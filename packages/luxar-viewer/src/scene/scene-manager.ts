@@ -24,6 +24,7 @@ import { materialManager } from '../rendering';
 import { resolveMaterialBackend } from '../rendering/material-manager/factories';
 import {
   createSceneEnvironment,
+  sceneEnvironmentRendererDeps,
   type SceneEnvironment,
 } from '../rendering/environment/scene-environment';
 import type { BakedEnvironment } from '../types/environment';
@@ -85,7 +86,14 @@ import {
 import { sceneDimsManager } from './scene-dims-manager';
 import { resolveViewAxisPose } from './scene-manager/camera/view-axis';
 import type { ViewAxis } from '../types/view-axis';
-import { WebGLContextRecovery } from './scene-manager/render-pipeline/webgl-context-recovery';
+import {
+  WebGLContextRecovery,
+  markSceneResourcesDirtyForContextRestore,
+} from './scene-manager/render-pipeline/webgl-context-recovery';
+import {
+  WebGPUDeviceRecovery,
+  type GpuDeviceLike,
+} from './scene-manager/render-pipeline/webgpu-device-recovery';
 import { reduceGpuByteBudgetForContextLoss } from '../rendering/gpu-byte-budget';
 import {
   createWebGLRenderer,
@@ -150,17 +158,25 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   'webgl-context-restored': {};
   /**
-   * Fired when the WebGPU device.lost Promise resolves. Treated as
-   * **unrecoverable** in this release — Luxar does not rebuild GPU
-   * resources after WebGPU device loss; the host application is
-   * expected to prompt for a reload. See
-   * `setupContextLossHandling` for the rationale.
+   * Fired when the WebGPU device is lost (its `device.lost` Promise resolved
+   * with any reason but `'destroyed'`). Recovery starts right after: a new
+   * renderer on a fresh device, announced by `webgpu-device-restored`, or,
+   * when every attempt fails, `webgpu-device-unrecoverable`.
    *
    * Payload carries the diagnostic reason / message returned by the
    * browser's `GPUDevice.lost` info struct (both may be undefined
    * when the browser doesn't supply them).
    */
   'webgpu-device-lost': { reason?: string; message?: string };
+  /**
+   * A new WebGPU renderer replaced the lost one, and post-processing, the
+   * environment and the scene's GPU resources were rewired to it. Subscribers
+   * re-register their per-renderer state (`NodeFactory.rebuildAfterContextRestore`
+   * with the new renderer).
+   */
+  'webgpu-device-restored': {};
+  /** Every recovery attempt after a WebGPU device loss failed: reload required. */
+  'webgpu-device-unrecoverable': { reason?: string; message?: string };
 }> {
   /**
    * The graphics-API renderer. Holds the `Renderer` union honestly:
@@ -253,6 +269,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * flag — SceneManager just forwards events through it.
    */
   private contextRecovery: WebGLContextRecovery | null = null;
+  private deviceRecovery: WebGPUDeviceRecovery | null = null;
 
   /**
    * When true, resize events are suppressed (used during recording to
@@ -653,16 +670,12 @@ export class SceneManager extends THREE.EventDispatcher<{
    * `webglcontextrestored` canvas events fire only on WebGL
    * contexts.
    *
-   * **WebGPU path.** Three's `WebGPURenderer` recreates its own
-   * GPU device internally when `device.lost` resolves, but it does
-   * **not** rebuild Luxar-owned resources (post-processing render
-   * targets, picking buffers, material caches, interleaved geometry
-   * buffers). A full rebuild path mirroring WebGL2 is non-trivial
-   * and untested in CI today, so for now we treat WebGPU device
-   * loss as **unrecoverable**: log it loudly and dispatch a
-   * `webgpu-device-lost` event so the host application can prompt
-   * for a reload. The event payload carries the device-loss reason
-   * for diagnostics.
+   * **WebGPU path.** Three's `WebGPURenderer` does NOT recreate a lost
+   * device: it only latches `_isDeviceLost`, after which every render
+   * returns early. `WebGPUDeviceRecovery` observes `device.lost`, ignores
+   * our own `'destroyed'` disposal, and rebuilds the renderer on a fresh
+   * device (`recreateWebGPURenderer`), dispatching `webgpu-device-lost`,
+   * then `webgpu-device-restored` or `webgpu-device-unrecoverable`.
    */
   private setupContextLossHandling(): void {
     if (this.capabilities.apiSurface === 'webgl2') {
@@ -694,33 +707,80 @@ export class SceneManager extends THREE.EventDispatcher<{
       return;
     }
 
-    // WebGPU: attach a best-effort device.lost observer. The
-    // backend's `device` is created during `gpuRenderer.init()`,
-    // so by the time `setupContextLossHandling` runs the device is
-    // either present or we accept "device.lost reporting unavailable
-    // on this Three.js build" silently. Structural typing avoids the
-    // @webgpu/types dependency on consumers that don't enable WebGPU
-    // in TypeScript's lib.
-    type DeviceLostInfo = { reason?: string; message?: string };
-    type GpuDeviceLike = { lost: Promise<DeviceLostInfo> };
-    const backend = (this.renderer as { backend?: { device?: GpuDeviceLike } }).backend;
-    const device = backend?.device;
-    if (!device || typeof device.lost !== 'object') {
-      return;
-    }
-    void device.lost.then((info: DeviceLostInfo) => {
-      log.error(
-        Modules.RENDERER,
-        `WebGPU device lost (reason=${info.reason ?? 'unknown'}). ` +
-          'Luxar does not auto-recover WebGPU device loss in this release — ' +
-          `please reload the page. Message: ${info.message ?? '(none)'}`
-      );
-      this.dispatchEvent({
-        type: 'webgpu-device-lost',
-        reason: info.reason,
-        message: info.message,
-      });
+    // WebGPU: three latches a lost device and renders nothing from then on,
+    // so recovery rebuilds the renderer (see webgpu-device-recovery.ts). The
+    // WebGL2 bridge (`webgpu-gl`) has no device to observe.
+    this.deviceRecovery = new WebGPUDeviceRecovery({
+      getDevice: () => (this.renderer as { backend?: { device?: GpuDeviceLike } }).backend?.device,
+      recreateRenderer: () => this.recreateWebGPURenderer(),
+      onLost: (info) => {
+        clearBlendModeProgramWarmup();
+        reduceGpuByteBudgetForContextLoss();
+        this.dispatchEvent({ type: 'webgpu-device-lost', ...info });
+      },
+      onRestored: () => {
+        this.dispatchEvent({ type: 'webgpu-device-restored' });
+        this.dispatchEvent({ type: 'change' });
+      },
+      onUnrecoverable: (info) =>
+        this.dispatchEvent({ type: 'webgpu-device-unrecoverable', ...info }),
     });
+    if (!this.deviceRecovery.attach()) this.deviceRecovery = null;
+  }
+
+  /**
+   * Replace a WebGPU renderer whose device was lost with one on a fresh device,
+   * on the same canvas, and rewire what renders through it. Resolves false when
+   * no native device can be obtained (the caller retries, then gives up).
+   *
+   * The old renderer is disposed FIRST: both would configure the same
+   * `GPUCanvasContext`, and a later dispose would unconfigure the new one.
+   */
+  private async recreateWebGPURenderer(): Promise<boolean> {
+    try {
+      this.renderer.dispose();
+    } catch (error) {
+      log.warning(Modules.RENDERER, 'Disposing the lost WebGPU renderer failed', error);
+    }
+    const result = await createWebGPURenderer(this.canvasElement, {
+      debug: this.debug,
+      perfTimestamp: this.perfTimestamp,
+      hdr: this.hdr,
+      hdrHeadroom: this.hdrHeadroom,
+      requireNativeAdapter: true,
+    });
+    if (result.fallback) return false;
+    this.renderer = result.renderer;
+    this.capabilities = result.capabilities;
+    materialManager.setCaps(this.capabilities);
+    this.postProcessing?.adoptRenderer(this.renderer, this.capabilities);
+    this.environment?.rebindRenderer(
+      sceneEnvironmentRendererDeps(this.renderer, resolveMaterialBackend(this.capabilities))
+    );
+    markSceneResourcesDirtyForContextRestore(this.scene);
+    this.resizeToCanvas();
+    this.renderer.setClearColor(config.scene.backgroundColor);
+    return true;
+  }
+
+  /**
+   * Whether the GPU context is lost right now: a lost WebGL context, or a lost
+   * WebGPU device whose renderer has not been rebuilt (yet).
+   */
+  public isGpuContextLost(): boolean {
+    return this.isWebGLContextLost() || (this.deviceRecovery?.isLost() ?? false);
+  }
+
+  /**
+   * Run the WebGPU device-loss recovery as if the device had just been lost
+   * (debug and E2E use; a real `device.destroy()` reports `'destroyed'`, which
+   * is ignored as our own disposal). Resolves when recovery has finished;
+   * false when this session has no WebGPU device to recover.
+   */
+  public async simulateWebGPUDeviceLoss(): Promise<boolean> {
+    if (!this.deviceRecovery) return false;
+    await this.deviceRecovery.simulateLoss();
+    return !this.deviceRecovery.isLost();
   }
 
   /**
@@ -1595,6 +1655,9 @@ export class SceneManager extends THREE.EventDispatcher<{
       this.contextRecovery.dispose();
       this.contextRecovery = null;
     }
+    // Disarm the device observer BEFORE renderer.dispose() destroys the device.
+    this.deviceRecovery?.dispose();
+    this.deviceRecovery = null;
 
     // Dispose post-processing resources first
     // This includes HDR render targets, effect composer, and all passes

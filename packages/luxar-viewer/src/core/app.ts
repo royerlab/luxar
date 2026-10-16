@@ -560,10 +560,19 @@ export class LuxarApp {
     controls.addEventListener('change', cameraListener);
     this.events.add(() => controls.removeEventListener('change', cameraListener));
 
-    // Unrecoverable in this release (the init pipeline shows the reload
-    // dialog): tell the embedder too, so a host can reload or report it.
+    // The scene manager rebuilds the renderer after WebGPU device loss; tell
+    // the embedder each stage, so a host can report it or reload on failure.
     this.events.add(
       this.onWebGPUDeviceLost((info) => this.embedderEvents.emit('webgpu-device-lost', info))
+    );
+    this.events.add(
+      this.onWebGPUDeviceRestored(() => this.embedderEvents.emit('webgpu-device-restored', {}))
+    );
+    this.events.add(
+      this.onWebGPUDeviceLost(
+        (info) => this.embedderEvents.emit('webgpu-device-unrecoverable', info),
+        'webgpu-device-unrecoverable'
+      )
     );
 
     // flyTo() driver. The canvas is the input surface whose pointer / wheel /
@@ -668,20 +677,33 @@ export class LuxarApp {
       },
       canvas: this.sceneManager.renderer?.domElement,
       onDeviceLost: (listener) => this.onWebGPUDeviceLost(listener),
+      onDeviceRestored: (listener) => this.onWebGPUDeviceRestored(listener),
     }));
     this.kioskInputRestore = teardown.restoreInput;
     session.setKioskTeardown(teardown.disposeWatchdog);
   }
 
-  /** Subscribe to the scene manager's WebGPU device loss; returns the unsubscribe. */
+  /**
+   * Subscribe to the scene manager's WebGPU device loss (or, with `type`, to
+   * the failure of its recovery); returns the unsubscribe.
+   */
   private onWebGPUDeviceLost(
-    listener: (info: { reason?: string; message?: string }) => void
+    listener: (info: { reason?: string; message?: string }) => void,
+    type: 'webgpu-device-lost' | 'webgpu-device-unrecoverable' = 'webgpu-device-lost'
   ): () => void {
     const sceneManager = this.sceneManager;
     const handler = (event: { reason?: string; message?: string }): void =>
       listener({ reason: event.reason, message: event.message });
-    sceneManager.addEventListener('webgpu-device-lost', handler);
-    return () => sceneManager.removeEventListener('webgpu-device-lost', handler);
+    sceneManager.addEventListener(type, handler);
+    return () => sceneManager.removeEventListener(type, handler);
+  }
+
+  /** Subscribe to the scene manager's WebGPU device recovery; returns the unsubscribe. */
+  private onWebGPUDeviceRestored(listener: () => void): () => void {
+    const sceneManager = this.sceneManager;
+    const handler = (): void => listener();
+    sceneManager.addEventListener('webgpu-device-restored', handler);
+    return () => sceneManager.removeEventListener('webgpu-device-restored', handler);
   }
 
   /** Bind the sound layer to the loaded scene (`viewer-config/install-audio.ts`). */

@@ -684,6 +684,24 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     mgr.dispose();
   });
 
+  it('adoptRenderer moves the pipeline to a NEW renderer and keeps user state', () => {
+    const mgr = makeManager();
+    mgr.updateExposure(1.7);
+    const next = makeMockRenderer();
+    (next as { outputColorSpace: string }).outputColorSpace = THREE.SRGBColorSpace;
+    const rebuild = vi.spyOn(mgr, 'rebuildAfterContextRestore');
+
+    mgr.adoptRenderer(next, mockCaps('webgl2'));
+
+    expect(rebuild).toHaveBeenCalledTimes(1);
+    expect(peek(mgr).renderer).toBe(next);
+    // The new renderer gets the same output pinning the constructor applies.
+    expect(next.outputColorSpace).toBe(THREE.LinearSRGBColorSpace);
+    expect(next.toneMapping).toBe(THREE.NoToneMapping);
+    expect(mgr.getExposure()).toBeCloseTo(1.7);
+    mgr.dispose();
+  });
+
   it('logs the effective MSAA state while SSAA suspends configured samples', () => {
     const mgr = makeManager();
     mgr.setMSAAEnabled(true);

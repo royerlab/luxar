@@ -186,7 +186,7 @@ app.on('element-contextmenu', (event) => console.log(event));
 app.on('camera-changed', (pose) => mirror(pose)); // frame rate while moving; throttle if relaying
 app.on('sound-started', ({ name }) => console.log('playing', name)); // and 'sound-ended'
 app.on('waypoint-arrived', ({ index, completed }) => console.log(index, completed)); // and 'waypoint-departed'
-app.on('webgpu-device-lost', ({ reason }) => location.reload()); // unrecoverable in this release
+app.on('webgpu-device-unrecoverable', () => location.reload()); // after a WebGPU device loss the viewer recovers on its own when it can
 // off();
 ```
 

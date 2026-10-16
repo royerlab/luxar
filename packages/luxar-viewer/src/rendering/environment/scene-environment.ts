@@ -147,7 +147,25 @@ export class SceneEnvironment {
   /** How many live captures have run (a diagnostic the tests and the bake read). */
   captureCount = 0;
 
-  constructor(private readonly deps: SceneEnvironmentDeps) {}
+  constructor(private deps: SceneEnvironmentDeps) {}
+
+  /**
+   * Point the environment at a NEW renderer (a WebGPU renderer rebuilt after
+   * device loss) and rebuild whatever was already built against the old one.
+   * The PMREM generator and cube target are renderer resources, so their
+   * factories travel with the renderer.
+   */
+  rebindRenderer(
+    deps: Pick<SceneEnvironmentDeps, 'renderer' | 'createGenerator' | 'createCubeTarget'>
+  ): void {
+    const wasReady = this.isReady();
+    this.releaseResources();
+    this.deps = { ...this.deps, ...deps };
+    if (wasReady) {
+      this.apply();
+      this.markStale();
+    }
+  }
 
   /** Whether an environment has been built and assigned. */
   isReady(): boolean {
@@ -526,6 +544,14 @@ export function createSceneEnvironment(
   backend: MaterialBackend,
   scene: THREE.Scene
 ): SceneEnvironment {
+  return new SceneEnvironment({ scene, ...sceneEnvironmentRendererDeps(renderer, backend) });
+}
+
+/** The renderer-bound half of {@link SceneEnvironmentDeps}, for one renderer. */
+export function sceneEnvironmentRendererDeps(
+  renderer: THREE.WebGLRenderer | object,
+  backend: MaterialBackend
+): Pick<SceneEnvironmentDeps, 'renderer' | 'createGenerator' | 'createCubeTarget'> {
   const targetOptions = {
     type: THREE.HalfFloatType,
     format: THREE.RGBAFormat,
@@ -548,5 +574,5 @@ export function createSceneEnvironment(
           targetOptions as never
         ) as unknown as CubeTargetLike)
       : (new THREE.WebGLCubeRenderTarget(resolution, targetOptions) as unknown as CubeTargetLike);
-  return new SceneEnvironment({ scene, renderer, createGenerator, createCubeTarget });
+  return { renderer, createGenerator, createCubeTarget };
 }
