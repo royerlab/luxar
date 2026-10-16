@@ -116,6 +116,30 @@ def test_default_run_writes_exactly_the_default_set(
     assert written == list(gate_scenes.HEAVY_SCENE_NAMES)
 
 
+def test_missing_writes_only_absent_stores(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    written: list[str] = []
+
+    def record(name: str):
+        def writer(path: Path, *, small: bool = False) -> None:
+            written.append(name)
+            path.mkdir()
+
+        return writer
+
+    stubs = {name: record(name) for name in gate_scenes.ALL_SCENE_NAMES}
+    monkeypatch.setattr(gate_scenes, "WRITERS", stubs)
+    present = [n for n in gate_scenes.SCENE_NAMES if n != "sp64_closeup_authored"]
+    for name in present:
+        (tmp_path / gate_scenes.store_filename(name)).mkdir()
+    gate_scenes.main(["--out", str(tmp_path), "--missing"])
+    assert written == ["sp64_closeup_authored"]
+    written.clear()
+    gate_scenes.main(["--out", str(tmp_path), "--missing"])
+    assert written == []
+
+
 def test_zip_scenes_are_named_as_zipped_stores() -> None:
     assert gate_scenes.store_filename("zip_mixed") == "zip_mixed.luxar.zarr.zip"
     assert gate_scenes.store_filename("zip_lod_ladder") == (

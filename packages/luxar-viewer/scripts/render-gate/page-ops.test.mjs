@@ -46,10 +46,12 @@ const SUBMIT_MS = 0.1;
 const GPU_MS = 20;
 const RAF_MS = 0.05;
 
-function fakePage(kind) {
+function fakePage(kind, { syncMs = 0 } = {}) {
   const page = { clock: 0, gpuQueued: 0, dirty: false };
+  // `syncMs`: the sync's own round trip, paid even with nothing queued (the
+  // WebGPU `onSubmittedWorkDone()` latency).
   const drain = () => {
-    page.clock += page.gpuQueued;
+    page.clock += page.gpuQueued + syncMs;
     page.gpuQueued = 0;
   };
   const gl = {
@@ -106,8 +108,8 @@ function fakePage(kind) {
 
 describe('motion frame timing', () => {
   let page;
-  const install = (kind) => {
-    page = fakePage(kind);
+  const install = (kind, options) => {
+    page = fakePage(kind, options);
     vi.stubGlobal('window', { __luxarDebug: page.dbg });
     vi.stubGlobal('requestAnimationFrame', page.raf);
     vi.spyOn(performance, 'now').mockImplementation(() => page.clock);
@@ -132,6 +134,29 @@ describe('motion frame timing', () => {
       expect(mo.p95Ms).toBeGreaterThan(GPU_MS);
     });
   }
+
+  for (const kind of ['webgl', 'webgpu']) {
+    it(`pipelined throughput still includes GPU completion on ${kind}`, async () => {
+      install(kind);
+      const tp = await motion({ frames: 12, warm: 3, pose, pipelined: true });
+      expect(tp.rendersPerFrame).toBe(1);
+      // One sync at the end drains every frame's GPU work into the window.
+      expect(tp.frameMs).toBeGreaterThan(GPU_MS);
+      expect(tp.frameMs).toBeLessThan(GPU_MS + 1);
+    });
+  }
+
+  it('pays a slow sync once per orbit when pipelined, once per frame when synced', async () => {
+    const SYNC_MS = 4;
+    const frames = 40;
+    install('webgpu', { syncMs: SYNC_MS });
+    const synced = await motion({ frames, warm: 3, pose });
+    install('webgpu', { syncMs: SYNC_MS });
+    const tp = await motion({ frames, warm: 3, pose, pipelined: true });
+    expect(synced.frameMs).toBeGreaterThan(GPU_MS + SYNC_MS);
+    expect(tp.frameMs).toBeGreaterThan(GPU_MS);
+    expect(tp.frameMs).toBeLessThan(GPU_MS + 1 + SYNC_MS / frames);
+  });
 
   it('restores the WebGL framebuffer binding it reads through', async () => {
     install('webgl');

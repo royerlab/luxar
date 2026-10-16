@@ -186,7 +186,14 @@ between rounds. Each arm records:
   full-pipeline renders, each followed by a GPU sync (a 1-pixel `readPixels` on
   WebGL, `queue.onSubmittedWorkDone()` on WebGPU). The fastest repetition is the
   least-interfered estimate and is the value kept. It depends on neither vsync
-  nor timer queries, which ANGLE/Metal reports unreliably.
+  nor timer queries, which ANGLE/Metal reports unreliably. The minimum was
+  checked against the median of the five on an obsidian A/A run under load
+  (1-minute load about 18 on 16 CPUs): the minimum spread less between arms in
+  8 of 12 case/backend pairs, and over re-partitioned arms it falsely failed
+  1.1% of comparisons against the median's 1.7%, so it stays. Interference that
+  slows a whole arm (all five repetitions) is not something either statistic
+  removes; the rounds' median and the A/A floor absorb it. `report.json` keeps
+  the five repetitions per arm as `gpuRepsMs`.
 - **`frameMs`, `frameP95Ms`, `cpuMs`, `rendersPerFrame`**: a deterministic orbit
   of 180 frames, one step per animation frame, with
   `--disable-gpu-vsync --disable-frame-rate-limit`. Motion matters: LOD
@@ -205,6 +212,17 @@ between rounds. Each arm records:
     and the WebGPU wait is asynchronous;
   - `rendersPerFrame`: `postProcessing.render` calls per frame. A frame that
     renders twice costs twice.
+- **`throughputMs`**: the same orbit run again with no per-frame sync, and one
+  sync after the last frame. CPU and GPU overlap as they do in a real browser,
+  so this is wall time per frame at full throughput, with the GPU work of
+  every frame still inside the window. The unsynced orbit's render count is
+  kept in `report.json` as `throughputRendersPerFrame` (reported, not judged).
+  On WebGL an unsynced frame is paced by Chrome's frame scheduling even with
+  vsync off: a cheap scene reads about 17 ms (60 Hz), slower than its synced
+  `frameMs` (measured on obsidian: `perf-mixed` 17.2 against 13.1 ms,
+  `perf-partition-normal` 17.1 against 11.5 ms), so WebGL `throughputMs` only
+  resolves scenes that cost more than a 60 Hz frame. WebGPU shows no such floor
+  (`perf-mixed` 2.0 ms).
 - **`wakeRenders`, `wakeBlockMs`**: waking a stopped loop the way an input
   handler does (`startAnimation()` after two idle frames), repeated nine times.
   `wakeRenders` counts renders from the wake up to and including the first
@@ -215,14 +233,35 @@ between rounds. Each arm records:
   0/0 or x/0 ratio would otherwise decide the verdict).
 
 A metric fails when its point ratio `median(candidate) / median(baseline)`
-exceeds `1 + floor`, and is reported as a win below `1 − floor`. `floor` is the
-band a no-change comparison spans: the bootstrap 95% CI of the two baseline arms'
-ratio, never below 1%. The candidate's own CI is reported but does not decide,
-because testing one CI edge against another CI's half-width counts the sampling
-noise twice and fails unchanged builds at small round counts.
+exceeds `1 + floor`, and is reported as a win below `1 / (1 + floor)`. The
+starting point is the band a no-change comparison spans: the bootstrap 95% CI
+of the two baseline arms' ratio, never below 1% (`aaFloor` in `report.json`).
+The candidate's own CI is reported but does not decide, because testing one CI
+edge against another CI's half-width counts the sampling noise twice and fails
+unchanged builds at small round counts.
+
+That band is for ONE comparison, and a run makes many: 13 cases, two backends
+and eight metrics are 208 judgements, any one of which fails the run. On an
+obsidian A/A run (identical builds), 0.5-1.4% of the timing comparisons fell
+outside their band, so most full runs of identical builds would FAIL. The
+floor the verdict uses is therefore widened for the run (`familyFloor`,
+Bonferroni): each judgement is tested at `0.05 / judgements`, which rescales the
+band in log space by `z(1 - 0.025 / judgements) / 1.96`, about x1.5 for a
+one-case run and x1.9 for the full suite. Re-partitioning that A/A run's arms
+into 100 pseudo-runs of 96 judgements, the share with a false fail fell from
+39% to 6%. The price is sensitivity: with a 10% slowdown injected into the
+candidate arm, the share of case/backend pairs caught fell from 81% to 77% for
+`gpuMs` and from 81% to 57% for `frameMs` (the noisier figure, whose band
+widens more). For a small effect, narrow the run with `--only` and
+`--backends` (fewer judgements, a narrower floor) and raise `--rounds` (a
+tighter A/A band).
 
 Run the perf suite on the machine whose numbers you care about, with nothing else
-heavy on its GPU. In headless Chrome with vsync off, rAF does not wait for the
+heavy on its GPU or CPU. Every arm records the host's 1-minute load average
+(`os.loadavg()`); the report header gives each arm's median and maximum, and
+warns when the median exceeds half the logical CPUs (`HIGH_LOAD_PER_CPU`). A
+busy host widens the A/A floor (less sensitivity) and can bias one arm, and the
+warning says to rerun the verdict on an idle host. In headless Chrome with vsync off, rAF does not wait for the
 GPU: without the per-frame sync an orbit frame times only the CPU submitting it
 (0.1-0.3 ms against a 20-110 ms `gpuMs`), a GPU-bound change is invisible, and a
 CPU stall on a resource the GPU still holds (a blocking `bufferSubData`) moves the
@@ -232,6 +271,24 @@ report says so under its Performance heading); `gpuMs` is GPU cost alone at a
 settled pose; `cpuMs` is CPU cost alone. The sync is part of the harness, so both
 arms carry it and the comparison stays like for like; a report measured before
 it existed is not comparable with one measured after.
+
+The per-frame sync biases the synced figures on WebGPU, and the bias is not the
+same on the two backends, so compare WebGL with WebGPU on `throughputMs`, not
+`frameMs`. `queue.onSubmittedWorkDone()` is a round trip through the GPU
+process that costs up to ~4 ms with nothing queued (obsidian, ANGLE/Vulkan
+Chrome), against about 0.2 ms for WebGL's 1-pixel `readPixels`, and every
+synced frame pays it. Work that completes asynchronously (a depth sort's
+result) also lands during that wait and triggers another render in the same
+frame, so `rendersPerFrame` reads 1.2-1.7 on WebGPU for a loop that renders
+1.01 times per frame unsynced. Measured on obsidian (RTX 3070, Vulkan):
+`perf-splats-1m-normal` `frameMs` 20.6 ms against `throughputMs` 10.2 ms,
+`perf-splats-10m-normal` 110.8 against 68.7 ms, and `rendersPerFrame` 1.18 and
+1.35 synced (`perf-splats-10m-normal`, `perf-partition-normal`) against 1.01
+unsynced; on WebGL the two render counts agree. Build-against-build on ONE backend the bias
+cancels, and `frameMs` stays the stricter figure for a GPU-bound change;
+`throughputMs` pays the sync once per orbit and is the one to read for
+backend-against-backend comparisons of scenes heavier than a 60 Hz frame (see
+the WebGL pacing note above) and for the WebGPU frame rate a user sees.
 
 ## Workload suites
 
@@ -269,7 +326,22 @@ provide the second. Each is a key of the manifest's `suites` block and is run by
 A case takes `store` (relative to `datasets/`) or `synthetic` (as in the exact
 suite), optional `urlParams` (appended to the defaults), `backends`, `pose`,
 `projection`, `heavy` and `staleFrameCheck`. A missing store makes the case an
-`error` row, not a crash. `heavy: true` cases run only with `--heavy`.
+`error` row, not a crash, and the row names the command that writes it
+(`generate_gate_scenes.py --out datasets/gate --only <scene>`; `make
+render-gate` runs the generator with `--missing`, which writes every default
+store that is not on disk yet). `heavy: true` cases run only with `--heavy`.
+
+A suite's `defaults.backends` is a default and a case's own `backends` is a
+constraint. The `hosted`, `trees` and `cache` suites default to WebGL only, to
+keep a default run short: they mostly measure the data path (requests, decodes,
+cache residency), which the renderer barely touches. An explicit `--backends`
+REPLACES a suite default, so `--backends webgl,webgpu` runs them on both
+renderers without a derived manifest. It widens to `webgl` and `webgpu` only:
+`webgpu-gl` is an exactness arm, so `--suite all --backends
+webgl,webgpu,webgpu-gl` runs it in the exact suite and wherever a suite lists
+it, not in every workload suite. A case that declares `backends` itself
+(`webgpu_idle_uploads` measures a WebGPU-only upload path) keeps that list, and
+`--backends` can only narrow it.
 
 Per arm the runner opens the case in a fresh context, applies the pose, settles
 (skipped for a cold load), zeroes the counters, runs the workload and reads the
@@ -413,7 +485,10 @@ give it a `tol`.
 
 Each suite adds a table (case, backend, metric, base median, candidate median,
 ratio, verdict, and any expectation) to `report.md`; `report.json` carries the
-rows under `suites.<name>`.
+rows under `suites.<name>`. Every perf and suite row in `report.json` also
+keeps its raw per-arm `samples` and the `load1` each arm ran under, so a run
+can be re-judged, or a counter that moved traced to the arm that moved it,
+without measuring again.
 
 ## When a run is not a pass
 

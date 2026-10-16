@@ -16,6 +16,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
+import { loadavg } from 'node:os';
 import { join } from 'node:path';
 
 import { installExtCounters } from './ext-counters.mjs';
@@ -357,6 +358,7 @@ async function measureArm(browser, server, c, backend, { defaults, profile, open
       })
     );
     if (c.staleFrameCheck) metrics.staleFrame = (await staleFrameCheck(page)) ? 0 : 1;
+    metrics.load1 = loadavg()[0];
     return metrics;
   } finally {
     await context.close();
@@ -378,6 +380,52 @@ function applyExpectations(row, c, expected) {
       );
     }
   }
+}
+
+/**
+ * The backends one suite case runs on.
+ *
+ * A suite's `defaults.backends` is a default, not a constraint: the cheap
+ * default set (a data-path suite such as `hosted` runs on WebGL only) and an
+ * explicit `--backends` replaces it, so `--backends webgl,webgpu` runs the
+ * hosted, trees and cache suites on WebGPU too (the forced-WebGL2 exactness
+ * arm `webgpu-gl` only where the suite lists it). A case's OWN `backends` is a
+ * constraint (`webgpu_idle_uploads` measures a WebGPU-only upload path), so
+ * `--backends` can only narrow it.
+ *
+ * @param {{ backends?: string[] }} c Suite case.
+ * @param {{ backends?: string[] }} defaults Suite defaults.
+ * @param {string[]|null|undefined} requested `--backends`, when given.
+ * @returns {string[]}
+ */
+export function caseBackends(c, defaults, requested) {
+  if (c.backends) return requested ? c.backends.filter((b) => requested.includes(b)) : c.backends;
+  const fallback = defaults.backends ?? SUITE_BACKENDS;
+  if (!requested) return fallback;
+  // `webgpu-gl` is an exactness arm (as in the perf suite): `--suite all
+  // --backends webgl,webgpu,webgpu-gl` must not triple every workload suite.
+  return requested.filter((b) => SUITE_BACKENDS.includes(b) || fallback.includes(b));
+}
+
+/** The backends `--backends` can widen a suite default to. */
+const SUITE_BACKENDS = ['webgl', 'webgpu'];
+
+/**
+ * The error of a case whose store is not on disk, with the command that
+ * writes it. Every gate store is `datasets/gate/<scene>.luxar.zarr[.zip]`,
+ * written by `generate_gate_scenes.py`; `make render-gate` writes only the
+ * stores that are missing, but a gate run straight from `run-gate.mjs` (or a
+ * datasets/ shared between checkouts) can predate a newly added scene.
+ *
+ * @param {string} store Store path relative to `datasets/`.
+ * @returns {string}
+ */
+export function missingStoreMessage(store) {
+  const m = /^gate\/(.+?)\.luxar\.zarr(\.zip)?$/.exec(store);
+  const fix = m
+    ? `; write it with \`hatch run python packages/luxar-viewer/scripts/render-gate/generate_gate_scenes.py --out datasets/gate --only ${m[1]}\` from the repository root`
+    : '';
+  return `store missing: datasets/${store}${fix}`;
 }
 
 /**
@@ -414,8 +462,7 @@ export async function runSuite({
   const cases = (suite.cases ?? []).filter((c) => !opts.only || opts.only.includes(c.id));
   for (const c of cases) {
     const expected = expectations?.[c.id];
-    const allowed = c.backends ?? defaults.backends ?? ['webgl', 'webgpu'];
-    const backends = (opts.backends ?? allowed).filter((b) => allowed.includes(b));
+    const backends = caseBackends(c, defaults, opts.backends);
     if (c.heavy && !opts.heavy) {
       const row = {
         suite: name,
@@ -446,7 +493,7 @@ export async function runSuite({
         reasons: [],
       };
       if (c.store && !existsSync(join(dataRoot, c.store))) {
-        rows.push({ ...row, status: 'error', failures: [`store missing: datasets/${c.store}`] });
+        rows.push({ ...row, status: 'error', failures: [missingStoreMessage(c.store)] });
         continue;
       }
       const samples = { base: [], base2: [], cand: [] };
@@ -465,6 +512,14 @@ export async function runSuite({
         rows.push({ ...row, status: 'error', failures: [String(e.message ?? e)] });
         continue;
       }
+      row.load1 = {
+        base: samples.base.map((x) => x.load1),
+        base2: samples.base2.map((x) => x.load1),
+        cand: samples.cand.map((x) => x.load1),
+      };
+      // Raw per-arm samples, so a report can be re-judged (or a flaky
+      // counter traced to its arms) offline.
+      row.samples = samples;
       for (const m of c.metrics ?? []) row.metrics[m.name] = judgeMetric(m, samples);
       // A `report` metric is judged and shown but cannot fail the row (a timed
       // total whose per-tick twin is the one that gates).

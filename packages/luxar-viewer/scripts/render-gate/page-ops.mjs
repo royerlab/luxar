@@ -372,12 +372,31 @@ export async function gpuCost({ k = 20, warm = 10, reps = 5 }) {
  * time around this call (CDP `ScriptDuration`, which does not count the time
  * spent blocked in the sync).
  *
+ * The per-frame sync is not free on WebGPU: `onSubmittedWorkDone()` resolves
+ * through the GPU process, a round trip measured at up to ~4 ms with NOTHING
+ * submitted (obsidian, Vulkan), so every synced frame carries it. Work that
+ * resolves asynchronously (a depth sort's result) also lands during the wait
+ * and triggers an extra render, which is why `rendersPerFrame` reads 1.2-1.7
+ * on WebGPU for a loop that renders once per frame unsynced. `pipelined: true`
+ * runs the same orbit with ONE sync after the last frame instead, so CPU and
+ * GPU overlap as they do in a real browser: `frameMs` is then throughput
+ * (wall time over the frames, the last frame's GPU work included) and the
+ * sync's latency is paid once, not per frame. Its `p95Ms` times animation
+ * frames only (no GPU completion inside them), so the caller ignores it.
+ *
  * @param {{ frames?: number, warm?: number, degPerFrame?: number,
+ *   pipelined?: boolean,
  *   pose: { position: number[], target: number[], up: number[] } }} opts
  * @returns {Promise<{ frames: number, renders: number, frameMs: number,
  *   p95Ms: number, rendersPerFrame: number }>}
  */
-export async function motion({ frames = 180, warm = 30, degPerFrame = 1, pose }) {
+export async function motion({
+  frames = 180,
+  warm = 30,
+  degPerFrame = 1,
+  pipelined = false,
+  pose,
+}) {
   const dbg = window.__luxarDebug;
   const pp = dbg.app.sceneManager.postProcessing;
   const renderer = dbg.app.sceneManager.renderer;
@@ -424,8 +443,9 @@ export async function motion({ frames = 180, warm = 30, degPerFrame = 1, pose })
   for (let i = 0; i < warm; i++) {
     place(i - warm);
     await tick();
-    await sync();
+    if (!pipelined) await sync();
   }
+  if (pipelined) await sync();
   let renders = 0;
   const original = pp.render;
   pp.render = function countedRender(...args) {
@@ -444,10 +464,11 @@ export async function motion({ frames = 180, warm = 30, degPerFrame = 1, pose })
     for (let i = 0; i < frames; i++) {
       place(i);
       await tick();
-      const t = await sync();
+      const t = pipelined ? performance.now() : await sync();
       deltas.push(t - last);
       last = t;
     }
+    if (pipelined) last = await sync();
   } finally {
     pp.render = original;
   }
