@@ -49,6 +49,7 @@ _IMPORTANT_FITTING_KEYS = (
     "image_min",
     "image_max",
     "intensity_range",
+    "intensity_scale",
     "convergence_time",
     "culled",
     "culling_method",

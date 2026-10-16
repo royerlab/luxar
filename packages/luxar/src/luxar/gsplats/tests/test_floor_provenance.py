@@ -120,6 +120,11 @@ def _leaf(n: int = 6, ndim: int = 3, stats: Optional[dict] = None) -> GSplatData
 
 
 class TestAgreementRule:
+    def test_intensity_scale_survives_a_merge_of_scaled_inputs(self) -> None:
+        stats = {**BLOCK, "intensity_range": 1950.0, "intensity_scale": 0.5}
+        merged = GSplatData.concatenate([_leaf(stats=stats), _leaf(stats=stats)])
+        assert merged.stats["intensity_scale"] == 0.5
+
     def test_unanimous_block_is_carried(self) -> None:
         assert agreed_normalization_stats([dict(BLOCK), dict(BLOCK)]) == BLOCK
 
@@ -145,7 +150,7 @@ class TestAgreementRule:
 class TestConcatenate:
     def test_carries_the_block_its_inputs_agree_on(self) -> None:
         merged = GSplatData.concatenate([_leaf(stats=dict(BLOCK)) for _ in range(3)])
-        for key in NORMALIZATION_STATS_KEYS:
+        for key in BLOCK:
             assert merged.stats[key] == BLOCK[key]
 
     def test_omits_a_floor_its_inputs_disagree_on(self) -> None:
@@ -176,7 +181,7 @@ class TestRoundTrip:
 
         assert _pipeline_attrs(path)["floor"] == 110.0
         stats = load_gsplats(path, include_stats=True).stats
-        for key in NORMALIZATION_STATS_KEYS:
+        for key in BLOCK:
             assert stats[key] == BLOCK[key]
 
     def test_partition(self, tmp_path: Path) -> None:
@@ -189,7 +194,7 @@ class TestRoundTrip:
 
         assert _pipeline_attrs(path)["floor"] == 110.0
         reloaded, stats = load_gsplat_node(path, include_stats=True)
-        for key in NORMALIZATION_STATS_KEYS:
+        for key in BLOCK:
             assert stats[key] == BLOCK[key]
         # The new sibling group must not be mistaken for a part on read.
         assert len(reloaded.children) == 2

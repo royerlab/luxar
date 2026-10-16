@@ -478,7 +478,7 @@ def test_no_basis_no_source_data_range(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("flag", "value", "expect"),
     [
-        ("--scale-intensity", "0.5", {"intensity_range": 1950.0, "image_max": 2006.0}),
+        ("--scale-intensity", "0.5", {"intensity_range": 1950.0, "image_max": 4012.0}),
         ("--normalize-intensity", "1.0", None),
     ],
 )
@@ -513,5 +513,7 @@ def test_transform_intensity_keeps_the_basis_honest(
     else:
         for key, want in expect.items():
             assert after[key] == pytest.approx(want)
-        assert attrs["amplitude_unit"] == "counts above background"
+        assert after["intensity_scale"] == pytest.approx(0.5)
+        assert attrs["amplitude_unit"] == "a.u."
+        assert "amplitude_offset" not in attrs
         assert attrs["source_data_range"] == pytest.approx([0.0, 1950.0])

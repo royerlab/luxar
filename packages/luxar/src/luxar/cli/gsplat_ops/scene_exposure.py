@@ -177,10 +177,9 @@ def amplitude_unit_attrs(stats: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     no basis — an imported classical splat file, a merge of disagreeing fits —
     gets ``a.u.`` and no offset: nothing says what its numbers mean.
 
-    With a basis, ``source_data_range`` = ``[0, image_max - image_min]`` records
-    the source's own intensity span in the same unit: the data the splats
-    represent, which their per-Gaussian PEAK amplitudes do not span (overlapping
-    Gaussians sum to a voxel's value).
+    With a basis, ``source_data_range`` records ``[0, intensity_range]`` in
+    amplitude units. After intensity scaling the amplitudes and range are in
+    arbitrary units; the raw source floor is then omitted from the scene.
     """
     import numpy as np
 
@@ -193,10 +192,11 @@ def amplitude_unit_attrs(stats: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
         integer = np.dtype(stats.get("source_dtype")).kind in "iu"
     except (TypeError, ValueError):
         integer = False
-    unit = "counts" if integer else "data units"
+    scaled = stats.get("intensity_scale", 1.0) != 1.0
+    unit = "a.u." if scaled else ("counts" if integer else "data units")
     level = fit_image_min(stats)
     attrs: Dict[str, Any] = {}
-    if level is not None and level > 0.0:
+    if not scaled and level is not None and level > 0.0:
         unit += " above background"
         attrs[AMPLITUDE_OFFSET_ATTR] = float(level)
     attrs[AMPLITUDE_UNIT_ATTR] = unit
