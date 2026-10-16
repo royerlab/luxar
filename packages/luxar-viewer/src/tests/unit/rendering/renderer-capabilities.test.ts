@@ -302,3 +302,64 @@ describe('createRendererCapabilities (WebGPU limits)', () => {
     warning.mockRestore();
   });
 });
+
+describe('createRendererCapabilities (WebGPU MSAA + colour depth)', () => {
+  const webgpu = (backend: unknown): Renderer =>
+    ({ isWebGPURenderer: true, backend }) as unknown as Renderer;
+
+  it('reports 4 MSAA samples on a native core device (WebGPU allows only 1 and 4)', () => {
+    const caps = createRendererCapabilities(webgpu({ isWebGPUBackend: true }), true);
+    expect(caps.maxMSAASamples).toBe(4);
+  });
+
+  it('reports 0 MSAA samples in compatibility mode, following three (it drops its own canvas MSAA)', () => {
+    const backend = { isWebGPUBackend: true, compatibilityMode: true };
+    expect(createRendererCapabilities(webgpu(backend), true).maxMSAASamples).toBe(0);
+  });
+
+  it('probes MAX_SAMPLES on the WebGL2 bridge', () => {
+    const gl = {
+      MAX_SAMPLES,
+      getParameter: (parameter: number) => (parameter === MAX_SAMPLES ? 8 : 0),
+    };
+    expect(createRendererCapabilities(webgpu({ gl }), true).maxMSAASamples).toBe(8);
+  });
+
+  it('reports 0 MSAA samples when the bridge MAX_SAMPLES probe returns junk', () => {
+    const gl = { MAX_SAMPLES, getParameter: () => null };
+    expect(createRendererCapabilities(webgpu({ gl }), true).maxMSAASamples).toBe(0);
+  });
+
+  it('reports 16-bit colour depth for an rgba16float (HalfFloatType) canvas', () => {
+    const backend = { isWebGPUBackend: true, parameters: { outputType: THREE.HalfFloatType } };
+    expect(createRendererCapabilities(webgpu(backend), true).hdr.colorDepth).toEqual({
+      red: 16,
+      green: 16,
+      blue: 16,
+    });
+  });
+
+  it('reports 8-bit colour depth for the default canvas format', () => {
+    const backend = { isWebGPUBackend: true, parameters: {} };
+    expect(createRendererCapabilities(webgpu(backend), true).hdr.colorDepth).toEqual({
+      red: 8,
+      green: 8,
+      blue: 8,
+    });
+  });
+
+  it('probes the channel bits of the WebGL2 bridge context', () => {
+    const bits: Record<number, number> = { [RED_BITS]: 10, [GREEN_BITS]: 10, [BLUE_BITS]: 10 };
+    const gl = {
+      RED_BITS,
+      GREEN_BITS,
+      BLUE_BITS,
+      getParameter: (parameter: number) => bits[parameter] ?? 0,
+    };
+    expect(createRendererCapabilities(webgpu({ gl }), true).hdr.colorDepth).toEqual({
+      red: 10,
+      green: 10,
+      blue: 10,
+    });
+  });
+});

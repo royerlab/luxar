@@ -288,13 +288,12 @@ export function createRendererCapabilities(
     };
   }
 
-  // WebGPU path: WebGPURenderer doesn't expose a `getContext()`
-  // returning a WebGL2 context. Most capability probes that the
-  // WebGL2 path uses (MAX_SAMPLES, ALIASED_POINT_SIZE_RANGE, GL
-  // extensions, channel bit depths) don't have direct WebGPU
-  // equivalents — WebGPU's adapter limits cover different things.
-  // Use sensible defaults for probes that do not map directly to
-  // WebGPU limits.
+  // WebGPU path: WebGPURenderer doesn't expose a `getContext()` returning a
+  // WebGL2 context, so every probe reads the backend that is actually running
+  // (createRendererCapabilities runs post-init on the production path): real
+  // WebGPU exposes `device`, the WebGL2 bridge (`?webgpuForceWebgl`, or three's
+  // own fallback) exposes the raw `gl` context.
+  const backend = webgpuBackendOf(renderer);
   const hdr: HDRCapabilities = {
     ...display,
     floatTextures: true, // WebGPU canvas formats include float-texture targets
@@ -305,44 +304,9 @@ export function createRendererCapabilities(
     // defaulting to false costs half the precision on a HalfFloat upload and
     // still filters correctly everywhere.
     filterableFloatTextures: hasWebGPUFloat32Filterable(renderer),
-    colorDepth: { red: 8, green: 8, blue: 8 },
+    colorDepth: probeWebGPUColorDepth(backend),
   };
-
-  // WebGPU surface: read the live limit from whichever backend is
-  // actually running (createRendererCapabilities runs post-init on the
-  // production path). Real WebGPU exposes `device.limits`; the WebGL2
-  // compat backend exposes the raw `gl` context instead — probe it so a
-  // 4096-class device under `?webgpuForceWebgl` isn't overestimated.
-  // Fall back to WebGPU's guaranteed default limit (8192).
-  const backend = (
-    renderer as unknown as {
-      backend?: {
-        isWebGPUBackend?: boolean;
-        device?: { limits?: { maxTextureDimension2D?: number } };
-        gl?: WebGL2RenderingContext;
-      };
-    }
-  ).backend;
-  let [maxTextureSize, maxRenderbufferSize] = [8192, 8192];
-  const maxTextureDimension2D = backend?.device?.limits?.maxTextureDimension2D;
-  if (typeof maxTextureDimension2D === 'number' && maxTextureDimension2D > 0) {
-    maxTextureSize = maxTextureDimension2D;
-    maxRenderbufferSize = maxTextureDimension2D;
-  } else if (backend?.gl && typeof backend.gl.getParameter === 'function') {
-    const glMax = backend.gl.getParameter(backend.gl.MAX_TEXTURE_SIZE) as number | null;
-    if (typeof glMax === 'number' && glMax > 0) maxTextureSize = glMax;
-    const renderbufferMax = backend.gl.getParameter(backend.gl.MAX_RENDERBUFFER_SIZE) as
-      number | null;
-    if (typeof renderbufferMax === 'number' && renderbufferMax > 0) {
-      maxRenderbufferSize = renderbufferMax;
-    } else {
-      maxRenderbufferSize = maxTextureSize;
-      log.warning(
-        Modules.RENDERER,
-        `MAX_RENDERBUFFER_SIZE probe failed; using MAX_TEXTURE_SIZE (${maxTextureSize})`
-      );
-    }
-  }
+  const [maxTextureSize, maxRenderbufferSize] = probeWebGPUTextureLimits(backend);
 
   return {
     apiSurface: 'webgpu',
@@ -351,11 +315,112 @@ export function createRendererCapabilities(
     framebufferYDown,
     readbackYDown: backend?.isWebGPUBackend === true,
     hdr,
-    maxMSAASamples: 4, // WebGPU adapters guarantee at least 4× MSAA
+    maxMSAASamples: probeWebGPUMaxSamples(backend),
     maxTextureSize,
     maxRenderbufferSize,
     pointSizeRange: [1, 1024],
   };
+}
+
+/** The slice of three's WebGPU / WebGL2-bridge backend the probes read. */
+interface WebGPUBackendLike {
+  isWebGPUBackend?: boolean;
+  /** Set by three's WebGPUBackend when the device lacks `core-features-and-limits`. */
+  compatibilityMode?: boolean | null;
+  /** The renderer's constructor parameters (three keeps them on the backend). */
+  parameters?: { outputType?: number };
+  device?: { limits?: { maxTextureDimension2D?: number } };
+  gl?: WebGL2RenderingContext;
+}
+
+function webgpuBackendOf(renderer: Renderer): WebGPUBackendLike | undefined {
+  return (renderer as unknown as { backend?: WebGPUBackendLike }).backend;
+}
+
+/** A positive integer `gl.getParameter` result, or null when the probe misbehaves. */
+function glPositiveParameter(gl: WebGL2RenderingContext, pname: number): number | null {
+  const value = gl.getParameter(pname) as unknown;
+  return typeof value === 'number' && value > 0 ? value : null;
+}
+
+function hasGlParameterProbe(
+  backend: WebGPUBackendLike | undefined
+): backend is WebGPUBackendLike & { gl: WebGL2RenderingContext } {
+  return !!backend?.gl && typeof backend.gl.getParameter === 'function';
+}
+
+/**
+ * The MSAA sample count `WebGPURenderer` can actually use.
+ *
+ * - Native WebGPU core: 4. The WebGPU spec allows exactly sample counts 1 and
+ *   4 for render attachments, so 4 is both the floor and the ceiling; there is
+ *   no adapter limit to query.
+ * - Native WebGPU in compatibility mode (a device without
+ *   `core-features-and-limits`, e.g. three's own init after our core
+ *   `requestDevice` failed): 0. three forces `renderer._samples = 0` there, i.e.
+ *   it gives up multisampling its own canvas output on such a device; Luxar's
+ *   MSAA lives on the HDR render target instead, but follows three's lead
+ *   rather than be the only multisampled path exercised on a compat device
+ *   (the transmission framebuffer copy reads that target).
+ * - The WebGL2 bridge: `MAX_SAMPLES` of its context, exactly as the WebGL
+ *   renderer probes it (three allocates multisampled renderbuffers there).
+ */
+function probeWebGPUMaxSamples(backend: WebGPUBackendLike | undefined): number {
+  if (backend?.isWebGPUBackend === true) return backend.compatibilityMode === true ? 0 : 4;
+  if (hasGlParameterProbe(backend)) {
+    return glPositiveParameter(backend.gl, backend.gl.MAX_SAMPLES) ?? 0;
+  }
+  // No backend in scope (a pre-init or test renderer): WebGPU core's 4.
+  return 4;
+}
+
+/**
+ * Bits per channel of the canvas `WebGPURenderer` presents to.
+ *
+ * Native WebGPU configures the canvas from `outputType`: `HalfFloatType` (the
+ * HDR-output path, see `renderer-setup.ts`) gives an `rgba16float` canvas →
+ * 16; anything else is an 8-bit `bgra8unorm` / `rgba8unorm` → 8. The WebGL2
+ * bridge draws into an ordinary WebGL2 default framebuffer, so its context is
+ * probed with the same `*_BITS` queries as the WebGL renderer.
+ */
+function probeWebGPUColorDepth(
+  backend: WebGPUBackendLike | undefined
+): HDRCapabilities['colorDepth'] {
+  if (backend?.isWebGPUBackend !== true && hasGlParameterProbe(backend)) {
+    const { gl } = backend;
+    return {
+      red: glPositiveParameter(gl, gl.RED_BITS) ?? 8,
+      green: glPositiveParameter(gl, gl.GREEN_BITS) ?? 8,
+      blue: glPositiveParameter(gl, gl.BLUE_BITS) ?? 8,
+    };
+  }
+  const bits = backend?.parameters?.outputType === THREE.HalfFloatType ? 16 : 8;
+  return { red: bits, green: bits, blue: bits };
+}
+
+/**
+ * `[maxTextureSize, maxRenderbufferSize]` from the live backend: real WebGPU's
+ * `device.limits.maxTextureDimension2D` (both), or the bridge's GL limits so a
+ * 4096-class device under `?webgpuForceWebgl` isn't overestimated. Falls back
+ * to WebGPU's guaranteed default limit (8192).
+ */
+function probeWebGPUTextureLimits(
+  backend: WebGPUBackendLike | undefined
+): [maxTextureSize: number, maxRenderbufferSize: number] {
+  const maxTextureDimension2D = backend?.device?.limits?.maxTextureDimension2D;
+  if (typeof maxTextureDimension2D === 'number' && maxTextureDimension2D > 0) {
+    return [maxTextureDimension2D, maxTextureDimension2D];
+  }
+  if (!hasGlParameterProbe(backend)) return [8192, 8192];
+  const { gl } = backend;
+  const maxTextureSize = glPositiveParameter(gl, gl.MAX_TEXTURE_SIZE) ?? 8192;
+  const renderbufferMax = glPositiveParameter(gl, gl.MAX_RENDERBUFFER_SIZE);
+  if (renderbufferMax !== null) return [maxTextureSize, renderbufferMax];
+  log.warning(
+    Modules.RENDERER,
+    `MAX_RENDERBUFFER_SIZE probe failed; using MAX_TEXTURE_SIZE (${maxTextureSize})`
+  );
+  return [maxTextureSize, maxTextureSize];
 }
 
 /**
