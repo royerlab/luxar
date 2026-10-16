@@ -76,6 +76,25 @@ import type { LayerApplyEngine } from './layer-apply';
 
 const COLOUR_RANGE_LABEL = 'Colour range';
 
+/**
+ * A window (or bound pair) chosen on the primary, as applied to another
+ * selected layer: re-expressed as the same fractions of that layer's own range
+ * when BOTH are in labelled data units (different units cannot share numbers),
+ * else the absolute values — exactly the historical behaviour on old scenes.
+ */
+function windowForSelected(
+  primary: LayerInfo | null | undefined,
+  layer: LayerInfo,
+  low: number,
+  high: number
+): [number, number] {
+  if (!primary || layer === primary) return [low, high];
+  if (primary.amplitudeUnit === undefined || layer.amplitudeUnit === undefined) {
+    return [low, high];
+  }
+  return remapWindowForLayer(primary, layer, low, high);
+}
+
 /** `{min, max}` as the `(min, max)` argument pair `setRange` takes. */
 function rangeTuple(range: { min: number; max: number }): [number, number] {
   return [range.min, range.max];
@@ -294,10 +313,7 @@ export class LayerControls {
         // fractions of that layer's own range (layers in different units).
         const primary = this.deps.state.getPrimarySelected();
         this.deps.state.applyToSelected((l) => {
-          const [lo, hi] =
-            primary && l !== primary ? remapWindowForLayer(primary, l, low, high) : [low, high];
-          l.displayMin = lo;
-          l.displayMax = hi;
+          [l.displayMin, l.displayMax] = windowForSelected(primary, l, low, high);
         });
         for (const sel of this.deps.state.getSelected()) {
           this.deps.apply.applyDisplayRange(sel);
@@ -306,9 +322,10 @@ export class LayerControls {
       },
       onBoundsChange: (min, max) => {
         this.controlsInteracting = true;
+        // Same per-layer rule as the window, so bounds and window stay in one basis.
+        const primary = this.deps.state.getPrimarySelected();
         this.deps.state.applyToSelected((l) => {
-          l.dataMin = min;
-          l.dataMax = max;
+          [l.dataMin, l.dataMax] = windowForSelected(primary, l, min, max);
         });
         this.controlsInteracting = false;
       },
@@ -879,7 +896,8 @@ export class LayerControls {
       onChange: (val) => {
         this.controlsInteracting = true;
         this.deps.state.applyToSelected((l) => {
-          l.brightness = l.authoredBrightness * val;
+          // Gsplats only: no other layer type has a display gain.
+          if (l.type === 'gsplats') l.brightness = l.authoredBrightness * val;
         });
         for (const sel of this.deps.state.getSelected()) {
           this.deps.apply.applyBrightness(sel);

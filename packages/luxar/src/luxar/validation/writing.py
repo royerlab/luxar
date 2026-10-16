@@ -782,9 +782,12 @@ _ALLOWED_NODE_ATTRS: FrozenSet[str] = frozenset(
         # values actually stored. Not a render attr — the viewer does not read
         # it — hence here rather than in ``KNOWN_RENDER_ATTRS``.
         "amplitude_normalization_factor",
-        # ``gsplat convert``'s auto-exposure provenance beside that factor (see
-        # ``gsplats/exposure.py``): which rule produced it and the predicted
-        # opening-view brightness. Also not read by the viewer.
+        # ``gsplat convert``'s auto-exposure provenance (see
+        # ``gsplats/exposure.py``): which rule produced the exposure and the
+        # predicted opening-view brightness. Also not read by the viewer. The
+        # exposure itself is now the render attr ``display_gain`` (and the
+        # data-unit labels ``amplitude_unit`` / ``amplitude_offset`` /
+        # ``source_data_range``), which ARE read and are validated below.
         "amplitude_normalization_mode",
         "projected_sum_p999",
         "projected_sum_target",

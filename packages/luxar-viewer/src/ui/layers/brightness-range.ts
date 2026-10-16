@@ -99,13 +99,15 @@ export function formatLegacyRangeValue(v: number): string {
  * other range control.
  */
 export function dataRangeLine(
-  layer: Pick<LayerInfo, 'sourceDataRange' | 'amplitudeOffset'>
+  layer: Pick<LayerInfo, 'sourceDataRange' | 'amplitudeOffset' | 'amplitudeUnit'>,
+  withUnit = false
 ): string | undefined {
   const range = layer.sourceDataRange;
   if (!range) return undefined;
+  const unit = withUnit && layer.amplitudeUnit ? ` ${layer.amplitudeUnit}` : '';
   const floor =
     layer.amplitudeOffset !== undefined ? ` (floor ${formatDataValue(layer.amplitudeOffset)})` : '';
-  return `Data range: ${formatDataValue(range[0])} \u2013 ${formatDataValue(range[1])}${floor}`;
+  return `Data range: ${formatDataValue(range[0])} \u2013 ${formatDataValue(range[1])}${unit}${floor}`;
 }
 
 /**
@@ -138,9 +140,8 @@ export function colourRangeTooltip(
   base: string,
   layer: Pick<LayerInfo, 'amplitudeUnit' | 'amplitudeOffset' | 'sourceDataRange'>
 ): string {
-  const data = dataRangeLine(layer);
-  if (!data) return base;
-  return [base, layer.amplitudeUnit ? `${data} ${layer.amplitudeUnit}` : data].join('\n');
+  const data = dataRangeLine(layer, true);
+  return data ? [base, data].join('\n') : base;
 }
 
 /**

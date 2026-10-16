@@ -1191,6 +1191,9 @@ gsplats/
 ├── exposure.py                    # Opening-view brightness: predict_projected_sum (additive
 │                                  #   per-pixel sum down the view axis) + plan_projected_exposure
 │                                  #   (the dimming factor `gsplat convert` folds into display_gain)
+│                                  #   + data_unit_display_attrs / amplitude_unit_attrs (the attrs
+│                                  #   an add_gsplats_* call passes with normalize_amplitudes=False
+│                                  #   to keep data units, as convert does)
 │
 ├── lod/                            # Level-of-Detail post-processing (additive + substitutive)
 │   ├── additive.py                 # compute_additive_order, make_additive_lod

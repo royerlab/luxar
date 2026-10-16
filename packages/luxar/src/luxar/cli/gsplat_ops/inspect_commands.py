@@ -808,7 +808,8 @@ def quick_view(
         False,
         "--raw",
         help="Serve the .gsplats.zarr node tree as is (no temporary scene: no "
-        "image orientation, no auto exposure, raw stored amplitudes).",
+        "image orientation, no auto exposure, no display gain and no unit "
+        "labels; amplitudes as stored).",
     ),
     auto_exposure: bool = typer.Option(
         True,

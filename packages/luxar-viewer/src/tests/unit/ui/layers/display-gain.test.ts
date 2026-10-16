@@ -33,7 +33,11 @@ import {
 } from '../../../../ui/layers/brightness-range';
 import { LayerStateManager, computeUniforms } from '../../../../ui/layers/layer-state';
 import { isControlVisible } from '../../../../ui/layers/layer-control-rules';
-import { parseBookmark, captureBookmark, restoreBookmark } from '../../../../core/app/bookmark-state';
+import {
+  parseBookmark,
+  captureBookmark,
+  restoreBookmark,
+} from '../../../../core/app/bookmark-state';
 import type { LuxarApp } from '../../../../core/app';
 
 const node = (
@@ -127,6 +131,14 @@ describe('brightness-range helpers', () => {
     expect(colourRangeTooltip('base', { sourceDataRange: [0, 10], amplitudeUnit: 'counts' })).toBe(
       'base\nData range: 0 \u2013 10 counts'
     );
+    // The unit sits with the numbers, before the floor's parenthesis.
+    expect(
+      colourRangeTooltip('base', {
+        sourceDataRange: [0, 10],
+        amplitudeUnit: 'counts',
+        amplitudeOffset: 5,
+      })
+    ).toBe('base\nData range: 0 \u2013 10 counts (floor 5)');
   });
 });
 
@@ -349,5 +361,67 @@ describe('bookmarks', () => {
     state.setBrightness('/g', 2.5e-3);
     await restoreBookmark(viewer, bookmark);
     expect(state.getLayer('/g')!.brightness).toBe(2.5e-4);
+  });
+
+  describe('content_hash', () => {
+    const viewerOn = (
+      hash: string | undefined,
+      layer: Record<string, unknown> = {}
+    ): { viewer: LuxarApp; setLayer: ReturnType<typeof vi.fn> } => {
+      const setLayer = vi.fn();
+      const base = app(2.5e-4);
+      const viewer = {
+        ...base,
+        getViewerState: () => ({ src: '/s.zarr', contentHash: hash }),
+        getLayers: () => [{ ...base.getLayers()[0], ...layer }],
+        restoreSnapshot: vi.fn(),
+        setRenderingSettings: vi.fn(),
+        setLayer,
+        flyTo: vi.fn().mockResolvedValue({ completed: true }),
+      } as unknown as LuxarApp;
+      return { viewer, setLayer };
+    };
+
+    it('stamps the scene hash and restores the window on the same build', async () => {
+      const { viewer, setLayer } = viewerOn('abc', { brightness: 5e-4 });
+      const bookmark = captureBookmark(viewer);
+      expect(bookmark.contentHash).toBe('abc');
+      await restoreBookmark(viewer, bookmark);
+      expect(setLayer.mock.calls[0][1]).toMatchObject({
+        displayRange: [0, 4200],
+        brightness: 5e-4,
+      });
+    });
+
+    it('skips the window and gain on another build of the scene', async () => {
+      const { viewer: before } = viewerOn('old', { brightness: 5e-4 });
+      const bookmark = captureBookmark(before);
+      const { viewer: after, setLayer } = viewerOn('new');
+      await restoreBookmark(after, bookmark);
+      const patch = setLayer.mock.calls[0][1];
+      expect(patch).not.toHaveProperty('displayRange');
+      expect(patch.brightness).toBe(2.5e-4); // this build's own opening exposure
+      expect(patch.opacity).toBe(1);
+    });
+
+    it('treats an unstamped bookmark on a data-unit layer as another build', async () => {
+      const old = { ...captureBookmark(viewerOn(undefined).viewer) };
+      delete (old as { contentHash?: string }).contentHash;
+      const { viewer, setLayer } = viewerOn('new', { amplitudeUnit: 'counts' });
+      await restoreBookmark(viewer, old);
+      expect(setLayer.mock.calls[0][1]).not.toHaveProperty('displayRange');
+    });
+
+    it('restores an unstamped bookmark on an old scene exactly as before', async () => {
+      const old = captureBookmark(viewerOn(undefined).viewer);
+      const { viewer, setLayer } = viewerOn(undefined);
+      await restoreBookmark(viewer, old);
+      expect(setLayer.mock.calls[0][1]).toMatchObject({ displayRange: [0, 4200] });
+    });
+
+    it('refuses a non-string hash', () => {
+      const bookmark = captureBookmark(viewerOn('abc').viewer);
+      expect(parseBookmark(JSON.stringify({ ...bookmark, contentHash: 3 }))).toBeNull();
+    });
   });
 });

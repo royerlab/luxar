@@ -2671,7 +2671,7 @@ class TestViewCommand:
         out = _plain(result.stdout)
         assert result.exit_code == 0, out
         assert "Built a temporary scene" in out
-        assert "Exposure: scaled splat brightness" in out
+        assert "Exposure: display gain" in out
         assert captured["root_format_type"] == "luxar_zarr"
         assert captured["viewer_config"]["camera"]["view_axis"] == "xy"
         attrs = captured["gsplats_attrs"]

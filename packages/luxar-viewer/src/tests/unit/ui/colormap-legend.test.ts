@@ -223,6 +223,33 @@ describe('ColormapLegend', () => {
       expect(labels[1].textContent).toBe('12.35');
     });
 
+    it('reads a data-unit layer in the panel formatter, with its unit', () => {
+      layerState.initFromSceneGraph({
+        name: 'root',
+        path: '/',
+        type: 'scene',
+        attrs: {},
+        hasSpatialIndex: false,
+        children: [
+          {
+            name: 'g',
+            path: 'layer/g',
+            type: 'gsplats',
+            attrs: {
+              layer: true,
+              colormap: 'viridis',
+              amplitude_data_range: [5.25212621689, 208.912979126],
+              amplitude_unit: 'counts above background',
+            },
+            hasSpatialIndex: true,
+          },
+        ],
+      } as unknown as SceneNode);
+      const labels = legend.getElement().querySelectorAll('.luxar-colormap-legend__labels span');
+      expect(labels[0].textContent).toBe('5.252');
+      expect(labels[1].textContent).toBe('208.9 counts above background');
+    });
+
     it('formats very small numbers in exponential', () => {
       layerState.setLayers([makeLayer({ displayMin: 0.001, displayMax: 0.005 })]);
       const labels = legend.getElement().querySelectorAll('.luxar-colormap-legend__labels span');

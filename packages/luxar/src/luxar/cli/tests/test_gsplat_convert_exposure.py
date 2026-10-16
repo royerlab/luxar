@@ -94,7 +94,8 @@ def test_default_dims_a_saturating_fit_and_stamps_the_prediction(
     out = tmp_path / "scene.luxar.zarr"
     output = _convert(CliRunner(), src, out)
 
-    assert "Exposure: scaled splat brightness" in output
+    assert "Exposure: display gain" in output
+    assert "below per-splat normalisation" in output
     assert "--no-auto-exposure to disable" in output
     attrs = read_node_attrs(out / "gsplats")
     assert attrs["amplitude_normalization_mode"] == "projected"
@@ -157,8 +158,9 @@ def test_empty_opening_prediction_is_reported_as_empty() -> None:
         hidden=[HiddenAxis(3, 0, False, 0, (0, 100))],
     )
     assert plan.predicted_before == 0
-    assert _exposure_line(plan) == (
-        "Exposure: nothing visible at the opening position; brightness unchanged"
+    assert _exposure_line(plan, 0.5) == (
+        "Exposure: nothing visible at the opening position; "
+        "display gain 0.5 (per-splat normalisation)"
     )
 
 
@@ -172,9 +174,10 @@ def test_empty_opening_prediction_can_still_be_capped_elsewhere() -> None:
         side_capped=True,
         cap_source="other timepoints",
     )
-    assert _exposure_line(plan) == (
+    assert _exposure_line(plan, 4e-4) == (
         "Exposure: nothing visible at the opening position; "
-        "scaled splat brightness ×0.25, capped by other timepoints"
+        "display gain 0.0001 (×0.25 below per-splat normalisation), "
+        "capped by other timepoints"
     )
 
 
@@ -197,7 +200,7 @@ def test_never_brightens_a_dim_fit(tmp_path: Path) -> None:
     src = _dense(tmp_path / "dense.gsplats.zarr")
     out = tmp_path / "scene.luxar.zarr"
     output = _convert(CliRunner(), src, out, "--target-brightness", "1e9")
-    assert "brightness unchanged" in output
+    assert "(per-splat normalisation)" in output
     assert _gain(out) == pytest.approx(_per_splat(src), rel=1e-6)
 
 
@@ -257,7 +260,8 @@ def test_partition_is_auto_exposed_with_one_factor(tmp_path: Path) -> None:
     )
     out = tmp_path / "scene.luxar.zarr"
     output = _convert(runner, part, out)
-    assert "Exposure: scaled splat brightness" in output
+    assert "Exposure: display gain" in output
+    assert "below per-splat normalisation" in output
     # ONE gain, on the kind=partition wrapper (``display_gain`` composes), so
     # every part renders at the same exposure; no part carries its own.
     assert read_node_attrs(out / "gsplats")["kind"] == "partition"
@@ -385,13 +389,41 @@ def _fit_like(path: Path, stats: Dict[str, Any], *, colors: bool = False) -> Pat
     ("stats", "unit", "offset"),
     [
         (
-            {"source_dtype": "uint16", "intensity_range": 3900.0, "image_min": 112.0},
+            {
+                "source_dtype": "uint16",
+                "intensity_range": 3900.0,
+                "image_min": 112.0,
+                "floor": 112.0,
+            },
             "counts above background",
             112.0,
         ),
+        # `--floor none`: the subtracted level is the data minimum.
+        (
+            {"source_dtype": "uint16", "intensity_range": 3900.0, "image_min": 112.0},
+            "counts above minimum",
+            112.0,
+        ),
+        # A float source below zero still had its minimum subtracted.
+        (
+            {"source_dtype": "float32", "intensity_range": 2.5, "image_min": -0.75},
+            "data units above minimum",
+            -0.75,
+        ),
+        # A level negligible against the range is no offset.
+        (
+            {"source_dtype": "float32", "intensity_range": 2.5, "image_min": 1e-9},
+            "data units",
+            None,
+        ),
         ({"source_dtype": "uint16", "intensity_range": 3900.0}, "counts", None),
         (
-            {"source_dtype": "float32", "intensity_range": 2.5, "image_min": 0.25},
+            {
+                "source_dtype": "float32",
+                "intensity_range": 2.5,
+                "image_min": 0.25,
+                "floor": 0.25,
+            },
             "data units above background",
             0.25,
         ),
@@ -429,6 +461,14 @@ def test_direct_colour_intensity_is_a_unitless_gain(tmp_path: Path) -> None:
     assert read_node_attrs(out / "gsplats")["intensity"] == 2.0
 
 
+def test_identity_intensity_is_not_restated(tmp_path: Path) -> None:
+    """``--intensity 1`` authors no window, even under a large manual gain."""
+    src = _fit_like(tmp_path / "fit.gsplats.zarr", {"intensity_range": 3900.0})
+    out = tmp_path / "scene.luxar.zarr"
+    _convert(CliRunner(), src, out, "--scale-intensity", "1000", "--intensity", "1")
+    assert read_node_attrs(out / "gsplats")["intensity"] == 1.0
+
+
 def test_unreachable_intensity_window_is_a_usage_error(tmp_path: Path) -> None:
     src = _fit_like(tmp_path / "fit.gsplats.zarr", {})
     result = CliRunner().invoke(
@@ -441,7 +481,7 @@ def test_unreachable_intensity_window_is_a_usage_error(tmp_path: Path) -> None:
             "--scale-intensity",
             "1000",
             "--intensity",
-            "1",
+            "2",
         ],
     )
     assert result.exit_code == 2
@@ -458,6 +498,7 @@ def test_source_data_range_is_the_datas_span_not_the_splat_window(
         "image_min": 100.0,
         "image_max": 12100.0,
         "intensity_range": 12000.0,
+        "floor": 100.0,
     }
     src = _fit_like(tmp_path / "fit.gsplats.zarr", stats)
     out = tmp_path / "scene.luxar.zarr"
@@ -495,6 +536,7 @@ def test_transform_intensity_keeps_the_basis_honest(
         "image_min": 112.0,
         "image_max": 4012.0,
         "intensity_range": 3900.0,
+        "floor": 112.0,
     }
     src = _fit_like(tmp_path / "fit.gsplats.zarr", stats)
     dst = tmp_path / "t.gsplats.zarr"

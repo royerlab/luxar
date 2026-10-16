@@ -236,6 +236,18 @@ def _merge_fitting_info(
     fitting_info: Dict[str, Any] = {"part_provenance": part_provenance}
     if source_dtype is not None:
         fitting_info["source_dtype"] = source_dtype
+    # The shared intensity basis. Every task fits against the plan's one
+    # `norm_range`, so the parts agree on it — but the streaming writer has no
+    # root node whose stats would carry it, and without it `gsplat convert`
+    # labels a multi-tile merge "a.u." instead of "counts". Only a unanimous
+    # basis is claimed (`agreed_normalization_stats`); `floor` stays in the
+    # pipeline group where `_batch_floor_stats` puts it.
+    from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
+
+    basis = agreed_normalization_stats(list(part_stats))
+    for key in ("image_min", "image_max", "intensity_range", "intensity_scale"):
+        if key in basis:
+            fitting_info[key] = basis[key]
     sum_population_counts(
         part_stats,
         fitting_info,

@@ -31,14 +31,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 
 from ...core.group.gsplats_pipeline.amplitude_norm import (
-    AMPLITUDE_OFFSET_ATTR,
-    AMPLITUDE_UNIT_ATTR,
-    DISPLAY_GAIN_ATTR,
     NORMALIZATION_MODE_ATTR,
     PROJECTED_SUM_AXIS_ATTR,
     PROJECTED_SUM_P999_ATTR,
     PROJECTED_SUM_TARGET_ATTR,
-    SOURCE_DATA_RANGE_ATTR,
     NormalizeSpec,
     _sample_reference,
     resolve_factor,
@@ -148,88 +144,63 @@ def _leaf_truncation(node: "GSplatNode") -> float:
     return DEFAULT_TRUNCATION_RADIUS
 
 
-def _gain_attrs(gain: float, mode: str, units: Mapping[str, Any]) -> Dict[str, Any]:
-    """``display_gain`` + the unit labels + the provenance mode."""
-    return {DISPLAY_GAIN_ATTR: float(gain), NORMALIZATION_MODE_ATTR: mode, **units}
+def _gain_attrs(
+    gain: float, mode: str, stats: Optional[Mapping[str, Any]]
+) -> Dict[str, Any]:
+    """The public :func:`~luxar.gsplats.exposure.data_unit_display_attrs` set
+    (gain + unit labels — what a Python caller gets too) + the provenance mode."""
+    from ...gsplats.exposure import data_unit_display_attrs
+
+    return {**data_unit_display_attrs(stats, gain=gain), NORMALIZATION_MODE_ATTR: mode}
 
 
 def _exposure(
     gain: float,
     mode: str,
-    units: Mapping[str, Any],
+    units: Optional[Mapping[str, Any]],
     line: Optional[str] = None,
     **extra: Any,
 ) -> ConvertExposure:
-    """A :class:`ConvertExposure` carrying ``gain`` (and its stamp attrs)."""
+    """A :class:`ConvertExposure` carrying ``gain`` (and its stamp attrs);
+    ``units`` is the store's root stats, which decide the unit labels."""
     attrs = _gain_attrs(gain, mode, units)
     attrs.update(extra)
     return ConvertExposure(gain=float(gain), attrs=attrs, line=line)
 
 
-def amplitude_unit_attrs(stats: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
-    """``amplitude_unit`` (+ ``amplitude_offset``) for a store's amplitudes.
-
-    A fit records its normalisation basis (``intensity_range``), and its
-    amplitudes are then in source data units above the subtracted level
-    (``image_min``, see :mod:`luxar.gsplats.fit_basis`): ``counts`` for an
-    integer source, ``data units`` otherwise, ``above background`` when a level
-    was subtracted, with that level as ``amplitude_offset``. A store recording
-    no basis — an imported classical splat file, a merge of disagreeing fits —
-    gets ``a.u.`` and no offset: nothing says what its numbers mean.
-
-    With a basis, ``source_data_range`` records ``[0, intensity_range]`` in
-    amplitude units. After intensity scaling the amplitudes and range are in
-    arbitrary units; the raw source floor is then omitted from the scene.
-    """
-    import numpy as np
-
-    from ...gsplats.fit_basis import fit_image_min, source_intensity_span
-
-    stats = stats or {}
-    if stats.get("intensity_range") is None:
-        return {AMPLITUDE_UNIT_ATTR: "a.u."}
-    try:
-        integer = np.dtype(stats.get("source_dtype")).kind in "iu"
-    except (TypeError, ValueError):
-        integer = False
-    scaled = stats.get("intensity_scale", 1.0) != 1.0
-    unit = "a.u." if scaled else ("counts" if integer else "data units")
-    level = fit_image_min(stats)
-    attrs: Dict[str, Any] = {}
-    if not scaled and level is not None and level > 0.0:
-        unit += " above background"
-        attrs[AMPLITUDE_OFFSET_ATTR] = float(level)
-    attrs[AMPLITUDE_UNIT_ATTR] = unit
-    span = source_intensity_span(stats)
-    if span is not None:
-        attrs[SOURCE_DATA_RANGE_ATTR] = [0.0, float(span)]
-    return attrs
-
-
-def _manual(scale_intensity: float, units: Mapping[str, Any]) -> ConvertExposure:
+def _manual(
+    scale_intensity: float, units: Optional[Mapping[str, Any]]
+) -> ConvertExposure:
     """``--scale-intensity``: gain exactly ``S``, recorded as mode ``manual``."""
     return _exposure(
         scale_intensity,
         "manual",
         units,
-        f"Exposure: manual gain ×{scale_intensity:g} (--scale-intensity); "
+        f"Exposure: manual gain ×{scale_intensity:g} (--display-gain); "
         "auto exposure off",
     )
 
 
-def _exposure_line(plan: "ExposurePlan") -> str:
-    """The one narration line; names the side-view cap only when it binds."""
+def _exposure_line(plan: "ExposurePlan", per_splat: float = 1.0) -> str:
+    """The one narration line, naming the STAMPED display gain (``per_splat ×
+    plan.factor``) and the side-view cap only when it binds."""
+    gain = f"display gain {per_splat * plan.factor:.2g}"
+    dimming = f"×{plan.factor:.2g} below per-splat normalisation"
     if plan.predicted_before == 0:
         if plan.factor >= 1.0:
-            return "Exposure: nothing visible at the opening position; brightness unchanged"
+            return (
+                "Exposure: nothing visible at the opening position; "
+                f"{gain} (per-splat normalisation)"
+            )
         return (
             "Exposure: nothing visible at the opening position; "
-            f"scaled splat brightness ×{plan.factor:.2g}, capped by {plan.cap_source}"
+            f"{gain} ({dimming}), capped by {plan.cap_source}"
         )
     if plan.factor >= 1.0:
         return (
             f"Exposure: default view already within range (projected p99.9 "
-            f"{plan.predicted_before:.2g} ≤ {plan.target:g}); brightness unchanged"
+            f"{plan.predicted_before:.2g} ≤ {plan.target:g}); {gain} "
+            "(per-splat normalisation)"
         )
     reason = "the default view isn't saturated"
     detail = f"projected p99.9 {plan.predicted_before:.2g} → {plan.predicted_after:.2g}"
@@ -237,7 +208,7 @@ def _exposure_line(plan: "ExposurePlan") -> str:
         reason += f", capped by {plan.cap_source}"
         detail += f", {plan.cap_source} {plan.side_p999 * plan.factor:.2g}"
     return (
-        f"Exposure: scaled splat brightness ×{plan.factor:.2g} so {reason} "
+        f"Exposure: {gain} ({dimming}) so {reason} "
         f"({detail}; --no-auto-exposure to disable)"
     )
 
@@ -269,7 +240,7 @@ def resolve_convert_exposure(
         stamped_amplitude_window,
     )
 
-    units = amplitude_unit_attrs(stats)
+    units = stats or {}
     if scale_intensity is not None:
         return _manual(scale_intensity, units)
     centers, chol, amps, colors = collect_default_splats(node)
@@ -319,5 +290,9 @@ def resolve_convert_exposure(
     if axis_name is not None:
         extra[PROJECTED_SUM_AXIS_ATTR] = axis_name
     return _exposure(
-        per_splat * plan.factor, "projected", units, _exposure_line(plan), **extra
+        per_splat * plan.factor,
+        "projected",
+        units,
+        _exposure_line(plan, per_splat),
+        **extra,
     )

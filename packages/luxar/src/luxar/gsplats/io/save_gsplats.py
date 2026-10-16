@@ -363,7 +363,19 @@ def agreed_normalization_stats(
     if scales and any(scale != scales[0] for scale in scales[1:]):
         agreed.pop("intensity_range", None)
         agreed.pop("intensity_scale", None)
+    # Abstaining is for EMPTY tiles only. An input that holds splats but records
+    # no intensity basis (an import, a normalised edit) has amplitudes in some
+    # other unit, so the merge cannot claim the others' basis for all of them.
+    if any(_holds_splats(s) and "intensity_range" not in s for s in stats_list if s):
+        agreed.pop("intensity_range", None)
+        agreed.pop("intensity_scale", None)
     return agreed
+
+
+def _holds_splats(stats: Dict[str, Any]) -> bool:
+    """Whether a stats record says its input has splats (``n_splats > 0``)."""
+    n = stats.get("n_splats")
+    return bool(isinstance(n, (int, np.integer)) and not isinstance(n, bool) and n > 0)
 
 
 #: Fit-runtime scratch keys that live in ``stats`` but are NOT persistable

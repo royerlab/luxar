@@ -429,11 +429,14 @@ describe('RangeSlider data-unit window (WP16)', () => {
     expect(host.querySelector('.luxar-range-slider__caption')).toBeNull();
   });
 
-  it('keeps the 0.001 step on unit-or-wider tracks and refines it on tiny ones', () => {
+  it('refines the step on a tiny DATA-UNIT track only; old scenes keep 0.001', () => {
     const { slider } = makeSlider({ min: 0, max: 4200, valueLow: 0, valueHigh: 4200 });
     const low = host.querySelector<HTMLInputElement>('.luxar-range-slider__input--low')!;
     expect(low.step).toBe('0.001');
     slider.setBounds(0, 1e-5);
+    // No unit (an old scene): the historical snapping, exactly.
+    expect(low.step).toBe('0.001');
+    slider.setDataUnits(true);
     expect(Number(low.step)).toBeCloseTo(1e-8, 15);
     slider.setBounds(0, 1);
     expect(low.step).toBe('0.001');

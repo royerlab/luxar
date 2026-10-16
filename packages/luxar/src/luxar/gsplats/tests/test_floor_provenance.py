@@ -150,6 +150,18 @@ class TestAgreementRule:
         agreed = agreed_normalization_stats([{"floor": None}, {"floor": None}])
         assert agreed == {"floor": None}
 
+    def test_a_populated_input_without_a_basis_vetoes_the_amplitude_basis(
+        self,
+    ) -> None:
+        """A non-empty input with no ``intensity_range`` (an import, a normalised
+        edit) is in another unit: the merge must not claim counts for it."""
+        agreed = agreed_normalization_stats([dict(BLOCK, n_splats=10), {"n_splats": 5}])
+        assert "intensity_range" not in agreed
+        assert agreed["image_min"] == BLOCK["image_min"]
+        # An EMPTY tile still abstains.
+        kept = agreed_normalization_stats([dict(BLOCK, n_splats=10), {"n_splats": 0}])
+        assert kept["intensity_range"] == BLOCK["intensity_range"]
+
     def test_nothing_recorded_yields_nothing(self) -> None:
         assert agreed_normalization_stats([{}, {"n_splats": 3}]) == {}
 

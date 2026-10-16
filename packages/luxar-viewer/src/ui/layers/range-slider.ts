@@ -187,7 +187,7 @@ export class RangeSlider {
     this.lowInput.className = 'luxar-range-slider__input luxar-range-slider__input--low';
     this.lowInput.min = String(options.min);
     this.lowInput.max = String(options.max);
-    this.lowInput.step = String(options.step ?? defaultTrackStep(options.min, options.max));
+    this.lowInput.step = String(options.step ?? 0.001);
     this.lowInput.value = String(options.valueLow);
 
     // High thumb
@@ -196,7 +196,7 @@ export class RangeSlider {
     this.highInput.className = 'luxar-range-slider__input luxar-range-slider__input--high';
     this.highInput.min = String(options.min);
     this.highInput.max = String(options.max);
-    this.highInput.step = String(options.step ?? defaultTrackStep(options.min, options.max));
+    this.highInput.step = String(options.step ?? 0.001);
     this.highInput.value = String(options.valueHigh);
     this.updateAccessibleNames();
 
@@ -332,9 +332,26 @@ export class RangeSlider {
   setDataUnits(on: boolean): void {
     if (this.dataUnits === on) return;
     this.dataUnits = on;
+    this.syncDefaultStep();
     this.boundsLowLabel.textContent = this.formatValue(parseFloat(this.lowInput.min));
     this.boundsHighLabel.textContent = this.formatValue(parseFloat(this.lowInput.max));
     this.updateLabels();
+  }
+
+  /**
+   * The input step when the caller set none: the historical 0.001, refined for
+   * a narrow DATA-UNIT track only (`setDataUnits`) — an old scene keeps its
+   * exact historical snapping.
+   */
+  private syncDefaultStep(): void {
+    if (this.options.step !== undefined) return;
+    const step = String(
+      this.dataUnits
+        ? defaultTrackStep(parseFloat(this.lowInput.min), parseFloat(this.lowInput.max))
+        : 0.001
+    );
+    this.lowInput.step = step;
+    this.highInput.step = step;
   }
 
   /**
@@ -484,11 +501,7 @@ export class RangeSlider {
     this.lowInput.max = String(max);
     this.highInput.min = String(min);
     this.highInput.max = String(max);
-    if (this.options.step === undefined) {
-      const step = String(defaultTrackStep(min, max));
-      this.lowInput.step = step;
-      this.highInput.step = step;
-    }
+    this.syncDefaultStep();
     this.boundsLowLabel.textContent = this.formatValue(min);
     this.boundsHighLabel.textContent = this.formatValue(max);
     this.updateTrackFill();

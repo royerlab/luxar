@@ -39,11 +39,14 @@ def convert_to_scene(
     ),
     scale_intensity: Optional[float] = typer.Option(
         None,
+        "--display-gain",
         "--scale-intensity",
         callback=_positive_scale,
-        help="Display gain (brightness) of exactly this factor relative to the "
-        "fitted amplitudes, which stay in data units (any tree shape); "
-        "replaces automatic normalization and auto exposure",
+        help="Set the node's display gain (brightness per data unit) to exactly "
+        "this factor instead of auto exposure. The amplitudes are NOT edited: "
+        "they stay in data units (any tree shape). --scale-intensity is the old "
+        "name; `gsplat transform --scale-intensity` is the command that edits "
+        "the data.",
     ),
     auto_exposure: bool = typer.Option(
         True,
@@ -101,7 +104,7 @@ def convert_to_scene(
         "--intensity",
         help="Display-window intensity relative to the display-gained "
         "amplitudes (after auto exposure / normalization, or "
-        "--scale-intensity); a colormap window is restated in data units",
+        "--display-gain); a colormap window is restated in data units",
     ),
     layer: bool = typer.Option(
         True,
@@ -147,7 +150,8 @@ def convert_to_scene(
     chroma (essentially white by peak 100), while a ``None`` clamp flattens
     everything above 1.0 and shifts hue when channels clip unequally, losing
     saturation too wherever the darkest channel is not already 0. So bring the
-    scene back into [0, 1] with ``--intensity`` and use ``None``, or accept
+    scene back into [0, 1] with ``--display-gain`` (or a lower
+    ``--target-brightness``) and use ``None``, or accept
     ACES's filmic rolloff (#1459).
 
     Orientation follows the IMAGE CONVENTION for fitted volumes: the center
@@ -167,7 +171,7 @@ def convert_to_scene(
     Examples:
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --no-center
-        luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --scale-intensity 0.1
+        luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --display-gain 0.1
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr \\
             --colormap plasma --tone-mapping ACES
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr \\

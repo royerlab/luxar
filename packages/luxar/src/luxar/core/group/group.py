@@ -83,6 +83,22 @@ def _reject_display_attrs_with_normalization(
         )
 
 
+def _reject_display_attrs_on_volume_fit(fit_kwargs: Dict[str, Any]) -> None:
+    """``add_gsplats_from_volume`` forwards ``**fit_kwargs`` to the FITTER, so a
+    data-unit attr there would be silently dropped — refuse it with the route
+    that works instead."""
+    from .compositing import GSPLATS_ONLY_AMPLITUDE_ATTRS
+
+    present = sorted(GSPLATS_ONLY_AMPLITUDE_ATTRS & fit_kwargs.keys())
+    if present:
+        raise ValueError(
+            f"add_gsplats_from_volume does not take {present}: its extra keyword "
+            "arguments configure the fit. Fit first (fit_gaussian_splats), then "
+            "add the result with add_gsplats_from_data(..., "
+            "normalize_amplitudes=False, **data_unit_display_attrs(...))."
+        )
+
+
 def _resolve_gsplat_substitutive_lod_alias(
     substitutive_lod: Any, lod_group: Any
 ) -> Any:
@@ -1213,12 +1229,12 @@ class Group(Node):
                 ``amplitude_normalization_factor``.
 
                 On by default for standalone insertion because raw fitted
-                amplitudes cannot be corrected at display time. A fit stores
-                source units (detector counts),
-                and while the colormap window feeds only the LUT index —
-                clamped to ``[0, 1]``, so it picks a colour — emitted radiance
-                and volumetric optical depth are both LINEAR in the raw stored
-                amplitude and nothing windows them. See
+                amplitudes need a brightness factor that the colormap window
+                cannot provide: a fit stores source units (detector counts),
+                the window feeds only the LUT index (clamped to ``[0, 1]``, so
+                it picks a colour), and emitted radiance and volumetric
+                optical depth are LINEAR in the stored amplitude. The other way
+                to supply that factor is ``display_gain`` (below). See
                 :mod:`luxar.core.group.gsplats_pipeline.amplitude_norm`.
 
                 To keep the amplitudes in SOURCE DATA UNITS instead (so the
@@ -1229,9 +1245,11 @@ class Group(Node):
                 ``amplitude_unit=`` (e.g. ``"counts above background"``),
                 ``amplitude_offset=`` (the subtracted background level, display
                 only) and ``source_data_range=`` (the source's own span above
-                it) — what ``luxar gsplat convert`` writes. None of them is
-                written unless passed, and all are refused while
-                ``normalize_amplitudes`` would rescale the amplitudes.
+                it) — what ``luxar gsplat convert`` writes, and what
+                :func:`luxar.gsplats.exposure.data_unit_display_attrs` returns
+                for a store's stats. None of them is written unless passed, and
+                all are refused while ``normalize_amplitudes`` would rescale the
+                amplitudes.
             **attrs: Additional node attributes — the :meth:`add_gsplats`
                 vocabulary (including ``absorption``) MINUS the four channels
                 this method supplies from ``result``, which are refused; see the
@@ -1352,13 +1370,22 @@ class Group(Node):
                 ``amplitude_normalization_factor``.
 
                 On by default for standalone insertion because raw fitted
-                amplitudes cannot be corrected at display time. A fit stores
-                source units (detector counts),
-                and while the colormap window feeds only the LUT index —
-                clamped to ``[0, 1]``, so it picks a colour — emitted radiance
-                and volumetric optical depth are both LINEAR in the raw stored
-                amplitude and nothing windows them. See
+                amplitudes need a brightness factor that the colormap window
+                cannot provide: a fit stores source units (detector counts),
+                the window feeds only the LUT index (clamped to ``[0, 1]``, so
+                it picks a colour), and emitted radiance and volumetric
+                optical depth are LINEAR in the stored amplitude. The other way
+                to supply that factor is ``display_gain`` (below). See
                 :mod:`luxar.core.group.gsplats_pipeline.amplitude_norm`.
+
+                To keep the amplitudes in SOURCE DATA UNITS instead (so the
+                viewer's Layers panel reads in data units), pass
+                ``normalize_amplitudes=False`` together with
+                ``**luxar.gsplats.exposure.data_unit_display_attrs(stats, ...)``
+                — ``display_gain`` / ``amplitude_unit`` / ``amplitude_offset`` /
+                ``source_data_range``, exactly what ``luxar gsplat convert``
+                stamps. They are refused while ``normalize_amplitudes`` would
+                rescale the amplitudes.
             partition: Spatial partition control applied to the loaded matrix,
                 or to each leaf of a retained nested tree.
             substitutive_lod: Substitutive-LOD control applied after loading;
@@ -1464,6 +1491,13 @@ class Group(Node):
                 specialized-group default, ``False`` to preserve raw units, or
                 a positive number to set an explicit target. The factor used is
                 recorded as ``amplitude_normalization_factor``.
+
+                For DATA-UNIT amplitudes with a separate ``display_gain`` (what
+                ``luxar gsplat convert`` writes), fit first and insert with
+                ``add_gsplats_from_data(..., normalize_amplitudes=False,
+                **luxar.gsplats.exposure.data_unit_display_attrs(stats, ...))``;
+                this method refuses those attrs, since its extra keyword
+                arguments configure the fit.
             **fit_kwargs: Extra kwargs for fitting function
         """
         from .gsplats_pipeline.from_io import add_gsplats_from_volume_impl
@@ -1471,7 +1505,7 @@ class Group(Node):
         normalize_amplitudes = _resolve_normalize_amplitudes_default(
             parent or self, normalize_amplitudes
         )
-        _reject_display_attrs_with_normalization(normalize_amplitudes, fit_kwargs)
+        _reject_display_attrs_on_volume_fit(fit_kwargs)
         return self._transactional_add(
             name,
             parent,

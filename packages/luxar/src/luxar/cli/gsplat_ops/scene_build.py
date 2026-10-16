@@ -259,7 +259,11 @@ def build_gsplat_scene(
         viewer_config = _viewer_config(orientation, opts.tone_mapping)
         tree = data.tree if data is not None else node
         exposure = _exposure(tree, orientation, opts, stats)
-        if "intensity" in appearance and _windows_amplitude(tree, opts.colormap):
+        # `--intensity 1` is the identity: no window was authored, the viewer
+        # windows on the data range, and restating it would invent one.
+        if appearance.get("intensity", 1.0) != 1.0 and _windows_amplitude(
+            tree, opts.colormap
+        ):
             appearance["intensity"] = _data_unit_intensity(
                 appearance["intensity"], exposure.gain
             )

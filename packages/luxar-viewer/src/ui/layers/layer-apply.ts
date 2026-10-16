@@ -824,6 +824,13 @@ export class LayerApplyEngine {
 
   applyBrightness(layer: LayerInfo): void {
     this.applyComposed(layer);
+    // An nD gsplats leaf is compacted by a visibility gate stated on the
+    // stored amplitudes as MIN_AMPLITUDE / gain (data-processor-gsplats.ts),
+    // so a new gain re-projects it; a 3D leaf takes the unfiltered fast path.
+    const nd = this.getAffectedDataLeaves(layer.path)
+      .filter((leaf) => leaf.type === 'gsplats' && Number(leaf.attrs.ndim) > 3)
+      .map((leaf) => leaf.path);
+    if (nd.length > 0) this.deps.requestReprocess(nd);
   }
 
   /**

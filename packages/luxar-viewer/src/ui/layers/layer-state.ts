@@ -512,10 +512,10 @@ export interface LayerInfo {
   /** The subtracted background level in that unit (`amplitude_offset`), display-only. */
   amplitudeOffset?: number;
   /**
-   * The SOURCE's intensity span above that level (`source_data_range`), shown as
-   * a read-only "Data:" reference under the window. Splat amplitudes are
-   * per-Gaussian PEAKS — overlapping Gaussians sum to a voxel's value — so the
-   * amplitude window sits well below this range.
+   * The SOURCE's intensity span above that level (`source_data_range`), listed in
+   * the window's tooltip ("Data range: 0 – 1,597 (floor 405)"). Splat amplitudes
+   * are per-Gaussian PEAKS — overlapping Gaussians sum to a voxel's value — so
+   * the amplitude window sits well below this range.
    */
   sourceDataRange?: [number, number];
   /**

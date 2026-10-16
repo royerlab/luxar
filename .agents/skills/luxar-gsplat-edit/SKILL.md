@@ -47,15 +47,16 @@ PLACE (no `-e`).
 | Upgrade an old-format file | `migrate-format` |
 | Look at stats / quality | `info` / `render` / `compare` / `view` / `napari` |
 
-## Amplitudes: normalisation now happens on INSERTION, not here
+## Amplitudes: brightness is a display gain or an insertion-time factor, not an edit here
 
-A fitted `.gsplats.zarr` stores amplitudes in **raw source units** — the fitter
+A fitted `.gsplats.zarr` stores amplitudes in **source data units** — the fitter
 multiplies its `[0,1]` working copy back out by the volume's intensity range, so
-a fit from a uint16 detector stack carries detector counts, in the hundreds or
-thousands. Those units cannot be corrected at display time: the colormap window
-only feeds the LUT index (`t = clamp((A-min)*scale, 0, 1)`, clamped, so it picks
-a *colour*), while emitted radiance and volumetric optical depth are both LINEAR
-in the raw stored amplitude and nothing windows them.
+a fit from a uint16 detector stack carries detector counts. The colormap window
+cannot correct that (it only feeds the clamped LUT index, so it picks a
+*colour*); emitted radiance and volumetric optical depth are LINEAR in the stored
+amplitude. What does correct it: the per-node `display_gain` (unbounded, unlike
+`opacity`), which `gsplat convert` sets while keeping the data units, or the
+Python adders' default insertion-time normalisation.
 
 **Since #2211 the scene adders normalise by default** — `add_gsplats_from_data`,
 `add_gsplats_from_file` and the graft path scale a robust p99.9 to 1.0, with ONE

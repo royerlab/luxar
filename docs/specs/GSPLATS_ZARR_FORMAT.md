@@ -667,18 +667,19 @@ it across each gsplat structure**.
 > `t = clamp((A - min) * scale, 0, 1)` — a LUT index, clamped to `[0, 1]`. It
 > selects a *colour*. It cannot scale brightness, and nothing downstream divides
 > the amplitude by it. Emitted radiance and, under `volumetric`, optical depth
-> (`tau = absorption * opacity * intensity`, `intensity ∝ A`) are both **linear
-> in the raw stored amplitude** and are not windowed by anything.
+> (`tau = absorption * opacity * display_gain * intensity`, `intensity ∝ A`) are
+> both **linear in the stored amplitude** and the window does not reach them.
 >
-> **Consequence — amplitudes must be normalised at scene insertion.** Fitted
-> archives store amplitudes in raw source units: the fitter multiplies its
-> `[0,1]` working copy back out by the volume's intensity range, so a fit from a
-> uint16 detector stack carries detector counts. An amplitude of 800 emits 1000x
-> the radiance of 0.8 and saturates `1 - exp(-tau)` into an opaque shell, and no
-> viewer control can compensate — the only remaining lever is `opacity`, which
-> would have to carry a ~1/500 factor on a `[0,1]` control. `add_gsplats_from_data`,
-> `add_gsplats_from_file`, `add_gsplats_from_volume` and the graft path therefore
-> normalise by default (robust p99.9 -> 1.0, **one factor for the whole
+> **Consequence — raw amplitudes need a brightness factor, which the window
+> cannot be.** Fitted archives store amplitudes in source units: the fitter
+> multiplies its `[0,1]` working copy back out by the volume's intensity range,
+> so a fit from a uint16 detector stack carries detector counts. An amplitude of
+> 800 emits 1000x the radiance of 0.8 and saturates `1 - exp(-tau)` into an
+> opaque shell unless something scales it. `opacity` cannot (it is a `[0, 1]`
+> control that would have to carry ~1/500); the node's `display_gain` can
+> (unbounded, see below). The Python adders `add_gsplats_from_data`,
+> `add_gsplats_from_file`, `add_gsplats_from_volume` and the graft path
+> instead normalise by default (robust p99.9 -> 1.0, **one factor for the whole
 > structure**), recording it as `amplitude_normalization_factor`; pass
 > `normalize_amplitudes=False` to opt out. A child inserted directly into a
 > `kind=lod` or `kind=partition` group defaults to no normalisation because its
@@ -1499,8 +1500,8 @@ fill differs, and the last column says so.
 
 | Writer | How it reaches `pipeline/` | Keys |
 |---|---|---|
-| flat fit (`--tiling none`) | `stats` → `split_fitting_info` (`gsplats/fitting/results.py`) | all five |
-| progressive fit | `stats`, stamped by `lift_normalization_stats` — the pedestal is removed once up front, so no individual pass records it | all five |
+| flat fit (`--tiling none`) | `stats` → `split_fitting_info` (`gsplats/fitting/results.py`) | all six |
+| progressive fit | `stats`, stamped by `lift_normalization_stats` — the pedestal is removed once up front, so no individual pass records it | all six |
 | sequential tiled merge (`fit_tiled`), flat leaf or `kind=partition` | `_stamp_merge_normalization` on the merged `stats` / the ROOT node's `meta`, from the level and strategy the parent resolved plus the bounds its tiles agree on; otherwise from tile agreement | numeric keys; parent-resolved strategy when available, otherwise tile agreement |
 | parallel tiled merge (`fit -j N`) | same stamp: the parent supplies the strategy when it resolved the shared floor, otherwise the tiles are reloaded WITH stats and the block is recovered from what they unanimously recorded | numeric keys; parent-resolved strategy when available, otherwise tile agreement |
 | `--tiling content` | the one level and strategy `resolve_shared_floor` gave every box, stamped on the merged leaf's `stats` or the root node's `meta` — unless the boxes themselves recorded a level, which wins (content boxes now share one `norm_range`, so their recorded bounds agree across boxes; a recorded floor can still exceed the planned level when the shared low endpoint does) | `floor`, `floor_strategy`, plus any bound the in-process boxes of a `--flat` fit agreed on |

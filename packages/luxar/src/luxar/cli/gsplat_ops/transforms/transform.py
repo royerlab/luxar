@@ -414,9 +414,7 @@ def run_transform_dataset(
                             f"target max: {normalize_intensity}"
                         )
                         data = data.normalize_intensity(normalize_intensity)
-                _rebase_intensity_stats(
-                    data.stats, scale_intensity_factor, normalize_intensity
-                )
+                # (The GSplatData intensity methods rebase ``data.stats`` themselves.)
                 result_node = data.tree
             else:
                 # ── Tree-walking path: kind=partition / nested (structure kept) ──

@@ -755,9 +755,15 @@ auto-exposes a separate `display_gain`: dimmed (never brightened) so the opening
 view's predicted additive p99.9 is `--target-brightness` (2.0; 0.9 under
 `--tone-mapping None|Linear`) instead of a saturated blob (side views and other
 timepoints capped at 4x); `--no-auto-exposure` = per-splat gain only. The Python
-adders keep per-splat normalisation by default — for the same result call
-`luxar.gsplats.exposure.plan_projected_exposure` and pass
-`normalize_amplitudes=False, display_gain=factor, amplitude_unit=...`.
+adders keep per-splat normalisation by default. For the same result in Python,
+use the public helper — the gain is per-splat normalisation × `plan.factor`:
+
+```python
+from luxar.gsplats.exposure import data_unit_display_attrs, plan_projected_exposure
+# plan = plan_projected_exposure(..., amps * per_splat, ...)  (as convert does), optional
+attrs = data_unit_display_attrs(stats, amplitudes=amps, plan=plan)  # or gain=...
+scene.add_gsplats_from_file("g", path, normalize_amplitudes=False, **attrs)
+```
 
 ## Notes
 

@@ -349,7 +349,7 @@ A folded tile is the one case where a tile is **larger** than `--tile-size`: the
 Convert .gsplats.zarr to a Luxar scene for the web viewer.
 ```bash
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --center
-luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --scale-intensity 0.1  # gain ×0.1
+luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --display-gain 1e-4  # brightness only; data untouched
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --view xz        # face the XZ plane
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --dim-order x,y,z  # opt out
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --target-brightness 3  # brighter
@@ -368,8 +368,9 @@ per-node `display_gain` attr (the panel's **Brightness** control), which the
 viewer multiplies into the emission (and the volumetric density) but not the
 colormap lookup, so the render is the one rescaling the data would have given.
 Convert stamps `amplitude_unit` (`counts` / `data units`, `above background`
-when a floor was subtracted, `a.u.` for a store with no recorded normalisation
-basis), `amplitude_offset` (that floor) and `source_data_range`; see `docs/guides/user/LUXAR_ZARR_FORMAT.md`
+when a floor was subtracted, `above minimum` when only the source minimum was,
+`a.u.` for a store with no recorded normalisation basis), `amplitude_offset`
+(that level, possibly negative for float data) and `source_data_range`; see `docs/guides/user/LUXAR_ZARR_FORMAT.md`
 § "Amplitude units and display gain". `--intensity` on a colormapped node is
 restated as the matching data-unit window (`I × gain`).
 
@@ -382,7 +383,7 @@ included, through the colour window the compiler will stamp;
 `--target-brightness` — default 2.0 under ACES/AgX/Neutral/Reinhard/Cineon (and
 when `--tone-mapping` is unset), 0.9 under `None`/`Linear`, which clip at 1.0 —
 printing e.g. `Exposure:
-scaled splat brightness ×0.31 so the default view isn't saturated (projected
+display gain 2.4e-4 (×0.31 below per-splat normalisation) so the default view isn't saturated (projected
 p99.9 6.4 → 2.0; --no-auto-exposure to disable)`. The two side views (orbit
 90°) and up to four more evenly spaced timepoints of the first hidden discrete
 axis are predicted too and capped at 4× the target (`SIDE_CAP`), so a thin slab
@@ -397,7 +398,7 @@ exposure factor) is stamped as `display_gain`, with
 `amplitude_normalization_mode="projected"` and the prediction; the stored
 amplitudes are the fit's own and the `.gsplats.zarr` is untouched.
 `--no-auto-exposure` makes the gain the legacy per-splat normalization alone
-(mode `"per_splat"`, the legacy render); `--scale-intensity S` makes it exactly
+(mode `"per_splat"`, the legacy render); `--display-gain S` (old name `--scale-intensity`, unlike `gsplat transform --scale-intensity`, which edits the data) makes it exactly
 `S` (mode `"manual"`) on any tree shape, partitions included.
 
 Fitted image volumes open in the **image convention** (the Fiji/napari view: x

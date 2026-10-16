@@ -739,6 +739,10 @@ export class LayersPanel {
       brightness: l.brightness,
       authoredBrightness: l.authoredBrightness,
       ...(l.amplitudeUnit !== undefined ? { amplitudeUnit: l.amplitudeUnit } : {}),
+      ...(l.amplitudeOffset !== undefined ? { amplitudeOffset: l.amplitudeOffset } : {}),
+      ...(l.sourceDataRange !== undefined
+        ? { sourceDataRange: [...l.sourceDataRange] as [number, number] }
+        : {}),
       layerOrder: l.layerOrderExplicit && l.layerOrder !== undefined ? l.layerOrder : null,
       ...(l.sound ? { gain: l.sound.gain } : {}),
     }));

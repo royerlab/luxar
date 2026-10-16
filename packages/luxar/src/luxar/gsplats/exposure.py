@@ -41,7 +41,7 @@ subsampling), i.e. toward a dimmer, never a more saturated, view. Pure NumPy.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -58,7 +58,9 @@ __all__ = [
     "ProjectedSumStats",
     "SIDE_CAP",
     "SUMMING_BLENDING_MODES",
+    "amplitude_unit_attrs",
     "collect_default_splats",
+    "data_unit_display_attrs",
     "default_target_brightness",
     "emission_weights",
     "plan_projected_exposure",
@@ -782,8 +784,10 @@ def plan_projected_exposure(
 ) -> ExposurePlan:
     """Choose a dimming factor so the opening view's projected p99.9 <= target.
 
-    ``amplitudes`` are the values the scene would store (already per-splat
-    normalised). Hidden axes (``hidden``) are weighted at the viewer's opening
+    ``amplitudes`` are the values the scene would render at gain 1: the
+    stored data-unit amplitudes (``gsplat convert``, where the factor becomes
+    the node's ``display_gain``) or per-splat normalised ones (the Python
+    adders, where it multiplies the stored values). Hidden axes (``hidden``) are weighted at the viewer's opening
     position. The factor is
     ``min(1, target / p999_open, SIDE_CAP * target / max(cap views))``, the cap
     views being the other two displayed axes and up to four more timepoints of
@@ -835,3 +839,114 @@ def plan_projected_exposure(
         side_capped=capped,
         cap_source=source if capped else None,
     )
+
+
+def amplitude_unit_attrs(stats: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """``amplitude_unit`` (+ ``amplitude_offset``) for a store's amplitudes.
+
+    A fit records its normalisation basis (``intensity_range``), and its
+    amplitudes are then in source data units above the subtracted level
+    (``image_min``, see :mod:`luxar.gsplats.fit_basis`): ``counts`` for an
+    integer source, ``data units`` otherwise, then ``above background`` when a
+    resolved background floor was subtracted or ``above minimum`` when the level
+    is the data's own minimum (``--floor none``; it may be negative for a float
+    source), with that level as ``amplitude_offset`` (omitted when it is below
+    1e-6 of the range). A store recording
+    no basis — an imported classical splat file, a merge of disagreeing fits —
+    gets ``a.u.`` and no offset: nothing says what its numbers mean.
+
+    With a basis, ``source_data_range`` records ``[0, intensity_range]`` in
+    amplitude units. After intensity scaling the amplitudes and range are in
+    arbitrary units; the raw source floor is then omitted from the scene.
+    """
+    import numpy as np
+
+    from luxar.gsplats.fit_basis import source_intensity_span
+
+    stats = stats or {}
+    if stats.get("intensity_range") is None:
+        return {"amplitude_unit": "a.u."}
+    try:
+        integer = np.dtype(stats.get("source_dtype")).kind in "iu"
+    except (TypeError, ValueError):
+        integer = False
+    scaled = stats.get("intensity_scale", 1.0) != 1.0
+    unit = "a.u." if scaled else ("counts" if integer else "data units")
+    level = _subtracted_level(stats)
+    attrs: Dict[str, Any] = {}
+    width = float(stats["intensity_range"])
+    if not scaled and level is not None and abs(level) >= 1e-6 * abs(width):
+        # `floor` is a number exactly when a background level was RESOLVED and
+        # subtracted; otherwise the subtracted level is the data's own minimum
+        # (or a low percentile) — which a float source may put below zero.
+        background = isinstance(stats.get("floor"), (int, float)) and not isinstance(
+            stats.get("floor"), bool
+        )
+        unit += " above background" if background else " above minimum"
+        attrs["amplitude_offset"] = float(level)
+    attrs["amplitude_unit"] = unit
+    span = source_intensity_span(stats)
+    if span is not None:
+        attrs["source_data_range"] = [0.0, float(span)]
+    return attrs
+
+
+def _subtracted_level(stats: Mapping[str, Any]) -> Optional[float]:
+    """The level the fit subtracted, for LABELLING: ``image_min``, else ``floor``.
+
+    Unlike :func:`~luxar.gsplats.fit_basis.fit_image_min` (which reverses the
+    shift on a raw volume and treats a negative level as unrecorded), any FINITE
+    level is accepted: a float source whose minimum is negative still had that
+    minimum subtracted, and its amplitudes are "above minimum" by that much.
+    """
+    import math
+
+    for key in ("image_min", "floor"):
+        value = stats.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if math.isfinite(float(value)):
+            return float(value)
+    return None
+
+
+def data_unit_display_attrs(
+    stats: Optional[Mapping[str, Any]],
+    *,
+    gain: Optional[float] = None,
+    amplitudes: Optional[np.ndarray] = None,
+    plan: Optional["ExposurePlan"] = None,
+) -> Dict[str, Any]:
+    """The data-unit display attrs ``luxar gsplat convert`` stamps, for Python.
+
+    Returns ``display_gain``, ``amplitude_unit`` and — when the store records
+    them — ``amplitude_offset`` and ``source_data_range``, ready to pass to
+    ``add_gsplats_from_data`` / ``add_gsplats_from_file`` together with
+    ``normalize_amplitudes=False`` so the scene keeps the fit's data units.
+
+    The gain is ``gain`` when given; otherwise the legacy per-splat
+    normalisation of ``amplitudes`` (their p99.9 → 1.0 when above 1.0) times
+    ``plan.factor`` from :func:`plan_projected_exposure` (pass ``amplitudes ×
+    per-splat factor`` to the planner, as convert does), else 1.0.
+
+    Example:
+        >>> from luxar.gsplats.exposure import data_unit_display_attrs
+        >>> node, stats = load_gsplat_node(path, include_stats=True)
+        >>> attrs = data_unit_display_attrs(stats, amplitudes=amps, plan=plan)
+        >>> scene.add_gsplats_from_file("g", path, normalize_amplitudes=False, **attrs)
+    """
+    if gain is None:
+        gain = 1.0
+        if amplitudes is not None:
+            from luxar.core.group.gsplats_pipeline.amplitude_norm import (
+                _sample_reference,
+                resolve_factor,
+            )
+
+            flat = np.asarray(amplitudes, dtype=np.float64).ravel()
+            gain = resolve_factor(True, _sample_reference(flat)) or 1.0
+        if plan is not None:
+            gain *= float(plan.factor)
+    if not (np.isfinite(gain) and gain > 0.0):
+        raise ValueError(f"display gain must be positive and finite, got {gain!r}")
+    return {"display_gain": float(gain), **amplitude_unit_attrs(stats)}

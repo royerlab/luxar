@@ -9,8 +9,8 @@ intensity range (``gsplats/fitting/results.py``), so an archive fitted from a
 uint16 detector stack carries amplitudes in detector counts — hundreds or
 thousands.
 
-**Those units cannot reach the screen unchanged, and no viewer control can
-rescue them.** The stored amplitude drives two things in the shader, and the
+**Those units cannot reach the screen unscaled, and the colormap window cannot
+scale them.** The stored amplitude drives two things in the shader, and the
 display window only reaches one:
 
 1. the **colormap LUT index** —
@@ -26,12 +26,15 @@ display window only reaches one:
 So an amplitude of 800 emits 1000x the radiance of 0.8 and produces 1000x the
 optical depth. Under ``volumetric`` that saturates ``1 - exp(-tau)`` to 1.0 and
 the specimen becomes an opaque shell; under the additive modes it blows out to
-white. The only remaining lever is ``opacity``, which then has to carry a
-~1/500 factor on a ``[0, 1]`` control — unauthorable in the Layers panel, and
-the reason so much shipped appearance is a magic tiny constant.
+white. ``opacity`` would have to carry a ~1/500 factor on a ``[0, 1]`` control;
+the per-node ``display_gain`` render attr can carry it (unbounded — see "The
+data-unit alternative" below, what ``gsplat convert`` uses). Leaving the
+factor on ``opacity`` is unauthorable in the Layers panel, and the reason so
+much shipped appearance is a magic tiny constant.
 
-Hence: **normalise at insertion, not at display.** By the time a node is in a
-scene its amplitudes should sit in ``[0, ~1]``, which puts ``opacity`` and
+Hence, for the Python adders: **normalise at insertion** (or pass
+``display_gain`` with ``normalize_amplitudes=False``). By the time a node is in
+a scene its rendered amplitudes should sit in ``[0, ~1]``, which puts ``opacity`` and
 ``absorption`` back in their natural ranges and makes appearance portable
 between datasets.
 
