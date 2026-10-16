@@ -46,6 +46,7 @@ import {
 import { resolveHdrHeadroom } from '../../../utils/hdr/hdr-headroom';
 import { platformName } from '../../../utils/platform';
 import { log, Modules } from '../../../utils/log';
+import { loadTslMaterials } from '../../../rendering/tsl/load';
 import {
   clampHdrHeadroom,
   DEFAULT_HDR_HEADROOM,
@@ -436,6 +437,13 @@ function confirmHdrOutput(
   return plan;
 }
 
+/** The `three/webgpu` module: the prefetch when one is in flight (retried if it failed). */
+function loadThreeWebGPU(
+  prefetch: Promise<typeof import('three/webgpu')> | undefined
+): Promise<typeof import('three/webgpu')> {
+  return prefetch?.catch(() => import('three/webgpu')) ?? import('three/webgpu');
+}
+
 /**
  * True (and logged) when `requireNativeAdapter` asked for a native WebGPU
  * device and none was obtained, so the caller falls back to WebGL.
@@ -538,6 +546,7 @@ export async function createWebGPURenderer(
 
   let device: unknown;
   let adapterMax: number | undefined;
+  let webgpuModule: Promise<typeof import('three/webgpu')> | undefined;
   if (adapter) {
     adapterMax = adapter.limits?.maxVertexBuffers;
 
@@ -577,6 +586,13 @@ export async function createWebGPURenderer(
         `maxStorageBufferBindingSize=${requiredLimits.maxStorageBufferBindingSize ?? 'default'}, ` +
         `maxTextureDimension2D=${requiredLimits.maxTextureDimension2D ?? 'default'}`
     );
+    // Fetch the renderer chunk and the TSL material cone WHILE the device is
+    // requested (~125 ms on an RTX 3070), not after it: a session that got an
+    // adapter is going WebGPU. Only a requestDevice failure under
+    // `requireNativeAdapter` (rare) pays for a download it then does not use.
+    // A failed prefetch is retried by the awaits below and in SceneManager.
+    webgpuModule = import('three/webgpu');
+    loadTslMaterials().catch(() => undefined);
     try {
       device = await adapter.requestDevice({ requiredFeatures, requiredLimits });
     } catch (err) {
@@ -591,13 +607,11 @@ export async function createWebGPURenderer(
     return { fallback: true };
   }
 
-  // Loaded HERE, not at module scope: a static `import { WebGPURenderer }`
+  // Loaded lazily, not at module scope: a static `import { WebGPURenderer }`
   // makes the ~182 kB gzipped `three-webgpu` chunk a dependency of the entry
   // bundle, which every WebGL session then downloads and never runs (issue
-  // #1679). `selectBackend()` is pure and synchronous and has already chosen
-  // WebGPU by the time we get here, so this await costs the WebGPU path one
-  // chunk fetch and the default path nothing.
-  const { WebGPURenderer } = await import('three/webgpu');
+  // #1679). Usually already in flight since the adapter answered (above).
+  const { WebGPURenderer } = await loadThreeWebGPU(webgpuModule);
   const hdrPlan = planHdrOutput(options, device);
 
   const gpuRenderer = new WebGPURenderer({
