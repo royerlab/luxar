@@ -315,7 +315,7 @@ luxar gsplat info splats.gsplats.zarr
 ```
 
 #### `luxar gsplat view`
-Open a `.gsplats.zarr` in the web viewer. By default it builds the scene `gsplat convert` would write — image-convention orientation and opening camera, auto exposure, the same defaults — in a temporary directory that is removed on exit, and serves that, printing the Exposure line and a "Built a temporary scene" line. The build re-writes the splats (a partition/nested store is grafted node for node, which still copies its arrays): about 1 s for a 30k-splat fit and 8-11 s for 1M splats on a laptop CPU, roughly half of it auto exposure. `--auto-exposure/--no-auto-exposure`, `--target-brightness`, `--dim-order`, `--view` and `--colormap` work as on `convert`. `--raw` serves the standalone `.gsplats.zarr` **directly** via `?src=` with no scene round-trip — a v3.4 node subtree the viewer renders as is (every tree shape; archives are extracted first) — with stored amplitudes and positional axes.
+Open a `.gsplats.zarr` in the web viewer. By default it builds the scene `gsplat convert` would write — image-convention orientation and opening camera, auto exposure, the same defaults — in a temporary directory that is removed on exit, and serves that, printing the Exposure line and a "Built a temporary scene" line. The build re-writes the splats (a partition/nested store is grafted node for node, which still copies its arrays): about 1 s for a 30k-splat fit and 8-11 s for 1M splats on a laptop CPU, roughly half of it auto exposure. `--auto-exposure/--no-auto-exposure`, `--target-brightness`, `--dim-order`, `--view` and `--colormap` work as on `convert`. `--raw` serves the store **directly** via `?src=` with no scene round-trip: the standalone `.gsplats.zarr` is a v3.4 node subtree the viewer renders as is (every tree shape; archives are extracted first), shown with its stored amplitudes and positional axes.
 ```bash
 luxar gsplat view splats.gsplats.zarr
 luxar gsplat view splats.gsplats.zarr --target-brightness 3  # brighter opening view
@@ -347,19 +347,36 @@ A folded tile is the one case where a tile is **larger** than `--tile-size`: the
 Convert .gsplats.zarr to a Luxar scene for the web viewer.
 ```bash
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --center
-luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --scale-intensity 0.1
+luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --scale-intensity 0.1  # gain ×0.1
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --view xz        # face the XZ plane
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --dim-order x,y,z  # opt out
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --target-brightness 3  # brighter
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --no-auto-exposure     # legacy
 ```
 
+**True data units.** The scene keeps the fit's amplitudes exactly as the
+`.gsplats.zarr` stores them — source data units above the subtracted background
+(detector counts for an integer source) — so the viewer's Layers panel reads in
+the data's own units: the **Splat amplitude** window is captioned with the unit
+(e.g. "counts above background") and the data's own range is shown under it
+(`source_data_range`, "Data: 0 – 12,000 counts above background (floor 100)").
+A splat amplitude is one Gaussian's PEAK; overlapping splats sum to the data
+value, so the window sits below the data range. Brightness is a separate
+per-node `display_gain` attr (the panel's **Brightness** control), which the
+viewer multiplies into the emission (and the volumetric density) but not the
+colormap lookup, so the render is the one rescaling the data would have given.
+Convert stamps `amplitude_unit` (`counts` / `data units`, `above background`
+when a floor was subtracted, `a.u.` for a store with no recorded normalisation
+basis), `amplitude_offset` (that floor) and `source_data_range`; see `docs/guides/user/LUXAR_ZARR_FORMAT.md`
+§ "Amplitude units and display gain". `--intensity` on a colormapped node is
+restated as the matching data-unit window (`I × gain`).
+
 **Auto exposure (default).** Additive blending sums every splat along the view
 ray, so normalizing each splat's amplitude (p99.9 → 1) still opens a dense fit as
 a saturated white blob. Convert predicts the opening view's per-pixel sum down
 its view axis (each splat's projected footprint, LUT/colour gain and opacity
 included, through the colour window the compiler will stamp;
-`luxar.gsplats.exposure`) and dims the amplitudes so its p99.9 equals
+`luxar.gsplats.exposure`) and dims the display gain so its p99.9 equals
 `--target-brightness` — default 2.0 under ACES/AgX/Neutral/Reinhard/Cineon (and
 when `--tone-mapping` is unset), 0.9 under `None`/`Linear`, which clip at 1.0 —
 printing e.g. `Exposure:
@@ -373,13 +390,13 @@ weighted where the viewer opens them (a discrete axis at its minimum — a
 timelapse at its first timepoint — a continuous one at its centre). It never
 brightens, applies only to `additive`/`luminous` blending, and works on
 partition/LOD stores; 10M splats take ~7 s and ~1 GB (the set is subsampled to
-2M before any covariance is built). The total raw→stored factor is
-stamped as `amplitude_normalization_factor` (with
-`amplitude_normalization_mode="projected"` and the prediction), so `stored /
-factor` gives back the fit's amplitudes; the `.gsplats.zarr` is untouched.
-`--no-auto-exposure` is the legacy per-splat normalization, attr for attr.
-`--scale-intensity S` replaces both with exactly `raw × S` (mode `"manual"`) on
-any tree shape, partitions included.
+2M before any covariance is built). The gain (per-splat normalization × the
+exposure factor) is stamped as `display_gain`, with
+`amplitude_normalization_mode="projected"` and the prediction; the stored
+amplitudes are the fit's own and the `.gsplats.zarr` is untouched.
+`--no-auto-exposure` makes the gain the legacy per-splat normalization alone
+(mode `"per_splat"`, the legacy render); `--scale-intensity S` makes it exactly
+`S` (mode `"manual"`) on any tree shape, partitions included.
 
 Fitted image volumes open in the **image convention** (the Fiji/napari view: x
 right, y down, looking along +z through the stack). A fit's center columns are

@@ -38,6 +38,16 @@ import {
   absorptionSliderRange,
   formatAbsorption,
 } from './absorption-range';
+import {
+  BRIGHTNESS_FLOOR,
+  brightnessSliderRange,
+  brightnessTooltip,
+  dataReferenceText,
+  formatBrightness,
+  relativeBrightness,
+  remapWindowForLayer,
+  scalarRangeLabel,
+} from './brightness-range';
 import { log, Modules } from '../../utils/log';
 import { EventGroup } from '../../utils/cross-layer/event-group';
 import { BLENDING_MODES } from '../../rendering/blending-state';
@@ -64,9 +74,12 @@ import { clampGamma } from './attrs-utils';
 import { clamp } from '../../utils/clamp';
 import type { LayerApplyEngine } from './layer-apply';
 
-const SCALAR_RANGE_LABEL = 'Display range';
 const COLOUR_RANGE_LABEL = 'Colour range';
-const SCALAR_RANGE_TOOLTIP = 'Scalar data values in this range are mapped across the colormap.';
+
+/** `{min, max}` as the `(min, max)` argument pair `setRange` takes. */
+function rangeTuple(range: { min: number; max: number }): [number, number] {
+  return [range.min, range.max];
+}
 const COLOUR_RANGE_TOOLTIP =
   "Input RGB values in this range are mapped to the full output range. This controls colour gain and offset, not the layer's data extents.";
 
@@ -121,6 +134,9 @@ export class LayerControls {
   private gammaSlider: LabeledSlider | null = null;
   private opacitySlider: LabeledSlider | null = null;
   private absorptionSlider: LabeledSlider | null = null;
+  private brightnessSlider: LabeledSlider | null = null;
+  /** Read-only "Data: 0 – 12,000 counts above background (floor 100)" line. */
+  private dataReferenceEl: HTMLElement | null = null;
   /**
    * Mesh-only appearance sliders (spec §6.2). Hidden for every other geometry type —
    * mesh is the only SHADED type, so a shade floor and a falloff exponent have nothing
@@ -213,22 +229,7 @@ export class LayerControls {
     this.lastShownLodStatus = null;
     this.rangeSlider?.dispose();
     this.rangeSlider = null;
-    this.gammaSlider?.dispose();
-    this.gammaSlider = null;
-    this.opacitySlider?.dispose();
-    this.opacitySlider = null;
-    this.absorptionSlider?.dispose();
-    this.absorptionSlider = null;
-    this.ambientSlider?.dispose();
-    this.ambientSlider = null;
-    this.shadeExponentSlider?.dispose();
-    this.shadeExponentSlider = null;
-    this.specularSlider?.dispose();
-    this.specularSlider = null;
-    this.shininessSlider?.dispose();
-    this.shininessSlider = null;
-    this.alphaCutoffSlider?.dispose();
-    this.alphaCutoffSlider = null;
+    this.disposeScalarSliders();
     this.disposePhysicalKnobs();
     this.blendSelect = null;
     this.layerOrderInput = null;
@@ -237,6 +238,32 @@ export class LayerControls {
     this.lodLevelStatus = null;
     this.controlEls.clear();
     this.controlsEl = null;
+  }
+
+  /** Dispose and drop every single-thumb slider of the section. */
+  private disposeScalarSliders(): void {
+    const sliders = [
+      this.gammaSlider,
+      this.opacitySlider,
+      this.absorptionSlider,
+      this.brightnessSlider,
+      this.ambientSlider,
+      this.shadeExponentSlider,
+      this.specularSlider,
+      this.shininessSlider,
+      this.alphaCutoffSlider,
+    ];
+    for (const slider of sliders) slider?.dispose();
+    this.gammaSlider = null;
+    this.opacitySlider = null;
+    this.absorptionSlider = null;
+    this.brightnessSlider = null;
+    this.dataReferenceEl = null;
+    this.ambientSlider = null;
+    this.shadeExponentSlider = null;
+    this.specularSlider = null;
+    this.shininessSlider = null;
+    this.alphaCutoffSlider = null;
   }
 
   /** Register a section control's group element under its rule id. */
@@ -262,13 +289,18 @@ export class LayerControls {
       max: 1,
       valueLow: 0,
       valueHigh: 1,
-      label: SCALAR_RANGE_LABEL,
-      tooltip: SCALAR_RANGE_TOOLTIP,
+      label: scalarRangeLabel({}).label,
+      tooltip: scalarRangeLabel({}).tooltip,
       onChange: (low, high) => {
         this.controlsInteracting = true;
+        // The primary's window, re-expressed per selected layer as the same
+        // fractions of that layer's own range (layers in different units).
+        const primary = this.deps.state.getPrimarySelected();
         this.deps.state.applyToSelected((l) => {
-          l.displayMin = low;
-          l.displayMax = high;
+          const [lo, hi] =
+            primary && l !== primary ? remapWindowForLayer(primary, l, low, high) : [low, high];
+          l.displayMin = lo;
+          l.displayMax = hi;
         });
         for (const sel of this.deps.state.getSelected()) {
           this.deps.apply.applyDisplayRange(sel);
@@ -284,6 +316,14 @@ export class LayerControls {
         this.controlsInteracting = false;
       },
     });
+
+    this.dataReferenceEl = document.createElement('div');
+    this.dataReferenceEl.className =
+      'luxar-range-slider__caption luxar-layers-panel__data-reference';
+    this.dataReferenceEl.hidden = true;
+    rangeContainer.appendChild(this.dataReferenceEl);
+
+    this.buildBrightnessSlider(this.controlsEl);
 
     this.gammaSlider = new LabeledSlider({
       container: this.controlsEl,
@@ -826,6 +866,65 @@ export class LayerControls {
     }
   }
 
+  /**
+   * The gsplats Brightness (`display_gain`) slider, directly under the display
+   * range it is independent of. The value is RELATIVE to the authored gain
+   * (×1 = the opening exposure, which double-click restores); the stored attr
+   * stays absolute and the tooltip names it. A log track; the readout is a ×
+   * multiplier and takes exact entry. A multi-selection gets the same relative
+   * factor on each layer's own authored gain.
+   */
+  private buildBrightnessSlider(container: HTMLElement): void {
+    this.brightnessSlider = new LabeledSlider({
+      container,
+      label: 'Brightness',
+      ...brightnessSliderRange(1),
+      step: 0.01,
+      scale: 'log',
+      format: formatBrightness,
+      initialValue: 1.0,
+      constrain: (v) => (v > 0 ? v : BRIGHTNESS_FLOOR),
+      rangeForValue: brightnessSliderRange,
+      onChange: (val) => {
+        this.controlsInteracting = true;
+        this.deps.state.applyToSelected((l) => {
+          l.brightness = l.authoredBrightness * val;
+        });
+        for (const sel of this.deps.state.getSelected()) {
+          this.deps.apply.applyBrightness(sel);
+        }
+        // Back at the opening exposure (double-click): re-centre the track.
+        if (val === 1) this.brightnessSlider?.setRange(...rangeTuple(brightnessSliderRange(1)));
+        const primary = this.deps.state.getPrimarySelected();
+        if (primary && this.brightnessSlider) {
+          this.brightnessSlider.element.title = brightnessTooltip(primary);
+        }
+        this.controlsInteracting = false;
+      },
+    });
+    this.registerControl('brightness', this.brightnessSlider.element);
+  }
+
+  /**
+   * The data-unit pieces of the section: readout formatting, the read-only data
+   * reference (shown for direct-colour layers too) and the relative Brightness.
+   */
+  private renderAmplitudeControls(primary: LayerInfo): void {
+    this.rangeSlider?.setDataUnits(primary.amplitudeUnit !== undefined);
+    if (this.dataReferenceEl) {
+      const text = dataReferenceText(primary);
+      this.dataReferenceEl.textContent = text ?? '';
+      this.dataReferenceEl.hidden = !text;
+      if (text) this.dataReferenceEl.title = dataReferenceText(primary, true) ?? text;
+    }
+    if (this.brightnessSlider) {
+      const relative = relativeBrightness(primary);
+      this.brightnessSlider.setRange(...rangeTuple(brightnessSliderRange(relative)));
+      this.brightnessSlider.setValue(relative);
+      this.brightnessSlider.element.title = brightnessTooltip(primary);
+    }
+  }
+
   /** Update controls to reflect the primary selected layer's values */
   render(): void {
     const primary = this.deps.state.getPrimarySelected();
@@ -839,14 +938,20 @@ export class LayerControls {
     if (!appearance) return;
 
     if (this.rangeSlider) {
+      const scalar = scalarRangeLabel(primary);
       this.rangeSlider.setLabel(
-        primary.scalarWindow ? SCALAR_RANGE_LABEL : COLOUR_RANGE_LABEL,
-        primary.scalarWindow ? SCALAR_RANGE_TOOLTIP : COLOUR_RANGE_TOOLTIP
+        primary.scalarWindow ? scalar.label : COLOUR_RANGE_LABEL,
+        primary.scalarWindow ? scalar.tooltip : COLOUR_RANGE_TOOLTIP
+      );
+      this.rangeSlider.setCaption(
+        primary.scalarWindow ? scalar.caption : undefined,
+        scalar.tooltip
       );
       this.rangeSlider.setBounds(primary.dataMin, primary.dataMax);
       this.rangeSlider.setValues(primary.displayMin, primary.displayMax);
     }
 
+    this.renderAmplitudeControls(primary);
     this.gammaSlider?.setValue(primary.gamma);
     if (this.layerOrderInput) {
       // Blank when the layer owns no level. If it inherits one, surface the

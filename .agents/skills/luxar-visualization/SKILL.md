@@ -191,8 +191,11 @@ the `add_*` call or it is lost. Five things about that round-trip surprise peopl
   raw units elsewhere. Note this is the *opposite* of what this bullet used to
   claim — the viewer does **not** normalise by the stored maximum.
   `luxar gsplat convert` and `luxar gsplat view` (which serves a temporary
-  convert scene; `--raw` serves the store as is) go further and auto-expose:
-  amplitudes dimmed so the opening view's additive p99.9 is `--target-brightness`.
+  convert scene; `--raw` serves the store as is) instead keep the DATA UNITS and
+  auto-expose a separate `display_gain` attr (opt in from Python with
+  `normalize_amplitudes=False, display_gain=…, amplitude_unit=…`), so the Layers
+  panel reads splat amplitudes (per-Gaussian peaks) in data units beside the
+  data's own range, plus a Brightness control.
 - **`opacity` is the exposure lever, and with normalised amplitudes it lives in
   its natural range.** That is the point of normalising: against raw counts
   `opacity` has to carry a ~1/500 factor on a `[0,1]` control, which is

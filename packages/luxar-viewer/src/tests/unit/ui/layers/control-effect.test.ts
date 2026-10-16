@@ -113,6 +113,8 @@ function leafFixture(
 }
 
 const EMISSIVE: LayerControlId[] = ['displayRange', 'gamma', 'opacity', 'blend', 'layerOrder'];
+/** A gsplats layer adds the data-unit Brightness (`display_gain`). */
+const SPLATS: LayerControlId[] = [...EMISSIVE, 'brightness'];
 const HOUSE_MESH: LayerControlId[] = [
   ...EMISSIVE,
   'ambient',
@@ -137,7 +139,7 @@ const FIXTURES: Fixture[] = [
   ]),
   leafFixture('lines', 'lines', {}, EMISSIVE),
   leafFixture('volumetric gsplats', 'gsplats', { blending_mode: 'volumetric' }, [
-    ...EMISSIVE,
+    ...SPLATS,
     'absorption',
     'colormap',
   ]),
@@ -177,15 +179,15 @@ const FIXTURES: Fixture[] = [
       { path: '/tiles/part_0/level_0', type: 'gsplats' },
       { path: '/tiles/part_0/level_1', type: 'gsplats' },
     ],
-    shows: [...EMISSIVE, 'colormap', 'activeLevel'],
+    shows: [...SPLATS, 'colormap', 'activeLevel'],
   },
   leafFixture('labelled gsplats', 'gsplats', { label_vocabulary: VOCABULARY }, [
-    ...EMISSIVE,
+    ...SPLATS,
     'colormap',
     'labels',
   ]),
   leafFixture('custom-LUT gsplats', 'gsplats', { colormap: 'custom', customLutBytes: CUSTOM_LUT }, [
-    ...EMISSIVE,
+    ...SPLATS,
     'colormap',
     'customColormap',
   ]),
@@ -376,6 +378,7 @@ const PROBES: Record<LayerControlId, Probe> = {
       low.dispatchEvent(new Event('input', { bubbles: true }));
     },
   },
+  brightness: slider('brightness'),
   gamma: slider('gamma'),
   opacity: slider('opacity'),
   absorption: slider('absorption'),

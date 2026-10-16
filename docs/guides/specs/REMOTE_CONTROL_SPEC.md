@@ -112,8 +112,10 @@ setLayer(path: string, patch: LayerPatch): void      // throws on unknown path
 ```
 
 `LayerPatch` fields: `visible`, `opacity`, `gamma`, `displayRange`, `colormap`
-(`null` = direct colour), `blendingMode`, `absorption`, `layerOrder` (`null` =
-release explicit order). Each field takes the route the Layers panel's own
+(`null` = direct colour), `blendingMode`, `absorption`, `brightness` (the gsplats
+`display_gain`; a non-positive value is ignored), `layerOrder` (`null` =
+release explicit order). `LayerSummary` also reports `brightness` and `authoredBrightness` (both `1` on non-gsplats
+layers; the panel shows their ratio) and, when the scene labels it, `amplitudeUnit`. Each field takes the route the Layers panel's own
 control takes (state-manager setter, then apply engine), so row, material and
 stored state cannot drift apart.
 

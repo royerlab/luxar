@@ -359,6 +359,7 @@ export class LayerApplyEngine {
         gamma: node.attrs.gamma as number | undefined,
         intensity: node.attrs.intensity as number | undefined,
         offset: node.attrs.offset as number | undefined,
+        display_gain: node.attrs.display_gain as number | undefined,
         blending_mode:
           insideLayerSubtree && editedLayerOwnsMode
             ? undefined
@@ -696,11 +697,16 @@ export class LayerApplyEngine {
     if (!eff) return;
     const pickUniforms = (
       mat as LuxarMaterial & {
-        uniforms?: { uOpacity?: { value: number }; uIntensity?: { value: number } };
+        uniforms?: {
+          uOpacity?: { value: number };
+          uIntensity?: { value: number };
+          uDisplayGain?: { value: number };
+        };
       }
     ).uniforms;
     const previousOpacity = pickUniforms?.uOpacity?.value;
     const previousIntensity = pickUniforms?.uIntensity?.value;
+    const previousGain = pickUniforms?.uDisplayGain?.value;
     // A live LOD fade (cross-fade, streaming energy or density-guard
     // compensation) owns the live opacity uniform as `_lodFadeBase × product`
     // (scene/lod-fade.ts), so a direct write of the authored value would be
@@ -722,6 +728,9 @@ export class LayerApplyEngine {
     // phase 1, points phase 3, lines phase 4); optional-chained for a mesh
     // material, which has none (a surface resolves `volumetric` to `opaque`).
     mat.updateAbsorption?.(eff.absorption);
+    // Gsplats only (the optional call is the type gate): the data-unit
+    // brightness. Never part of the scalar window below.
+    mat.updateDisplayGain?.(eff.display_gain);
     // A colormap-active leaf windows a SCALAR, and (when the composed window
     // really is stated on the layer's reference range — see
     // `composedWindowIsInReferenceBasis`) it is re-expressed in this leaf's
@@ -736,7 +745,8 @@ export class LayerApplyEngine {
       meshPickDirty ||
       (obj.userData.pickNode &&
         (previousOpacity !== pickUniforms?.uOpacity?.value ||
-          previousIntensity !== pickUniforms?.uIntensity?.value))
+          previousIntensity !== pickUniforms?.uIntensity?.value ||
+          previousGain !== pickUniforms?.uDisplayGain?.value))
     ) {
       this.deps.invalidatePickBuffer?.();
     }
@@ -809,6 +819,10 @@ export class LayerApplyEngine {
   }
 
   applyAbsorption(layer: LayerInfo): void {
+    this.applyComposed(layer);
+  }
+
+  applyBrightness(layer: LayerInfo): void {
     this.applyComposed(layer);
   }
 

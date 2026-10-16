@@ -422,3 +422,43 @@ describe('RangeSlider — dispose', () => {
     expect(onBoundsChange).not.toHaveBeenCalled();
   });
 });
+
+describe('RangeSlider data-unit window (WP16)', () => {
+  it('shows a unit caption under the track, hidden when empty', () => {
+    const { slider } = makeSlider({ label: 'Display range' });
+    const caption = host.querySelector<HTMLElement>('.luxar-range-slider__caption')!;
+    expect(caption.hidden).toBe(true);
+    slider.setCaption('counts above background', 'tooltip text');
+    expect(caption.hidden).toBe(false);
+    expect(caption.textContent).toBe('counts above background');
+    expect(caption.title).toBe('tooltip text');
+    slider.setCaption(undefined);
+    expect(caption.hidden).toBe(true);
+    expect(caption.hasAttribute('title')).toBe(false);
+  });
+
+  it('keeps the 0.001 step on unit-or-wider tracks and refines it on tiny ones', () => {
+    const { slider } = makeSlider({ min: 0, max: 4200, valueLow: 0, valueHigh: 4200 });
+    const low = host.querySelector<HTMLInputElement>('.luxar-range-slider__input--low')!;
+    expect(low.step).toBe('0.001');
+    slider.setBounds(0, 1e-5);
+    expect(Number(low.step)).toBeCloseTo(1e-8, 15);
+    slider.setBounds(0, 1);
+    expect(low.step).toBe('0.001');
+  });
+
+  it('formats data-unit bounds with thousands separators, editable without them', () => {
+    const { slider } = makeSlider({
+      label: 'Display range',
+      min: 0,
+      max: 24271.5,
+      valueLow: 508,
+      valueHigh: 24271,
+    });
+    const bounds = host.querySelectorAll<HTMLElement>('.luxar-range-slider__bound');
+    // Historical readout until the layer declares data units (old scenes unchanged).
+    expect(bounds[1].textContent).toBe('24271.5');
+    slider.setDataUnits(true);
+    expect(bounds[1].textContent).toBe('24,272');
+  });
+});

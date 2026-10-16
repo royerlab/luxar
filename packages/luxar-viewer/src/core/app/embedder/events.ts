@@ -175,6 +175,18 @@ export interface LayerSummary {
   blendingMode: BlendingMode;
   /** Volumetric absorption κ (meaningful in `volumetric` blending only). */
   absorption: number;
+  /**
+   * Gsplats display gain (the panel's Brightness, `display_gain`): rendered
+   * brightness per data unit. `1` (and inert) on every other layer type.
+   */
+  brightness: number;
+  /**
+   * The authored `display_gain` (the opening exposure; `1` when absent). The
+   * panel's Brightness readout is `brightness / authoredBrightness`.
+   */
+  authoredBrightness: number;
+  /** Unit of the gsplats amplitudes / display window, when the scene labels it. */
+  amplitudeUnit?: string;
   /** Explicit compositing order, or `null` when inherited/automatic. */
   layerOrder: number | null;
   /** Live linear gain — present on `type === 'sound'` layers only. */
@@ -195,6 +207,8 @@ export interface LayerPatch {
   colormap?: string | null;
   blendingMode?: BlendingMode;
   absorption?: number;
+  /** Gsplats display gain (> 0; a non-positive value is ignored). Inert on other types. */
+  brightness?: number;
   layerOrder?: number | null;
   /** Sound layers only: live linear gain, clamped to `[0, 2]`. Ignored elsewhere. */
   gain?: number;

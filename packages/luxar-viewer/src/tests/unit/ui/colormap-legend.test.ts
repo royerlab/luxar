@@ -37,6 +37,8 @@ function makeLayer(overrides: Partial<LayerInfo> = {}): LayerInfo {
     visible: true,
     opacity: 1,
     absorption: 1,
+    brightness: 1,
+    authoredBrightness: 1,
     // Mesh appearance defaults. Present on every LayerInfo (the field set is uniform
     // across types) and inert for a points layer, exactly like `absorption` above.
     ambient: MESH_DEFAULTS.ambient,

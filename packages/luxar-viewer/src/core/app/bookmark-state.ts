@@ -113,6 +113,7 @@ function validAppearance(value: unknown): boolean {
     typeof value.blendingMode === 'string',
     value.layerOrder === null || Number.isSafeInteger(value.layerOrder),
     value.gain === undefined || finite(value.gain),
+    value.brightness === undefined || positive(value.brightness),
   ].every(Boolean);
 }
 
@@ -166,6 +167,11 @@ export function captureBookmark(app: LuxarApp): ViewBookmark {
         colormap: layer.colormap,
         blendingMode: layer.blendingMode,
         absorption: layer.absorption,
+        // Omitted while it still equals the AUTHORED gain (the opening exposure),
+        // so an untouched layer — any scene, converted or not — adds nothing.
+        ...(layer.brightness !== (layer.authoredBrightness ?? 1)
+          ? { brightness: layer.brightness }
+          : {}),
         layerOrder: layer.layerOrder,
         ...(layer.gain !== undefined ? { gain: layer.gain } : {}),
       },

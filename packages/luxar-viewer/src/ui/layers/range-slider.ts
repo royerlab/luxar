@@ -21,6 +21,7 @@ import {
 import { normalizeWheelDeltaWithAxisFallback } from '../../utils/wheel-delta';
 import { applyModifierTier } from '../../utils/cross-layer/modifier-tiers';
 import { clamp } from '../../utils/clamp';
+import { formatDataValue, formatLegacyRangeValue } from './brightness-range';
 
 export interface RangeSliderOptions {
   container: HTMLElement;
@@ -43,6 +44,17 @@ export interface RangeSliderOptions {
  * power-of-10 increments across the full range.
  * The caller applies the shared Shift/Ctrl modifier ladder.
  */
+/**
+ * The input step for a `[min, max]` track when the caller set none: the
+ * historical 0.001, refined below a unit-wide range so a small data window (a
+ * float source whose values sit in [0, 1e-5]) is not snapped to its ends.
+ */
+function defaultTrackStep(min: number, max: number): number {
+  const range = Math.abs(max - min);
+  if (!(range > 0) || range >= 1) return 0.001;
+  return Math.max(1e-12, Math.min(0.001, Math.pow(10, Math.floor(Math.log10(range)) - 3)));
+}
+
 function computeWheelStep(min: number, max: number): number {
   const range = Math.abs(max - min);
   if (range < 1e-10) return 0.1;
@@ -60,6 +72,10 @@ export class RangeSlider {
   private boundsLowLabel: HTMLElement;
   private boundsHighLabel: HTMLElement;
   private trackFill: HTMLElement;
+  /** Optional caption under the track (e.g. the data unit); hidden when empty. */
+  private captionEl: HTMLElement;
+  /** Data-unit readouts (thousands separators, scientific extremes) — see setDataUnits. */
+  private dataUnits = false;
   private options: RangeSliderOptions;
 
   // Bound wheel handlers (stored for removeEventListener in dispose)
@@ -173,7 +189,7 @@ export class RangeSlider {
     this.lowInput.className = 'luxar-range-slider__input luxar-range-slider__input--low';
     this.lowInput.min = String(options.min);
     this.lowInput.max = String(options.max);
-    this.lowInput.step = String(options.step ?? 0.001);
+    this.lowInput.step = String(options.step ?? defaultTrackStep(options.min, options.max));
     this.lowInput.value = String(options.valueLow);
 
     // High thumb
@@ -182,7 +198,7 @@ export class RangeSlider {
     this.highInput.className = 'luxar-range-slider__input luxar-range-slider__input--high';
     this.highInput.min = String(options.min);
     this.highInput.max = String(options.max);
-    this.highInput.step = String(options.step ?? 0.001);
+    this.highInput.step = String(options.step ?? defaultTrackStep(options.min, options.max));
     this.highInput.value = String(options.valueHigh);
     this.updateAccessibleNames();
 
@@ -194,6 +210,11 @@ export class RangeSlider {
     trackRow.appendChild(trackContainer);
     trackRow.appendChild(this.boundsHighLabel);
     this.wrapper.appendChild(trackRow);
+
+    this.captionEl = document.createElement('div');
+    this.captionEl.className = 'luxar-range-slider__caption';
+    this.captionEl.hidden = true;
+    this.wrapper.appendChild(this.captionEl);
 
     // Event listeners
     this.lowInput.addEventListener('input', this.onLowChange);
@@ -305,8 +326,22 @@ export class RangeSlider {
   }
 
   private formatValue(v: number): string {
-    // Show up to 3 decimal places, strip trailing zeros
-    return v.toFixed(3).replace(/\.?0+$/, '');
+    // Historical 3-decimal readouts unless the window is in labelled data units
+    // (thousands separators, scientific notation at the extremes).
+    return this.dataUnits ? formatDataValue(v) : formatLegacyRangeValue(v);
+  }
+
+  /**
+   * Switch the readouts to data-unit formatting (a layer with an
+   * `amplitude_unit`) or back to the historical form, so a scene without units
+   * reads exactly as before. Re-renders the current labels.
+   */
+  setDataUnits(on: boolean): void {
+    if (this.dataUnits === on) return;
+    this.dataUnits = on;
+    this.boundsLowLabel.textContent = this.formatValue(parseFloat(this.lowInput.min));
+    this.boundsHighLabel.textContent = this.formatValue(parseFloat(this.lowInput.max));
+    this.updateLabels();
   }
 
   /**
@@ -321,7 +356,9 @@ export class RangeSlider {
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'luxar-range-slider__bound-input';
-    input.value = this.formatValue(currentValue);
+    // Plain digits, no thousands separators: the field is parsed back with
+    // parseFloat, which would read "4,200" as 4.
+    input.value = this.formatValue(currentValue).replace(/,/g, '');
     input.style.width = `${Math.max(label.offsetWidth, 28)}px`;
 
     // Replace label with input
@@ -445,12 +482,28 @@ export class RangeSlider {
     else this.labelEl.removeAttribute('title');
   }
 
+  /**
+   * Show `text` under the track (the data unit of the window), with `tooltip`
+   * carrying the full text; an empty / absent text hides the caption.
+   */
+  setCaption(text?: string, tooltip?: string): void {
+    this.captionEl.textContent = text ?? '';
+    this.captionEl.hidden = !text;
+    if (text) this.captionEl.title = tooltip ?? text;
+    else this.captionEl.removeAttribute('title');
+  }
+
   /** Update the slider bounds */
   setBounds(min: number, max: number): void {
     this.lowInput.min = String(min);
     this.lowInput.max = String(max);
     this.highInput.min = String(min);
     this.highInput.max = String(max);
+    if (this.options.step === undefined) {
+      const step = String(defaultTrackStep(min, max));
+      this.lowInput.step = step;
+      this.highInput.step = step;
+    }
     this.boundsLowLabel.textContent = this.formatValue(min);
     this.boundsHighLabel.textContent = this.formatValue(max);
     this.updateTrackFill();

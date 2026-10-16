@@ -1,35 +1,44 @@
 """Opening-view exposure for ``luxar gsplat convert`` (auto exposure).
 
-Per-splat amplitude normalisation maps the p99.9 SPLAT to 1.0, but additive
-blending sums every splat along the view ray, so a dense fit still opens as a
-saturated white blob. Auto exposure (the convert default) predicts the opening
-view's per-pixel sum with :func:`luxar.gsplats.exposure.plan_projected_exposure`
-and dims the amplitudes — never brightens — so its p99.9 lands at
-``--target-brightness`` (default by tone mapping: 2.0 filmic, 0.9 clipping),
-unless a side view (orbit 90°) or another timepoint would then exceed
-``SIDE_CAP`` (4) times that, in which case those set the factor.
-The whole raw-to-stored factor is applied as ONE exact :class:`AmplitudeScale`
-and stamped as ``amplitude_normalization_factor``, with
-``amplitude_normalization_mode`` and the prediction beside it, so the stored
-amplitudes divide back to the fit's own values. The ``.gsplats.zarr`` itself is
-never touched: ``gsplat render`` / ``compare`` / ``export`` read it, not the scene.
+The scene keeps the fit's amplitudes in SOURCE DATA UNITS — a fitted
+``.gsplats.zarr`` already stores them that way (``fitting/results.py`` multiplies
+the ``[0, 1]`` working copy back out by ``intensity_range``), so the Layers panel
+can read in the data's own units. Brightness is a separate per-node ``display_gain``
+(``LUXAR_ZARR_FORMAT.md``, "Amplitude units and display gain"), which the viewer
+multiplies into every amplitude-linear term of the draw but NOT into the
+colormap lookup — exactly what pre-multiplying the stored amplitudes used to do,
+without rewriting the data.
 
-``--no-auto-exposure`` is the legacy per-splat normalisation, attr for attr;
-``--scale-intensity S`` replaces both with an exact manual factor ``S``.
+Per-splat normalisation maps the p99.9 SPLAT to 1.0, but additive blending sums
+every splat along the view ray, so a dense fit still opens as a saturated white
+blob. Auto exposure (the convert default) predicts the opening view's per-pixel
+sum with :func:`luxar.gsplats.exposure.plan_projected_exposure` and dims — never
+brightens — so its p99.9 lands at ``--target-brightness`` (default by tone
+mapping: 2.0 filmic, 0.9 clipping), unless a side view (orbit 90°) or another
+timepoint would then exceed ``SIDE_CAP`` (4) times that, in which case those set
+the factor. The gain is ``per-splat normalisation × that factor``, stamped with
+``amplitude_normalization_mode`` and the prediction beside it.
+
+``--no-auto-exposure`` stamps the per-splat normalisation alone as the gain (the
+legacy look, attr for attr in the render); ``--scale-intensity S`` makes the gain
+exactly ``S``. The ``.gsplats.zarr`` itself is never touched: ``gsplat render`` /
+``compare`` / ``export`` read it, not the scene.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 
 from ...core.group.gsplats_pipeline.amplitude_norm import (
-    NORMALIZATION_FACTOR_ATTR,
+    AMPLITUDE_OFFSET_ATTR,
+    AMPLITUDE_UNIT_ATTR,
+    DISPLAY_GAIN_ATTR,
     NORMALIZATION_MODE_ATTR,
     PROJECTED_SUM_AXIS_ATTR,
     PROJECTED_SUM_P999_ATTR,
     PROJECTED_SUM_TARGET_ATTR,
-    AmplitudeScale,
+    SOURCE_DATA_RANGE_ATTR,
     NormalizeSpec,
     _sample_reference,
     resolve_factor,
@@ -48,14 +57,18 @@ class ConvertExposure:
     """What convert hands ``add_gsplats_*`` for the amplitudes.
 
     Attributes:
-        normalize: The ``normalize_amplitudes`` argument.
-        attrs: Provenance attrs to stamp on the gsplats node(s).
+        gain: The ``display_gain`` (brightness relative to data units).
+        attrs: ``display_gain``, the unit labels and the provenance attrs to
+            stamp on the gsplats node.
         line: One narration line, or ``None``.
+        normalize: The ``normalize_amplitudes`` argument — always ``False``:
+            the amplitudes stay in data units.
     """
 
-    normalize: NormalizeSpec
+    gain: float
     attrs: Dict[str, Any] = field(default_factory=dict)
     line: Optional[str] = None
+    normalize: NormalizeSpec = False
 
 
 def _column_of(name: str, orientation: "ConvertOrientation") -> int:
@@ -135,15 +148,71 @@ def _leaf_truncation(node: "GSplatNode") -> float:
     return DEFAULT_TRUNCATION_RADIUS
 
 
-def _manual(scale_intensity: float) -> ConvertExposure:
-    """``--scale-intensity``: exactly ``raw × S``, recorded as mode ``manual``."""
-    return ConvertExposure(
-        normalize=AmplitudeScale(scale_intensity),
-        attrs={
-            NORMALIZATION_FACTOR_ATTR: float(scale_intensity),
-            NORMALIZATION_MODE_ATTR: "manual",
-        },
-        line=f"Exposure: manual ×{scale_intensity:g} (--scale-intensity); "
+def _gain_attrs(gain: float, mode: str, units: Mapping[str, Any]) -> Dict[str, Any]:
+    """``display_gain`` + the unit labels + the provenance mode."""
+    return {DISPLAY_GAIN_ATTR: float(gain), NORMALIZATION_MODE_ATTR: mode, **units}
+
+
+def _exposure(
+    gain: float,
+    mode: str,
+    units: Mapping[str, Any],
+    line: Optional[str] = None,
+    **extra: Any,
+) -> ConvertExposure:
+    """A :class:`ConvertExposure` carrying ``gain`` (and its stamp attrs)."""
+    attrs = _gain_attrs(gain, mode, units)
+    attrs.update(extra)
+    return ConvertExposure(gain=float(gain), attrs=attrs, line=line)
+
+
+def amplitude_unit_attrs(stats: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """``amplitude_unit`` (+ ``amplitude_offset``) for a store's amplitudes.
+
+    A fit records its normalisation basis (``intensity_range``), and its
+    amplitudes are then in source data units above the subtracted level
+    (``image_min``, see :mod:`luxar.gsplats.fit_basis`): ``counts`` for an
+    integer source, ``data units`` otherwise, ``above background`` when a level
+    was subtracted, with that level as ``amplitude_offset``. A store recording
+    no basis — an imported classical splat file, a merge of disagreeing fits —
+    gets ``a.u.`` and no offset: nothing says what its numbers mean.
+
+    With a basis, ``source_data_range`` = ``[0, image_max - image_min]`` records
+    the source's own intensity span in the same unit: the data the splats
+    represent, which their per-Gaussian PEAK amplitudes do not span (overlapping
+    Gaussians sum to a voxel's value).
+    """
+    import numpy as np
+
+    from ...gsplats.fit_basis import fit_image_min, source_intensity_span
+
+    stats = stats or {}
+    if stats.get("intensity_range") is None:
+        return {AMPLITUDE_UNIT_ATTR: "a.u."}
+    try:
+        integer = np.dtype(stats.get("source_dtype")).kind in "iu"
+    except (TypeError, ValueError):
+        integer = False
+    unit = "counts" if integer else "data units"
+    level = fit_image_min(stats)
+    attrs: Dict[str, Any] = {}
+    if level is not None and level > 0.0:
+        unit += " above background"
+        attrs[AMPLITUDE_OFFSET_ATTR] = float(level)
+    attrs[AMPLITUDE_UNIT_ATTR] = unit
+    span = source_intensity_span(stats)
+    if span is not None:
+        attrs[SOURCE_DATA_RANGE_ATTR] = [0.0, float(span)]
+    return attrs
+
+
+def _manual(scale_intensity: float, units: Mapping[str, Any]) -> ConvertExposure:
+    """``--scale-intensity``: gain exactly ``S``, recorded as mode ``manual``."""
+    return _exposure(
+        scale_intensity,
+        "manual",
+        units,
+        f"Exposure: manual gain ×{scale_intensity:g} (--scale-intensity); "
         "auto exposure off",
     )
 
@@ -184,11 +253,13 @@ def resolve_convert_exposure(
     opacity: float,
     blending_mode: str,
     tone_mapping: Optional[str] = None,
+    stats: Optional[Mapping[str, Any]] = None,
 ) -> ConvertExposure:
-    """Decide the amplitude scaling convert applies (see the module docstring).
+    """Decide the ``display_gain`` convert stamps (see the module docstring).
 
     ``target=None`` picks the tone-mapping default
-    (:func:`~luxar.gsplats.exposure.default_target_brightness`).
+    (:func:`~luxar.gsplats.exposure.default_target_brightness`). ``stats`` is the
+    store's root stats, which decide the unit labels.
     """
     from ...gsplats.exposure import (
         SUMMING_BLENDING_MODES,
@@ -198,21 +269,26 @@ def resolve_convert_exposure(
         stamped_amplitude_window,
     )
 
+    units = amplitude_unit_attrs(stats)
     if scale_intensity is not None:
-        return _manual(scale_intensity)
+        return _manual(scale_intensity, units)
+    centers, chol, amps, colors = collect_default_splats(node)
+    # The legacy per-splat normalisation, as a gain: p99.9 splat → 1.0 when
+    # the data sit above 1.0, else 1 (``normalize_amplitudes=True``'s rule).
+    per_splat = resolve_factor(True, _sample_reference(amps)) or 1.0
     if not auto_exposure:
-        return ConvertExposure(normalize=True)
+        return _exposure(per_splat, "per_splat", units)
     if blending_mode not in SUMMING_BLENDING_MODES:
-        return ConvertExposure(
-            normalize=True,
-            line=f"Exposure: auto exposure applies to additive/luminous blending; "
+        return _exposure(
+            per_splat,
+            "per_splat",
+            units,
+            f"Exposure: auto exposure applies to additive/luminous blending; "
             f"'{blending_mode}' keeps per-splat normalization",
         )
     if target is None:
         target = default_target_brightness(tone_mapping)
     columns, axis_col, axis_name = opening_view_columns(orientation)
-    centers, chol, amps, colors = collect_default_splats(node)
-    per_splat = resolve_factor(True, _sample_reference(amps)) or 1.0
     try:
         plan = plan_projected_exposure(
             centers,
@@ -229,19 +305,19 @@ def resolve_convert_exposure(
             trunc=_leaf_truncation(node),
         )
     except ValueError as exc:
-        return ConvertExposure(
-            normalize=True,
-            line=f"Exposure: could not predict the opening view ({exc}); "
+        return _exposure(
+            per_splat,
+            "per_splat",
+            units,
+            f"Exposure: could not predict the opening view ({exc}); "
             "using per-splat normalization",
         )
-    total = per_splat * plan.factor
-    attrs: Dict[str, Any] = {
-        NORMALIZATION_FACTOR_ATTR: float(total),
-        NORMALIZATION_MODE_ATTR: "projected",
+    extra: Dict[str, Any] = {
         PROJECTED_SUM_P999_ATTR: float(plan.predicted_after),
         PROJECTED_SUM_TARGET_ATTR: float(target),
     }
     if axis_name is not None:
-        attrs[PROJECTED_SUM_AXIS_ATTR] = axis_name
-    line = _exposure_line(plan)
-    return ConvertExposure(normalize=AmplitudeScale(total), attrs=attrs, line=line)
+        extra[PROJECTED_SUM_AXIS_ATTR] = axis_name
+    return _exposure(
+        per_splat * plan.factor, "projected", units, _exposure_line(plan), **extra
+    )

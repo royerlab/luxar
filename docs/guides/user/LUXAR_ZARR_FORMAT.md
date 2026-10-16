@@ -1356,20 +1356,52 @@ and `luxar optimize` carries the file into a re-chunked store for the same reaso
 `master_gain`, `panning_model` `"equalpower"` | `"HRTF"`, per-bus gains, and
 `duck_db` — the ambient attenuation while anything on the voice bus plays).
 
+### Amplitude units and display gain
+
+A scene written by `luxar gsplat convert` / `view` keeps a fit's amplitudes in
+**source data units** — the fit already stores them that way (detector counts
+above the subtracted background for an integer source) — so the Layers panel
+reads in the data's own units. Note what those numbers are: a stored amplitude is
+one Gaussian's PEAK value. Overlapping Gaussians sum to the voxel value in 3D (and
+the view additionally sums along each ray), so the amplitude window
+(`amplitude_data_range`, p0.1–p99.9 of the peaks) sits well below the data's own
+range — a 12,000-count stack can show peaks of 7–1,800. The source's range is
+therefore recorded separately as `source_data_range`. Brightness is carried
+separately too. Four render attrs, all gsplats-only (the writer refuses them on
+points / lines / mesh, which have no amplitude) and all written only when the
+producer passes them; the Python adders refuse them while `normalize_amplitudes`
+would rescale the amplitudes (anything but `False` / `AmplitudeScale(1.0)`):
+
+| Attr | Meaning |
+|------|---------|
+| `display_gain` | Positive float, identity `1.0`. The brightness the viewer applies to the stored amplitudes: it multiplies the amplitude in EVERY amplitude-linear term of the draw — the emitted radiance (all modes), the `max`-mode peak, the `normal`-mode coverage, the `volumetric` optical depth (`τ = κ · opacity · gain · rayMass`, so in `volumetric` it scales density exactly as `opacity` does, but unbounded) and the visibility/footprint culling — and NEVER the colormap lookup, which windows the amplitude in its stored units against `amplitude_data_range`. The render is therefore identical to pre-multiplying the stored amplitudes by it. Composes **multiplicatively** along the ancestry like `intensity` (it is a compositing attr), so one gain on a `kind=partition` / `kind=lod` wrapper scales every part and level alike. The Layers panel shows it as **Brightness**. |
+| `amplitude_unit` | Non-empty string labelling the stored amplitudes (and so the display window): `"counts above background"`, `"counts"`, `"data units above background"`, `"data units"`, or `"a.u."` when the source recorded no normalisation basis (imported classical splat files, merges of disagreeing fits). Display-only; sits on every leaf. |
+| `amplitude_offset` | Finite float: the level subtracted before fitting (`image_min`, the background floor), in the source's units. Display-only (the Layers panel's tooltip and data line); the amplitudes are NOT shifted by it. Absent when nothing was subtracted. |
+| `source_data_range` | `[lo, hi]` finite floats: the SOURCE's intensity span above `amplitude_offset`, in the amplitude unit — `[0, intensity_range]` (`= image_max − image_min` for a range-normalised fit). Display-only: the Layers panel shows it as a read-only "Data: 0 – 12,000 counts above background (floor 100)" line, for colormapped and direct-colour layers alike. Absent when the store records no basis. `gsplat transform --scale-intensity` scales `intensity_range` / `image_max` with the amplitudes, and `--normalize-intensity` drops them (the scene then says `a.u.`, with no data line). |
+
+Which `amplitude_unit` a fit gets depends on its recorded `source_dtype`: every
+fit path records it (flat, uniform-tiled, content-tiled and batch-fit merges), so
+an integer stack reads `counts`; a store that lost it reads `data units`.
+
+An old scene carries none of them and renders bit-identically (the gain's
+identity is exactly `1.0`). From Python, opt in with
+`add_gsplats_from_data(..., normalize_amplitudes=False, display_gain=…,
+amplitude_unit=…, amplitude_offset=…, source_data_range=…)`; the default insertion still normalises
+(see `docs/specs/GSPLATS_ZARR_FORMAT.md`).
+
 ### GSplats amplitude provenance
 
-A gsplats node in a scene stores amplitudes that have usually been rescaled at
-insertion (see `docs/specs/GSPLATS_ZARR_FORMAT.md`). The rescale is recorded so
-the stored values can be reconciled with the fit they came from. None of these
+`gsplat convert` records how it chose the `display_gain`, so the brightness can
+be reconciled with the fit and with the opening-view prediction. None of these
 attrs is read by the viewer; on a `kind=lod` / `kind=partition` subtree they sit
 on every leaf, with one shared value.
 
 | Attr | Meaning |
 |------|---------|
-| `amplitude_normalization_factor` | The TOTAL raw→stored factor: `stored = raw × factor`, so `raw = stored / factor` (to the store's amplitude quantization). Always stamped by `gsplat convert` auto exposure and `--scale-intensity` (1.0 when nothing was scaled); on the per-splat path it is absent when nothing was scaled. |
-| `amplitude_normalization_mode` | `"projected"` — `gsplat convert` auto exposure; `"manual"` — `gsplat convert --scale-intensity`. Absent on the per-splat p99.9 normalization of the Python adders and `--no-auto-exposure`. |
-| `projected_sum_p999` | Auto exposure only: the predicted p99.9 of the per-pixel additive sum of the opening view, after scaling (HDR, before tone mapping). |
-| `projected_sum_target` | Auto exposure only: the `--target-brightness` it was scaled to (never brightened past the per-splat normalization). `projected_sum_p999` falls below it when the side-view cap (side views ≤ 4× target) set the factor. |
+| `amplitude_normalization_factor` | Written only by the Python adders' insertion-time normalisation (`normalize_amplitudes=True`, the default outside convert): the raw→stored factor, `stored = raw × factor`. A `gsplat convert` scene does not rescale its amplitudes, so it carries none. |
+| `amplitude_normalization_mode` | Which rule produced convert's `display_gain`: `"projected"` — auto exposure; `"per_splat"` — the per-splat p99.9 normalisation alone (`--no-auto-exposure`, a non-summing blending mode, or a failed prediction); `"manual"` — `--scale-intensity`. |
+| `projected_sum_p999` | Auto exposure only: the predicted p99.9 of the per-pixel additive sum of the opening view, after the gain (HDR, before tone mapping). |
+| `projected_sum_target` | Auto exposure only: the `--target-brightness` it was dimmed to (never brightened past the per-splat normalization). `projected_sum_p999` falls below it when the side-view cap (side views ≤ 4× target) set the gain. |
 | `projected_sum_axis` | Auto exposure only: the scene dimension the opening view looks along. |
 
 The source `.gsplats.zarr` is never rewritten, so `luxar gsplat render` /

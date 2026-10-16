@@ -50,6 +50,39 @@ def _resolve_normalize_amplitudes_default(
     return parent.attrs.get("kind") not in ("lod", "partition")
 
 
+def _reject_display_attrs_with_normalization(
+    normalize_amplitudes: Any, attrs: Dict[str, Any]
+) -> None:
+    """Refuse the data-unit attrs on amplitudes that insertion will RESCALE.
+
+    ``display_gain`` / ``amplitude_unit`` / ``amplitude_offset`` /
+    ``source_data_range`` describe amplitudes stored in source data units; with
+    normalisation on, the stored values become ``raw × factor`` and every one of
+    those labels would be wrong (and the gain would apply twice).
+    """
+    from .compositing import GSPLATS_ONLY_AMPLITUDE_ATTRS
+    from .gsplats_pipeline.amplitude_norm import AmplitudeScale
+
+    present = sorted(GSPLATS_ONLY_AMPLITUDE_ATTRS & attrs.keys())
+    if not present:
+        return
+    identity = (
+        normalize_amplitudes is None
+        or normalize_amplitudes is False
+        or (
+            isinstance(normalize_amplitudes, AmplitudeScale)
+            and normalize_amplitudes.factor == 1.0
+        )
+    )
+    if not identity:
+        raise ValueError(
+            f"{present} describe amplitudes kept in source data units, but "
+            f"normalize_amplitudes={normalize_amplitudes!r} rescales them at "
+            "insertion. Pass normalize_amplitudes=False to keep the data units "
+            "(and put the brightness in display_gain), or drop these attrs."
+        )
+
+
 def _resolve_gsplat_substitutive_lod_alias(
     substitutive_lod: Any, lod_group: Any
 ) -> Any:
@@ -1187,6 +1220,18 @@ class Group(Node):
                 and volumetric optical depth are both LINEAR in the raw stored
                 amplitude and nothing windows them. See
                 :mod:`luxar.core.group.gsplats_pipeline.amplitude_norm`.
+
+                To keep the amplitudes in SOURCE DATA UNITS instead (so the
+                viewer's Layers panel reads in data units), pass
+                ``normalize_amplitudes=False`` together with the opt-in attrs
+                ``display_gain=`` (the brightness factor the viewer applies to
+                every amplitude-linear term, never to the colormap lookup),
+                ``amplitude_unit=`` (e.g. ``"counts above background"``),
+                ``amplitude_offset=`` (the subtracted background level, display
+                only) and ``source_data_range=`` (the source's own span above
+                it) — what ``luxar gsplat convert`` writes. None of them is
+                written unless passed, and all are refused while
+                ``normalize_amplitudes`` would rescale the amplitudes.
             **attrs: Additional node attributes — the :meth:`add_gsplats`
                 vocabulary (including ``absorption``) MINUS the four channels
                 this method supplies from ``result``, which are refused; see the
@@ -1215,6 +1260,7 @@ class Group(Node):
         normalize_amplitudes = _resolve_normalize_amplitudes_default(
             parent or self, normalize_amplitudes
         )
+        _reject_display_attrs_with_normalization(normalize_amplitudes, attrs)
         return self._transactional_add(
             name,
             parent,
@@ -1339,6 +1385,7 @@ class Group(Node):
         normalize_amplitudes = _resolve_normalize_amplitudes_default(
             parent or self, normalize_amplitudes
         )
+        _reject_display_attrs_with_normalization(normalize_amplitudes, attrs)
         return self._transactional_add(
             name,
             parent,
@@ -1424,6 +1471,7 @@ class Group(Node):
         normalize_amplitudes = _resolve_normalize_amplitudes_default(
             parent or self, normalize_amplitudes
         )
+        _reject_display_attrs_with_normalization(normalize_amplitudes, fit_kwargs)
         return self._transactional_add(
             name,
             parent,

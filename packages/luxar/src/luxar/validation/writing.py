@@ -843,6 +843,25 @@ _SUGGESTION_ATTRS: tuple[str, ...] = tuple(
 )
 
 
+def _validate_amplitude_display_attrs(attrs: Dict[str, Any]) -> None:
+    """Validate the gsplats data-unit display attrs (``display_gain`` & co)."""
+    from .types import (
+        validate_amplitude_offset,
+        validate_amplitude_unit,
+        validate_display_gain,
+        validate_source_data_range,
+    )
+
+    if "display_gain" in attrs:
+        validate_display_gain(attrs["display_gain"])
+    if "amplitude_unit" in attrs:
+        validate_amplitude_unit(attrs["amplitude_unit"])
+    if "amplitude_offset" in attrs:
+        validate_amplitude_offset(attrs["amplitude_offset"])
+    if "source_data_range" in attrs:
+        validate_source_data_range(attrs["source_data_range"])
+
+
 def _validate_compositing_attrs(attrs: Dict[str, Any]) -> None:
     """Validate authored compositing controls in the shared attr gate."""
     if "blending_mode" in attrs:
@@ -1246,6 +1265,8 @@ def validate_render_attrs(
         from .types import validate_offset
 
         validate_offset(attrs["offset"])
+
+    _validate_amplitude_display_attrs(attrs)
 
     if "layer" in attrs:
         from .types import validate_layer

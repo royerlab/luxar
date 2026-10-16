@@ -323,6 +323,16 @@ render_attr_keys:
   - link_target
   # Lines-only join style (#790)
   - join
+  # GSplats-only data-unit display (LUXAR_ZARR_FORMAT.md, "Amplitude units and
+  # display gain"): `display_gain` multiplies every amplitude-linear term of the
+  # draw (composes multiplicatively, like `intensity`); `amplitude_unit` and
+  # `amplitude_offset` label the stored amplitudes for the Layers panel;
+  # `source_data_range` is the source's own intensity span above that offset (a
+  # read-only reference: splat amplitudes are per-Gaussian peaks, not voxels).
+  - display_gain
+  - amplitude_unit
+  - amplitude_offset
+  - source_data_range
   # Mesh-only shading / material / texture knobs
   - alpha_cutoff
   - ambient

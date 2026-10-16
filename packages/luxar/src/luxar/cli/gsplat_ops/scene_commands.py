@@ -41,19 +41,22 @@ def convert_to_scene(
         None,
         "--scale-intensity",
         callback=_positive_scale,
-        help="Multiply the fitted amplitudes by exactly this factor (any tree "
-        "shape); replaces automatic normalization and auto exposure",
+        help="Display gain (brightness) of exactly this factor relative to the "
+        "fitted amplitudes, which stay in data units (any tree shape); "
+        "replaces automatic normalization and auto exposure",
     ),
     auto_exposure: bool = typer.Option(
         True,
         "--auto-exposure/--no-auto-exposure",
         help="Dim splat brightness so the opening view is not saturated: predict "
-        "the per-pixel additive sum down the default view axis and scale "
-        "amplitudes so its p99.9 is --target-brightness (never brightens), "
+        "the per-pixel additive sum down the default view axis and set the "
+        "node's display gain so its p99.9 is --target-brightness (never "
+        "brightens; the amplitudes stay in data units), "
         "dimming further if a side view or another timepoint would exceed 4x "
         "that. Hidden axes are predicted where the viewer opens them (a "
         "timelapse at its first timepoint, up to 4 more sampled for the cap). "
-        "--no-auto-exposure = legacy per-splat p99.9 normalization only.",
+        "--no-auto-exposure = gain from the legacy per-splat p99.9 "
+        "normalization only.",
     ),
     target_brightness: Optional[float] = typer.Option(
         None,
@@ -96,8 +99,9 @@ def convert_to_scene(
     intensity: Optional[float] = typer.Option(
         None,
         "--intensity",
-        help="Display-window intensity relative to amplitudes as stored "
-        "(after auto exposure / normalization, or --scale-intensity)",
+        help="Display-window intensity relative to the display-gained "
+        "amplitudes (after auto exposure / normalization, or "
+        "--scale-intensity); a colormap window is restated in data units",
     ),
     layer: bool = typer.Option(
         True,

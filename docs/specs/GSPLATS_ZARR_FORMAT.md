@@ -687,15 +687,34 @@ it across each gsplat structure**.
 > a per-level factor scales the levels against each other and the brightness pops
 > at every LOD switch. See `core/group/gsplats_pipeline/amplitude_norm.py`.
 >
-> **`luxar gsplat convert` goes one step further: auto exposure.** Per-splat
-> normalisation ignores overlap, and additive blending SUMS every splat along the
-> view ray, so a dense fit still opens as a saturated blob. By default convert
-> predicts the opening view's per-pixel sum (`luxar.gsplats.exposure`) and dims
-> the amplitudes — never brightens — so its p99.9 equals `--target-brightness`
-> (2.0; 0.9 under a clipping tone mapping), or lower when a side view or another
-> timepoint would exceed 4x that, recording the total factor plus `amplitude_normalization_mode="projected"`
-> and the prediction (`docs/guides/user/LUXAR_ZARR_FORMAT.md` § "GSplats amplitude
-> provenance"). `--no-auto-exposure` restores the per-splat normalisation alone.
+> **`luxar gsplat convert` does not normalise: it keeps data units and stamps a
+> `display_gain`.** Rescaling the data would make the viewer's Layers panel show
+> arbitrary numbers, so convert writes the fit's amplitudes unchanged (source data
+> units, labelled by `amplitude_unit`, with the subtracted floor as
+> `amplitude_offset` and the source's own span above it as `source_data_range` —
+> a splat amplitude is one Gaussian's PEAK, so its window sits below the data's
+> range wherever Gaussians overlap) and puts the brightness into the per-node `display_gain`
+> render attr, which the viewer multiplies into exactly the amplitude-linear terms
+> above (radiance and optical depth) and not into the colormap lookup — the same
+> render, without rewriting the data (`docs/guides/user/LUXAR_ZARR_FORMAT.md`
+> § "Amplitude units and display gain"). The gain is chosen by **auto exposure**:
+> per-splat normalisation ignores overlap, and additive blending SUMS every splat
+> along the view ray, so a dense fit would still open as a saturated blob. Convert
+> predicts the opening view's per-pixel sum (`luxar.gsplats.exposure`) and dims —
+> never brightens — so its p99.9 equals `--target-brightness` (2.0; 0.9 under a
+> clipping tone mapping), or lower when a side view or another timepoint would
+> exceed 4x that, recording `amplitude_normalization_mode="projected"` and the
+> prediction (§ "GSplats amplitude provenance" there). `--no-auto-exposure` makes
+> the gain the per-splat normalisation alone; `--scale-intensity S` makes it `S`.
+>
+> **Every amplitude encoding holds data units losslessly relative to normalised
+> ones.** The scene encodings are anchored on each array's own range
+> (geometric-log or bounded-linear quantisation; `float32` under `precision`), so
+> storing `k·a` picks the same encoder, has the same relative error and decodes to
+> `k·decode(a)` — measured for 0–65535 counts and for float data spanning
+> 1e-6–1e6 (`io/tests/test_data_unit_amplitudes.py`). No amplitude path emits
+> `float16`; the viewer applies the gain in the vertex stage, so the `mediump`
+> amplitude varying never carries raw counts.
 
 **Window harmonization (#1691)**. A per-node window is right for one flat leaf
 and wrong for a multi-node structure: on a `kind=lod` ladder a coarse level's

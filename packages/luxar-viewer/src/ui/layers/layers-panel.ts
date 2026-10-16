@@ -736,6 +736,9 @@ export class LayersPanel {
       supportsColormap: l.supportsColormap,
       blendingMode: l.blendingMode,
       absorption: l.absorption,
+      brightness: l.brightness,
+      authoredBrightness: l.authoredBrightness,
+      ...(l.amplitudeUnit !== undefined ? { amplitudeUnit: l.amplitudeUnit } : {}),
       layerOrder: l.layerOrderExplicit && l.layerOrder !== undefined ? l.layerOrder : null,
       ...(l.sound ? { gain: l.sound.gain } : {}),
     }));
@@ -788,6 +791,10 @@ export class LayersPanel {
       absorption: (absorption) => {
         this.state.setAbsorption(path, absorption);
         this.applyEngine.applyAbsorption(live);
+      },
+      brightness: (brightness) => {
+        this.state.setBrightness(path, brightness);
+        this.applyEngine.applyBrightness(live);
       },
       layerOrder: (order) => {
         this.state.setLayerOrder(path, order);

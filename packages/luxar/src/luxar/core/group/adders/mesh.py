@@ -66,6 +66,7 @@ from ..compositing import (
     is_broadcast_color,
     position_bounds_from_array,
     preflight_extend_to_all,
+    reject_gsplats_only_amplitude_attrs,
     reject_layer_order_inside_specialized_group,
     reject_lines_only_join,
     slice_optional_array,
@@ -1165,6 +1166,7 @@ def add_mesh_impl(
         _reject_physical_material_conflicts(name, attrs, shading, texture)
         _reject_energy_stamps(name, attrs)
         reject_lines_only_join("mesh", name, attrs)
+        reject_gsplats_only_amplitude_attrs("mesh", name, attrs)
 
         # Consumed HERE, at the top, so nothing downstream — the substitutive
         # wrapper, the attr gate, the returned node object — ever sees the

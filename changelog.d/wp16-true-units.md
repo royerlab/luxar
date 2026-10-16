@@ -1,0 +1,32 @@
+#### Converted Gaussian-splat scenes read in the data's own units
+
+`luxar gsplat convert` and `luxar gsplat view` no longer rescale a fit's
+amplitudes. The scene keeps them in the source's own units (detector counts
+above the subtracted background for an integer stack) and labels them with the
+new `amplitude_unit` attr, with the subtracted floor in `amplitude_offset`.
+Brightness now lives in a separate per-node `display_gain` attr, which the
+viewer multiplies into the emission and the volumetric density but never into
+the colormap lookup. The render is the same one rescaling gave, but the Layers
+panel reads in those units. The window is labelled **Splat amplitude** with the
+unit as a caption, because each value is one Gaussian's peak: overlapping splats
+sum to the data value, so the window sits below the data's own range, which a new
+`source_data_range` attr records and the panel shows as a read-only "Data: 0 –
+12,000 counts above background (floor 100)" line. A new logarithmic
+**Brightness** control edits the gain relative to the opening exposure (×1;
+double-click returns to it; the tooltip gives the absolute gain). The gain composes
+like `intensity`, reaches the pick pass, and travels in the embedder API
+(`LayerSummary`/`LayerPatch.brightness`) and in view bookmarks.
+
+Auto exposure, `--no-auto-exposure` and `--scale-intensity` now set the gain
+(`amplitude_normalization_mode` records which), and a colormap `--intensity`
+window is restated in data units. `amplitude_normalization_factor` is no longer
+written by convert, because convert no longer rescales the data. The Python
+`add_gsplats_*` adders still normalise by default; pass
+`normalize_amplitudes=False` with `display_gain=`, `amplitude_unit=`,
+`amplitude_offset=` and `source_data_range=` to opt in (they are refused while
+normalising). `gsplat transform --scale-intensity` now scales the store's
+intensity basis with the amplitudes and `--normalize-intensity` drops it, and
+content-tiled fits record their `source_dtype`, so integer stacks read "counts". Scenes without the attrs render bit-identically.
+Every amplitude encoding holds data units: counts up to 65535 and float data of
+any magnitude keep the relative precision normalised values had, and no
+amplitude path uses float16.

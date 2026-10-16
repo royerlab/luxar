@@ -454,6 +454,22 @@ scene.
 Displays a list of all data nodes in the scene with toggles for visibility
 and opacity control.
 
+For a Gaussian-splat layer converted with `luxar gsplat convert`, the window is
+labelled **Splat amplitude** and is in the data's own units (a caption under the
+slider names them, e.g. "counts above background"). These are not voxel
+intensities: each value is one Gaussian's PEAK amplitude. Overlapping splats sum
+to the data value in 3D, and the view additionally sums along each ray, so the
+window sits well below the data's range — which the panel shows underneath as a
+read-only line, e.g. "Data: 0 – 12,000 counts above background (floor 100)"
+(also for RGB / multichannel layers). How bright the layer renders is the
+separate **Brightness** control (the node's `display_gain`, on a logarithmic
+track). It reads RELATIVE to the brightness the scene opened with — ×1 is the
+opening exposure, double-click returns to it, and the tooltip gives the absolute
+gain — and it changes neither the window nor the colormap. With several layers
+selected, a window or Brightness change applies to each as the same fraction of
+its own range or authored gain. See `docs/guides/user/LUXAR_ZARR_FORMAT.md`
+§ "Amplitude units and display gain".
+
 ### Overlays (U)
 
 Screen-space annotations (text, images, videos, HTML) positioned over the 3D

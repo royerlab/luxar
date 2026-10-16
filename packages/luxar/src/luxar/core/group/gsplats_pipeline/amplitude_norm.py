@@ -35,6 +35,19 @@ scene its amplitudes should sit in ``[0, ~1]``, which puts ``opacity`` and
 ``absorption`` back in their natural ranges and makes appearance portable
 between datasets.
 
+The data-unit alternative: ``display_gain``
+-------------------------------------------
+
+Normalising REWRITES the data, so the Layers panel then shows rescaled numbers
+rather than the data's own units. ``luxar gsplat convert`` therefore no longer
+normalises: it keeps the amplitudes in source data units and stamps the same
+factor as a per-node ``display_gain`` attr instead, which the viewer multiplies
+into exactly the two amplitude-linear terms above (emission and optical depth)
+and NOT into the colormap lookup — so the render is the one normalising would
+have produced (``LUXAR_ZARR_FORMAT.md``, "Amplitude units and display gain").
+The Python ``add_gsplats_*`` default is unchanged (``normalize_amplitudes=True``);
+pass ``normalize_amplitudes=False, display_gain=...`` to opt in.
+
 Design decisions, and why
 -------------------------
 
@@ -103,13 +116,27 @@ IN_RANGE_TOLERANCE = 1e-6
 NORMALIZATION_FACTOR_ATTR = "amplitude_normalization_factor"
 
 #: Provenance attrs stamped by ``gsplat convert``'s auto exposure (see
-#: :mod:`luxar.gsplats.exposure`): how the stored amplitudes were derived and
-#: what the opening view was predicted to look like. Like the factor, the viewer
-#: does not read them.
+#: :mod:`luxar.gsplats.exposure`): which rule produced the ``display_gain``
+#: (``projected`` / ``per_splat`` / ``manual``) and what the opening view was
+#: predicted to look like. Like the factor, the viewer does not read them.
 NORMALIZATION_MODE_ATTR = "amplitude_normalization_mode"
 PROJECTED_SUM_P999_ATTR = "projected_sum_p999"
 PROJECTED_SUM_TARGET_ATTR = "projected_sum_target"
 PROJECTED_SUM_AXIS_ATTR = "projected_sum_axis"
+
+#: Render attrs of the data-unit path (``LUXAR_ZARR_FORMAT.md``): the per-node
+#: brightness factor the viewer applies to the stored amplitudes, the label of
+#: the stored amplitudes' unit, and the level subtracted before fitting (in the
+#: same unit; display-only). Unlike the provenance attrs above, the viewer READS
+#: all three.
+DISPLAY_GAIN_ATTR = "display_gain"
+AMPLITUDE_UNIT_ATTR = "amplitude_unit"
+AMPLITUDE_OFFSET_ATTR = "amplitude_offset"
+#: ``[0, image_max - image_min]``: the SOURCE's intensity span above the offset,
+#: in the amplitude unit. A reference the Layers panel shows beside the splat
+#: window — a splat amplitude is one Gaussian's PEAK, and overlapping Gaussians
+#: sum to the voxel value, so the peak window sits well below the data's range.
+SOURCE_DATA_RANGE_ATTR = "source_data_range"
 
 
 @dataclass(frozen=True)
