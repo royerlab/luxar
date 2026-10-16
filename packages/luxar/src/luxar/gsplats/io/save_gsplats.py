@@ -296,6 +296,22 @@ _FITTING_INFO_KEYS = (
     "fitted_voxels",
     "occupancy",
     "voxels_per_splat",
+    # The coordinate frame of the stored splats. `physical_coordinates` says
+    # whether centers/Cholesky are voxel indices or `voxel_size` x index (in
+    # `voxel_unit`, from `voxel_size_source`); `source_region` is the
+    # `fit --region` crop, [[start, stop], ...] in source voxel indices, whose
+    # start is ALREADY added to the centers (they sit in full-volume
+    # coordinates; `source_shape` is the crop's). Rendering onto the fitted
+    # grid means undoing both first.
+    "voxel_size",
+    "voxel_unit",
+    "voxel_size_source",
+    "physical_coordinates",
+    "source_region",
+    # The robust-peak companions of `psnr_db` / `foreground_psnr_db` (see
+    # `luxar.gsplats.metrics.compute_quality_metrics`).
+    "psnr_robust_db",
+    "foreground_psnr_robust_db",
 )
 
 
@@ -895,10 +911,12 @@ def fit_axis_dimension_metadata(
     No fitting provenance, a stacked timelapse whose centers outrank the source
     grid, or an unconventional rank returns ``None`` rather than guessing.
 
-    Names only, deliberately: a later geometric ``gsplat transform`` scales or
-    rotates the data inside the same frame, so the frame's axis NAMES stay
-    honest, whereas a voxel ``scale`` would not (the fit's voxel spacing is
-    already recorded verbatim in ``fitting/config``).
+    Names, plus a ``unit`` only for a fit stored in physical coordinates
+    (``fitting/physical_coordinates`` with a known ``voxel_unit``): its centers
+    ARE in that unit, so ``gsplat convert`` can label the scene axes (and its
+    scale bar) honestly. Never a voxel ``scale``: a later geometric ``gsplat
+    transform`` moves the data inside the same frame, so names stay honest where
+    a scale would not (the spacing itself is recorded in ``fitting/voxel_size``).
     """
     if not fitting_info or ndim is None:
         return None
@@ -908,7 +926,20 @@ def fit_axis_dimension_metadata(
     names = IMAGE_ARRAY_AXIS_NAMES.get(ndim)
     if names is None:
         return None
-    return [{"name": name} for name in names]
+    unit = _physical_fit_unit(fitting_info)
+    return [{"name": name, **({"unit": unit} if unit else {})} for name in names]
+
+
+def _physical_fit_unit(fitting_info: Dict[str, Any]) -> Optional[str]:
+    """The unit a physical-coordinate fit's centers are in, when it is known."""
+    if fitting_info.get("physical_coordinates") is not True:
+        return None
+    from luxar.typing_utils.enums import PhysicalUnit
+
+    try:
+        return PhysicalUnit.validate(str(fitting_info.get("voxel_unit"))).value
+    except ValueError:
+        return None
 
 
 def _root_ndim(root: zarr.Group) -> Optional[int]:

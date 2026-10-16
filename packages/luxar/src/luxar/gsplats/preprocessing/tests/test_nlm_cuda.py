@@ -10,13 +10,16 @@ import pytest
 import torch
 
 from luxar.gsplats.preprocessing import denoise_nlm
-from luxar.gsplats.preprocessing.cuda import NLM_CUDA_AVAILABLE
+from luxar.gsplats.preprocessing.cuda import nlm_cuda_available
 
 from .conftest import Tolerances, psnr
 
 pytestmark = [
     pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available"),
-    pytest.mark.skipif(not NLM_CUDA_AVAILABLE, reason="NLM CUDA backend not compiled"),
+    pytest.mark.skipif(
+        not torch.cuda.is_available() or not nlm_cuda_available(),
+        reason="no CUDA NLM kernel backend (compiled extension or NVRTC)",
+    ),
 ]
 
 

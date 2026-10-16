@@ -235,10 +235,13 @@ Every writer also fills the gap an unlabeled fit leaves: when the root carries n
 `dimension_metadata` but its `fitting/source_shape` has the same rank as the
 centers (a fit of a 2-D or 3-D image), the root is stamped with the column NAMES
 in array order — `[{"name": "z"}, {"name": "y"}, {"name": "x"}]` for a stack,
-`[{"name": "y"}, {"name": "x"}]` for a plane. Names only: a later `gsplat
-transform` moves data inside the same frame, so the axis names stay honest where
-a voxel `scale` would not (the fit's spacing is already recorded verbatim under
-`fitting/config`, `voxel_size` + `output_space`). An explicit
+`[{"name": "y"}, {"name": "x"}]` for a plane. A fit stored in physical
+coordinates (`fitting/physical_coordinates: true` with a known
+`fitting/voxel_unit`) also gets that `unit` on each entry
+(`{"name": "z", "unit": "um"}`), because its centers ARE in that unit. Never a
+`scale`: a later `gsplat transform` moves data inside the same frame, so names
+and the unit stay honest where a voxel `scale` would not (the spacing itself is
+recorded in `fitting/voxel_size`, see "Coordinate frame" below). An explicit
 `dimension_metadata` always wins, and a stacked timelapse (centers outranking the
 source grid) is left unstamped. `luxar gsplat convert` reads the names to map the
 columns onto x, y, z-ordered scene dimensions and open the scene in the image
@@ -906,6 +909,20 @@ The `fitting/` group is **optional** and designed to be **fitter-agnostic**. Dif
 }
 ```
 
+**Coordinate frame** (fitting/.zattrs, optional; written by `luxar gsplat fit`):
+
+| Key | Meaning |
+| --- | --- |
+| `physical_coordinates` | `true`: centers and Cholesky factors are `voxel_size × voxel index` (physical units); `false` or absent: voxel indices. Every CLI fit writes it. |
+| `voxel_size` | Per-axis spacing the fit used, array axis order. Present whenever a spacing shaped the fit, even with `physical_coordinates: false` (`cal`'s fits, an `output_space: voxel` config). |
+| `voxel_unit` | Unit of `voxel_size` (`"um"` for TIFF metadata and `--voxel-size`; a recognized NGFF unit normalized to its Luxar spelling, otherwise the original unit). Absent when unknown (a config `voxel_size`). |
+| `voxel_size_source` | Where the spacing came from: `--voxel-size`, `fit config`, `OME-TIFF metadata`, `ImageJ metadata`, `OME-Zarr NGFF scale`. |
+| `source_region` | A `fit --region` crop, `[[start, stop], ...]` in the source volume's voxel indices. The start is ALREADY added to the centers (× `voxel_size` when physical), so the splats sit in full-volume coordinates; `source_shape` / `fitted_shape` describe the crop. To render onto the crop's own grid, subtract the start first. |
+
+A Python `fit_gaussian_splats(..., voxel_size=...)` records `voxel_size` and
+`physical_coordinates`; the CLI adds the rest. A reader that renders the splats onto a
+voxel grid has to undo this frame itself.
+
 **Design principle**: Other programs that produce gsplats can write their own
 `fitter_name` and custom config. Readers should:
 1. Always read common fields from `fitting/.zattrs`
@@ -978,6 +995,21 @@ spent splats on.
 `voxels_per_splat` is `fitted_voxels` over the splat count **at the end of the
 fit**, so it predates any post-fit culling.
 
+`voxel_size` (a list, one value per spatial center column) is the spacing of
+the source grid. The mapping applies when `voxel_size` is present and
+`physical_coordinates` is not `false`: every center column and Cholesky row was
+then multiplied by it, so `centers / voxel_size` are indices on the source grid.
+CLI fits may record the spacing for a voxel-output fit too, with
+`physical_coordinates: false`, plus `voxel_unit` and `voxel_size_source`
+(provenance). A stacked store (a timelapse merge) carries the SPATIAL stamp, one
+value short per stacked column; readers pad the trailing stacked columns with
+1.0 and warn about any other length mismatch. `gsplat compare` / `gsplat render`
+divide the spacing back out. A scale or rotation (CLI `gsplat transform`, or a
+non-translation `GSplatData.transform`) drops `voxel_size`, `voxel_unit`,
+`voxel_size_source` and `physical_coordinates` together; a pure translation
+keeps them. Absent means the centers are voxel indices (or the store predates
+the stamp).
+
 Absent on datasets written before these keys existed; readers should report
 nothing rather than infer a source grid from the bounding box.
 
@@ -989,7 +1021,9 @@ and relative-L2 denominator are derived from that shifted reference too:
 ```json
 {
   "psnr_db": 37.0,
+  "psnr_robust_db": 33.4,
   "foreground_psnr_db": 20.0,
+  "foreground_psnr_robust_db": 16.4,
   "foreground_threshold": 0.1274,
   "foreground_fraction": 0.00098,
   "ssim": 0.9912,
@@ -1000,20 +1034,32 @@ and relative-L2 denominator are derived from that shifted reference too:
 `psnr_db` / `ssim` / `mse` are taken over **every** voxel, which on sparse data
 makes them largely a score for reproducing the background: a fit that discards
 nine tenths of the signal in a 99.9%-empty volume still reports 37 dB.
-`foreground_psnr_db` is the same PSNR averaged over `target > foreground_threshold`
-only (Otsu's threshold on the **target**, so a fit that hallucinates structure is
-still scored where the signal actually is), while `data_range` stays the whole
+`foreground_psnr_db` is the same PSNR averaged over the foreground only, defined
+on the **target** (so a fit that hallucinates structure is still scored where
+the signal actually is): `smooth(target) > foreground_threshold`, where `smooth`
+is one separable `[0.25, 0.5, 0.25]` tent blur and the threshold is Otsu's over a
+histogram capped at the target's 99.99th percentile (an uncapped histogram lets
+one hot pixel push every real structure below the threshold). Stores written
+before this definition used plain Otsu on the unblurred target. `gsplat compare`
+uses the same definition by default, while `data_range` stays the whole
 volume's — the convention `calibration.metrics.held_out_psnr_foreground` uses, so
 the two are comparable. Quote `foreground_fraction` with it: a dB figure taken
 over 0.01% of a volume means something quite different from one taken over 40%,
 and the bare number cannot say which.
 
+`psnr_db` / `foreground_psnr_db` use the full range `max - min` of the fit-basis
+reference as the peak. `psnr_robust_db` / `foreground_psnr_robust_db` (same
+error, same voxels) use the robust peak `p99.99 - min` instead, which one hot
+pixel cannot move; tools present the robust figure as the headline and the
+full-range one beside it. Both are optional; older stores carry only the
+full-range pair.
+
 The score is always taken on the fitter's own **voxel grid**, whatever frame the
 centers were handed back in. A dataset fitted with `output_space: real` and a
 `voxel_size` stores physical centers, so re-rendering the stored splats directly
 onto the source grid will not reproduce these numbers — divide the spacing back
-out first. The metrics describe the fit, not the coordinate frame it was
-delivered in.
+out first (`voxel_size` above records it). The metrics describe the fit, not
+the coordinate frame it was delivered in.
 
 **Stacked component provenance** (`fitting/part_provenance`, optional) keeps the
 component fits addressable without pretending their scores aggregate into one

@@ -13,9 +13,14 @@
 #ifndef CUDA_SPLATTING_DTYPE_TRAITS_CUH
 #define CUDA_SPLATTING_DTYPE_TRAITS_CUH
 
+// NVRTC has no toolkit/std headers: rtc_compat.cuh supplies what the kernels use.
+#ifdef __CUDACC_RTC__
+#include "rtc_compat.cuh"
+#else
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
 #include <cassert>
+#endif
 
 // =============================================================================
 // FP16 (HALF PRECISION) SUPPORT

@@ -16,14 +16,8 @@ import torch
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
 
-# Check if CUDA backend is compiled
-try:
-    import cuda_splatting_backend
-
-    CUDA_BACKEND_AVAILABLE = True
-except ImportError:
-    CUDA_BACKEND_AVAILABLE = False
-
+# Resolved kernel backend (AOT extension or NVRTC); honors LUXAR_CUDA_BACKEND.
+from .conftest import CUDA_BACKEND_AVAILABLE, cuda_splatting_backend  # noqa: E402, F401
 
 pytestmark = pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
 
@@ -1244,16 +1238,23 @@ class TestDeviceMovement:
 
         with torch.cuda.device(0):
             output_before = model().clone()
+            params_before = [
+                param.detach().cpu().clone() for param in model.parameters()
+            ]
 
             # Move to second GPU
             model = model.to("cuda:1")
 
             # Verify FP16 preserved
-            for param in model.parameters():
+            for param, before in zip(model.parameters(), params_before, strict=True):
                 assert param.dtype == torch.float16
                 assert param.device == torch.device("cuda:1")
+                assert torch.equal(param.cpu(), before)
 
             output = model()
-        # Different GPU architectures may differ by a half-precision rounding
-        # step; compare the outputs at FP16 precision.
-        assert torch.allclose(output_before.cpu(), output.cpu(), atol=1e-3, rtol=1e-3)
+            # Different GPU architectures (or torch.compile falling back to
+            # eager after its recompile limit on the second GPU) may round
+            # FP16 conic arithmetic differently.
+            assert torch.allclose(
+                output_before.cpu(), output.cpu(), atol=1e-3, rtol=1e-3
+            )

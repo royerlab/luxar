@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import itertools
 import math
-from typing import Dict, List, Tuple
+from typing import Dict, Iterator, List, Tuple
 
 import torch
 
@@ -106,20 +106,18 @@ def _gaussian_filter_valid(
     return out
 
 
-def _ssim_nd(
+def _ssim_map(
     pred: torch.Tensor,
     target: torch.Tensor,
     window_size: int,
     data_range: float,
-) -> Tuple[float, int]:
-    """Compute SSIM for a 2-D or 3-D tensor pair with a separable Gaussian.
+) -> torch.Tensor:
+    """The VALID-region SSIM map of a 2-D or 3-D tensor pair (separable Gaussian).
 
-    Uses valid (no-padding) filtering so the border region — where the
-    kernel would overlap with implicit zeros — is excluded from the mean.
-    This matches the standard scikit-image implementation.
-
-    Returns ``(ssim_sum, num_voxels)`` so callers can do voxel-weighted
-    averaging across tiles.  Mean SSIM = ``ssim_sum / num_voxels``.
+    Valid (no-padding) filtering excludes the border where the kernel would
+    overlap implicit zeros, matching scikit-image. The map is therefore smaller
+    than the inputs by ``window_size - 1`` along every axis: map voxel ``i``
+    describes input voxel ``i + window_size // 2``.
 
     Memory: at most ~6 live full-volume float32 tensors (the five filtered
     moments, one being built, plus one product temporary) — independent of
@@ -173,13 +171,60 @@ def _ssim_nd(
     del sigma_p_sq
 
     # --- Step 6: SSIM map ---
-    mu_pt.div_(mu_p_sq)
-    del mu_p_sq
+    return mu_pt.div_(mu_p_sq)
 
-    ssim_sum = float(mu_pt.sum().item())
-    num_voxels = mu_pt.numel()
-    del mu_pt
 
+#: ``(ssim_sum, num_voxels, foreground_ssim_sum, foreground_voxels)``.
+_SSIMSums = Tuple[float, int, float, int]
+
+
+def _ssim_sums(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    window_size: int,
+    data_range: float,
+    fg_field: torch.Tensor | None = None,
+    fg_threshold: float = 0.0,
+) -> _SSIMSums:
+    """SSIM-map sums over every valid voxel and over the foreground ones.
+
+    Foreground is ``fg_field > fg_threshold``, evaluated on the input voxel each
+    valid map voxel describes (the field is cropped by ``window_size // 2``).
+    The mask is built per call, so under :func:`_ssim_sums_tiled` it is only
+    ever tile-sized. Without a field the foreground sums are ``(0.0, 0)``.
+    """
+    ssim_map = _ssim_map(pred, target, window_size, data_range)
+    ssim_sum = float(ssim_map.sum().item())
+    num_voxels = ssim_map.numel()
+    fg_sum, fg_voxels = 0.0, 0
+    if fg_field is not None and num_voxels > 0:
+        half = window_size // 2
+        crop = tuple(slice(half, half + n) for n in ssim_map.shape)
+        mask = fg_field[crop] > fg_threshold
+        fg_voxels = int(mask.sum().item())
+        if fg_voxels:
+            fg_sum = float(ssim_map.mul_(mask).sum().item())
+        del mask
+    del ssim_map
+    return ssim_sum, num_voxels, fg_sum, fg_voxels
+
+
+def _ssim_nd(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    window_size: int,
+    data_range: float,
+) -> Tuple[float, int]:
+    """Compute SSIM for a 2-D or 3-D tensor pair with a separable Gaussian.
+
+    Uses valid (no-padding) filtering so the border region — where the
+    kernel would overlap with implicit zeros — is excluded from the mean.
+    This matches the standard scikit-image implementation.
+
+    Returns ``(ssim_sum, num_voxels)`` so callers can do voxel-weighted
+    averaging across tiles.  Mean SSIM = ``ssim_sum / num_voxels``.
+    """
+    ssim_sum, num_voxels, _, _ = _ssim_sums(pred, target, window_size, data_range)
     return ssim_sum, num_voxels
 
 
@@ -222,6 +267,44 @@ def _compute_tile_slices(
     return list(itertools.product(*axis_slices))
 
 
+def _ssim_sums_tiled(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    window_size: int,
+    data_range: float,
+    tile_size: int = _SSIM_DEFAULT_TILE_SIZE,
+    fg_field: torch.Tensor | None = None,
+    fg_threshold: float = 0.0,
+) -> _SSIMSums:
+    """:func:`_ssim_sums` over overlapping tiles — same result, tile-sized memory.
+
+    Each tile overlaps its neighbours by ``window_size - 1`` voxels. Because
+    the map uses valid convolution, the overlap is exactly the border each tile
+    trims, so every tile's map covers a non-overlapping region of the full map
+    and the sums equal the untiled ones up to float summation order.
+    """
+    ndim = pred.ndim
+    overlap = window_size - 1
+
+    # If volume fits in a single tile, skip tiling overhead.
+    if all(s <= tile_size for s in pred.shape):
+        return _ssim_sums(pred, target, window_size, data_range, fg_field, fg_threshold)
+
+    totals = [0.0, 0, 0.0, 0]
+    for slices in _compute_tile_slices(pred.shape, tile_size, overlap):
+        tile_p = pred[slices]
+        # Skip tiles too small for the convolution kernel.
+        if any(tile_p.shape[d] < window_size for d in range(ndim)):
+            continue
+        tile_field = fg_field[slices] if fg_field is not None else None
+        sums = _ssim_sums(
+            tile_p, target[slices], window_size, data_range, tile_field, fg_threshold
+        )
+        for index, value in enumerate(sums):
+            totals[index] += value
+    return float(totals[0]), int(totals[1]), float(totals[2]), int(totals[3])
+
+
 def _ssim_nd_tiled(
     pred: torch.Tensor,
     target: torch.Tensor,
@@ -231,46 +314,106 @@ def _ssim_nd_tiled(
 ) -> Tuple[float, int]:
     """Compute SSIM by splitting the volume into overlapping tiles.
 
-    Each tile overlaps its neighbours by ``window_size - 1`` voxels.
-    Because ``_ssim_nd`` uses valid convolution (``padding=0``), the
-    overlap region is exactly the border that gets trimmed — so each
-    tile's output covers a non-overlapping region of the full SSIM map.
-    The tiled result is therefore numerically identical to the non-tiled
-    result (modulo float summation order).
+    The tiled result is numerically identical to the non-tiled result (modulo
+    float summation order); see :func:`_ssim_sums_tiled`.
 
     Returns ``(ssim_sum, num_voxels)`` — same contract as ``_ssim_nd``.
     """
-    ndim = pred.ndim
-    overlap = window_size - 1
-
-    # If volume fits in a single tile, skip tiling overhead.
-    if all(s <= tile_size for s in pred.shape):
-        return _ssim_nd(pred, target, window_size, data_range)
-
-    tile_slices = _compute_tile_slices(pred.shape, tile_size, overlap)
-
-    total_sum = 0.0
-    total_voxels = 0
-
-    for slices in tile_slices:
-        tile_p = pred[slices]
-        tile_t = target[slices]
-
-        # Skip tiles too small for the convolution kernel.
-        if any(tile_p.shape[d] < window_size for d in range(ndim)):
-            continue
-
-        s, n = _ssim_nd(tile_p, tile_t, window_size, data_range)
-        del tile_p, tile_t
-        total_sum += s
-        total_voxels += n
-
-    return total_sum, total_voxels
+    ssim_sum, num_voxels, _, _ = _ssim_sums_tiled(
+        pred, target, window_size, data_range, tile_size
+    )
+    return ssim_sum, num_voxels
 
 
 # ---------------------------------------------------------------------------
 # SSIM (public API)
 # ---------------------------------------------------------------------------
+
+
+def _ssim_volume_sums(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    window_size: int,
+    data_range: float,
+    fg_field: torch.Tensor | None,
+    fg_threshold: float,
+) -> _SSIMSums:
+    """Tiled-or-not SSIM sums for one 2-D/3-D volume (the auto-tiling decision)."""
+    if _should_tile_ssim(pred.shape, pred.device):
+        return _ssim_sums_tiled(
+            pred,
+            target,
+            window_size,
+            data_range,
+            fg_field=fg_field,
+            fg_threshold=fg_threshold,
+        )
+    return _ssim_sums(pred, target, window_size, data_range, fg_field, fg_threshold)
+
+
+def compute_ssim_with_foreground(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    window_size: int = 11,
+    data_range: float | None = None,
+    fg_field: torch.Tensor | None = None,
+    fg_threshold: float = 0.0,
+) -> Tuple[float, float]:
+    """``(ssim, foreground_ssim)``: mean SSIM over all valid voxels, and over
+    the foreground ones (``fg_field > fg_threshold``).
+
+    Same SSIM as :func:`compute_ssim` — one SSIM map, two averages — so on a
+    sparse volume the foreground figure is not diluted by thousands of trivially
+    matching empty voxels. ``foreground_ssim`` is ``nan`` without a field or
+    when the foreground has no valid voxel.
+    """
+    if pred.shape != target.shape:
+        raise ValueError(f"Shape mismatch: pred {pred.shape} vs target {target.shape}")
+    if fg_field is not None and fg_field.shape != target.shape:
+        raise ValueError(
+            f"Shape mismatch: foreground field {fg_field.shape} vs target {target.shape}"
+        )
+
+    if data_range is None:
+        data_range = float((target.max() - target.min()).item())
+    if data_range == 0.0:
+        has_fg = fg_field is not None and any(
+            bool((chunk > fg_threshold).any()) for chunk in _flat_chunks(fg_field)
+        )
+        return 1.0, 1.0 if has_fg else float("nan")
+
+    # Clamp window_size to the smallest spatial dimension (must be odd)
+    min_dim = min(pred.shape[-min(pred.ndim, 3) :])
+    if window_size > min_dim:
+        window_size = min_dim if min_dim % 2 == 1 else max(min_dim - 1, 1)
+
+    if pred.ndim in (2, 3):
+        totals = _ssim_volume_sums(
+            pred, target, window_size, data_range, fg_field, fg_threshold
+        )
+    else:
+        # >3D: voxel-weighted average over all 3D sub-volumes along leading dims
+        acc = [0.0, 0, 0.0, 0]
+        leading = pred.shape[:-3]
+        for idx in torch.cartesian_prod(*[torch.arange(s) for s in leading]):
+            idx_tuple = tuple(idx.tolist()) if idx.ndim > 0 else (idx.item(),)
+            sub_field = fg_field[idx_tuple] if fg_field is not None else None
+            sums = _ssim_volume_sums(
+                pred[idx_tuple],
+                target[idx_tuple],
+                window_size,
+                data_range,
+                sub_field,
+                fg_threshold,
+            )
+            for index, value in enumerate(sums):
+                acc[index] += value
+        totals = (float(acc[0]), int(acc[1]), float(acc[2]), int(acc[3]))
+
+    ssim_sum, n_vox, fg_sum, fg_vox = totals
+    ssim = ssim_sum / n_vox if n_vox > 0 else 0.0
+    fg_ssim = fg_sum / fg_vox if fg_vox > 0 else float("nan")
+    return ssim, fg_ssim
 
 
 def compute_ssim(
@@ -305,44 +448,10 @@ def compute_ssim(
     float
         Mean SSIM in [−1, 1] (typically [0, 1] for non-negative data).
     """
-    if pred.shape != target.shape:
-        raise ValueError(f"Shape mismatch: pred {pred.shape} vs target {target.shape}")
-
-    if data_range is None:
-        data_range = float((target.max() - target.min()).item())
-    if data_range == 0.0:
-        return 1.0  # constant images are identical
-
-    # Clamp window_size to the smallest spatial dimension (must be odd)
-    min_dim = min(pred.shape[-min(pred.ndim, 3) :])
-    if window_size > min_dim:
-        window_size = min_dim if min_dim % 2 == 1 else max(min_dim - 1, 1)
-
-    ndim = pred.ndim
-    if ndim in (2, 3):
-        use_tiled = _should_tile_ssim(pred.shape, pred.device)
-        if use_tiled:
-            s_sum, n_vox = _ssim_nd_tiled(pred, target, window_size, data_range)
-        else:
-            s_sum, n_vox = _ssim_nd(pred, target, window_size, data_range)
-        return s_sum / n_vox if n_vox > 0 else 0.0
-
-    # >3D: voxel-weighted average over all 3D sub-volumes along leading dims
-    leading = pred.shape[:-3]
-    total_sum = 0.0
-    total_voxels = 0
-    for idx in torch.cartesian_prod(*[torch.arange(s) for s in leading]):
-        idx_tuple = tuple(idx.tolist()) if idx.ndim > 0 else (idx.item(),)
-        sub_p = pred[idx_tuple]
-        sub_t = target[idx_tuple]
-        use_tiled = _should_tile_ssim(sub_p.shape, sub_p.device)
-        if use_tiled:
-            s, n = _ssim_nd_tiled(sub_p, sub_t, window_size, data_range)
-        else:
-            s, n = _ssim_nd(sub_p, sub_t, window_size, data_range)
-        total_sum += s
-        total_voxels += n
-    return total_sum / total_voxels if total_voxels > 0 else 0.0
+    ssim, _ = compute_ssim_with_foreground(
+        pred, target, window_size=window_size, data_range=data_range
+    )
+    return ssim
 
 
 # ---------------------------------------------------------------------------
@@ -435,7 +544,9 @@ def _otsu_bin_counts(
     return torch.bincount(idx, minlength=bins).to(torch.float64)
 
 
-def otsu_threshold(target: torch.Tensor, bins: int = _OTSU_BINS) -> float:
+def otsu_threshold(
+    target: torch.Tensor, bins: int = _OTSU_BINS, upper: float | None = None
+) -> float:
     """Otsu's between-class-variance threshold.
 
     Reimplemented here rather than delegating to ``skimage.filters`` because
@@ -454,15 +565,28 @@ def otsu_threshold(target: torch.Tensor, bins: int = _OTSU_BINS) -> float:
 
     Returns ``target.min()`` for a constant volume, which selects nothing under
     the strict ``>`` that :func:`compute_foreground_psnr` applies.
+
+    ``upper`` caps the histogram range (values above it are left out of the
+    histogram — they are foreground under any threshold below it). Pass a robust
+    peak (:func:`robust_peak`) so one hot pixel cannot stretch the 256 bins over
+    a range where all real signal falls into the first few.
     """
     flat = target.reshape(-1)
     lo = float(flat.min().item())
     hi = float(flat.max().item())
+    capped = False
+    if upper is not None and lo < upper < hi:
+        hi, capped = float(upper), True
     if not math.isfinite(lo) or not math.isfinite(hi) or hi <= lo:
         return lo
 
     if flat.numel() > _OTSU_MAX_SAMPLES:
         flat = flat[otsu_sample_indices(flat.numel()).to(flat.device)]
+    if capped:
+        # Leave the values above the cap OUT of the histogram (the counter would
+        # otherwise fold them into the last bin). After the subsample, so the
+        # mask is at most sample-sized.
+        flat = flat[flat <= hi]
     counts = _otsu_bin_counts(flat, lo, hi, bins)
     edges = torch.linspace(lo, hi, bins + 1, dtype=torch.float32).to(torch.float64)
     centres = (edges[:-1] + edges[1:]) / 2.0
@@ -545,6 +669,175 @@ def compute_foreground_psnr(
 
 
 # ---------------------------------------------------------------------------
+# Robust peak + streamed error sums
+# ---------------------------------------------------------------------------
+
+#: Quantile of the reference that sets the ROBUST PSNR peak. One hot pixel (a
+#: cosmic ray, a saturated bead, a stitching artefact) sets ``max - min`` and so
+#: the classical full-range PSNR, by itself; at 99.99% it takes more than one
+#: voxel in ten thousand to move the peak.
+ROBUST_PEAK_QUANTILE = 0.9999
+
+#: Voxels per streamed chunk (4 Mvox = 16 MiB of float32): every full-volume
+#: reduction below walks the volume in views of this size, so its temporaries
+#: are chunk-sized whatever the volume's.
+_STREAM_CHUNK_VOXELS = 1 << 22
+
+
+def _flat_chunks(
+    t: torch.Tensor, chunk: int = _STREAM_CHUNK_VOXELS
+) -> Iterator[torch.Tensor]:
+    """Consecutive views of ``t`` flattened (a copy only if ``t`` is non-contiguous)."""
+    flat = t.reshape(-1)
+    for start in range(0, flat.numel(), chunk):
+        yield flat[start : start + chunk]
+
+
+def robust_peak(target: torch.Tensor, quantile: float = ROBUST_PEAK_QUANTILE) -> float:
+    """The ``quantile`` of ``target`` (nearest rank), streamed and exact.
+
+    Keeps a running top-``k`` over chunk-sized views, where ``k`` is the number of
+    voxels at or above the requested rank (``N - ceil(q N) + 1``; 6.7 k for a
+    256x512x512 volume at 99.99%), so nothing full-volume is allocated and the
+    answer is the exact order statistic — not a histogram bin edge. ``torch.quantile``
+    is not an option: it refuses inputs above 16 M elements. MPS chunks are
+    reduced on the CPU (its ``topk`` caps ``k``).
+    """
+    n = target.numel()
+    if n == 0:
+        return float("nan")
+    k_top = max(1, min(n, n - math.ceil(quantile * n) + 1))
+    best: torch.Tensor | None = None
+    for chunk in _flat_chunks(target):
+        values = chunk.detach()
+        if values.device.type == "mps":
+            values = values.cpu()
+        values = values.to(torch.float32)
+        top = torch.topk(values, min(k_top, values.numel())).values
+        merged = top if best is None else torch.cat((best, top))
+        best = torch.topk(merged, min(k_top, merged.numel())).values
+    assert best is not None
+    return float(best.min().item())
+
+
+def _streamed_extrema(target: torch.Tensor) -> Tuple[float, float]:
+    """``(min, max)`` of ``target`` without a full-volume temporary."""
+    lo, hi = math.inf, -math.inf
+    for chunk in _flat_chunks(target):
+        lo = min(lo, float(chunk.min().item()))
+        hi = max(hi, float(chunk.max().item()))
+    return lo, hi
+
+
+def _error_sums(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    fg_field: torch.Tensor,
+    fg_threshold: float,
+) -> Dict[str, float]:
+    """Squared-error / norm / foreground sums in one chunked pass.
+
+    Replaces the whole-volume ``pred - target``, ``diff ** 2``, ``abs(diff)`` and
+    boolean-mask temporaries (each as large as the volume) with chunk-sized ones.
+    Partial sums are float32 per chunk, accumulated in Python floats.
+    """
+    sse = max_abs = target_sq = fg_sse = 0.0
+    fg_voxels = 0
+    for p, t, f in zip(
+        _flat_chunks(pred), _flat_chunks(target), _flat_chunks(fg_field), strict=True
+    ):
+        if not t.is_floating_point():
+            t = t.to(torch.float32)
+        if not p.is_floating_point():
+            p = p.to(torch.float32)
+        diff = p - t
+        max_abs = max(max_abs, float(diff.abs().max().item()))
+        diff.square_()
+        sse += float(diff.sum().item())
+        mask = f > fg_threshold
+        fg_voxels += int(mask.sum().item())
+        fg_sse += float(diff.mul_(mask).sum().item())
+        target_sq += float(t.square().sum().item())
+        del diff, mask
+    return {
+        "sse": sse,
+        "max_abs": max_abs,
+        "target_sq": target_sq,
+        "fg_sse": fg_sse,
+        "fg_voxels": float(fg_voxels),
+    }
+
+
+def _psnr_from(data_range: float, mse: float) -> float:
+    """``10 log10(range^2 / mse)``; ``inf`` for a zero error or a zero range."""
+    if mse == 0.0 or data_range == 0.0:
+        return float("inf")
+    return 10.0 * math.log10(data_range**2 / mse)
+
+
+# ---------------------------------------------------------------------------
+# Foreground definition
+# ---------------------------------------------------------------------------
+
+
+def _tent_blur(t: torch.Tensor) -> torch.Tensor:
+    """Separable ``[0.25, 0.5, 0.25]`` blur with replicated edges, as float32.
+
+    The torch twin of ``seeds.utils.soft_blur_nd`` (scipy ``convolve1d``,
+    ``mode="nearest"``), so the foreground can be defined on the scoring device.
+    Never modifies ``t``; peaks at two volumes besides it.
+    """
+    out = t.to(torch.float32)
+    for axis in range(t.ndim):
+        src = out
+        out = src * 0.5
+        n = src.shape[axis]
+        out.narrow(axis, 1, n - 1).add_(src.narrow(axis, 0, n - 1), alpha=0.25)
+        out.narrow(axis, 0, n - 1).add_(src.narrow(axis, 1, n - 1), alpha=0.25)
+        out.narrow(axis, 0, 1).add_(src.narrow(axis, 0, 1), alpha=0.25)
+        out.narrow(axis, n - 1, 1).add_(src.narrow(axis, n - 1, 1), alpha=0.25)
+        del src
+    return out
+
+
+def default_foreground(
+    target: torch.Tensor, peak: float | None = None
+) -> Tuple[torch.Tensor, float]:
+    """The shared foreground definition: ``(field, threshold)``, fg = field > thr.
+
+    One light tent blur (the smoothed-Otsu field calibration scores with), then
+    Otsu with the histogram capped at the target's robust peak (``peak``,
+    default :func:`robust_peak`). The cap is taken on the UNBLURRED target: the
+    blur spreads a hot pixel over its neighbours, enough to own the field's own
+    top quantile. Uncapped, one hot pixel stretches the 256 bins until every real
+    structure sits in the first few and below the threshold — a 0.00% foreground.
+    """
+    if peak is None:
+        peak = robust_peak(target)
+    field = _tent_blur(target)
+    return field, otsu_threshold(field, upper=peak)
+
+
+def _resolve_foreground(
+    target: torch.Tensor,
+    field: torch.Tensor | None,
+    threshold: float | None,
+    peak: float,
+) -> Tuple[torch.Tensor, float]:
+    if field is None:
+        if threshold is not None:
+            return target, float(threshold)
+        return default_foreground(target, peak)
+    if field.shape != target.shape:
+        raise ValueError(
+            f"Shape mismatch: foreground field {field.shape} vs target {target.shape}"
+        )
+    if threshold is None:
+        threshold = otsu_threshold(field)
+    return field, float(threshold)
+
+
+# ---------------------------------------------------------------------------
 # Aggregate
 # ---------------------------------------------------------------------------
 
@@ -554,57 +847,105 @@ def compute_quality_metrics(
     target: torch.Tensor,
     data_range: float | None = None,
     ssim_window_size: int = 11,
+    *,
+    foreground_field: torch.Tensor | None = None,
+    foreground_threshold: float | None = None,
+    robust_quantile: float = ROBUST_PEAK_QUANTILE,
 ) -> Dict[str, float]:
     """Compute a suite of quality metrics between predicted and target volumes.
 
     All heavy computation stays on the input device; only scalar results are
-    returned.
+    returned. Full-volume reductions are streamed (chunk-sized temporaries) and
+    SSIM tiles itself, so the peak beyond the two inputs is bounded.
+
+    PSNR comes in two peaks. ``psnr_robust_db`` — the HEADLINE — uses the
+    robust range ``p_q(target) - min(target)`` (``q`` = ``robust_quantile``,
+    99.99% by default), which one hot pixel cannot move. ``psnr_db`` keeps the
+    classical full range ``max - min`` (or ``data_range`` when given): it is the
+    figure stamped into every store so far, so it is kept for comparability and
+    reported beside the headline, labelled. A robust range of zero (more than
+    99.99% of voxels at the minimum) falls back to the full range. The same pair
+    exists for the foreground PSNR. On a fit's basis the target minimum is the
+    fit's floor (the background-relative reference is clipped at 0), so the
+    robust peak is "reference p99.99 minus the floor".
 
     Parameters
     ----------
     pred, target : torch.Tensor
         Predicted and reference tensors (same shape, >= 2-D).
     data_range : float, optional
-        Dynamic range.  If *None*, computed from *target*.
+        Full dynamic range for ``psnr_db`` and SSIM. If *None*, ``max - min`` of
+        *target*.
     ssim_window_size : int
         SSIM window size.
+    foreground_field, foreground_threshold : optional
+        Foreground is ``foreground_field > foreground_threshold``. With neither,
+        the ONE shared definition applies (:func:`default_foreground`): a tent-
+        blurred target thresholded by Otsu over a histogram capped at the robust
+        peak — the fit summary and ``gsplat compare`` both use it, so a stored
+        foreground score and a recomputed one agree. A threshold alone applies
+        to the target itself (``compare --fg-threshold``); a field is a mask
+        volume or any other caller-defined field.
+    robust_quantile : float
+        Quantile setting the robust peak.
 
     Returns
     -------
     dict
-        Keys: ``mse``, ``psnr_db``, ``ssim``, ``rel_l2``, ``max_abs_error``,
-        ``foreground_psnr_db``, ``foreground_threshold``,
-        ``foreground_fraction``.  The foreground trio is the honest score on
-        sparse data -- see :func:`compute_foreground_psnr`.
+        ``mse``, ``psnr_db`` (full range), ``psnr_robust_db`` (headline),
+        ``ssim``, ``foreground_ssim``, ``rel_l2``, ``max_abs_error``,
+        ``foreground_psnr_db`` (full range), ``foreground_psnr_robust_db``,
+        ``foreground_threshold``, ``foreground_fraction``, ``data_range`` and
+        ``robust_data_range`` (the two peaks). SSIM uses the full range.
     """
     if pred.shape != target.shape:
         raise ValueError(f"Shape mismatch: pred {pred.shape} vs target {target.shape}")
-
-    diff = pred - target
-
-    mse = torch.mean(diff**2).item()
-    max_abs_error = torch.max(torch.abs(diff)).item()
-    target_norm = torch.linalg.norm(target.reshape(-1)).item()
-    rel_l2 = float(torch.linalg.norm(diff.reshape(-1)).item() / (target_norm + 1e-12))
-
-    if data_range is None:
-        data_range = float((target.max() - target.min()).item())
-
-    psnr_db = compute_psnr(pred, target, data_range=data_range)
-    ssim = compute_ssim(
-        pred, target, window_size=ssim_window_size, data_range=data_range
+    peak = robust_peak(target, robust_quantile)
+    field, threshold = _resolve_foreground(
+        target, foreground_field, foreground_threshold, peak
     )
-    fg_psnr_db, fg_threshold, fg_fraction = compute_foreground_psnr(
-        pred, target, data_range=data_range
+
+    sums = _error_sums(pred, target, field, threshold)
+    n = max(target.numel(), 1)
+    mse = sums["sse"] / n
+    t_min, t_max = _streamed_extrema(target)
+    full_range = float(data_range) if data_range is not None else t_max - t_min
+    robust_range = peak - t_min
+    if not robust_range > 0.0:
+        robust_range = full_range
+
+    fg_voxels = int(sums["fg_voxels"])
+    if fg_voxels:
+        fg_mse = sums["fg_sse"] / fg_voxels
+        fg_psnr = _psnr_from(full_range, fg_mse)
+        fg_psnr_robust = _psnr_from(robust_range, fg_mse)
+    else:
+        fg_psnr = fg_psnr_robust = float("nan")
+
+    ssim, fg_ssim = compute_ssim_with_foreground(
+        pred,
+        target,
+        window_size=ssim_window_size,
+        data_range=full_range,
+        fg_field=field,
+        fg_threshold=threshold,
     )
+    if not fg_voxels:
+        fg_ssim = float("nan")
+    rel_l2 = float(math.sqrt(sums["sse"]) / (math.sqrt(sums["target_sq"]) + 1e-12))
 
     return {
         "mse": mse,
-        "psnr_db": psnr_db,
+        "psnr_db": _psnr_from(full_range, mse),
+        "psnr_robust_db": _psnr_from(robust_range, mse),
         "ssim": ssim,
+        "foreground_ssim": fg_ssim,
         "rel_l2": rel_l2,
-        "max_abs_error": max_abs_error,
-        "foreground_psnr_db": fg_psnr_db,
-        "foreground_threshold": fg_threshold,
-        "foreground_fraction": fg_fraction,
+        "max_abs_error": sums["max_abs"],
+        "foreground_psnr_db": fg_psnr,
+        "foreground_psnr_robust_db": fg_psnr_robust,
+        "foreground_threshold": threshold,
+        "foreground_fraction": fg_voxels / n,
+        "data_range": full_range,
+        "robust_data_range": robust_range,
     }
