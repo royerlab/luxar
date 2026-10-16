@@ -45,6 +45,7 @@ DEFAULT_MIN_EXTENT_VOX = 0.6
 #: brightness (config/YAML key ``min_extent_max_mass_share``).
 DEFAULT_MIN_EXTENT_MAX_MASS_SHARE = 0.02
 
+
 def validate_min_extent(min_extent: "float | None") -> float:
     """Normalize ``min_extent``: ``None``/``0`` disable (-> ``0.0``)."""
     if min_extent is None:

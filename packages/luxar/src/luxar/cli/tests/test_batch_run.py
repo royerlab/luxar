@@ -635,6 +635,7 @@ def test_batch_rejects_bad_speck_flags_before_planning(
     output = normalized_cli_output(result)
     assert result.exit_code == 2, output
     assert flag in output
+    assert "Discovering dataset" not in output
     assert not out.exists()
 
 
