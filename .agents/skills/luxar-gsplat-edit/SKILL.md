@@ -145,7 +145,7 @@ per-splat shading sidecar into the store instead would give `reencode`, `lod`,
 ```bash
 # Crop, then recenter + anisotropic z-scale
 luxar gsplat slice in.gsplats.zarr crop.gsplats.zarr "0:50, :, 10:90"
-luxar gsplat transform crop.gsplats.zarr out.gsplats.zarr --scale 4,1,1,1 --center
+luxar gsplat transform crop.gsplats.zarr out.gsplats.zarr --scale 4,1,1 --center
 
 # Shrink: error-budget cull against the original volume (most principled)
 luxar gsplat cull in.gsplats.zarr culled.gsplats.zarr --target vol.npy -p 95

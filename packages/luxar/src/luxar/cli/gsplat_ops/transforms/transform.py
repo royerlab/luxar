@@ -10,7 +10,7 @@ import typer
 from arbol import aprint, asection
 
 from ..._traceback import exit_with_error
-from ...utils import format_memory_size
+from ...utils import format_memory_size, store_size
 from ..encoding import _resolve_encoding_mode
 from .parsing import parse_csv_floats
 
@@ -604,7 +604,7 @@ def run_transform_dataset(
                 aprint(f"Saved: {output_path}")
 
                 if output_path.exists():
-                    aprint(f"  Size: {format_memory_size(output_path.stat().st_size)}")
+                    aprint(f"  Size: {format_memory_size(store_size(output_path))}")
 
     except typer.Exit:
         raise

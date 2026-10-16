@@ -17,7 +17,7 @@ from arbol import aprint, asection
 
 from .._traceback import _report_line, exit_with_error, report_error
 from ..common_options import CorsOriginOption, HostOption, make_port_option
-from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size
+from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size, store_size
 
 if TYPE_CHECKING:
     import numpy as np
@@ -292,6 +292,49 @@ def _is_node_tree(path: Path) -> bool:
         return False
 
 
+#: Inputs `gsplat fit` accepts that are IMAGES, not splat stores.
+_IMAGE_VOLUME_SUFFIXES = (".tif", ".tiff", ".npy", ".npz")
+#: Root attributes a `.gsplats.zarr` (any format version) carries.
+_GSPLAT_ROOT_ATTRS = ("format_type", "format_version", "kind", "type")
+
+
+def _image_volume_reason(path: Path) -> Optional[str]:
+    """Why ``path`` looks like an image volume rather than a splat store, or None.
+
+    ``gsplat info`` is the first thing people point at a raw stack, and the
+    loader's own error for that ("missing centers", a zarr KeyError) never says
+    the useful thing: fit it first. Conservative on purpose — anything carrying
+    a gsplats root attribute or ``centers``/``amplitudes`` arrays is left to the
+    normal loader (and its own error).
+    """
+    from luxar._zarr_compat import read_array_meta, read_node_attrs
+
+    name = path.name.lower()
+    for suffix in _IMAGE_VOLUME_SUFFIXES:
+        if name.endswith(suffix):
+            return f"a {suffix} file"
+    if not path.is_dir():
+        return None
+    if read_array_meta(path) is not None:
+        return "a bare zarr array"
+    attrs = read_node_attrs(path)
+    if attrs is None or any(key in attrs for key in _GSPLAT_ROOT_ATTRS):
+        return None
+    if "multiscales" in attrs or "ome" in attrs:
+        return "an OME-Zarr image"
+    if (path / "centers").exists() or (path / "amplitudes").exists():
+        return None
+    return "a zarr store with no Gaussian-splat structure"
+
+
+def _report_image_volume(path: Path, reason: str) -> None:
+    aprint(
+        f"❌ {path.name} is an image volume ({reason}), not a .gsplats.zarr — "
+        f"fit it first with `luxar gsplat fit {path.name} "
+        f"<output>.gsplats.zarr`, then run `gsplat info` on the output."
+    )
+
+
 def _load_info_data(
     path: Path, *, full_provenance: bool
 ) -> tuple["Optional[GSplatData]", bool]:
@@ -302,6 +345,10 @@ def _load_info_data(
     with asection(f"Loading dataset: {path.name}"):
         zarr_path = path
         tmp = None
+        reason = _image_volume_reason(path)
+        if reason is not None:
+            _report_image_volume(path, reason)
+            return None, False
         try:
             if path.is_file():
                 from tarfile import TarError
@@ -317,6 +364,12 @@ def _load_info_data(
                     TarError,
                 ) as resolve_exc:
                     aprint(f"❌ {resolve_exc}")
+                    return None, False
+
+            if zarr_path != path:
+                reason = _image_volume_reason(zarr_path)
+                if reason is not None:
+                    _report_image_volume(path, reason)
                     return None, False
 
             # Ask the store what shape it is BEFORE loading anything. A partition
@@ -408,7 +461,7 @@ def _info_report(
         aprint("DATASET INFORMATION")
         aprint("═" * 70)
 
-        stored_bytes = _store_size(path)
+        stored_bytes = store_size(path)
         aprint(f"\nFile: {path.name}")
         aprint(f"Size: {format_memory_size(stored_bytes)}")
 
@@ -970,7 +1023,12 @@ def _print_quality_comparison(
     aprint(f"  Rel L2:          {metrics['rel_l2']:.6g}")
     aprint(f"  Max Abs Error:   {metrics['max_abs_error']:.6g}")
     if "compression_ratio" in metrics:
-        aprint(f"  Compression:     {metrics['compression_ratio']:.1f}x")
+        from luxar.gsplats.fitting.visualization import format_compression_ratio
+
+        aprint(
+            "  Compression:     "
+            f"{format_compression_ratio(metrics['compression_ratio'])} vs raw voxels"
+        )
     aprint("=" * 50)
 
 
@@ -1113,6 +1171,7 @@ def compare_quality(
         try:
             import json
 
+            import numpy as np
             import torch
 
             from luxar.cli.gsplat_config import load_volume, parse_shape
@@ -1145,10 +1204,23 @@ def compare_quality(
 
                 # Load reference volume
                 with asection("Loading reference volume"):
+                    ref_info: dict = {}
                     ref_np = load_volume(
-                        reference_path, channel=channel, timepoint=timepoint
+                        reference_path,
+                        channel=channel,
+                        timepoint=timepoint,
+                        info=ref_info,
                     )
                     ref_shape = ref_np.shape
+                    # Decoded size in the reference's STORED element type (the
+                    # loader hands back float32 whatever the file holds): the same
+                    # `source_bytes` basis `gsplat info` and `fit` quote.
+                    ref_itemsize = (
+                        np.dtype(ref_info["source_dtype"]).itemsize
+                        if ref_info.get("source_dtype")
+                        else ref_np.dtype.itemsize
+                    )
+                    ref_decoded_bytes = int(ref_np.size) * int(ref_itemsize)
 
                     # Put the reference on the render's basis before anything scores
                     # it. An explicit --image-min wins over the stored level so a
@@ -1202,17 +1274,13 @@ def compare_quality(
                     with asection("Computing metrics"):
                         metrics = compute_quality_metrics(rendered_t, ref_t)
 
-                # Compression ratio (handle zarr directories and archives)
-                def _total_size(p: Path) -> int:
-                    if p.is_file():
-                        return p.stat().st_size
-                    # Directory: sum all file sizes recursively
-                    return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+                # Compression ratio: the one definition `gsplat info` and `fit`
+                # quote — decoded reference bytes over the store's bytes on disk.
+                from luxar.gsplats.fitting.visualization import compression_ratio
 
-                gsplats_size = _total_size(gsplats_path)
-                ref_size = _total_size(reference_path)
-                if ref_size > 0 and gsplats_size > 0:
-                    metrics["compression_ratio"] = ref_size / gsplats_size
+                ratio = compression_ratio(ref_decoded_bytes, store_size(gsplats_path))
+                if ratio is not None:
+                    metrics["compression_ratio"] = ratio
 
             # Print table
             if not quiet:
@@ -1309,7 +1377,7 @@ def _print_gsplat_tree_summary(
         # Same measurement as the flat report's "Size:" line — a directory store's
         # own stat() is the ~4 KB directory entry, not the chunks in it, and a
         # partition is the shape most likely to BE a directory.
-        aprint(f"Size: {format_memory_size(_store_size(display_path))}")
+        aprint(f"Size: {format_memory_size(store_size(display_path))}")
         aprint(f"\nRoot kind: {summary.kind}")
         aprint(f"Dimensions: {summary.ndim}D")
         aprint(f"Total splats (all leaves): {summary.n_splats:,}")
@@ -1637,21 +1705,6 @@ def register_inspect_commands(app: typer.Typer) -> None:
     app.command("annotate-quality")(annotate_quality)
 
 
-def _store_size(path: Path) -> int:
-    """Bytes a dataset occupies: an archive's own size, a directory store's total.
-
-    ``Path.stat().st_size`` on a `.gsplats.zarr` directory reports the directory
-    entry (typically 4 KB), not the chunks inside it — off by orders of magnitude,
-    and it would contradict the compression line printed from the same number.
-    """
-    try:
-        if path.is_file():
-            return path.stat().st_size
-        return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
-    except OSError:
-        return 0
-
-
 #: ``stats`` keys :func:`_print_source_grid` reports itself. ``info``'s
 #: "Additional Metadata" dump skips exactly these once the source block has run,
 #: so one quantity is never quoted twice in one report: the block RECOMPUTES
@@ -1742,31 +1795,15 @@ def _print_source_grid(data: Any, stored_bytes: int) -> tuple[str, ...]:
     if src_stored:
         aprint(f"  stored source: {format_memory_size(src_stored)} (as downloaded)")
 
-    def _ratio(n: int, d: int) -> str:
-        r = n / d
-        # A whole-number ratio reads best, but a stored artifact LARGER than its
-        # source is a real outcome (few voxels, many splats) and must not round
-        # to a nonsensical "0:1".
-        return f"{r:,.0f}" if r >= 10 else f"{r:.2g}"
+    # TWO ratios, each labelled with its basis (one shared definition, see
+    # `compression_ratio`): `source_bytes` is the DECODED array while the splat
+    # store on disk is compressed, so the first compares unlike things and
+    # flatters the splats by whatever the source codec was already achieving.
+    # It is still the number volumetric compression is normally quoted
+    # against, so both are printed rather than either alone.
+    from luxar.gsplats.fitting.visualization import compression_lines
 
-    # TWO ratios, each labelled with its basis. `source_bytes` is the DECODED
-    # array while the splat store on disk is compressed, so that ratio compares
-    # unlike things and flatters the splats by whatever the source codec was
-    # already achieving. It is still the number volumetric compression is
-    # normally quoted against, so both are printed rather than either alone:
-    # quoting only the first invites reading it as the second.
-    src_bytes = stats.get("source_bytes")
-    lines = []
-    if src_bytes and stored_bytes:
-        lines.append(
-            f"{_ratio(src_bytes, stored_bytes)}:1 vs raw voxels "
-            f"({format_memory_size(src_bytes)} -> {format_memory_size(stored_bytes)})"
-        )
-    if src_stored and stored_bytes:
-        lines.append(
-            f"{_ratio(src_stored, stored_bytes)}:1 vs the stored source "
-            f"({format_memory_size(src_stored)} -> {format_memory_size(stored_bytes)})"
-        )
+    lines = compression_lines(stats.get("source_bytes"), stored_bytes, src_stored)
     for i, line in enumerate(lines):
         aprint(f"  compression: {line}" if i == 0 else f"               {line}")
     return _SOURCE_GRID_STATS_KEYS

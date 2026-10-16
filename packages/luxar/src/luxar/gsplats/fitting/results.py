@@ -824,7 +824,8 @@ def finalize_results(
         stats["foreground_fraction"] = quality["foreground_fraction"]
         if config.verbose:
             aprint(
-                f"Quality: PSNR={quality['psnr_db']:.1f} dB, "
+                f"Quality (fitted, before any post-fit cull): "
+                f"PSNR={quality['psnr_db']:.1f} dB, "
                 f"foreground PSNR={quality['foreground_psnr_db']:.1f} dB "
                 f"(over {quality['foreground_fraction'] * 100:.2f}% of voxels), "
                 f"SSIM={quality['ssim']:.4f}, MSE={quality['mse']:.2e}"

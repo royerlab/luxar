@@ -34,6 +34,15 @@ except ImportError:
 
 
 @pytest.fixture(autouse=True)
+def reset_cpu_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the process-wide CPU warning from leaking between tests."""
+    if HAS_TORCH:
+        import luxar.gsplats.utils.device as device_mod
+
+        monkeypatch.setattr(device_mod, "_CPU_WARNING_ISSUED", False)
+
+
+@pytest.fixture(autouse=True)
 def set_random_seed():
     """Safety net for tests that rely on global RNG state."""
     seed = 42
