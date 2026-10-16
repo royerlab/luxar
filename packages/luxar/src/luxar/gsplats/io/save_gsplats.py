@@ -330,6 +330,7 @@ NORMALIZATION_STATS_KEYS = (
 
 def agreed_normalization_stats(
     stats_list: "Sequence[Optional[Dict[str, Any]]]",
+    counts: "Optional[Sequence[int]]" = None,
 ) -> Dict[str, Any]:
     """The :data:`NORMALIZATION_STATS_KEYS` block the inputs UNANIMOUSLY agree on.
 
@@ -341,9 +342,10 @@ def agreed_normalization_stats(
     on any disagreement it is dropped, and the merged artifact simply says
     nothing rather than something false.
 
-    An input that does not carry a key casts no vote: an empty/skipped tile
-    records no bounds at all, and vetoing on that would erase the block for the
-    whole merge. At least one input must carry the key for it to appear.
+    An empty/skipped tile casts no vote. A populated input without an amplitude
+    basis vetoes that basis; ``counts`` supplies the actual per-input sizes
+    when they are available, since imported splats need not record ``n_splats``
+    in their stats. At least one input must carry a key for it to appear.
     """
     agreed: Dict[str, Any] = {}
     for key in NORMALIZATION_STATS_KEYS:
@@ -366,7 +368,17 @@ def agreed_normalization_stats(
     # Abstaining is for EMPTY tiles only. An input that holds splats but records
     # no intensity basis (an import, a normalised edit) has amplitudes in some
     # other unit, so the merge cannot claim the others' basis for all of them.
-    if any(_holds_splats(s) and "intensity_range" not in s for s in stats_list if s):
+    if counts is not None and len(counts) != len(stats_list):
+        raise ValueError("counts must match stats_list")
+    if any(
+        (count > 0 if counts is not None else _holds_splats(s or {}))
+        and (s is None or "intensity_range" not in s)
+        for count, s in zip(
+            counts if counts is not None else (0 for _ in stats_list),
+            stats_list,
+            strict=True,
+        )
+    ):
         agreed.pop("intensity_range", None)
         agreed.pop("intensity_scale", None)
     return agreed

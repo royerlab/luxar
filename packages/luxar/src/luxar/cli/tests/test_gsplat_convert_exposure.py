@@ -445,6 +445,29 @@ def test_unit_labels_follow_the_fit_basis(
         assert attrs["amplitude_offset"] == pytest.approx(offset)
 
 
+def test_merge_with_unbased_splats_has_no_count_unit(tmp_path: Path) -> None:
+    based = _fit_like(
+        tmp_path / "based.gsplats.zarr",
+        {
+            "source_dtype": "uint16",
+            "image_min": 112.0,
+            "image_max": 4012.0,
+            "intensity_range": 3900.0,
+        },
+    )
+    unbased = _fit_like(tmp_path / "unbased.gsplats.zarr", {})
+    merged = tmp_path / "merged.gsplats.zarr"
+    result = CliRunner().invoke(
+        app, ["gsplat", "merge", str(based), str(unbased), "-o", str(merged)]
+    )
+    assert result.exit_code == 0, normalized_cli_output(result)
+    out = tmp_path / "scene.luxar.zarr"
+    _convert(CliRunner(), merged, out)
+    attrs = read_node_attrs(out / "gsplats")
+    assert attrs["amplitude_unit"] == "a.u."
+    assert "source_data_range" not in attrs
+
+
 def test_colormap_intensity_window_is_restated_in_data_units(tmp_path: Path) -> None:
     """``--intensity I`` windowed the gained amplitudes ``[0, 1/I]``; now ``I·g``."""
     src = _fit_like(tmp_path / "fit.gsplats.zarr", {"intensity_range": 3900.0})

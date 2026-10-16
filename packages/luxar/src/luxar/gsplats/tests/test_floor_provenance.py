@@ -167,6 +167,16 @@ class TestAgreementRule:
 
 
 class TestConcatenate:
+    def test_unbased_nonempty_input_vetoes_basis_but_empty_input_abstains(self) -> None:
+        based = _leaf(stats=dict(BLOCK))
+        unbased = _leaf(stats={})
+        assert "intensity_range" not in GSplatData.concatenate([based, unbased]).stats
+        assert "intensity_range" not in GSplatData.concatenate([unbased, based]).stats
+        assert (
+            GSplatData.concatenate([based, _leaf(n=0)]).stats["intensity_range"]
+            == BLOCK["intensity_range"]
+        )
+
     def test_carries_the_block_its_inputs_agree_on(self) -> None:
         merged = GSplatData.concatenate([_leaf(stats=dict(BLOCK)) for _ in range(3)])
         for key in BLOCK:

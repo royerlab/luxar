@@ -244,7 +244,9 @@ def _merge_fitting_info(
     # pipeline group where `_batch_floor_stats` puts it.
     from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
 
-    basis = agreed_normalization_stats(list(part_stats))
+    basis = agreed_normalization_stats(
+        list(part_stats), [int(stats["n_splats"]) for stats in part_stats]
+    )
     for key in ("image_min", "image_max", "intensity_range", "intensity_scale"):
         if key in basis:
             fitting_info[key] = basis[key]

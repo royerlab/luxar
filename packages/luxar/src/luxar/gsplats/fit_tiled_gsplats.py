@@ -866,7 +866,11 @@ def _stamp_merge_normalization(
     # __init__, which is still executing when this module is first imported.
     from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
 
-    target.update(agreed_normalization_stats([r.stats for r in sources]))
+    target.update(
+        agreed_normalization_stats(
+            [r.stats for r in sources], [r.n_splats for r in sources]
+        )
+    )
     if applied_floor is not None:
         target["floor"] = applied_floor
     if floor_strategy is not None:
