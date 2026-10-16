@@ -107,6 +107,8 @@ export class PostProcessingManager {
   // Persisted state (survives context loss; mirrors UI state)
   // ----------------------------------------------------------------
   private fxaaEnabled = config.renderingControls.defaults.fxaaEnabled;
+  /** Live HDR output headroom; seeded from the renderer in the constructor. */
+  private hdrHeadroom = 1;
   private msaaEnabled = config.renderingControls.defaults.msaaEnabled;
   private msaaSamples: number = config.renderingControls.defaults.msaaSamples;
   private ssaaEnabled = config.renderingControls.defaults.ssaaEnabled;
@@ -194,6 +196,7 @@ export class PostProcessingManager {
 
     this.renderSize = { ...size };
 
+    this.hdrHeadroom = capabilities.hdrOutputPeak ?? 1;
     this.initializeTransientResources({ applyDefaults: true });
 
     log.success(
@@ -288,6 +291,8 @@ export class PostProcessingManager {
     this.bloomChain = r.bloomChain;
     this.fxaaPass = r.fxaaPass;
     this.refractionSplit = r.refractionSplit;
+    // The rebuilt mega-shader starts from the renderer's initial headroom.
+    this.megaShader.setHdrPeak(this.hdrHeadroom);
 
     // Apply config defaults to the mega-shader uniforms / defines.
     // Skipped during context-restore rebuilds — the caller restores user
@@ -408,6 +413,22 @@ export class PostProcessingManager {
 
   updateExposure(value: number): void {
     this.megaShader.setExposure(value);
+  }
+
+  /** True when the canvas is an extended-range HDR canvas (PROTOTYPE, `?hdr`). */
+  isHdrOutputActive(): boolean {
+    return this.capabilities.hdrOutputPeak !== undefined;
+  }
+
+  /** HDR output headroom, as a multiple of SDR white; 1 when HDR output is off. */
+  getHdrHeadroom(): number {
+    return this.hdrHeadroom;
+  }
+
+  /** Set the HDR output headroom (a uniform write; survives resource rebuilds). */
+  setHdrHeadroom(value: number): void {
+    this.hdrHeadroom = Math.max(1, value);
+    this.megaShader.setHdrPeak(this.hdrHeadroom);
   }
 
   getExposure(): number {

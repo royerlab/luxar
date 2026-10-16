@@ -876,6 +876,7 @@ the native WKWebView launcher fall back to L1-only caching; see the
 - `?noDensityGuard` — Disable the projected-density guard (per-node keep-fraction thinning + refinement rung cap on over-drawn nodes; enabled by default) for the session
 - `?densityCap=<N>` — Session-only override of the density guard's blendable cap, in elements per drawing-buffer pixel (configured default 4)
 - `?renderer=webgpu` — Use `WebGPURenderer` (TSL `NodeMaterial`) instead of the default `WebGLRenderer`
+- `?renderer=webgpu&hdr[=headroom]` — PROTOTYPE: extended-range HDR output on native WebGPU with an HDR display (`rgba16float` canvas); highlights use the display's headroom (default 2x SDR white, adjustable live in the Rendering panel's HDR folder)
 - `?renderer=webgpu&webgpuForceWebgl` — Keep the WebGPU/TSL API surface while Three.js routes through its internal WebGL2 backend (diagnostic)
 - `?perfTimestamp` — Enable WebGPU timestamp-query profiling for performance tests
 - `?renderAlways` — Render every animation-loop tick, as before render-on-change (kill switch; pixels are identical, only the redundant re-renders of an unchanged frame come back)

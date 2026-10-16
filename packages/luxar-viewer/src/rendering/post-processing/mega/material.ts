@@ -34,6 +34,12 @@ export interface MegaShaderConfig {
 
   // Tone mapping
   toneMapping?: THREE.ToneMapping;
+  /**
+   * PROTOTYPE (`?hdr`), TSL material only: tone-map to `[0, peak]` for an
+   * extended-range WebGPU canvas. The GLSL material ignores it — WebGL has
+   * no extended-range canvas to present to.
+   */
+  hdrOutputPeak?: number;
 
   // Lens distortion
   lensDistortion?: {
@@ -196,6 +202,9 @@ export class MegaShaderMaterial extends THREE.ShaderMaterial {
    * set (to clamp to [0,1] matching old behavior), so this getter
    * returns `LinearToneMapping` for either input.
    */
+  /** HDR output is WebGPU-only (see `MegaShaderConfig.hdrOutputPeak`): no-op. */
+  setHdrPeak(_value: number): void {}
+
   getToneMapping(): THREE.ToneMapping {
     return toneMappingFromLuxarMode(Number(this.defines.LUXAR_TONE_MAPPING_MODE));
   }

@@ -67,7 +67,12 @@ interface ContextStubs {
     updateGlobalOffset: ReturnType<typeof vi.fn>;
     updateGlobalGamma: ReturnType<typeof vi.fn>;
   };
-  postProcessing: { setToneMapping: ReturnType<typeof vi.fn> };
+  postProcessing: {
+    setToneMapping: ReturnType<typeof vi.fn>;
+    isHdrOutputActive: ReturnType<typeof vi.fn>;
+    getHdrHeadroom: ReturnType<typeof vi.fn>;
+    setHdrHeadroom: ReturnType<typeof vi.fn>;
+  };
   saveSettings: ReturnType<typeof vi.fn>;
   triggerAnimation: ReturnType<typeof vi.fn>;
   settings: { exposure: number; globalOffset: number; globalGamma: number; toneMapping: string };
@@ -83,7 +88,12 @@ function makeContext(): ContextStubs {
     updateGlobalOffset: vi.fn(),
     updateGlobalGamma: vi.fn(),
   };
-  const postProcessing = { setToneMapping: vi.fn() };
+  const postProcessing = {
+    setToneMapping: vi.fn(),
+    isHdrOutputActive: vi.fn(() => false),
+    getHdrHeadroom: vi.fn(() => 1),
+    setHdrHeadroom: vi.fn(),
+  };
   const saveSettings = vi.fn();
   const triggerAnimation = vi.fn();
   const settings = {
@@ -189,6 +199,44 @@ describe('setupHDRControls', () => {
 
       expect(stubs.postProcessing.setToneMapping).toHaveBeenCalledWith(constant);
       expect(stubs.saveSettings).toHaveBeenCalled();
+      expect(stubs.triggerAnimation).toHaveBeenCalled();
+    });
+  });
+
+  describe('Headroom control (HDR output)', () => {
+    beforeEach(() => {
+      localStorage.clear();
+    });
+
+    it('is absent while the canvas is SDR', () => {
+      setupHDRControls(stubs.context);
+      expect(stubs.folder.add).toHaveBeenCalledTimes(4);
+    });
+
+    it('appears with the live headroom when HDR output is active', () => {
+      stubs.postProcessing.isHdrOutputActive.mockReturnValue(true);
+      stubs.postProcessing.getHdrHeadroom.mockReturnValue(2.5);
+      setupHDRControls(stubs.context);
+
+      expect(stubs.folder.add).toHaveBeenCalledTimes(5);
+      const [state, key, min, max] = stubs.folder.add.mock.calls[4] as [
+        Record<string, number>,
+        string,
+        number,
+        number,
+      ];
+      expect(state[key]).toBe(2.5);
+      expect([min, max]).toEqual([1, 16]);
+    });
+
+    it('applies and persists a change without touching the per-scene settings', () => {
+      stubs.postProcessing.isHdrOutputActive.mockReturnValue(true);
+      setupHDRControls(stubs.context);
+      stubs.folder.controllers[4]._onChangeFn?.(6);
+
+      expect(stubs.postProcessing.setHdrHeadroom).toHaveBeenCalledWith(6);
+      expect(localStorage.getItem('luxar.hdrHeadroom')).toBe('6');
+      expect(stubs.saveSettings).not.toHaveBeenCalled();
       expect(stubs.triggerAnimation).toHaveBeenCalled();
     });
   });

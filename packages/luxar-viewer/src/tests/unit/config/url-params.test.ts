@@ -198,6 +198,8 @@ describe('readUrlParams', () => {
       renderer: null,
       webgpuForceWebGL: false,
       perfTimestamp: false,
+      hdr: false,
+      hdrHeadroom: null,
       renderAlways: false,
       renderAudit: false,
       gpuBudgetMB: null,

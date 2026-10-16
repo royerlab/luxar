@@ -14,6 +14,11 @@ import {
   toneMappingFromName,
 } from '../../../rendering/post-processing/tone-mapping';
 import { FOLDER_ICONS } from '../folder-icons';
+import {
+  HDR_HEADROOM_MAX,
+  HDR_HEADROOM_MIN,
+  storeHdrHeadroom,
+} from '../../../utils/hdr/hdr-headroom';
 
 /**
  * Set up HDR controls in the rendering controls GUI.
@@ -125,6 +130,30 @@ export function setupHDRControls(context: SetupContext): SetupResult {
       '• AgX: Modern filmic mapping with good color preservation\n' +
       '• Neutral: Gentle rolloff — well above 1.0 it desaturates hard (keeps hue, not chroma)'
   );
+
+  // Display headroom — only while the canvas is an extended-range HDR
+  // canvas (PROTOTYPE, `?hdr` on WebGPU). Not part of the per-scene
+  // settings: it describes the DISPLAY, so it persists per browser instead.
+  if (postProcessing.isHdrOutputActive()) {
+    const headroomState = { headroom: postProcessing.getHdrHeadroom() };
+    const headroomControl = hdrFolder
+      .add(headroomState, 'headroom', HDR_HEADROOM_MIN, HDR_HEADROOM_MAX, 0.1)
+      .name('Headroom')
+      .onChange((value: number) => {
+        postProcessing.setHdrHeadroom(value);
+        storeHdrHeadroom(value);
+        triggerAnimation();
+      });
+    headroomControl.domElement.setAttribute(
+      'title',
+      'Headroom: how far above SDR white this display can go (HDR output)\n' +
+        '• 1 = SDR (no highlights above white)\n' +
+        '• 2 = default, safe on almost every HDR display\n' +
+        '• Raise it until the brightest highlights stop gaining detail;\n' +
+        '  past the real headroom the OS clips them\n' +
+        '• Depends on the OS brightness setting (dimmer panel = more headroom)'
+    );
+  }
 
   return {
     controllers,

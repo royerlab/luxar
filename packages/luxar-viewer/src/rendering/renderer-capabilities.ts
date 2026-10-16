@@ -104,6 +104,12 @@ export interface RendererCapabilities {
   readonly readbackYDown: boolean;
   /** HDR / wide-gamut / float-texture detection. */
   readonly hdr: HDRCapabilities;
+  /**
+   * PROTOTYPE (`?hdr`): set only when the canvas is an extended-range
+   * `rgba16float` WebGPU canvas. The final pass then tone-maps to
+   * `[0, hdrOutputPeak]` instead of `[0, 1]`, 1.0 staying SDR white.
+   */
+  readonly hdrOutputPeak?: number;
   /** Maximum MSAA sample count the GPU supports (0 if unsupported). */
   readonly maxMSAASamples: number;
   /**

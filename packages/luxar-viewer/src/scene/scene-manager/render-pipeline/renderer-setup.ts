@@ -37,7 +37,11 @@ import { configureSortedIndexChunkedApply } from '../../../rendering/element-sto
 import { installUploadCounters } from '../../../rendering/upload-counters';
 import { installElementTextureRowUploads } from '../../../rendering/element-texture-row-upload';
 import { configureRenderObjectEviction } from '../../../data/scene-loader/commit/invalidate-render-object';
-import { configureHDRRenderer, logHDRCapabilities } from '../../../utils/hdr/hdr-detection';
+import {
+  configureHDRRenderer,
+  detectDisplayCapabilities,
+  logHDRCapabilities,
+} from '../../../utils/hdr/hdr-detection';
 import { log, Modules } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
 
@@ -282,6 +286,41 @@ export interface CreateWebGPUOptions {
    * push through on a degenerate adapter.
    */
   rendererOverride?: 'webgl' | 'webgpu';
+  /**
+   * PROTOTYPE: request extended-range (HDR) output with this peak, as a
+   * multiple of SDR white (`?hdr[=peak]`). See {@link resolveHdrOutputPeak}.
+   */
+  hdrPeak?: number;
+}
+
+/**
+ * Decide whether the HDR output requested by `?hdr` can actually be honoured,
+ * returning the peak to tone-map to or `undefined` for ordinary SDR output.
+ *
+ * Needs native WebGPU: only `GPUCanvasContext.configure` takes the
+ * `toneMapping: { mode: 'extended' }` that lets canvas values above 1.0 reach
+ * the display, and three only asks for it with `outputType: HalfFloatType`
+ * (an `rgba16float` canvas). Its WebGL2 fallback has no such switch. And the
+ * display must report `(dynamic-range: high)`: on an SDR display an extended
+ * canvas just clips at 1.0, which is strictly worse than the SDR tone curve.
+ */
+function resolveHdrOutputPeak(
+  hdrPeak: number | undefined,
+  webgpuForceWebGL: boolean
+): number | undefined {
+  if (hdrPeak === undefined) return undefined;
+  if (webgpuForceWebGL || typeof navigator === 'undefined' || !('gpu' in navigator)) {
+    log.warning(Modules.RENDERER, 'HDR output needs native WebGPU; ignoring ?hdr.');
+    return undefined;
+  }
+  if (!detectDisplayCapabilities().hdr) {
+    log.warning(
+      Modules.RENDERER,
+      'HDR output requested but the display does not report (dynamic-range: high); staying SDR.'
+    );
+    return undefined;
+  }
+  return hdrPeak;
 }
 
 /**
@@ -308,6 +347,7 @@ export async function createWebGPURenderer(
   options: CreateWebGPUOptions = {}
 ): Promise<CreateWebGPUResult> {
   const { webgpuForceWebGL = false, perfTimestamp = false, rendererOverride } = options;
+  const hdrOutputPeak = resolveHdrOutputPeak(options.hdrPeak, webgpuForceWebGL);
 
   log.info(Modules.SCENE_MANAGER, 'Constructing WebGPURenderer…');
   if (webgpuForceWebGL) {
@@ -426,14 +466,25 @@ export async function createWebGPURenderer(
     alpha: config.webgl.context.alpha,
     ...(webgpuForceWebGL ? { forceWebGL: true } : device !== undefined ? { device } : {}),
     ...(perfTimestamp ? { trackTimestamp: true } : {}),
+    // rgba16float canvas + `toneMapping.mode = 'extended'` (WebGPUBackend).
+    ...(hdrOutputPeak !== undefined ? { outputType: THREE.HalfFloatType } : {}),
   } as ConstructorParameters<typeof WebGPURenderer>[0]);
   await gpuRenderer.init();
   // After init(): the backend's device / WebGL2 context exists only now.
   installUploadCounters(gpuRenderer);
 
-  const capabilities = createRendererCapabilities(gpuRenderer);
+  const capabilities: RendererCapabilities = {
+    ...createRendererCapabilities(gpuRenderer),
+    ...(hdrOutputPeak !== undefined ? { hdrOutputPeak } : {}),
+  };
   configureRendererBackend(gpuRenderer, capabilities);
   log.info(Modules.RENDERER, `Rendering API: ${capabilities.apiSurface}`);
+  if (hdrOutputPeak !== undefined) {
+    log.info(
+      Modules.RENDERER,
+      `HDR output: rgba16float extended-range canvas, peak ${hdrOutputPeak}x SDR white`
+    );
+  }
 
   const hdrCapabilities = capabilities.hdr;
   logHDRCapabilities(hdrCapabilities);

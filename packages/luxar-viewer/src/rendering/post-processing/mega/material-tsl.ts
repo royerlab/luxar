@@ -65,9 +65,11 @@ export class MegaShaderTSLMaterial extends NodeMaterial {
   private toneMappingMode: LuxarToneMappingMode = 6;
   private captureRawHDR = false;
   private captureLinearLDR = false;
+  private readonly hdrOutput: boolean;
 
   constructor(cfg: MegaShaderConfig = {}) {
     super();
+    this.hdrOutput = cfg.hdrOutputPeak !== undefined;
 
     // Single source of truth for every omitted value: the shared
     // rendering-controls defaults the UI and PostProcessingManager read.
@@ -112,6 +114,9 @@ export class MegaShaderTSLMaterial extends NodeMaterial {
       // Bloom
       uBloomTexture: { value: null as THREE.Texture | null },
       uBloomIntensity: { value: cfg.bloom?.intensity ?? d.bloomStrength },
+
+      // HDR output headroom (`?hdr`); read only when `hdrOutput`.
+      uHdrPeak: { value: cfg.hdrOutputPeak ?? 1.0 },
     };
 
     this.toneMappingMode = luxarToneMappingMode(cfg.toneMapping ?? resolveToneMappingDefault());
@@ -143,6 +148,7 @@ export class MegaShaderTSLMaterial extends NodeMaterial {
         toneMappingMode: this.toneMappingMode,
         captureRawHDR: this.captureRawHDR,
         captureLinearLDR: this.captureLinearLDR,
+        hdrOutput: this.hdrOutput,
       },
       this
     );
@@ -196,6 +202,15 @@ export class MegaShaderTSLMaterial extends NodeMaterial {
     if (next === this.toneMappingMode) return;
     this.toneMappingMode = next;
     this.rebuildGraph();
+  }
+
+  /**
+   * HDR output headroom, as a multiple of SDR white (PROTOTYPE, `?hdr`).
+   * A uniform write — no graph rebuild. No-op unless built with
+   * `hdrOutputPeak`.
+   */
+  setHdrPeak(value: number): void {
+    this.uniforms.uHdrPeak.value = Math.max(1, value);
   }
 
   getToneMapping(): THREE.ToneMapping {

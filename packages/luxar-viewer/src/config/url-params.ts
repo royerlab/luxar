@@ -75,6 +75,7 @@ export const URL_PARAM_KEYS = {
   renderer: 'renderer',
   webgpuForceWebgl: 'webgpuForceWebgl',
   perfTimestamp: 'perfTimestamp',
+  hdr: 'hdr',
   renderAlways: 'renderAlways',
   renderAudit: 'renderAudit',
   gpuBudgetMB: 'gpuBudgetMB',
@@ -601,6 +602,18 @@ export interface UrlParams {
    */
   perfTimestamp: boolean;
   /**
+   * `?hdr[=headroom]` — PROTOTYPE, WebGPU only: present to an extended-range
+   * (`rgba16float`, tone-mapping mode `extended`) canvas so highlights use the
+   * display's HDR headroom.
+   */
+  hdr: boolean;
+  /**
+   * The explicit `?hdr=<headroom>` value (multiple of SDR white, > 0), or
+   * null for a bare `?hdr` / no flag — the stored or default headroom then
+   * applies (`utils/hdr/hdr-headroom.ts`).
+   */
+  hdrHeadroom: number | null;
+  /**
    * `?renderAlways` — render every loop tick (the pre-render-on-change loop).
    * A kill switch: the pixels are identical, only the redundant re-renders of
    * an unchanged frame come back.
@@ -787,6 +800,8 @@ export function readUrlParams(
     renderer: normalizeRendererParam(get(K.renderer)),
     webgpuForceWebGL: has(K.webgpuForceWebgl),
     perfTimestamp: has(K.perfTimestamp),
+    hdr: has(K.hdr),
+    hdrHeadroom: parsePositiveFloat(get(K.hdr)),
     renderAlways: has(K.renderAlways),
     renderAudit: has(K.renderAudit),
     gpuBudgetMB: parseNonNegativeInt(get(K.gpuBudgetMB)),

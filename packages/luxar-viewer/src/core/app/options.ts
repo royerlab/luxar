@@ -133,6 +133,14 @@ export interface LuxarAppOptions {
   perfTimestamp?: boolean;
 
   /**
+   * PROTOTYPE, WebGPU only: extended-range (HDR) canvas output with this
+   * peak, as a multiple of SDR white. Mirrors the `?hdr[=peak]` URL flag.
+   * Ignored under `WebGLRenderer`, the forceWebGL backend, and on displays
+   * that do not report `(dynamic-range: high)`.
+   */
+  hdrPeak?: number;
+
+  /**
    * Render every loop tick, as the loop did before render-on-change (the
    * `?renderAlways` kill switch). Default false: a tick re-renders only when
    * something changed (`config.animation.renderOnChange`). Pixels are the

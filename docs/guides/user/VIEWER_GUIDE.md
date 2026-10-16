@@ -231,6 +231,7 @@ Append parameters to the viewer URL to control startup behavior.
 | `probe` | `auto` \| `node:<path>` \| `x,y,z` | Probe position for `bakeEnv`; defaults to the scene's configured probe or `auto`. |
 | `envResolution` | integer 16-1024 | Cube face size for `bakeEnv`; defaults to the scene's configured resolution or 128. |
 | `renderer` | `webgl` \| `webgpu` | Select the default GLSL WebGLRenderer path or opt into the WebGPURenderer + TSL path. |
+| `hdr` | flag or number | PROTOTYPE, `renderer=webgpu` only: extended-range HDR canvas output on an HDR display. An optional value sets the headroom (multiple of SDR white); otherwise the stored or default (2) headroom applies, adjustable in the HDR folder. |
 | `webgpuForceWebgl` | flag | Diagnostic flag for `renderer=webgpu`: keep WebGPURenderer + TSL materials but force Three.js's internal WebGL2 backend. |
 | `perfTimestamp` | flag | Opt into GPU timestamp queries (WebGPU only, `timestamp-query` feature). Small runtime cost; intended for the perf bench. |
 | `renderAlways` | flag | Render every animation-loop tick, as before render-on-change. A kill switch: the pixels are identical, only the redundant re-renders of an unchanged frame come back. |

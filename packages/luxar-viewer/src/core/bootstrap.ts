@@ -17,6 +17,7 @@
  */
 
 import { LuxarApp, type LuxarAppOptions } from './app';
+import { resolveHdrHeadroom } from '../utils/hdr/hdr-headroom';
 import { parseBookmark, restoreBookmark } from './app/bookmark-state';
 import { dataSourceDocumentTitle, setDocumentTitle } from './document-title';
 import { config } from '../config';
@@ -319,6 +320,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       (userSettings.advanced.renderer !== 'auto' ? userSettings.advanced.renderer : undefined),
     webgpuForceWebGL: urlParams.webgpuForceWebGL,
     perfTimestamp: urlParams.perfTimestamp,
+    hdrPeak: urlParams.hdr ? resolveHdrHeadroom(urlParams.hdrHeadroom) : undefined,
     // `?renderAlways` (render every tick) and the debug-only `?renderAudit`.
     renderAlways: urlParams.renderAlways,
     renderAudit: urlParams.renderAudit,
