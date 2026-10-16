@@ -68,6 +68,20 @@ jobs:
           make test-cuda
           make test-nlm-cuda
 
+      - name: Run CUDA parity suites on the NVRTC runtime-compiled kernels
+        # The path a plain `pip install` takes: same suites, kernels compiled at
+        # runtime by NVRTC instead of the extensions built above. Forcing the
+        # backend makes an unavailable NVRTC fail rather than fall back.
+        # ~2-3 min measured on obsidian (both GPUs visible).
+        timeout-minutes: 10
+        env:
+          LUXAR_CUDA_BACKEND: nvrtc
+          XDG_CACHE_HOME: ${{ runner.temp }}/luxar-nvrtc-cache
+        run: |
+          hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/cuda/tests/ \
+            packages/luxar/src/luxar/gsplats/preprocessing/tests/test_nlm_cuda.py \
+            packages/luxar/src/luxar/gsplats/tests/test_nvrtc.py -v -rs
+
       - name: Report cadence failure
         if: ${{ failure() || cancelled() }}
         timeout-minutes: 5

@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 import pytest
 import typer
+import zarr
 
 from luxar.cli.gsplat_ops.fitting.fit_utils import (
     floor_spec_needs_volume,
@@ -221,10 +222,12 @@ def test_content_fit_records_the_level_every_box_subtracted(
     volume[16:32, 16:32, 16:32] += 200.0
 
     output = tmp_path / f"content_{flat}.gsplats.zarr"
+    names = [{"name": "x"}, {"name": "y"}, {"name": "z"}]
     planner.run_content_fit(
         tmp_path / "unused.npy",
         output,
         volume=volume,
+        dimension_metadata=names,
         k_star_ref=1000,
         n_features_ref=100,
         floor="100.0",
@@ -235,6 +238,7 @@ def test_content_fit_records_the_level_every_box_subtracted(
         overlap=4,
         verbose=False,
     )
+    assert zarr.open_group(str(output), mode="r").attrs["dimension_metadata"] == names
 
     if flat:
         stats = load_gsplats(output, include_stats=True).stats
@@ -405,8 +409,6 @@ def test_content_plan_box_uses_source_matched_amplitudes(
 ) -> None:
     import importlib
 
-    import zarr
-
     from luxar.cli.gsplat_ops import planner
     from luxar.gsplats.planner import FitPlan, PlanBox
 
@@ -431,10 +433,12 @@ def test_content_plan_box_uses_source_matched_amplitudes(
     )
 
     output = tmp_path / "box.gsplats.zarr"
+    names = [{"name": "x"}, {"name": "y"}, {"name": "z"}]
     planner.run_content_fit(
         tmp_path / "unused.npy",
         output,
         volume=volume,
+        dimension_metadata=names,
         plan=plan_path,
         plan_box=0,
         k_star_ref=100,
@@ -443,7 +447,9 @@ def test_content_plan_box_uses_source_matched_amplitudes(
         verbose=False,
     )
 
-    amplitudes = zarr.open_group(str(output), mode="r")["amplitudes"]
+    root = zarr.open_group(str(output), mode="r")
+    assert root.attrs["dimension_metadata"] == names
+    amplitudes = root["amplitudes"]
     assert amplitudes.attrs["encoding"]["name"] == "geolog_scalar_uint8"
 
 

@@ -34,7 +34,14 @@ def nlm_cuda_denoise(
     torch.Tensor
         Denoised tensor, same shape/dtype/device as input.
     """
-    import nlm_cuda_backend  # type: ignore[import-not-found]
+    from luxar.gsplats.preprocessing.cuda import get_nlm_backend
+
+    nlm_cuda_backend = get_nlm_backend()
+    if nlm_cuda_backend is None:
+        raise RuntimeError(
+            "No CUDA NLM kernel backend is available (no compiled extension and "
+            "no NVRTC); use backend='pytorch'"
+        )
 
     orig_dtype = volume.dtype
     vol = volume.float().contiguous()

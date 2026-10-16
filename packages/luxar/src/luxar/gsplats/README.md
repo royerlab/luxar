@@ -23,12 +23,21 @@ pip install "luxar[gsplats]"
 > construction and intensity editing all need it; the `luxar.gsplats` package
 > docstring states exactly where the line falls.
 
-> **⚠️ torch ABI coupling.** The optional CUDA extension
-> (`models/gsplats/cuda/cuda_splatting_backend*.so`) is compiled against a
-> specific PyTorch ABI. **After any `torch` upgrade you must rebuild it** with
-> `make build-cuda`, otherwise importing the backend fails with an ABI/symbol
-> mismatch. The `torch>=2.2.0,<3.0` pin in `pyproject.toml` exists to prevent a
-> silent major-version jump from breaking the prebuilt extension.
+> **CUDA kernels: two ways in, no build step required.** On Linux with a CUDA
+> build of torch, the splatting and NLM kernels are compiled at runtime by NVRTC
+> (shipped in torch's NVIDIA wheels) the first time a given dimensionality is
+> used, loaded through the CUDA driver API, and cached under
+> `$XDG_CACHE_HOME/luxar/cuda` (default `~/.cache`). That path has no torch C++
+> ABI to match. The ahead-of-time extension
+> (`models/gsplats/cuda/cuda_splatting_backend*.so`, `make build-cuda`) is still
+> preferred when it imports; see `models/gsplats/cuda/README.md` for the order
+> and the `LUXAR_CUDA_BACKEND=aot|nvrtc|torch` override.
+>
+> **⚠️ torch ABI coupling (AOT extension only).** The `make build-cuda` `.so`
+> is compiled against a specific PyTorch ABI. **After any `torch` upgrade you
+> must rebuild it**, otherwise importing it fails with an ABI/symbol mismatch
+> (the NVRTC path then takes over). The `torch>=2.2.0,<3.0` pin in
+> `pyproject.toml` exists to prevent a silent major-version jump.
 
 ## Key Features
 

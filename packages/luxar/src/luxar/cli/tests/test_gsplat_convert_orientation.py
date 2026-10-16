@@ -92,6 +92,116 @@ def runner() -> CliRunner:
 
 
 class TestFitStampsAxisNames:
+    def test_single_content_box_keeps_explicit_axes_through_checkpoint(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "volume.npy"
+        np.save(
+            source, np.random.default_rng(42).random((8, 12, 16)).astype(np.float32)
+        )
+        store = tmp_path / "fit.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(source),
+                str(store),
+                "--axes",
+                "x,y,z",
+                "--tiling",
+                "content",
+                "--k-star-ref",
+                "200",
+                "--n-features-ref",
+                "30",
+                "--seeds",
+                "100",
+                "--iters",
+                "20",
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, normalized_cli_output(result)
+        attrs = zarr.open_group(str(store), mode="r").attrs
+        assert attrs["type"] == "gsplats"
+        assert [entry["name"] for entry in attrs["dimension_metadata"]] == [
+            "x",
+            "y",
+            "z",
+        ]
+
+        out = tmp_path / "scene.luxar.zarr"
+        _convert(runner, store, out)
+        assert _dim_names(out) == ["x", "y", "z"]
+        assert _camera(out) is None
+        np.testing.assert_allclose(
+            np.ptp(np.asarray(_leaf(out).centers), axis=0),
+            np.ptp(GSplatData.load(store).centers, axis=0),
+            rtol=0.02,
+        )
+
+    @pytest.mark.parametrize(
+        ("axes", "shape", "expected"),
+        [
+            ("x,y,z", (8, 12, 16), ["x", "y", "z"]),
+            ("c,depth,width,height", (1, 8, 12, 16), ["z", "x", "y"]),
+            ("x,y", (12, 16), ["x", "y"]),
+        ],
+    )
+    def test_fit_axes_names_kept_columns_and_convert_uses_them(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        axes: str,
+        shape: tuple[int, ...],
+        expected: List[str],
+    ) -> None:
+        rng = np.random.default_rng(42)
+        source = tmp_path / "volume.npy"
+        np.save(source, rng.random(shape).astype(np.float32))
+        store = tmp_path / "fit.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(source),
+                str(store),
+                "--axes",
+                axes,
+                "--tiling",
+                "none",
+                "--floor",
+                "none",
+                "--seeds",
+                "100",
+                "--iters",
+                "20",
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, normalized_cli_output(result)
+        fitted = zarr.open_group(str(store), mode="r")
+        attrs = fitted.attrs
+        assert [entry["name"] for entry in attrs["dimension_metadata"]] == expected
+        assert len(fitted["fitting"].attrs["source_shape"]) == len(expected)
+
+        out = tmp_path / "scene.luxar.zarr"
+        _convert(runner, store, out)
+        assert _dim_names(out) == sorted(expected)
+        source_spans = np.ptp(GSplatData.load(store).centers, axis=0)
+        scene_spans = np.ptp(np.asarray(_leaf(out).centers), axis=0)
+        np.testing.assert_allclose(
+            scene_spans,
+            [source_spans[expected.index(name)] for name in sorted(expected)],
+            rtol=0.02,
+        )
+        if expected == ["x", "y", "z"] or expected == ["x", "y"]:
+            assert _camera(out) is None
+
     def test_fit_store_root_names_its_columns_in_array_order(
         self, tmp_path: Path
     ) -> None:

@@ -123,6 +123,7 @@ class FitPipelineCtx:
     voxel_size: "Optional[tuple[float, ...]]" = None
     denoise_effective_h: Optional[float] = None
     denoise_norm_range: "Optional[tuple[float, float]]" = None
+    dimension_metadata: "Optional[list[dict[str, str]]]" = None
     min_extent: Optional[float] = None
     reseed_sigma: Optional[float] = None
 
@@ -1000,7 +1001,11 @@ def dispatch_parallel_tiled(
 
         with asection(f"Saving to {ctx.output_path.name}"):
             n_splats = save_fit_output(
-                result, ctx.output_path, compress=ctx.compress, verbose=ctx.verbose
+                result,
+                ctx.output_path,
+                compress=ctx.compress,
+                verbose=ctx.verbose,
+                dimension_metadata=ctx.dimension_metadata,
             )
 
         aprint(f"\nDone: {n_splats:,} splats")
@@ -1761,7 +1766,11 @@ def rescale_and_save(
         else:
             # leaf → .save; partition node → write_gsplats_tree
             n_splats = save_fit_output(
-                result, ctx.output_path, compress=ctx.compress, verbose=ctx.verbose
+                result,
+                ctx.output_path,
+                compress=ctx.compress,
+                verbose=ctx.verbose,
+                dimension_metadata=ctx.dimension_metadata,
             )
     return result, n_splats, is_leaf
 
@@ -1806,6 +1815,7 @@ def save_fit_output(
     *,
     compress: "Optional[Literal['zip', 'tar.gz']]",
     verbose: bool,
+    dimension_metadata: "Optional[list[dict[str, str]]]" = None,
 ) -> int:
     """Save a flat ``GSplatData`` leaf or a ``kind=partition`` tree node.
 
@@ -1813,12 +1823,23 @@ def save_fit_output(
     """
     from luxar.gsplats.gsplat_data import GSplatData
 
+    root_attrs = (
+        {"dimension_metadata": dimension_metadata}
+        if dimension_metadata is not None
+        else None
+    )
     if isinstance(result, GSplatData):
-        result.save(output_path, compress=compress, amplitude_bits="auto")
+        result.save(
+            output_path, compress=compress, amplitude_bits="auto", root_attrs=root_attrs
+        )
         n = int(result.n_splats)
     else:  # a partition / tree node has no flat-matrix equivalent
         from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
 
+        # A single content box may carry guessed axes from its checkpoint store.
+        # The fit's explicit labels must win over that reloaded node metadata.
+        if dimension_metadata is not None:
+            result.meta["dimension_metadata"] = dimension_metadata
         fitting, config, provenance, pipeline = split_fitting_info(
             result.meta.get("fit_stats", {}), include_fitting_info=True
         )
@@ -1832,6 +1853,7 @@ def save_fit_output(
             fitting_config=config,
             provenance_info=provenance,
             pipeline_info=pipeline,
+            root_attrs=root_attrs,
         )
         n = int(getattr(result, "n_splats", 0))
     if verbose:
