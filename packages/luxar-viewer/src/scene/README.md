@@ -83,7 +83,7 @@ class SceneManager extends THREE.EventDispatcher {
     renderer?: 'webgl' | 'webgpu';
     webgpuForceWebGL?: boolean;
     perfTimestamp?: boolean;
-    hdr?: boolean; // HDR canvas output request (WebGPU only)
+    hdr?: boolean; // HDR canvas output request (WebGPU only); default false here — LuxarApp passes true
     hdrHeadroom?: number; // pinned headroom; omitted = per display
   }): Promise<void>;
   loadSceneData(

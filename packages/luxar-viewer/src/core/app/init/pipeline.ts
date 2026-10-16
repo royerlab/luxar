@@ -72,6 +72,9 @@ function wireRenderOnChange(
       'Render audit on (?renderAudit): every tick renders and is checked'
     );
     events.add(() => animationController.setRenderAudit(null));
+    // The audit reads the canvas back through an 8-bit 2D canvas, which clips
+    // an HDR canvas above SDR white: audit the SDR curve instead.
+    events.add(sceneManager.postProcessing.holdSdrOutput());
   }
 }
 

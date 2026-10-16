@@ -355,7 +355,7 @@ export function describeUrlSessionOverrides(): string | null {
   }
   if (urlPrefetch !== null) parts.push(`prefetch ${urlPrefetch}`);
   if (urlRenderer !== null) parts.push(urlRenderer === 'webgpu' ? 'WebGPU' : 'WebGL');
-  if (urlHdrOutput !== null) parts.push(urlHdrOutput === 'off' ? 'HDR off' : 'HDR on');
+  if (urlHdrOutput !== null) parts.push(urlHdrOutput === 'off' ? 'HDR off' : 'HDR auto');
   return parts.length ? `This page: ${parts.join(', ')} (from its URL)` : null;
 }
 

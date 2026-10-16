@@ -607,7 +607,8 @@ export interface UrlParams {
    * extended-range `rgba16float` canvas, tone-mapping mode `extended`) is on
    * by default in WebGPU sessions on HDR displays; the URL overrides the
    * Settings › Advanced › HDR Output preference for this page load: `off`
-   * forces SDR, anything else (bare `?hdr`, `?hdr=4`) forces `'auto'`.
+   * (also `0` / `false`) forces SDR, any other value (bare `?hdr`, `?hdr=4`)
+   * forces `'auto'`.
    * Null when absent.
    */
   hdr: 'auto' | 'off' | null;

@@ -352,12 +352,37 @@ describe('createWebGPURenderer', () => {
       expect(result).not.toHaveProperty('capabilities.hdrOutput');
     });
 
-    it('falls back to SDR when the browser ignored the extended tone-mapping mode', async () => {
+    it('keeps the canvas SDR when the browser cannot do extended tone mapping', async () => {
+      // Probed before the renderer exists: no rgba16float canvas to pay for.
       for (const mode of ['standard', null]) {
         webgpuConstructorArgs.length = 0;
         const result = await createWebGPURenderer(hdrCanvas(mode), { hdr: true });
+        expect(outputType()).toBeUndefined();
         expect(result).not.toHaveProperty('capabilities.hdrOutput');
       }
+    });
+
+    it('keeps the canvas SDR when the device request failed (three picks its own)', async () => {
+      stubNavigatorGpu(
+        vi.fn().mockResolvedValue(
+          makeAdapter({
+            maxVertexBuffers: 16,
+            requestDevice: vi.fn().mockRejectedValue(new Error('device exhausted')),
+          })
+        )
+      );
+      const result = await createWebGPURenderer(hdrCanvas('extended'), { hdr: true });
+      expect(outputType()).toBeUndefined();
+      expect(result).not.toHaveProperty('capabilities.hdrOutput');
+    });
+
+    it('treats a headroom pinned to 1x as SDR output', async () => {
+      const result = await createWebGPURenderer(hdrCanvas('extended'), {
+        hdr: true,
+        hdrHeadroom: 1,
+      });
+      expect(outputType()).toBeUndefined();
+      expect(result).not.toHaveProperty('capabilities.hdrOutput');
     });
   });
 });

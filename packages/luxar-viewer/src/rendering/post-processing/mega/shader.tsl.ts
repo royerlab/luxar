@@ -134,9 +134,10 @@ function applyToneMapping(color: TSLNode, mode: LuxarToneMappingMode): TSLNode {
 
 /**
  * Scene-linear level below which HDR output reproduces the SDR operator
- * exactly. Neutral is linear up to 0.8 (its compression start plus its 0.04
- * offset), so its knee sits there; a lower knee would roll its linear range
- * off below what SDR shows.
+ * exactly (by construction, whatever the knee). Neutral only starts
+ * compressing once its peak, less a black-level offset of at most 0.04, passes
+ * 0.76 — so up to ~0.8 on grey — hence its higher knee: a lower one would roll
+ * off a range SDR still shows linearly (verified never darker than SDR).
  */
 function hdrKnee(mode: LuxarToneMappingMode): number {
   return mode === 6 ? 0.8 : 0.5;

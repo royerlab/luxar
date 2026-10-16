@@ -42,10 +42,10 @@ describe('resolveHdrHeadroomFor', () => {
   });
 
   it('goes url > manual > measured > model > default', () => {
-    storeManualHeadroom('screen:1512x982@2', 5);
+    storeManualHeadroom('screen:1512x982', 5);
     expect(resolveHdrHeadroomFor(XDR, 6.35, 8)).toMatchObject({ value: 8, source: 'url' });
     expect(resolveHdrHeadroomFor(XDR, 6.35, null)).toMatchObject({ value: 5, source: 'manual' });
-    storeManualHeadroom('screen:1512x982@2', null);
+    storeManualHeadroom('screen:1512x982', null);
     expect(resolveHdrHeadroomFor(XDR, 6.35, null)).toMatchObject({
       value: 6.35,
       source: 'measured',
@@ -184,6 +184,34 @@ describe('HdrHeadroomController', () => {
     Object.assign(currentScreen, { hdrHeadroom: Math.log2(3) });
     currentScreen.dispatchEvent(new Event('hdrheadroomchange'));
     expect(c.current()?.value).toBeCloseTo(3);
+    c.dispose();
+  });
+
+  it('a double-clicked Detect shares one permission request', async () => {
+    stubMatchMedia({ hdr: true });
+    const { getScreenDetails } = stubScreenDetails(
+      { label: 'Built-in Retina Display', hdrHeadroom: 1 },
+      true
+    );
+    const c = new HdrHeadroomController(apply, { pinned: null, gpuRenderer: null });
+    await c.start();
+    const outcomes = await Promise.all([c.detect(), c.detect()]);
+    expect(outcomes).toEqual(['measured', 'measured']);
+    expect(getScreenDetails).toHaveBeenCalledTimes(1);
+    c.dispose();
+  });
+
+  it('stores a hand-set value under the geometry key too (startup reads it)', async () => {
+    stubMatchMedia({ hdr: true });
+    stubScreenDetails({ label: 'Built-in Retina Display' }, true);
+    const c = new HdrHeadroomController(apply, { pinned: null, gpuRenderer: null });
+    await c.start();
+    await c.detect(); // 'unmeasurable', but the label is now known
+    c.setManual(4);
+    const map = JSON.parse(localStorage.getItem('luxar.hdrHeadroom') ?? '{}');
+    expect(Object.values(map)).toEqual([4, 4]);
+    expect(Object.keys(map).some((k) => k.startsWith('label:'))).toBe(true);
+    expect(Object.keys(map).some((k) => k.startsWith('screen:'))).toBe(true);
     c.dispose();
   });
 

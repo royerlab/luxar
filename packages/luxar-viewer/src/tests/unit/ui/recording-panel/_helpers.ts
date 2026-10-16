@@ -131,6 +131,7 @@ export function createMockAnimationController({
     renderOnce: vi.fn(() => {
       isAnimating = true;
     }),
+    requestRender: vi.fn(),
     stopAnimation: vi.fn(() => {
       isAnimating = false;
     }),

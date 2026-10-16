@@ -114,7 +114,9 @@ test('line rendering: compare WebGL vs WebGPU FPS on line-heavy scenes', async (
   };
 
   for (const backend of BACKENDS) {
-    await page.goto(`/?src=${chosen.url}&renderer=${backend}&debug`);
+    // `hdr=off`: the bench runs headed by default and an HDR display would turn
+    // the WebGPU arm into an rgba16float HDR arm (+0.22 ms/frame at 4K).
+    await page.goto(`/?src=${chosen.url}&renderer=${backend}&debug&hdr=off`);
     await waitForLuxarReady(page);
 
     // Read the actually-active backend AND the visible line count so a

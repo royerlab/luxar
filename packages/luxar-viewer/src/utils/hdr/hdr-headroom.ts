@@ -94,16 +94,16 @@ export function storeManualHeadroom(key: string, value: number | null): void {
 }
 
 /**
- * Once the display label is known, carry a value hand-set under the
- * geometry key (before the permission) over to the label key, so granting
- * the permission does not forget it.
+ * Once the display label is known, copy a value hand-set under the geometry
+ * key (before the permission) to the label key, so granting the permission
+ * does not forget it. The geometry entry stays: the renderer's synchronous
+ * startup resolution only knows the geometry.
  */
 function migrateManualHeadroom(fromKey: string, toKey: string): void {
   if (fromKey === toKey) return;
   const map = loadManualMap();
   if (map[fromKey] === undefined || map[toKey] !== undefined) return;
   map[toKey] = map[fromKey];
-  delete map[fromKey];
   saveManualMap(map);
 }
 
@@ -211,6 +211,8 @@ export type HdrDetectOutcome = 'measured' | 'unmeasurable' | 'denied';
 export class HdrHeadroomController {
   private readonly events = new EventGroup();
   private details: ScreenDetailsLike | null = null;
+  /** The in-flight `getScreenDetails()` attach, shared by concurrent callers. */
+  private attaching: Promise<void> | null = null;
   private stopWatchingScreen: (() => void) | null = null;
   private last: HdrHeadroomResolution | null = null;
   private disposed = false;
@@ -247,7 +249,7 @@ export class HdrHeadroomController {
     if (this.details === null) await this.attachScreenDetails();
     if (this.details === null) return 'denied';
     if (measuredHeadroom(this.details.currentScreen) === null) return 'unmeasurable';
-    storeManualHeadroom(displayKey(this.signals()), null);
+    for (const key of this.manualKeys()) storeManualHeadroom(key, null);
     this.resolve();
     return 'measured';
   }
@@ -255,7 +257,7 @@ export class HdrHeadroomController {
   /** The user moved the slider: remember it for the current display. */
   setManual(value: number): void {
     if (this.last !== null && isHeadroomLocked(this.last.source)) return;
-    storeManualHeadroom(displayKey(this.signals()), value);
+    for (const key of this.manualKeys()) storeManualHeadroom(key, value);
     this.resolve();
   }
 
@@ -275,10 +277,17 @@ export class HdrHeadroomController {
     this.events.dispose();
   }
 
-  private async attachScreenDetails(): Promise<void> {
+  /** Attach once; concurrent callers (a double-clicked Detect) share the attempt. */
+  private attachScreenDetails(): Promise<void> {
+    this.attaching ??= this.doAttachScreenDetails().finally(() => {
+      this.attaching = null;
+    });
+    return this.attaching;
+  }
+
+  private async doAttachScreenDetails(): Promise<void> {
     const getDetails = getScreenDetailsFn();
     if (getDetails === null) return;
-    const geometryKey = displayKey(this.signals());
     try {
       this.details = await getDetails();
     } catch {
@@ -286,7 +295,8 @@ export class HdrHeadroomController {
       return;
     }
     if (this.disposed) return;
-    migrateManualHeadroom(geometryKey, displayKey(this.signals()));
+    // Geometry read AFTER the prompt: the window may have moved meanwhile.
+    migrateManualHeadroom(this.geometryKey(), displayKey(this.signals()));
     this.events.on(this.details, 'currentscreenchange', this.onScreenSwitch);
     this.watchCurrentScreen();
     this.resolve();
@@ -298,6 +308,18 @@ export class HdrHeadroomController {
     this.stopWatchingScreen = screen
       ? this.events.on(screen, 'hdrheadroomchange', this.onChange)
       : null;
+  }
+
+  /**
+   * Keys a hand-set value is stored under: the label key once known, and
+   * always the geometry key the synchronous startup resolution reads.
+   */
+  private manualKeys(): string[] {
+    return [...new Set([displayKey(this.signals()), this.geometryKey()])];
+  }
+
+  private geometryKey(): string {
+    return displayKey(collectDisplaySignals(this.options.gpuRenderer));
   }
 
   private signals(): DisplaySignals {

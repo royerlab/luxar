@@ -426,8 +426,12 @@ export class VideoRecordingStrategy implements CaptureStrategy {
    * Non-private so Panel can route `panel.cleanupCaptureStream()` through.
    */
   cleanupCaptureStream(): void {
-    this.releaseSdrHold?.();
-    this.releaseSdrHold = null;
+    if (this.releaseSdrHold) {
+      this.releaseSdrHold();
+      this.releaseSdrHold = null;
+      // The canvas goes back to the HDR curve: draw it now, not at the next input.
+      this.animationController.requestRender('recording SDR hold released');
+    }
     this.captureStream?.getTracks().forEach((track) => track.stop());
     this.captureStream = null;
     this.liveOverlayCompositor?.detach();

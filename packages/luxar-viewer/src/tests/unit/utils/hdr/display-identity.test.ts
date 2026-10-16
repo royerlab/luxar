@@ -44,6 +44,13 @@ describe('identifyDisplay', () => {
     expect(identifyDisplay(signals({ gpuRenderer: M4, width: 1470, height: 956 }))).toBeNull();
   });
 
+  it('survives page zoom (devicePixelRatio includes it)', () => {
+    expect(identifyDisplay(signals({ dpr: 2.2 }))?.name).toContain('XDR');
+    expect(displayKey(signals({ dpr: 2.2 }))).toBe(displayKey(signals()));
+    // A 1x external monitor never takes the MacBook rule.
+    expect(identifyDisplay(signals({ dpr: 1, width: 1536, height: 997 }))).toBeNull();
+  });
+
   it('trusts isInternal over the panel shape when the label is known', () => {
     const internal = signals({ width: 1920, height: 1200, isInternal: true });
     expect(identifyDisplay(internal)?.name).toContain('XDR');
@@ -86,6 +93,6 @@ describe('measuredHeadroom', () => {
 describe('displayKey', () => {
   it('keys by label when known, else by screen geometry', () => {
     expect(displayKey(signals({ label: 'M28U' }))).toBe('label:M28U');
-    expect(displayKey(signals())).toBe('screen:1512x982@2');
+    expect(displayKey(signals())).toBe('screen:1512x982');
   });
 });

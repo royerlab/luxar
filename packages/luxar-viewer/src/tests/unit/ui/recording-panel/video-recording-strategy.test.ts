@@ -160,6 +160,8 @@ describe('VideoRecordingStrategy', () => {
       mockMediaRecorder.onstop();
       await recordingPromise;
       expect(release).toHaveBeenCalledTimes(1);
+      // ...and asks for a frame so the canvas returns to the HDR curve at once.
+      expect(mockAnimController.requestRender).toHaveBeenCalled();
     });
 
     it('ignores stopVideoRecording when not recording', () => {

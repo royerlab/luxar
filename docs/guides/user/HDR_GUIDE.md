@@ -288,20 +288,20 @@ console.log('Float support:', !!gl.getExtension('EXT_color_buffer_float'));
 **Limitations:**
 - The WebGL renderer (the production default) presents an 8-bit SDR canvas; true HDR canvas output exists only in the WebGPU prototype below
 - True HDR output requires an HDR-capable display + browser support; otherwise the canvas stays SDR
-- Screenshots, image sequences, video exports and live recordings are always 8-bit SDR
+- 8-bit exports (PNG/JPEG/WebP screenshots and sequences, video, live recordings) are SDR; EXR screenshots and sequences keep the float data
 - Performance impact on older GPUs
 
 ### HDR display output (WebGPU, prototype)
 
 With `?renderer=webgpu`, HDR output is **on by default**: when the renderer runs natively on a display that reports `(dynamic-range: high)`, the canvas is an extended-range `rgba16float` canvas and highlights can go above SDR white, up to the display's headroom. Below a knee the image is identical to the SDR tone curve; above it a smooth shoulder rises toward the headroom.
 
-It falls back to the ordinary SDR canvas, with no action needed, for the WebGL renderer, `?webgpuForceWebgl`, no WebGPU adapter, an SDR display, or a browser that ignores the extended tone-mapping mode.
+It falls back to the ordinary SDR canvas, with no action needed, for the WebGL renderer, `?webgpuForceWebgl`, no native WebGPU device, an SDR display, a headroom pinned to 1, or a browser that cannot confirm the extended tone-mapping mode (one without `GPUCanvasContext.getConfiguration()` counts as unsupported). Support is checked before the canvas is created, so a fallback session pays nothing for HDR.
 
-- **Turn it off**: Settings › Advanced › HDR Output (Auto / Off; reloads the page), or `?hdr=off` for one page load.
+- **Turn it off**: Settings › Advanced › HDR Output (Auto / Off; takes effect after a reload, which the Settings popover offers), or `?hdr=off` (also `0` / `false`) for one page load.
 - **Pin the headroom**: `?hdr=<n>` (multiple of SDR white, clamped to 1-16).
-- **Headroom** is resolved per display: the URL pin, then a value you set by hand, then the browser's measurement (Chrome with "Experimental Web Platform features", after granting display access), then a conservative model guess (e.g. 3x for MacBook Pro Liquid Retina XDR), then 2x. It follows the window across displays and brightness changes, and drops to 1x on a display in SDR mode.
+- **Headroom** is resolved per display: the URL pin, then a value you set by hand, then the browser's measurement (Chrome with "Experimental Web Platform features", after granting display access), then a conservative model guess (e.g. 3x for MacBook Pro Liquid Retina XDR), then 2x. In Chromium it follows the window to another display, and with the measurement it also follows brightness changes; it drops to 1x on a display in SDR mode. A session started on an SDR display stays SDR until reloaded.
 - **Rendering panel › HDR folder** (only while HDR output is active): the **Headroom** slider (1-16; locked when pinned by URL or on an SDR display) and **Detect Display**, which measures the display and reports the outcome in a toast.
-- **Captures stay SDR**: screenshots, image sequences, offline video and live recordings use the SDR tone curve, since 8-bit output would clip values above SDR white.
+- **8-bit captures use the SDR curve**: PNG/JPEG/WebP screenshots and image sequences, offline video and live recordings are tone-mapped for SDR, since 8-bit output would clip values above SDR white. EXR exports are unaffected.
 
 ---
 

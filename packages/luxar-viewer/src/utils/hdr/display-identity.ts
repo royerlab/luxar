@@ -84,13 +84,15 @@ const MACBOOK_PRO_14_SIZES: ReadonlyArray<readonly [number, number]> = [
 ];
 
 /**
- * True when the screen has the MacBook panel shape: 2x, aspect ~1.54-1.55
+ * True when the screen has the MacBook panel shape: Retina-class, aspect ~1.54-1.55
  * (14"/16" Pro, 13"/15" Air). External monitors are almost all 16:9, 16:10
  * or ultrawide, which this excludes; a notched MacBook in a non-default
  * scaled mode keeps the panel aspect.
  */
 function hasMacBookPanelShape(s: DisplaySignals): boolean {
-  if (s.dpr !== 2 || s.height <= 0) return false;
+  // `>= 1.5`, not `=== 2`: devicePixelRatio includes the page zoom (2.2 at
+  // 110%), while the aspect ratio below is zoom-invariant.
+  if (s.dpr < 1.5 || s.height <= 0) return false;
   const aspect = s.width / s.height;
   return aspect >= 1.535 && aspect <= 1.55;
 }
@@ -159,5 +161,6 @@ export function collectDisplaySignals(
 
 /** Stable per-display key: the label when known, else the screen geometry. */
 export function displayKey(s: DisplaySignals): string {
-  return s.label !== null ? `label:${s.label}` : `screen:${s.width}x${s.height}@${s.dpr}`;
+  // No devicePixelRatio in the key: it moves with the page zoom.
+  return s.label !== null ? `label:${s.label}` : `screen:${s.width}x${s.height}`;
 }
