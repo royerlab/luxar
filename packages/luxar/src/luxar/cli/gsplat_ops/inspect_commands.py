@@ -292,13 +292,21 @@ def _is_node_tree(path: Path) -> bool:
         return False
 
 
-#: Inputs `gsplat fit` accepts that are images, not splat stores.
+#: Inputs `gsplat fit` accepts that are IMAGES, not splat stores.
 _IMAGE_VOLUME_SUFFIXES = (".tif", ".tiff", ".npy", ".npz")
+#: Root attributes a `.gsplats.zarr` (any format version) carries.
 _GSPLAT_ROOT_ATTRS = ("format_type", "format_version", "kind", "type")
 
 
 def _image_volume_reason(path: Path) -> Optional[str]:
-    """Why ``path`` looks like an image volume rather than a splat store, or None."""
+    """Why ``path`` looks like an image volume rather than a splat store, or None.
+
+    ``gsplat info`` is the first thing people point at a raw stack, and the
+    loader's own error for that ("missing centers", a zarr KeyError) never says
+    the useful thing: fit it first. Conservative on purpose — anything carrying
+    a gsplats root attribute or ``centers``/``amplitudes`` arrays is left to the
+    normal loader (and its own error).
+    """
     from luxar._zarr_compat import read_array_meta, read_node_attrs
 
     name = path.name.lower()
@@ -1107,6 +1115,9 @@ def compare_quality(
                         info=ref_info,
                     )
                     ref_shape = ref_np.shape
+                    # Decoded size in the reference's STORED element type (the
+                    # loader hands back float32 whatever the file holds): the same
+                    # `source_bytes` basis `gsplat info` and `fit` quote.
                     ref_itemsize = (
                         np.dtype(ref_info["source_dtype"]).itemsize
                         if ref_info.get("source_dtype")
@@ -1166,6 +1177,8 @@ def compare_quality(
                     with asection("Computing metrics"):
                         metrics = compute_quality_metrics(rendered_t, ref_t)
 
+                # Compression ratio: the one definition `gsplat info` and `fit`
+                # quote — decoded reference bytes over the store's bytes on disk.
                 from luxar.gsplats.fitting.visualization import compression_ratio
 
                 ratio = compression_ratio(ref_decoded_bytes, store_size(gsplats_path))
@@ -1685,6 +1698,12 @@ def _print_source_grid(data: Any, stored_bytes: int) -> tuple[str, ...]:
     if src_stored:
         aprint(f"  stored source: {format_memory_size(src_stored)} (as downloaded)")
 
+    # TWO ratios, each labelled with its basis (one shared definition, see
+    # `compression_ratio`): `source_bytes` is the DECODED array while the splat
+    # store on disk is compressed, so the first compares unlike things and
+    # flatters the splats by whatever the source codec was already achieving.
+    # It is still the number volumetric compression is normally quoted
+    # against, so both are printed rather than either alone.
     from luxar.gsplats.fitting.visualization import compression_lines
 
     lines = compression_lines(stats.get("source_bytes"), stored_bytes, src_stored)
