@@ -9,7 +9,7 @@ import typer
 from arbol import aprint, asection
 
 from ..._traceback import exit_with_error
-from ...utils import format_memory_size
+from ...utils import format_memory_size, store_size
 from ..encoding import _resolve_encoding_mode
 from .parsing import (
     parse_axis_list,
@@ -228,9 +228,7 @@ def run_filter_dataset(
                     )
                     aprint(f"Saved filtered dataset: {output_path}")
                     if output_path.exists():
-                        aprint(
-                            f"  Size: {format_memory_size(output_path.stat().st_size)}"
-                        )
+                        aprint(f"  Size: {format_memory_size(store_size(output_path))}")
 
     except (typer.Exit, typer.BadParameter):
         raise
@@ -302,9 +300,7 @@ def run_slice_dataset(
                     aprint(f"Saved sliced dataset: {output_path}")
 
                     if output_path.exists():
-                        aprint(
-                            f"  Size: {format_memory_size(output_path.stat().st_size)}"
-                        )
+                        aprint(f"  Size: {format_memory_size(store_size(output_path))}")
 
     except typer.Exit:
         raise

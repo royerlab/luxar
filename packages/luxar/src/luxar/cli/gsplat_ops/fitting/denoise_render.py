@@ -9,7 +9,7 @@ import typer
 from arbol import aprint, asection
 
 from ..._traceback import exit_with_error
-from ...utils import format_memory_size
+from ...utils import format_memory_size, store_size
 
 if TYPE_CHECKING:
     import numpy as np
@@ -308,7 +308,7 @@ def _save_volume(volume: np.ndarray, output_path: Path) -> None:
             np.save(str(output_path), volume)
 
         if output_path.exists():
-            aprint(f"File size: {format_memory_size(output_path.stat().st_size)}")
+            aprint(f"File size: {format_memory_size(store_size(output_path))}")
 
 
 def run_render_to_file(
