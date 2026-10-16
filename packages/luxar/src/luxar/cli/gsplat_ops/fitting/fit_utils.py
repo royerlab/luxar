@@ -124,6 +124,27 @@ class FitPipelineCtx:
     denoise_effective_h: Optional[float] = None
     denoise_norm_range: "Optional[tuple[float, float]]" = None
     dimension_metadata: "Optional[list[dict[str, str]]]" = None
+    min_extent: Optional[float] = None
+    reseed_sigma: Optional[float] = None
+
+
+def validate_hygiene_flags(
+    min_extent: Optional[float], reseed_sigma: Optional[float]
+) -> None:
+    """Reject a negative ``--min-extent`` / non-positive ``--reseed-sigma`` early."""
+    from luxar.gsplats.fitting.splat_hygiene import (
+        validate_min_extent,
+        validate_reseed_sigma,
+    )
+
+    try:
+        validate_min_extent(min_extent)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--min-extent") from exc
+    try:
+        validate_reseed_sigma(reseed_sigma)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--reseed-sigma") from exc
 
 
 def warn_ignored_density_flags(ctx: FitPipelineCtx) -> None:
@@ -370,6 +391,8 @@ def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any
         "seed_method": ctx.seed_method,
         "verbose": ctx.verbose,
         "cull_retention": ctx.cull_retention,
+        "min_extent": ctx.min_extent,
+        "relocation_reseed_sigma_vox": ctx.reseed_sigma,
     }
     fit_config = load_fit_config(ctx.preset, ctx.config, cli_overrides)
 
@@ -914,6 +937,8 @@ def dispatch_parallel_tiled(
                 denoise_search_distance=ctx.denoise_search_distance,
                 denoise_backend=ctx.denoise_backend,
                 denoise_2d=ctx.denoise_2d,
+                min_extent=ctx.min_extent,
+                reseed_sigma=ctx.reseed_sigma,
                 # Empty (windowed-to-zero) tiles must not crash the
                 # whole run: the worker writes an .empty marker and
                 # exits 0; the orchestrator skips it at merge.

@@ -23,6 +23,7 @@ import { BloomChain } from './bloom/chain';
 import { FxaaPass } from './fxaa/pass';
 import { FullscreenPass } from './fullscreen/pass';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
+import type { HdrOutputState } from '../../types/hdr-output';
 import { clamp } from '../../utils/clamp';
 import { raceTimeout } from '../../utils/race-timeout';
 import type { LuxarCamera } from '../../utils/camera-utils';
@@ -107,6 +108,10 @@ export class PostProcessingManager {
   // Persisted state (survives context loss; mirrors UI state)
   // ----------------------------------------------------------------
   private fxaaEnabled = config.renderingControls.defaults.fxaaEnabled;
+  /** Live HDR output headroom; seeded from the renderer in the constructor. */
+  private hdrHeadroom = 1;
+  /** Active {@link holdSdrOutput} holds. */
+  private sdrOutputHolds = 0;
   private msaaEnabled = config.renderingControls.defaults.msaaEnabled;
   private msaaSamples: number = config.renderingControls.defaults.msaaSamples;
   private ssaaEnabled = config.renderingControls.defaults.ssaaEnabled;
@@ -194,6 +199,7 @@ export class PostProcessingManager {
 
     this.renderSize = { ...size };
 
+    this.hdrHeadroom = capabilities.hdrOutput?.headroom ?? 1;
     this.initializeTransientResources({ applyDefaults: true });
 
     log.success(
@@ -288,6 +294,8 @@ export class PostProcessingManager {
     this.bloomChain = r.bloomChain;
     this.fxaaPass = r.fxaaPass;
     this.refractionSplit = r.refractionSplit;
+    // A rebuilt mega-shader (context restore) keeps the live headroom.
+    this.megaShader.setHdrPeak(this.effectiveHdrPeak());
 
     // Apply config defaults to the mega-shader uniforms / defines.
     // Skipped during context-restore rebuilds — the caller restores user
@@ -408,6 +416,51 @@ export class PostProcessingManager {
 
   updateExposure(value: number): void {
     this.megaShader.setExposure(value);
+  }
+
+  /** True when the canvas is an extended-range HDR canvas (PROTOTYPE, `?hdr`). */
+  isHdrOutputActive(): boolean {
+    return this.capabilities.hdrOutput !== undefined;
+  }
+
+  /** The renderer's HDR output state (pin, GPU string), or undefined when SDR. */
+  getHdrOutputState(): HdrOutputState | undefined {
+    return this.capabilities.hdrOutput;
+  }
+
+  /** HDR output headroom, as a multiple of SDR white; 1 when HDR output is off. */
+  getHdrHeadroom(): number {
+    return this.hdrHeadroom;
+  }
+
+  /** Set the HDR output headroom (a uniform write; survives resource rebuilds). */
+  setHdrHeadroom(value: number): void {
+    this.hdrHeadroom = Math.max(1, value);
+    this.megaShader.setHdrPeak(this.effectiveHdrPeak());
+  }
+
+  /**
+   * Show the SDR tone curve on the HDR canvas until the returned release is
+   * called — for consumers that turn the canvas into 8-bit frames (a live
+   * MediaRecorder capture clips everything above SDR white, measured:
+   * an extended 2.0 reads back as 255, like 1.0). Ref-counted; a release
+   * runs once. No-op on an SDR canvas.
+   */
+  holdSdrOutput(): () => void {
+    this.sdrOutputHolds++;
+    this.megaShader.setHdrPeak(this.effectiveHdrPeak());
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.sdrOutputHolds--;
+      this.megaShader.setHdrPeak(this.effectiveHdrPeak());
+    };
+  }
+
+  /** The peak the mega-shader should use now: 1 while an SDR hold is active. */
+  private effectiveHdrPeak(): number {
+    return this.sdrOutputHolds > 0 ? 1 : this.hdrHeadroom;
   }
 
   getExposure(): number {

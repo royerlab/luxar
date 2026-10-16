@@ -35,7 +35,8 @@ runInitPipeline(ports, partial)
 ├── 3. resolveFactories       merge options.factories over defaults
 ├── 4. SceneManager           factories.sceneManager() then init({canvas,
 │                              debug, renderer, webgpuForceWebGL,
-│                              perfTimestamp}); stored on partial BEFORE
+│                              perfTimestamp, hdr (default true),
+│                              hdrHeadroom}); stored on partial BEFORE
 │                              awaiting init so a throw stays disposable
 ├── 5. AnimationController    factories.animationController(controls,
 │                              postProcessing); setContextLostPredicate

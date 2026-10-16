@@ -255,6 +255,9 @@ def _merge_fitting_info(
         fitting_info,
         sum(int(stats["n_splats"]) for stats in part_stats),
     )
+    from luxar.gsplats.fitting.splat_hygiene import aggregate_min_extent_stats
+
+    aggregate_min_extent_stats(part_stats, fitting_info)
     return fitting_info
 
 
@@ -340,6 +343,7 @@ def _build_part_for_tile(
         finish_population_stats,
         sum_population_counts,
     )
+    from luxar.gsplats.fitting.splat_hygiene import aggregate_min_extent_stats
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.merged_quality import collect_part_provenance
 
@@ -425,6 +429,8 @@ def _build_part_for_tile(
         return None
     sum_population_counts(tile_stats, part.stats, part.n_splats)
     finish_population_stats(part.stats)
+    # Each tile pruned its own specks (`min_extent`); carry the summed record.
+    aggregate_min_extent_stats(tile_stats, part.stats)
     return part
 
 
