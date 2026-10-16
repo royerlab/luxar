@@ -41,46 +41,50 @@ pip install "luxar[gsplats]"
 
 ## Fitting on a CPU or a Mac
 
-Fast fitting needs compiled splatting kernels: CUDA on an NVIDIA GPU, or Metal on
-Apple Silicon (compiled at runtime from a plain pip install with torch >= 2.7;
-see [metal/README.md](models/gsplats/metal/README.md)). Everywhere else, including
-`--device cpu`, a Mac whose fit logs `Metal splatting kernels: none, using
-PyTorch`, and a CUDA GPU without the compiled extension, the fitter runs PyTorch
-reference ops. That path works, but plan for **seconds per iteration, not
-milliseconds**. A fit prints which path it took near the start (`Model class:
-GaussianSplatModel (PyTorch, device=cpu)` is the reference path).
+On a 3D CPU fit, the native numba kernels are selected automatically when numba
+is installed (included in `[gsplats]`). CUDA on an NVIDIA GPU uses an AOT
+extension or compiles the kernels at runtime with NVRTC. Metal on Apple Silicon
+compiles at runtime from a plain pip install with torch >= 2.7; see
+[metal/README.md](models/gsplats/metal/README.md). A fit prints its path near
+the start: `Model class: GaussianSplatModelCPUNative (numba, ... threads, ...)`,
+`GaussianSplatModelCUDA`, or `GaussianSplatModelMetal`. The PyTorch reference
+path (`Model class: GaussianSplatModel (PyTorch, device=...)`) is used when the
+native CPU kernels are unavailable, `LUXAR_CPU_BACKEND=torch` is set for a CPU
+fit, the CPU fit is not 3D, or neither CUDA kernel path is available. An MPS fit
+without working Metal kernels also uses PyTorch.
 
-What to expect on the reference path (Apple M4 Max CPU, `--device cpu`, splat
-count and iterations fixed):
+The following **reference-path** measurements are from an Apple M4 Max CPU with
+`LUXAR_CPU_BACKEND=torch` (`--device cpu`, splat count and iterations fixed).
+They do not predict the default native CPU fit:
 
 | volume | splats | one thread | 4–8 threads |
 | --- | --- | --- | --- |
 | 64×128×128 (1 Mvoxel) | 2,000 | ≈ 0.35 s / iteration | |
 | 128×256×256 (8.4 Mvoxel) | 4,000 | ≈ 3.5–4.6 s / iteration | ≈ 2.6 s / iteration |
 
-So a 2,000-iteration `--preset draft` on the larger volume is roughly an hour or
-more, and the runtime Metal kernels on the same Mac are 50–100x faster. A
-separate run on a loaded Intel i9-9900K (load average about 27, 16 threads
-oversubscribed) took about 25 minutes for `--iters 200` on the larger volume; an
-idle machine is likely to be faster. On noisy data most of the gain arrives in
-the first few hundred iterations, so a short run is often nearly as good as a
-long one: time a short run on your own data first, then decide.
+On this reference path, a 2,000-iteration `--preset draft` on the larger volume
+can take roughly an hour or more; the runtime Metal kernels on the same Mac
+were 50–100x faster. A separate reference-path run on a loaded Intel i9-9900K
+(load average about 27, 16 threads oversubscribed) took about 25 minutes for
+`--iters 200` on the larger volume. Native CPU fits have different timings.
+On noisy data most of the gain arrives in the first few hundred iterations, so
+time a short run on your own data before choosing the final iteration count.
 
 A CPU recipe:
 
 ```bash
-export OMP_NUM_THREADS=8 MKL_NUM_THREADS=8   # 4-8; set BOTH
+export LUXAR_CPU_THREADS=8                   # optional: override automatic thread count
 export PYTHONUNBUFFERED=1                    # progress shows up in a redirected log
 luxar gsplat fit vol.tiff quick.gsplats.zarr --device cpu --seeds 4000 --iters 200
 luxar gsplat fit vol.tiff small.gsplats.zarr --device cpu --downscale 2 --preset draft
 ```
 
-- **Threads: export BOTH variables, and use 4–8.** In a source checkout `hatch
-  run` pins both to 1 (see the note in `pyproject.toml`), and torch takes its
-  intra-op count from `MKL_NUM_THREADS`, so it runs on ONE thread unless both are
-  exported. More is not better: past about 4–8 threads it got slower (16 threads
-  was slower than 4 in the measurement above).
-- **`--downscale` cuts the cost per iteration roughly by the voxel factor.**
+- **Threads are automatic for CLI CPU fits.** The native kernels use the available
+  physical cores; the PyTorch path widens a one-thread setting to at most eight.
+  `LUXAR_CPU_THREADS=N` overrides either path. Set it to 1 to reproduce the
+  one-thread reference measurements above. More threads are not always faster;
+  time a short fit on your machine.
+- **`--downscale` reduces the fitting volume.** On the reference path,
   `--downscale 2` (8x fewer voxels) took the 128×256×256, 4,000-splat fit from
   4.6 to 0.53 s per iteration on one thread. Seeding, the final full-resolution
   render and the final SSIM still run at full resolution, and the splats are
