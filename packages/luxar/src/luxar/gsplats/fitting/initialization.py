@@ -307,55 +307,23 @@ def initialize_optimization(
     )
 
     if use_cuda:
-        try:
-            from luxar.gsplats.models.gsplats.cuda import (
-                CUDA_BACKEND_AVAILABLE,
-                GaussianSplatModelCUDA,
-            )
-
-            if config.verbose:
-                aprint(
-                    f"CUDA custom kernels: {'compiled and available' if CUDA_BACKEND_AVAILABLE else 'NOT compiled (using PyTorch fallback)'}"
-                )
-
-            if CUDA_BACKEND_AVAILABLE:
-                model = GaussianSplatModelCUDA(
-                    shape=opt_shape,
-                    centers0=preprocessed_data.seed_centers,
-                    L0=L0,
-                    amps0=amps0,
-                    sigma_min_diag=_sigma_min,
-                    sigma_max_diag=_sigma_max,
-                    amp_max=amp_max,
-                    max_eccentricity=config.max_eccentricity,
-                    truncate=config.truncate,
-                    intensity_floor=config.cuda_intensity_floor,
-                    voxel_size=config.voxel_size,
-                    device=config.device,
-                )
-                if config.verbose:
-                    aprint(
-                        "✓ Model class: GaussianSplatModelCUDA (often orders of magnitude faster on NVIDIA GPUs; depends on hardware)"
-                    )
-            else:
-                aprint(
-                    "WARNING: CUDA device detected but custom CUDA kernels are NOT compiled! "
-                    "Fitting will use PyTorch fallback (significantly slower). "
-                    "Build CUDA kernels with: make build-cuda"
-                )
-                warnings.warn(
-                    "CUDA device detected but custom CUDA kernels are NOT compiled. "
-                    "Fitting will use PyTorch fallback (significantly slower). "
-                    "Build CUDA kernels with: make build-cuda",
-                    UserWarning,
-                    stacklevel=2,
-                )
-        except ImportError:
-            if config.verbose:
-                aprint(
-                    "CUDA backend: NOT installed (cuda_splatting_backend module missing)"
-                )
-            pass  # CUDA backend not compiled
+        model = _try_cuda_model(
+            config,
+            dict(
+                shape=opt_shape,
+                centers0=preprocessed_data.seed_centers,
+                L0=L0,
+                amps0=amps0,
+                sigma_min_diag=_sigma_min,
+                sigma_max_diag=_sigma_max,
+                amp_max=amp_max,
+                max_eccentricity=config.max_eccentricity,
+                truncate=config.truncate,
+                intensity_floor=config.cuda_intensity_floor,
+                voxel_size=config.voxel_size,
+                device=config.device,
+            ),
+        )
 
     # Fall back to standard PyTorch model
     if model is None:
@@ -406,6 +374,71 @@ def initialize_optimization(
         optimizer=optimizer,
         scheduler=scheduler,
     )
+
+
+def _warn_cuda_kernels_unavailable(reason: str) -> None:
+    """Loud, actionable warning that fitting fell back to the PyTorch renderer."""
+    from arbol import aprint
+
+    message = (
+        "CUDA device detected but the custom CUDA kernels are unavailable "
+        f"({reason}). Fitting will use the PyTorch fallback (significantly slower). "
+        "On Linux, a CUDA build of torch provides NVRTC and the kernels compile "
+        "automatically on first use; from a source checkout, `make build-cuda` "
+        "builds them ahead of time."
+    )
+    aprint(f"WARNING: {message}")
+    warnings.warn(message, UserWarning, stacklevel=3)
+
+
+def _try_cuda_model(config: FitConfig, model_kwargs: dict[str, Any]) -> Any | None:
+    """Build a GaussianSplatModelCUDA, or None (with a warning) when no kernels run.
+
+    Kernel backend order (see ``models/gsplats/cuda/backend.py``): compiled
+    extension, then NVRTC runtime compilation, then the PyTorch model. A
+    failing NVRTC compile falls back here rather than aborting the fit.
+    """
+    from arbol import aprint
+
+    try:
+        from luxar.gsplats.models.gsplats.cuda import (
+            GaussianSplatModelCUDA,
+            get_splatting_backend,
+            splatting_backend_unavailable_reason,
+        )
+    except ImportError as exc:
+        if config.verbose:
+            aprint(f"CUDA backend: NOT importable ({exc})")
+        return None
+
+    backend = get_splatting_backend()
+    if backend is None:
+        if splatting_backend_unavailable_reason() != "LUXAR_CUDA_BACKEND=torch":
+            _warn_cuda_kernels_unavailable(
+                splatting_backend_unavailable_reason() or "unknown reason"
+            )
+        return None
+
+    from luxar.gsplats._nvrtc import (
+        CudaDriverError,
+        NvrtcCompileError,
+        NvrtcUnavailableError,
+    )
+    from luxar.gsplats.models.gsplats.cuda.backend import requested_backend
+
+    try:
+        model = GaussianSplatModelCUDA(**model_kwargs)
+    except (NvrtcCompileError, NvrtcUnavailableError, CudaDriverError) as exc:
+        if requested_backend() != "auto":
+            raise  # a forced backend (LUXAR_CUDA_BACKEND) fails loudly, never degrades
+        _warn_cuda_kernels_unavailable(f"{backend.name} kernels failed to load: {exc}")
+        return None
+    if config.verbose:
+        aprint(
+            f"✓ Model class: GaussianSplatModelCUDA, {backend.name} kernels "
+            "(often orders of magnitude faster on NVIDIA GPUs; depends on hardware)"
+        )
+    return model
 
 
 def _warn_metal_kernels_unavailable(reason: str) -> None:

@@ -985,6 +985,21 @@ spent splats on.
 `voxels_per_splat` is `fitted_voxels` over the splat count **at the end of the
 fit**, so it predates any post-fit culling.
 
+`voxel_size` (a list, one value per spatial center column) is the spacing of
+the source grid. The mapping applies when `voxel_size` is present and
+`physical_coordinates` is not `false`: every center column and Cholesky row was
+then multiplied by it, so `centers / voxel_size` are indices on the source grid.
+CLI fits may record the spacing for a voxel-output fit too, with
+`physical_coordinates: false`, plus `voxel_unit` and `voxel_size_source`
+(provenance). A stacked store (a timelapse merge) carries the SPATIAL stamp, one
+value short per stacked column; readers pad the trailing stacked columns with
+1.0 and warn about any other length mismatch. `gsplat compare` / `gsplat render`
+divide the spacing back out. A scale or rotation (CLI `gsplat transform`, or a
+non-translation `GSplatData.transform`) drops `voxel_size`, `voxel_unit`,
+`voxel_size_source` and `physical_coordinates` together; a pure translation
+keeps them. Absent means the centers are voxel indices (or the store predates
+the stamp).
+
 Absent on datasets written before these keys existed; readers should report
 nothing rather than infer a source grid from the bounding box.
 
@@ -996,7 +1011,9 @@ and relative-L2 denominator are derived from that shifted reference too:
 ```json
 {
   "psnr_db": 37.0,
+  "psnr_robust_db": 33.4,
   "foreground_psnr_db": 20.0,
+  "foreground_psnr_robust_db": 16.4,
   "foreground_threshold": 0.1274,
   "foreground_fraction": 0.00098,
   "ssim": 0.9912,
@@ -1007,20 +1024,32 @@ and relative-L2 denominator are derived from that shifted reference too:
 `psnr_db` / `ssim` / `mse` are taken over **every** voxel, which on sparse data
 makes them largely a score for reproducing the background: a fit that discards
 nine tenths of the signal in a 99.9%-empty volume still reports 37 dB.
-`foreground_psnr_db` is the same PSNR averaged over `target > foreground_threshold`
-only (Otsu's threshold on the **target**, so a fit that hallucinates structure is
-still scored where the signal actually is), while `data_range` stays the whole
+`foreground_psnr_db` is the same PSNR averaged over the foreground only, defined
+on the **target** (so a fit that hallucinates structure is still scored where
+the signal actually is): `smooth(target) > foreground_threshold`, where `smooth`
+is one separable `[0.25, 0.5, 0.25]` tent blur and the threshold is Otsu's over a
+histogram capped at the target's 99.99th percentile (an uncapped histogram lets
+one hot pixel push every real structure below the threshold). Stores written
+before this definition used plain Otsu on the unblurred target. `gsplat compare`
+uses the same definition by default, while `data_range` stays the whole
 volume's — the convention `calibration.metrics.held_out_psnr_foreground` uses, so
 the two are comparable. Quote `foreground_fraction` with it: a dB figure taken
 over 0.01% of a volume means something quite different from one taken over 40%,
 and the bare number cannot say which.
 
+`psnr_db` / `foreground_psnr_db` use the full range `max - min` of the fit-basis
+reference as the peak. `psnr_robust_db` / `foreground_psnr_robust_db` (same
+error, same voxels) use the robust peak `p99.99 - min` instead, which one hot
+pixel cannot move; tools present the robust figure as the headline and the
+full-range one beside it. Both are optional; older stores carry only the
+full-range pair.
+
 The score is always taken on the fitter's own **voxel grid**, whatever frame the
 centers were handed back in. A dataset fitted with `output_space: real` and a
 `voxel_size` stores physical centers, so re-rendering the stored splats directly
 onto the source grid will not reproduce these numbers — divide the spacing back
-out first. The metrics describe the fit, not the coordinate frame it was
-delivered in.
+out first (`voxel_size` above records it). The metrics describe the fit, not
+the coordinate frame it was delivered in.
 
 **Stacked component provenance** (`fitting/part_provenance`, optional) keeps the
 component fits addressable without pretending their scores aggregate into one

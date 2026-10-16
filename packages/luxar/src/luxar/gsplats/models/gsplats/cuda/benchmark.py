@@ -1087,13 +1087,16 @@ def main() -> None:
         print("This benchmark requires an NVIDIA GPU with CUDA support.")
         sys.exit(1)
 
-    try:
-        import cuda_splatting_backend  # type: ignore[import-not-found]  # noqa: F401
-    except ImportError:
-        print("ERROR: CUDA splatting backend is not compiled.")
-        print("Please build it first:")
-        print("  make build-cuda")
-        print("Or: hatch run python .../gsplats/models/gsplats/cuda/build.py")
+    from luxar.gsplats.models.gsplats.cuda import (
+        get_splatting_backend,
+        splatting_backend_unavailable_reason,
+    )
+
+    if get_splatting_backend() is None:
+        print("ERROR: no CUDA splatting kernels available.")
+        print(f"Reason: {splatting_backend_unavailable_reason()}")
+        print("On Linux, a CUDA build of torch provides NVRTC and the kernels")
+        print("compile on first use; in a checkout, `make build-cuda` builds them.")
         sys.exit(1)
 
     parser = argparse.ArgumentParser(

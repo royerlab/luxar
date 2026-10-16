@@ -306,6 +306,22 @@ class TransformsMixin(_GSplatDataOps):
     def transform(self, matrix: np.ndarray) -> "GSplatData":
         """Apply affine transformation to all splats.
 
+        A pure translation keeps the fit's ``voxel_size`` frame stamp (the
+        spacing is unchanged — tiled fitting places its tiles this way); any
+        other linear part drops it, with ``voxel_unit``, ``voxel_size_source``
+        and ``physical_coordinates``, since the stamp no longer describes how
+        the centers map to voxels. See :func:`_transform_geometry` for the rest.
+        """
+        from luxar.gsplats.scoring_grid import drop_frame_stamp, linear_part_is_identity
+
+        result = self._transform_geometry(matrix)
+        if not linear_part_is_identity(matrix, self.ndim):
+            result.stats = drop_frame_stamp(result.stats)
+        return result
+
+    def _transform_geometry(self, matrix: np.ndarray) -> "GSplatData":
+        """Apply affine transformation to all splats.
+
         Transforms centers and covariance matrices. Amplitudes and colors
         are unchanged.
 

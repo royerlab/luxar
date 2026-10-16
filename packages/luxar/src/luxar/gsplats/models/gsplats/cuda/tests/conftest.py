@@ -20,6 +20,29 @@ import pytest
 import torch
 
 # =============================================================================
+# KERNEL BACKEND UNDER TEST
+# =============================================================================
+
+
+def _resolve_kernel_backend() -> Any:
+    """The kernel backend the model would use: AOT extension, else NVRTC.
+
+    ``LUXAR_CUDA_BACKEND=aot|nvrtc`` pins it, so the whole suite can be run
+    once per backend. ``forward``/``backward`` share the extension's contract.
+    """
+    if not torch.cuda.is_available():
+        return None
+    from luxar.gsplats.models.gsplats.cuda import get_splatting_backend
+
+    return get_splatting_backend()
+
+
+#: Imported by the test modules as their backend handle (``.forward``/``.backward``).
+cuda_splatting_backend = _resolve_kernel_backend()
+CUDA_BACKEND_AVAILABLE = cuda_splatting_backend is not None
+
+
+# =============================================================================
 # MARKERS CONFIGURATION
 # =============================================================================
 
@@ -27,18 +50,16 @@ import torch
 def pytest_configure(config):
     """Enforce required CUDA coverage and register custom markers."""
     if os.environ.get("LUXAR_REQUIRE_CUDA") == "1":
-        from luxar.gsplats.models.gsplats.cuda import (
-            CUDA_AVAILABLE,
-            CUDA_BACKEND_AVAILABLE,
-        )
+        from luxar.gsplats.models.gsplats import cuda as cuda_pkg
 
-        if not CUDA_AVAILABLE:
+        if not cuda_pkg.CUDA_AVAILABLE:
             raise pytest.UsageError(
                 "LUXAR_REQUIRE_CUDA=1 but PyTorch cannot access a CUDA device"
             )
-        if not CUDA_BACKEND_AVAILABLE:
+        if cuda_pkg.get_splatting_backend() is None:
             raise pytest.UsageError(
-                "LUXAR_REQUIRE_CUDA=1 but the CUDA splatting backend is unavailable"
+                "LUXAR_REQUIRE_CUDA=1 but the CUDA splatting backend is unavailable "
+                "(neither the compiled extension nor NVRTC)"
             )
 
     config.addinivalue_line(
@@ -72,20 +93,15 @@ def cuda_device(cuda_available):
 
 @pytest.fixture(scope="session")
 def cuda_backend_available():
-    """Check if CUDA backend is compiled and available."""
-    try:
-        import cuda_splatting_backend  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
+    """Check if a CUDA kernel backend (AOT extension or NVRTC) is usable."""
+    return CUDA_BACKEND_AVAILABLE
 
 
 @pytest.fixture
 def require_cuda_backend(cuda_backend_available):
     """Skip test if CUDA backend is not compiled."""
     if not cuda_backend_available:
-        pytest.skip("CUDA backend not compiled")
+        pytest.skip("no CUDA kernel backend (compiled extension or NVRTC)")
 
 
 # =============================================================================

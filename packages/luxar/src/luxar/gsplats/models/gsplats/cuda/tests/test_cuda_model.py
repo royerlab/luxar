@@ -14,13 +14,8 @@ from .conftest import Tolerances
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
 
-# Check if CUDA backend is compiled
-try:
-    import cuda_splatting_backend  # noqa: F401
-
-    CUDA_BACKEND_AVAILABLE = True
-except ImportError:
-    CUDA_BACKEND_AVAILABLE = False
+# Resolved kernel backend (AOT extension or NVRTC); honors LUXAR_CUDA_BACKEND.
+from .conftest import CUDA_BACKEND_AVAILABLE, cuda_splatting_backend  # noqa: E402, F401
 
 pytestmark = pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
 
@@ -28,7 +23,7 @@ pytestmark = pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
 class TestGaussianSplatModelCUDA:
     """Test GaussianSplatModelCUDA class."""
 
-    def test_model_creation(self):
+    def test_model_creation(self, monkeypatch):
         """Test model can be created."""
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             GaussianSplatModelCUDA,
@@ -54,6 +49,16 @@ class TestGaussianSplatModelCUDA:
         assert model.n_splats() == N
         assert model.dim == d
         assert model.shape == shape
+        from luxar.gsplats.fitting.initialization import model_backend_summary
+
+        backend_name = cuda_splatting_backend.name if cuda_splatting_backend else None
+        assert model.kernel_backend == backend_name
+        detail = f"{backend_name} kernels" if backend_name else "custom kernels"
+        assert model_backend_summary(model, "cuda") == (
+            f"Fitting backend: GaussianSplatModelCUDA ({detail}, device=cuda)"
+        )
+        monkeypatch.setenv("LUXAR_CUDA_BACKEND", "torch")
+        assert model.kernel_backend is None
 
     def test_dimension_validation(self):
         """Test that invalid dimensions are rejected."""

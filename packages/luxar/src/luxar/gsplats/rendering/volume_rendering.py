@@ -41,14 +41,16 @@ def _try_cuda_render(
         return None
 
     try:
+        from luxar.gsplats.models.gsplats.cuda.backend import requested_backend
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
-            CUDA_BACKEND_AVAILABLE,
             CUDASplatFunction,
+            get_splatting_backend,
         )
     except ImportError:
         return None
 
-    if not CUDA_BACKEND_AVAILABLE:
+    # The AOT extension or NVRTC runtime-compiled kernels; None = PyTorch path.
+    if get_splatting_backend() is None:
         return None
 
     try:
@@ -66,6 +68,8 @@ def _try_cuda_render(
                 output = output.view(shape)
             return output
     except Exception as exc:
+        if requested_backend() != "auto":
+            raise
         global _cuda_render_warning_emitted  # noqa: PLW0603
         if not _cuda_render_warning_emitted:
             warnings.warn(

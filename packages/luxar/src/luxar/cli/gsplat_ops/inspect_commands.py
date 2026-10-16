@@ -6,8 +6,6 @@ the shared ``app_gsplat`` Typer.
 
 from __future__ import annotations
 
-import contextlib
-import math
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -15,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Optional
 import typer
 from arbol import aprint, asection
 
-from .._traceback import _report_line, exit_with_error, report_error
+from .._traceback import exit_with_error, report_error
 from ..common_options import CorsOriginOption, HostOption, make_port_option
 from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size, store_size
 
@@ -37,7 +35,9 @@ _IMPORTANT_FITTING_KEYS = (
     "fitter_name",
     "n_iters",
     "final_loss",
+    "psnr_robust_db",
     "psnr_db",
+    "foreground_psnr_robust_db",
     "foreground_psnr_db",
     "foreground_threshold",
     "foreground_fraction",
@@ -49,6 +49,7 @@ _IMPORTANT_FITTING_KEYS = (
     "image_min",
     "image_max",
     "intensity_range",
+    "voxel_size",
     "convergence_time",
     "culled",
     "culling_method",
@@ -896,113 +897,6 @@ def quick_view(
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def _print_quality_comparison(
-    metrics: dict[str, Any],
-    *,
-    reference_name: str,
-    ref_shape: Any,
-    gsplats_name: str,
-    n_splats: int,
-) -> None:
-    """Render the ``gsplat compare`` results table."""
-    aprint("\n" + "=" * 50)
-    aprint("QUALITY COMPARISON")
-    aprint("=" * 50)
-    aprint(f"\nReference:  {reference_name} {ref_shape}")
-    aprint(f"GSplats:    {gsplats_name} ({n_splats:,} splats)")
-    aprint("")
-    aprint(f"  MSE:             {metrics['mse']:.6g}")
-    aprint(f"  PSNR:            {metrics['psnr_db']:.2f} dB")
-    if "foreground_psnr_db" in metrics:
-        # The share is not decoration: on a 99%-empty volume the global PSNR
-        # above is largely a score for reproducing the emptiness, and this line
-        # says how little of the volume the honest number was taken over.
-        aprint(
-            f"  PSNR foreground: {metrics['foreground_psnr_db']:.2f} dB "
-            f"(over {metrics['foreground_fraction'] * 100:.2f}% of voxels, "
-            f"Otsu > {metrics['foreground_threshold']:.4g})"
-        )
-    aprint(f"  SSIM:            {metrics['ssim']:.4f}")
-    aprint(f"  Rel L2:          {metrics['rel_l2']:.6g}")
-    aprint(f"  Max Abs Error:   {metrics['max_abs_error']:.6g}")
-    if "compression_ratio" in metrics:
-        from luxar.gsplats.fitting.visualization import format_compression_ratio
-
-        aprint(
-            "  Compression:     "
-            f"{format_compression_ratio(metrics['compression_ratio'])} vs raw voxels"
-        )
-    aprint("=" * 50)
-
-
-def _load_gsplats_for_comparison(path: Path) -> tuple["GSplatData", int, int]:
-    """Materialize the tree selection that the renderer shows by default.
-
-    Root stats come along on both paths so the caller can resolve the
-    normalization basis (#1173). They remain unscrubbed because this temporary
-    flat dataset is never persisted.
-    """
-    from luxar.gsplats.gsplat_data import GSplatData
-    from luxar.gsplats.io.load_gsplats import load_gsplat_node
-    from luxar.gsplats.tree import iter_default_leaves, total_splats
-
-    node, stats = load_gsplat_node(path, include_stats=True)
-    n_leaves = sum(1 for _ in iter_default_leaves(node))
-    data = GSplatData.from_default_selection(node, stats=stats)
-    return data, n_leaves, total_splats(node)
-
-
-def _announce_unscored_comparison_splats(
-    *, n_stored_splats: int, n_scored_splats: int
-) -> None:
-    """Report coarse LOD splats excluded from the default-rendered selection."""
-    if n_stored_splats > n_scored_splats:
-        aprint(
-            f"Skipped {n_stored_splats - n_scored_splats:,} splats in coarse "
-            "LOD levels; compression ratio covers the whole store"
-        )
-
-
-def _validate_image_min_override(image_min: Optional[float]) -> None:
-    if image_min is not None and (not math.isfinite(image_min) or image_min < 0.0):
-        raise typer.BadParameter(
-            "must be a finite, non-negative level", param_hint="--image-min"
-        )
-
-
-def _reference_on_dataset_basis(
-    reference: "np.ndarray", stats: Any, image_min: Optional[float]
-) -> "np.ndarray":
-    from luxar.gsplats.fit_basis import (
-        MISSING_BASIS_HINT,
-        fit_image_min,
-        reference_on_fit_basis,
-    )
-
-    resolved_min = float(image_min) if image_min is not None else fit_image_min(stats)
-    if resolved_min is None:
-        aprint(f"WARNING: {MISSING_BASIS_HINT}")
-    elif resolved_min == 0.0:
-        aprint("Basis: fit removed no background (image_min=0)")
-    else:
-        source = "--image-min" if image_min is not None else "dataset"
-        reference = reference_on_fit_basis(reference, resolved_min)
-        aprint(
-            f"Basis: reference shifted by image_min={resolved_min:.6g} "
-            f"(from {source}); scores are background-relative, matching the render"
-        )
-    return reference
-
-
-def _silenced_when(quiet: bool) -> contextlib.AbstractContextManager[None]:
-    """Silence all arbol output for the block when ``quiet``; else a no-op."""
-    if not quiet:
-        return contextlib.nullcontext()
-    from luxar.utils.verbosity import verbosity
-
-    return verbosity("silent")
-
-
 def compare_quality(
     gsplats_path: Path = typer.Argument(
         ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
@@ -1034,11 +928,55 @@ def compare_quality(
         "shifted by this before scoring. Normally read from the dataset; pass it "
         "only for stores fitted before the level was persisted.",
     ),
+    voxel_size: Optional[str] = typer.Option(
+        None,
+        "--voxel-size",
+        help="Spacing the splat centers are scaled by, one value or one per axis "
+        "(e.g. '2.0,0.4,0.4'). Normally read from the dataset's voxel_size stamp, "
+        "which a physical-output fit records; pass it for a physical store "
+        "without the stamp, or '1' to disable the mapping.",
+    ),
+    at_fit_resolution: bool = typer.Option(
+        False,
+        "--at-fit-resolution",
+        help="Score a --downscale fit on the grid it was fitted on: the reference "
+        "is decimated the same way (anti-aliased, strided) and the splats mapped "
+        "onto that grid. Default: score at the source resolution.",
+    ),
+    mask: Optional[Path] = typer.Option(
+        None,
+        "--mask",
+        exists=True,
+        help="Foreground mask volume, same shape as the reference (voxels > 0 are "
+        "foreground). Overrides the default smoothed-Otsu foreground.",
+    ),
+    fg_threshold: Optional[float] = typer.Option(
+        None,
+        "--fg-threshold",
+        help="Foreground = reference > this value, in the reference's own "
+        "intensity units. Overrides the default smoothed-Otsu foreground.",
+    ),
     channel: Optional[int] = typer.Option(
-        None, "--channel", "-c", help="Channel index for OME-Zarr reference"
+        None,
+        "--channel",
+        "-c",
+        help="Channel index (zarr/OME-Zarr reference, or any format with --axes)",
     ),
     timepoint: Optional[int] = typer.Option(
-        None, "--timepoint", help="Timepoint index for OME-Zarr reference"
+        None,
+        "--timepoint",
+        help="Timepoint index (zarr/OME-Zarr reference, or any format with --axes)",
+    ),
+    array_key: Optional[str] = typer.Option(
+        None, "--array-key", help="Array key within .npz or .zarr"
+    ),
+    axes: Optional[str] = typer.Option(
+        None,
+        "--axes",
+        help="Per-dimension axis labels overriding the positional "
+        "TCZYX/CZYX/ZYX heuristic, e.g. 'z,c,y,x' or 't,z,y,x' — the same "
+        "selection `gsplat fit` used. Required to pick a --channel/--timepoint "
+        "out of a TIFF or NumPy file.",
     ),
     output_json: Optional[Path] = typer.Option(
         None, "--output-json", "-j", help="Write metrics to JSON file"
@@ -1052,9 +990,12 @@ def compare_quality(
 ) -> None:
     """Compare Gaussian splat reconstruction quality against a reference volume.
 
-    Renders the gsplats back to a volume and computes PSNR, SSIM, MSE,
-    relative L2 error, and maximum absolute error.  All heavy computation
-    runs on GPU when available. Partition and nested stores are scored over
+    Renders the gsplats back onto the reference's voxel grid and computes PSNR,
+    SSIM, MSE, relative L2 error and maximum absolute error, globally and over
+    the foreground. The headline PSNR uses a robust peak (reference p99.99 minus
+    the fit's floor), which one hot pixel cannot move; the classical full-range
+    PSNR is reported beside it. A physical-output fit is mapped back to voxels
+    with its stored voxel_size. Partition and nested stores are scored over
     their default-rendered selection: all parts and each LOD group's finest
     level. The compression ratio covers the whole store, including coarse
     levels that are not scored.
@@ -1062,163 +1003,32 @@ def compare_quality(
     Examples:
         luxar gsplat compare fitted.gsplats.zarr original.tiff
         luxar gsplat compare fitted.gsplats.zarr original.npy --device cuda
-        luxar gsplat compare fitted.gsplats.zarr original.zarr --output-json metrics.json
+        luxar gsplat compare fitted.gsplats.zarr stack.tif --axes c,z,y,x -c 1
+        luxar gsplat compare fitted.gsplats.zarr original.zarr --mask cells.tif
         luxar gsplat compare fitted.gsplats.zarr original.zarr -j metrics.json -q
     """
-    _validate_image_min_override(image_min)
+    from .compare_ops import CompareOptions, run_compare
 
-    # `-q` silences the whole arbol narration, not just the table; failures
-    # still surface, on stderr (`_report_line` / `exit_with_error` fall back
-    # to it while arbol output is off).
-    with _silenced_when(quiet):
-        try:
-            import json
-
-            import numpy as np
-            import torch
-
-            from luxar.cli.gsplat_config import load_volume, parse_shape
-            from luxar.gsplats.metrics import compute_quality_metrics
-            from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
-            from luxar.gsplats.utils.device import resolve_torch_device
-
-            with asection("Quality Comparison"):
-                # Load gsplat dataset
-                with asection("Loading gsplat dataset"):
-                    # Stats come along (`include_stats=True` inside the helper) so
-                    # the normalization basis is reachable: a render is
-                    # background-relative and the reference is raw, and without the
-                    # stored `image_min` the two cannot be reconciled (#1173). This
-                    # is metadata only — no extra array decode.
-                    data, n_leaves, n_stored_splats = _load_gsplats_for_comparison(
-                        gsplats_path
-                    )
-                    n_splats = data.n_splats
-                    ndim = data.ndim
-                    aprint(f"Loaded {n_splats:,} splats ({ndim}D)")
-                    aprint(f"Materialized {n_leaves:,} default-rendered leaf/leaves")
-                    _announce_unscored_comparison_splats(
-                        n_stored_splats=n_stored_splats, n_scored_splats=n_splats
-                    )
-
-                # Resolve truncation radius from dataset if not explicitly set
-                if truncate is None:
-                    truncate = data.truncation_radius
-
-                # Load reference volume
-                with asection("Loading reference volume"):
-                    ref_info: dict = {}
-                    ref_np = load_volume(
-                        reference_path,
-                        channel=channel,
-                        timepoint=timepoint,
-                        info=ref_info,
-                    )
-                    ref_shape = ref_np.shape
-                    # Decoded size in the reference's STORED element type (the
-                    # loader hands back float32 whatever the file holds): the same
-                    # `source_bytes` basis `gsplat info` and `fit` quote.
-                    ref_itemsize = (
-                        np.dtype(ref_info["source_dtype"]).itemsize
-                        if ref_info.get("source_dtype")
-                        else ref_np.dtype.itemsize
-                    )
-                    ref_decoded_bytes = int(ref_np.size) * int(ref_itemsize)
-
-                    # Put the reference on the render's basis before anything scores
-                    # it. An explicit --image-min wins over the stored level so a
-                    # pre-provenance store is still comparable.
-                    ref_np = _reference_on_dataset_basis(ref_np, data.stats, image_min)
-
-                # Determine rendering shape
-                if shape is not None:
-                    render_shape = parse_shape(shape)
-                else:
-                    render_shape = ref_shape
-                aprint(f"Comparison shape: {render_shape}")
-
-                if len(render_shape) != ndim:
-                    _report_line(
-                        f"Dimension mismatch: gsplats are {ndim}D but "
-                        f"reference/shape is {len(render_shape)}D"
-                    )
-                    raise typer.Exit(1)
-
-                if shape is not None and tuple(render_shape) != tuple(ref_shape):
-                    _report_line(
-                        f"Error: --shape {render_shape} does not match "
-                        f"reference shape {ref_shape}. "
-                        f"Omit --shape to use the reference shape."
-                    )
-                    raise typer.Exit(1)
-
-                # Select device
-                dev = str(resolve_torch_device(device))
-
-                # Render gsplats to tensor (stays on GPU)
-                with torch.no_grad():
-                    with asection(f"Rendering on {dev}"):
-                        rendered_t = render_to_volume_tensor(
-                            data, shape=render_shape, device=dev, truncate=truncate
-                        )
-                        aprint(
-                            f"Rendered: {rendered_t.shape}, "
-                            f"range [{rendered_t.min().item():.4f}, {rendered_t.max().item():.4f}]"
-                        )
-
-                    # Upload reference to same device, on the FIT's basis. Scoring
-                    # a background-relative render against a pedestal-bearing
-                    # reference charges the fit for background it never claimed to
-                    # represent, which is the artifact this command most needed
-                    # fixing (#1173).
-                    ref_t = torch.from_numpy(ref_np).to(rendered_t.device)
-
-                    # Compute metrics (all on GPU)
-                    with asection("Computing metrics"):
-                        metrics = compute_quality_metrics(rendered_t, ref_t)
-
-                # Compression ratio: the one definition `gsplat info` and `fit`
-                # quote — decoded reference bytes over the store's bytes on disk.
-                from luxar.gsplats.fitting.visualization import compression_ratio
-
-                ratio = compression_ratio(ref_decoded_bytes, store_size(gsplats_path))
-                if ratio is not None:
-                    metrics["compression_ratio"] = ratio
-
-            # Print table
-            if not quiet:
-                _print_quality_comparison(
-                    metrics,
-                    reference_name=reference_path.name,
-                    ref_shape=ref_shape,
-                    gsplats_name=gsplats_path.name,
-                    n_splats=n_splats,
-                )
-
-            # JSON output
-            if output_json is not None:
-                # Replace non-finite floats (inf/nan) with None for valid JSON
-                safe_metrics = {
-                    k: (v if isinstance(v, (int, str)) or math.isfinite(v) else None)
-                    for k, v in metrics.items()
-                }
-                json_data = {
-                    "gsplats": str(gsplats_path),
-                    "reference": str(reference_path),
-                    "n_splats": n_splats,
-                    "ndim": ndim,
-                    "shape": list(render_shape),
-                    **safe_metrics,
-                }
-                with open(output_json, "w") as f:
-                    json.dump(json_data, f, indent=2)
-                if not quiet:
-                    aprint(f"\nMetrics written to: {output_json}")
-
-        except typer.Exit:
-            raise
-        except Exception as e:
-            exit_with_error(f"Error: {e}", e)
+    run_compare(
+        CompareOptions(
+            gsplats_path=gsplats_path,
+            reference_path=reference_path,
+            shape=shape,
+            device=device,
+            truncate=truncate,
+            image_min=image_min,
+            channel=channel,
+            timepoint=timepoint,
+            array_key=array_key,
+            axes=axes,
+            mask=mask,
+            fg_threshold=fg_threshold,
+            voxel_size=voxel_size,
+            at_fit_resolution=at_fit_resolution,
+            output_json=output_json,
+            quiet=quiet,
+        )
+    )
 
 
 def _print_normalization_block(root: Any) -> None:

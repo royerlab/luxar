@@ -308,6 +308,10 @@ _FITTING_INFO_KEYS = (
     "voxel_size_source",
     "physical_coordinates",
     "source_region",
+    # The robust-peak companions of `psnr_db` / `foreground_psnr_db` (see
+    # `luxar.gsplats.metrics.compute_quality_metrics`).
+    "psnr_robust_db",
+    "foreground_psnr_robust_db",
 )
 
 
