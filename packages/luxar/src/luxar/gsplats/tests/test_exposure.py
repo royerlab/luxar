@@ -11,6 +11,7 @@ from luxar.gsplats.exposure import (
     LINEAR_TARGET_BRIGHTNESS,
     SIDE_CAP,
     HiddenAxis,
+    data_unit_display_attrs,
     default_target_brightness,
     emission_weights,
     plan_projected_exposure,
@@ -18,6 +19,25 @@ from luxar.gsplats.exposure import (
     stamped_amplitude_window,
 )
 from luxar.gsplats.lift import compute_ray_integral_factor
+
+
+@pytest.mark.parametrize(
+    ("amplitudes", "expected"),
+    [
+        (np.array([], dtype=np.float32), 1.0),
+        (np.array([0.0, 0.0], dtype=np.float32), 1.0),
+        (np.array([1.0, 1.0 + 5e-7], dtype=np.float32), 1.0),
+        (np.array([10.0, 20.0, 30.0], dtype=np.float32), None),
+    ],
+)
+def test_data_unit_display_gain_uses_the_auto_reference(
+    amplitudes: np.ndarray, expected: Optional[float]
+) -> None:
+    """The Python data-unit path uses the same p99.9 gate as scene insertion."""
+    if expected is None:
+        expected = 1.0 / float(np.percentile(amplitudes, 99.9))
+    attrs = data_unit_display_attrs(None, amplitudes=amplitudes)
+    assert attrs["display_gain"] == pytest.approx(expected)
 
 
 def _random_set(

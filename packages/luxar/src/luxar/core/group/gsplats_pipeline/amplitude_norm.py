@@ -95,23 +95,22 @@ from typing import TYPE_CHECKING, Optional, Tuple, Union
 
 import numpy as np
 
+from luxar.gsplats.amplitude_reference import (
+    AMPLITUDE_REFERENCE_PERCENTILE as AMPLITUDE_REFERENCE_PERCENTILE,
+)
+from luxar.gsplats.amplitude_reference import (
+    IN_RANGE_TOLERANCE as IN_RANGE_TOLERANCE,
+)
+from luxar.gsplats.amplitude_reference import (
+    automatic_factor,
+)
+from luxar.gsplats.amplitude_reference import (
+    sample_reference as _sample_reference,
+)
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.tree import GSplatNode
-
-#: Upper reference percentile mapped to the normalisation target.
-#: Kept equal to the percentile ``amplitude_data_range`` uses for its upper
-#: bound so the LUT window and the normalisation cannot drift apart.
-AMPLITUDE_REFERENCE_PERCENTILE = 99.9
-
-#: How far above 1.0 the reference may sit and still count as "already in
-#: range". Not cosmetic: amplitudes are stored float32 and the reference is an
-#: interpolated percentile, so a set normalised to exactly 1.0 comes back a few
-#: ULPs ABOVE it (measured: 1.0000000465). Without this, ``auto`` fires a second
-#: time with a factor of ~1.0 — harmless numerically, but it stamps a
-#: meaningless factor and makes the operation non-idempotent, so re-inserting an
-#: already-normalised node would no longer be a no-op.
-IN_RANGE_TOLERANCE = 1e-6
 
 #: Node attr recording the factor applied, so an authored window, an
 #: ``amplitude_mass`` stamp or a later refit can be reconciled with the values
@@ -170,13 +169,6 @@ class AmplitudeScale:
 NormalizeSpec = Union[bool, str, float, AmplitudeScale, None]
 
 
-def _sample_reference(values: np.ndarray) -> float:
-    """Pooled robust upper reference for a 1-D amplitude sample."""
-    if values.size == 0:
-        return 0.0
-    return float(np.percentile(values, AMPLITUDE_REFERENCE_PERCENTILE))
-
-
 def pooled_amplitudes_from_node(node: "GSplatNode") -> np.ndarray:
     """Reference amplitudes for a node tree, pooled into one array.
 
@@ -230,12 +222,12 @@ def resolve_factor(spec: NormalizeSpec, reference: float) -> Optional[float]:
             )
         automatic = False
 
+    if automatic:
+        return automatic_factor(reference)
     if not (reference > 0.0) or not np.isfinite(reference):
         # All-zero or degenerate amplitudes: any factor is meaningless, and
         # scaling by one would only invalidate the fit's measured stamps.
         return None
-    if automatic and reference <= 1.0 + IN_RANGE_TOLERANCE:
-        return None  # already in range — see module docstring
     return target / reference
 
 

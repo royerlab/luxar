@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, 
 
 import numpy as np
 
+from luxar.gsplats.amplitude_reference import automatic_factor, sample_reference
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -938,13 +939,8 @@ def data_unit_display_attrs(
     if gain is None:
         gain = 1.0
         if amplitudes is not None:
-            from luxar.core.group.gsplats_pipeline.amplitude_norm import (
-                _sample_reference,
-                resolve_factor,
-            )
-
             flat = np.asarray(amplitudes, dtype=np.float64).ravel()
-            gain = resolve_factor(True, _sample_reference(flat)) or 1.0
+            gain = automatic_factor(sample_reference(flat)) or 1.0
         if plan is not None:
             gain *= float(plan.factor)
     if not (np.isfinite(gain) and gain > 0.0):

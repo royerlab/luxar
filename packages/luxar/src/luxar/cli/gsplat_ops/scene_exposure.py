@@ -36,9 +36,9 @@ from ...core.group.gsplats_pipeline.amplitude_norm import (
     PROJECTED_SUM_P999_ATTR,
     PROJECTED_SUM_TARGET_ATTR,
     NormalizeSpec,
-    _sample_reference,
     resolve_factor,
 )
+from ...gsplats.amplitude_reference import sample_reference as _sample_reference
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ...gsplats.exposure import ExposurePlan, HiddenAxis
