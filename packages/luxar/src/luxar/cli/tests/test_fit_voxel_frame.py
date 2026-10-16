@@ -14,6 +14,7 @@ from typing import Any, Dict
 import numpy as np
 import pytest
 import typer
+from click import unstyle
 from typer.testing import CliRunner
 
 from luxar.cli import app
@@ -498,8 +499,8 @@ class TestFitCli:
                 "16,32,32",
             ],
         )
-        assert result.exit_code != 0
-        assert "--tile" in result.output
+        assert result.exit_code == 2
+        assert "cannot be combined with --tile" in unstyle(result.output)
 
     def test_region_is_refused_with_a_hand_run_tile(self, tmp_path: Path) -> None:
         src = tmp_path / "vol.npy"
@@ -518,7 +519,7 @@ class TestFitCli:
             ],
         )
         assert result.exit_code == 2
-        assert "cannot be combined with --tile" in result.output
+        assert "cannot be combined with --tile" in unstyle(result.output)
 
     def test_too_many_region_spans_is_a_usage_error(self, tmp_path: Path) -> None:
         src = _ome_tiff(tmp_path / "vol.ome.tif")
