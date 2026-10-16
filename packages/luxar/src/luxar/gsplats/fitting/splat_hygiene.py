@@ -16,8 +16,9 @@ the fitted brightness. After a high floor (``p95``) the same threshold removed
 than :data:`DEFAULT_MIN_EXTENT_MAX_MASS_SHARE` of the mass, the fit (tile, box)
 keeps its splats and says so (``stats["min_extent_skipped"] = True``).
 
-Mass here is the Gaussian integral up to a constant,
-``amplitude * prod(marginal spatial sigmas)``.
+Mass here is an axis-aligned upper bound on the Gaussian integral up to a
+constant: ``amplitude * prod(marginal spatial sigmas)``. It equals the integral
+for axis-aligned splats.
 
 The "spatial" axes are those with non-zero variance. A STACKED time/channel
 axis (sigma 0 for every splat) is ignored, but in a native nD fit where time
@@ -142,7 +143,7 @@ def spatial_extent_vox(data: "GSplatData", unit: np.ndarray) -> np.ndarray:
 
 
 def integrated_mass(data: "GSplatData") -> np.ndarray:
-    """Per-splat brightness ``amplitude * prod(spatial marginal sigmas)``."""
+    """Axis-aligned upper bound on each splat's Gaussian integral (up to a constant)."""
     if data.n_splats == 0:
         return np.empty(0, dtype=np.float64)
     sig = _spatial_sigmas(data, np.ones(data.ndim, dtype=np.float64))
