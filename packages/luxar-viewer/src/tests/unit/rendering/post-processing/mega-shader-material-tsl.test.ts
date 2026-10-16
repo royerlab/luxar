@@ -94,3 +94,33 @@ describe('MegaShaderTSLMaterial capture-mode toggles', () => {
     material.dispose();
   });
 });
+
+describe('MegaShaderTSLMaterial HDR output (WebGPU-only)', () => {
+  it('starts at the configured headroom; without HDR output the peak stays 1', () => {
+    const hdr = new MegaShaderTSLMaterial({ hdrOutputPeak: 3 });
+    const sdr = new MegaShaderTSLMaterial();
+    expect(hdr.getHdrPeak()).toBe(3);
+    expect(sdr.getHdrPeak()).toBe(1);
+    hdr.dispose();
+    sdr.dispose();
+  });
+
+  it('setHdrPeak is a uniform write (no graph rebuild) clamped to >= 1', () => {
+    const material = new MegaShaderTSLMaterial({ hdrOutputPeak: 2 });
+    const v0 = material.version;
+    material.setHdrPeak(6.35);
+    expect(material.getHdrPeak()).toBe(6.35);
+    material.setHdrPeak(0.5);
+    expect(material.getHdrPeak()).toBe(1);
+    expect(material.version).toBe(v0);
+    material.dispose();
+  });
+
+  it('the linear-LDR capture toggle still rebuilds with HDR output on', () => {
+    const material = new MegaShaderTSLMaterial({ hdrOutputPeak: 2 });
+    const v0 = material.version;
+    material.toggleLinearLdrCapture(true);
+    expect(material.version).toBeGreaterThan(v0);
+    material.dispose();
+  });
+});

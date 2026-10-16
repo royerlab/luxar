@@ -1585,13 +1585,13 @@ def test_post_cull_quality_line_uses_robust_headline_and_full_range_fallback() -
         "foreground_psnr_robust_db": 15.0,
     }
     assert _post_cull_quality_line(quality, pre) == (
-        "Quality (saved model, after post-fit cull): PSNR=24.0 dB robust peak "
+        "Quality (saved model, after post-fit pruning/cull): PSNR=24.0 dB robust peak "
         "(29.0 dB full range) (-1.00 dB vs fitted), foreground PSNR=15.0 dB"
     )
     assert _post_cull_quality_line(
         {"psnr_db": 29.0, "foreground_psnr_db": 20.0}, pre
     ) == (
-        "Quality (saved model, after post-fit cull): PSNR=29.0 dB "
+        "Quality (saved model, after post-fit pruning/cull): PSNR=29.0 dB "
         "(-1.00 dB vs fitted), foreground PSNR=20.0 dB"
     )
 

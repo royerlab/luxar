@@ -115,6 +115,9 @@ export interface SetupResult {
   /** Map of controller references for programmatic updates */
   controllers: Partial<RenderingControllers>;
 
+  /** Teardown for listeners the setup registered (optional). */
+  cleanup?: () => void;
+
   /** Shadow objects for special UI patterns (optional) */
   shadowObjects?: {
     hdrLogValue?: { log: number };

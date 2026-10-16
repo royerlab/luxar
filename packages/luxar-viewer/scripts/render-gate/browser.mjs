@@ -142,7 +142,10 @@ export function browserKit({ channel, headless, chromeArgs, log }) {
     page.on('pageerror', (e) => errors.push(e.message));
     try {
       beforeGoto?.();
-      await page.goto(caseUrl(origin, c, backend, dsf, urlParams), { timeout: 300000 });
+      // A headed run can land on an HDR display, where WebGPU would present an
+      // extended-range canvas by default; measure the SDR output either way.
+      const url = caseUrl(origin, c, backend, dsf, urlParams) + (headless ? '' : '&hdr=off');
+      await page.goto(url, { timeout: 300000 });
       await page.waitForFunction(ops.debugReady, undefined, { timeout: 300000 });
       const info = await page.evaluate(ops.rendererInfo);
       seenGpus.add(`${info.api}: ${info.gpu}`);

@@ -118,6 +118,16 @@ def _tile_handoff_args(
     return args
 
 
+def _optional_float_args(*pairs: "tuple[str, Optional[float]]") -> list[str]:
+    """``[flag, value, ...]`` for every pair whose value is not ``None``."""
+    return [
+        part
+        for flag, value in pairs
+        if value is not None
+        for part in (flag, str(value))
+    ]
+
+
 def build_worker_cmd(
     argv0: list[str],
     input_path: str | Path,
@@ -156,6 +166,8 @@ def build_worker_cmd(
     allow_empty_tile: bool = False,
     fold_tile_slivers: bool = True,
     tile_seed_count: Optional[int] = None,
+    min_extent: Optional[float] = None,
+    reseed_sigma: Optional[float] = None,
 ) -> list[str]:
     """Build the ``luxar gsplat fit --tile i/M`` argv for one worker.
 
@@ -248,6 +260,11 @@ def build_worker_cmd(
             cmd += ["--denoise-2d"]
     if allow_empty_tile:
         cmd += ["--allow-empty-tile"]
+    # Speck pruning runs inside each worker (per tile); forward explicit values
+    # only, so an unset flag resolves through the same preset/config merge.
+    cmd += _optional_float_args(
+        ("--min-extent", min_extent), ("--reseed-sigma", reseed_sigma)
+    )
     cmd += _tile_handoff_args(fold_tile_slivers, tile_seed_count)
     return cmd
 

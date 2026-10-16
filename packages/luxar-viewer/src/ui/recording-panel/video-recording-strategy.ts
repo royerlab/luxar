@@ -68,6 +68,8 @@ export class VideoRecordingStrategy implements CaptureStrategy {
   // until explicitly stopped. mediaRecorder.stop() does NOT stop the
   // underlying tracks; tracked here so cleanupCaptureStream() can.
   captureStream: MediaStream | null = null;
+  /** Releases the post-processing SDR hold taken for this recording (HDR canvas). */
+  private releaseSdrHold: (() => void) | null = null;
   recordedChunks: Blob[] = [];
   durationTimer: ReturnType<typeof setTimeout> | null = null;
   // Non-null only while recording a scene that HAS visible overlays: the
@@ -145,6 +147,9 @@ export class VideoRecordingStrategy implements CaptureStrategy {
           `mode: ${mode})`
       );
 
+      // The recording is 8-bit: film the SDR tone curve, not an HDR canvas
+      // it would clip. Released with the capture source.
+      this.releaseSdrHold = this.sceneManager.postProcessing.holdSdrOutput();
       // A frame NOW, not at the next animation frame: the capture stream and
       // the MediaRecorder start below in this same turn, on a canvas the
       // recording-state resize has just cleared.
@@ -421,6 +426,12 @@ export class VideoRecordingStrategy implements CaptureStrategy {
    * Non-private so Panel can route `panel.cleanupCaptureStream()` through.
    */
   cleanupCaptureStream(): void {
+    if (this.releaseSdrHold) {
+      this.releaseSdrHold();
+      this.releaseSdrHold = null;
+      // The canvas goes back to the HDR curve: draw it now, not at the next input.
+      this.animationController.requestRender('recording SDR hold released');
+    }
     this.captureStream?.getTracks().forEach((track) => track.stop());
     this.captureStream = null;
     this.liveOverlayCompositor?.detach();

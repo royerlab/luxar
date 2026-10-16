@@ -74,6 +74,13 @@ from luxar.gsplats.fitting.results import (
     lift_source_grid_stats,
     stamp_voxels_per_splat,
 )
+from luxar.gsplats.fitting.splat_hygiene import (
+    DEFAULT_MIN_EXTENT_MAX_MASS_SHARE,
+    DEFAULT_MIN_EXTENT_VOX,
+    fitted_voxel_unit,
+    validate_max_mass_share,
+    validate_min_extent,
+)
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
@@ -239,15 +246,11 @@ def _robust_psnr(psnr: float, V_original: np.ndarray, robust_range: float) -> fl
 
 def _closing_cull(
     final_result: GSplatData,
-    V_original: np.ndarray,
     cull_retention: float,
     *,
     verbose: bool,
-    device: Optional[str],
-    voxel_size: Any,
-    output_space: str,
-) -> GSplatData:
-    """The fit's closing cumulative trim, then a re-score of the saved set."""
+) -> "tuple[GSplatData, int]":
+    """The fit's closing cumulative trim; the caller re-scores the saved set."""
     from luxar.gsplats._data.filtering import (
         measured_stats_snapshot,
         restore_measured_stats,
@@ -270,7 +273,45 @@ def _closing_cull(
             f"{n_before} -> {final_result.n_splats} splats "
             f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%)"
         )
-    if n_removed > 0 and final_result.n_splats > 0:
+    return final_result, n_removed
+
+
+def _closing_reductions(
+    final_result: GSplatData,
+    V_original: np.ndarray,
+    *,
+    min_extent_vox: float,
+    max_mass_share: float,
+    cull_retention: float | None,
+    unit: np.ndarray,
+    verbose: bool,
+    device: Optional[str],
+    voxel_size: Any,
+    output_space: str,
+) -> GSplatData:
+    """Speck pruning, the cumulative cull, then one re-score of the saved set."""
+    from luxar.gsplats.fit_gsplats import prune_min_extent
+
+    removed = 0
+    if min_extent_vox > 0 and final_result.n_splats > 0:
+        final_result, n_pruned = prune_min_extent(
+            final_result,
+            min_extent_vox,
+            unit,
+            verbose=verbose,
+            max_mass_share=max_mass_share,
+        )
+        removed += n_pruned
+    if (
+        cull_retention is not None
+        and 0 < cull_retention < 1.0
+        and final_result.n_splats > 0
+    ):
+        final_result, n_culled = _closing_cull(
+            final_result, cull_retention, verbose=verbose
+        )
+        removed += n_culled
+    if removed > 0 and final_result.n_splats > 0:
         _rescore_progressive_after_cull(
             final_result,
             V_original,
@@ -280,6 +321,20 @@ def _closing_cull(
             output_space=output_space,
         )
     return final_result
+
+
+def _drop_inert_reseed_sigma(kwargs: dict[str, Any], enable_dynamic_ops: bool) -> None:
+    """Warn once (not per pass) when a reseed sigma is set but nothing relocates.
+
+    Progressive passes run without relocation by default, so the sigma would
+    silently do nothing; it is dropped from the per-pass kwargs after the note.
+    """
+    if kwargs.get("relocation_reseed_sigma_vox") is not None and not enable_dynamic_ops:
+        aprint(
+            "⚠ relocation_reseed_sigma_vox / --reseed-sigma has no effect: "
+            "progressive passes run without relocation (dynamic ops off)"
+        )
+        kwargs.pop("relocation_reseed_sigma_vox")
 
 
 def _rescore_progressive_after_cull(
@@ -337,6 +392,8 @@ def fit_progressive_gaussian_splats(
     ] = 10.0,  # Intentionally higher than single-pass (1.0)
     enable_dynamic_ops: bool = False,
     cull_retention: float | None = 0.999,
+    min_extent: float | None = DEFAULT_MIN_EXTENT_VOX,
+    min_extent_max_mass_share: float = DEFAULT_MIN_EXTENT_MAX_MASS_SHARE,
     on_pass_complete: Optional[Callable[[int, AdditiveSubLOD, float], None]] = None,
     device: Optional[str] = None,
     verbose: bool = True,
@@ -379,6 +436,14 @@ def fit_progressive_gaussian_splats(
         Post-fit cumulative culling on the final accumulated result.  Keeps the
         top splats that account for this fraction of total amplitude (0--1).
         Set to ``None`` to disable.
+    min_extent : float or None, default=0.6
+        Speck pruning on the final accumulated result (before the cull): drop
+        splats whose geometric-mean spatial sigma is below this many voxels.
+        Never applied per pass. See
+        :func:`~luxar.gsplats.fit_gsplats.fit_gaussian_splats`. ``0`` disables.
+    min_extent_max_mass_share : float, default=0.02
+        Keep the splats (and print a note) when pruning would remove more than
+        this share of the fitted brightness.
     on_pass_complete : callable, optional
         Callback invoked after each pass:
         ``on_pass_complete(pass_index, lod_data, cumulative_psnr)``.
@@ -436,6 +501,10 @@ def fit_progressive_gaussian_splats(
     kwargs.pop("seeds", None)  # progressive computes seeds_this_pass per pass
     kwargs.pop("seed_method", None)  # progressive sets auto/peaks per pass
     kwargs.pop("cull_retention", None)  # per-pass culling disabled; final cull at end
+    # Speck pruning likewise runs once, on the accumulated result.
+    min_extent_vox = validate_min_extent(min_extent)
+    max_mass_share = validate_max_mass_share(min_extent_max_mass_share)
+    _drop_inert_reseed_sigma(kwargs, enable_dynamic_ops)
     # Background floor / DC-offset suppression: subtract ONCE from the volume up
     # front (like calibrate()), then run EVERY pass with floor='none'. The
     # residual chain (target = clip(V - render, 0)) is built against this
@@ -634,6 +703,7 @@ def fit_progressive_gaussian_splats(
             asymmetric_penalty=pass_asymmetric_penalty,
             enable_dynamic_ops=pass_enable_dynamic,
             cull_retention=None,  # Disable per-pass; final cull at end of progressive
+            min_extent=0.0,  # Pruned once, on the accumulated result
             seed_method=pass_seed_method,
             device=device,
             verbose=verbose,
@@ -847,21 +917,25 @@ def fit_progressive_gaussian_splats(
 
         final_result.stats.update(physical_voxel_size_stamp(vs, "real", d))
 
-    # Post-fit cumulative culling on the full accumulated result
-    if (
-        cull_retention is not None
-        and 0 < cull_retention < 1.0
-        and final_result.n_splats > 0
-    ):
-        final_result = _closing_cull(
-            final_result,
-            V_original,
-            cull_retention,
-            verbose=verbose,
-            device=device,
+    # Closing reductions on the full accumulated result: speck pruning, then
+    # the cumulative cull, then ONE re-score of the saved set.
+    final_result = _closing_reductions(
+        final_result,
+        V_original,
+        min_extent_vox=min_extent_vox,
+        max_mass_share=max_mass_share,
+        cull_retention=cull_retention,
+        unit=fitted_voxel_unit(
+            V.ndim,
             voxel_size=caller_voxel_size,
             output_space=caller_output_space,
-        )
+            downscale=kwargs.get("downscale"),
+        ),
+        verbose=verbose,
+        device=device,
+        voxel_size=caller_voxel_size,
+        output_space=caller_output_space,
+    )
 
     # Density is quoted against the splats actually DELIVERED, so it is stamped
     # here rather than beside the other source-grid stamps above: the post-fit
