@@ -154,6 +154,7 @@ export function buildTransientResources(c: BuildResourcesConfig): PipelineResour
     globalOffset: config.renderingControls.defaults.globalOffset,
     globalGamma: config.renderingControls.defaults.globalGamma,
     toneMapping: resolveToneMappingDefault(),
+    hdrOutputPeak: c.capabilities.hdrOutput?.headroom,
   });
   megaShader.setResolution(c.physW, c.physH);
 

@@ -83,6 +83,8 @@ def build_plan_configs(
     merge_refine_iters: Optional[int],
     merge_substitutive_method: Optional[str],
     merge_coarsen_dims: Optional[str],
+    batch_min_extent: Optional[float] = None,
+    batch_reseed_sigma: Optional[float] = None,
 ) -> PlanConfigs:
     """Map the CLI flags onto the ``plan_batch`` config dataclasses."""
     from luxar.cli.gsplat_ops.batch.planning import (
@@ -104,6 +106,8 @@ def build_plan_configs(
         psnr_patience=batch_psnr_patience,
         max_passes=batch_max_passes,
         cull_retention=batch_cull_retention,
+        min_extent=batch_min_extent,
+        reseed_sigma=batch_reseed_sigma,
     )
     denoise_cfg = DenoiseConfig(
         denoise=batch_denoise,

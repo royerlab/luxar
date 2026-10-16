@@ -60,6 +60,18 @@ The mega-shader fuses these steps in one fragment pass:
 6. Vignette (multiplicative)
 7. sRGB encoding (skipped when capturing for EXR)
 
+**HDR canvas output (PROTOTYPE, WebGPU only).** When the renderer reports
+`capabilities.hdrOutput` (an `rgba16float` extended-range canvas on an HDR
+display), the mega-shader's WebGPU-only branch tone-maps to `[0, headroom]`
+via the `uHdrPeak` uniform (`mega/README.md`); `isHdrOutputActive()`,
+`getHdrOutputState()`, `getHdrHeadroom()` and `setHdrHeadroom()` expose and
+drive it. Consumers that turn the canvas into 8-bit frames must see the SDR
+curve, because values above 1.0 would clip: `renderToImageData` (screenshots,
+image sequences, offline video, the embedder screenshot) runs the pipeline at
+peak 1 for that frame (`capture.ts::runPipelineWithSdrCurve`), and a live
+MediaRecorder recording takes `holdSdrOutput()`, a ref-counted hold that
+returns its release function (used by `ui/recording-panel`).
+
 Two `#define`-gated shortcuts cover the EXR/HDR-capture paths
 (`LUXAR_CAPTURE_RAW_HDR` for pre-tone linear HDR,
 `LUXAR_CAPTURE_LINEAR_LDR` for post-tone-mapped linear LDR).

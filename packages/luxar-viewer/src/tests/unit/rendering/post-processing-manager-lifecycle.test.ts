@@ -34,6 +34,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import { PostProcessingManager } from '../../../rendering/post-processing/post-processing-manager';
 import { materialManager } from '../../../rendering/material-manager';
+import { MegaShaderMaterial } from '../../../rendering/post-processing/mega/material';
 import { createPostProcessing } from '../../../scene/scene-manager/render-pipeline/post-processing-setup';
 import type { Renderer, RendererCapabilities } from '../../../rendering/renderer-capabilities';
 import type { DataRefractionSplit } from '../../../rendering/post-processing/post-processing-manager/refraction-split';
@@ -918,5 +919,57 @@ describe('PostProcessingManager → the refraction split (spec §3.4 Phase 3)', 
     expect(s!.glassDepthTarget.depthTexture).toBe(getGlassDepthTexture());
     mgr.dispose();
     expect(split(mgr)).toBeNull();
+  });
+});
+
+describe('PostProcessingManager — HDR output headroom', () => {
+  function makeHdrManager(): PostProcessingManager {
+    materialManager.setCaps(mockCaps('webgl2'));
+    return new PostProcessingManager(
+      makeMockRenderer(),
+      mockCaps('webgl2', { hdrOutput: { headroom: 3, pinned: false, gpuRenderer: null } }),
+      new THREE.Scene(),
+      new THREE.PerspectiveCamera(),
+      { width: 64, height: 64 }
+    );
+  }
+
+  it('reports HDR output only when the renderer carries an HDR state', () => {
+    const sdr = makeManager();
+    const hdr = makeHdrManager();
+    expect(sdr.isHdrOutputActive()).toBe(false);
+    expect(sdr.getHdrHeadroom()).toBe(1);
+    expect(hdr.isHdrOutputActive()).toBe(true);
+    expect(hdr.getHdrHeadroom()).toBe(3);
+    sdr.dispose();
+    hdr.dispose();
+  });
+
+  it('holdSdrOutput shows peak 1 until every hold is released, then the live headroom', () => {
+    const mgr = makeHdrManager();
+    const setPeak = vi.spyOn(
+      peek(mgr).megaShader as unknown as { setHdrPeak(v: number): void },
+      'setHdrPeak'
+    );
+    const releaseA = mgr.holdSdrOutput();
+    const releaseB = mgr.holdSdrOutput();
+    mgr.setHdrHeadroom(5); // changed while held: stored, not shown
+    releaseA();
+    releaseA(); // a release runs once
+    expect(setPeak.mock.calls.map(([v]) => v)).toEqual([1, 1, 1, 1]);
+    releaseB();
+    expect(setPeak).toHaveBeenLastCalledWith(5);
+    mgr.dispose();
+  });
+
+  it('keeps the live headroom across a context-restore rebuild', () => {
+    const mgr = makeHdrManager();
+    mgr.setHdrHeadroom(4);
+    const setPeak = vi.spyOn(MegaShaderMaterial.prototype, 'setHdrPeak');
+    mgr.rebuildAfterContextRestore();
+    expect(setPeak).toHaveBeenCalledWith(4);
+    expect(mgr.getHdrHeadroom()).toBe(4);
+    setPeak.mockRestore();
+    mgr.dispose();
   });
 });

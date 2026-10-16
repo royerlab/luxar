@@ -198,6 +198,22 @@ export async function captureHDRAsEXR(
   }
 }
 
+/**
+ * Run the pipeline on the SDR tone curve even while the canvas shows HDR
+ * output: an 8-bit export clips above SDR white. Peak 1 selects the exact
+ * SDR branch (a uniform write, no rebuild); restored once the frame is
+ * encoded, so the next on-screen frame is HDR again.
+ */
+function runPipelineWithSdrCurve(ctx: CaptureCtx, opts: Parameters<typeof runPipeline>[1]): void {
+  const hdrPeak = ctx.megaShader.getHdrPeak();
+  ctx.megaShader.setHdrPeak(1);
+  try {
+    runPipeline(ctx.pipelineCtx, opts);
+  } finally {
+    ctx.megaShader.setHdrPeak(hdrPeak);
+  }
+}
+
 /** Render a full frame to an offscreen target and return as ImageData. */
 export async function renderToImageData(
   ctx: CaptureCtx,
@@ -214,7 +230,7 @@ export async function renderToImageData(
   });
   captureTarget.texture.name = 'PostProcessing.captureTarget';
   try {
-    runPipeline(ctx.pipelineCtx, { applyFxaa, finalTarget: captureTarget });
+    runPipelineWithSdrCurve(ctx, { applyFxaa, finalTarget: captureTarget });
     // Read pixels in canonical top-down order. The unified primitive
     // hides the backend signature split, compacts WebGPU row padding,
     // and flips WebGL2's bottom-up rows to top-down — exactly the

@@ -604,6 +604,41 @@ def test_run_dry_run_reports_plan_without_fitting(tmp_path: Path) -> None:
     assert not (out / "tiles").exists() or not list((out / "tiles").glob("*.zarr"))
 
 
+@pytest.mark.parametrize("command", ["run", "submit"])
+@pytest.mark.parametrize(
+    ("flag", "value"), [("--min-extent", "-1"), ("--reseed-sigma", "0")]
+)
+def test_batch_rejects_bad_speck_flags_before_planning(
+    tmp_path: Path, command: str, flag: str, value: str
+) -> None:
+    src = tmp_path / "vol.zarr"
+    _make_zarr(src)
+    out = tmp_path / "out"
+    options = ["--gpus", "cpu"] if command == "run" else ["--partition", "gpu"]
+    result = runner.invoke(
+        app_gsplat,
+        [
+            "batch-fit",
+            command,
+            str(src),
+            str(out),
+            "--axes",
+            "z,y,x",
+            "--tile-size",
+            "64",
+            *options,
+            flag,
+            value,
+            "--dry-run",
+        ],
+    )
+    output = normalized_cli_output(result)
+    assert result.exit_code == 2, output
+    assert flag in output
+    assert "Discovering dataset" not in output
+    assert not out.exists()
+
+
 def test_run_dry_run_announces_whole_volume_seed_split(tmp_path: Path) -> None:
     """The plan announces how an integer ``--seeds`` divides across tiles (#1556).
 
