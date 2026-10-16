@@ -499,9 +499,15 @@ def test_backend_summary_names_accelerated_kernels() -> None:
     class GaussianSplatModelCUDA:
         pass
 
+    class GaussianSplatModelCUDANvrtc:
+        kernel_backend = "nvrtc"
+
     assert model_backend_summary(GaussianSplatModelMetal(), "mps") == (
         "Fitting backend: GaussianSplatModelMetal (runtime kernels, device=mps)"
     )
     assert model_backend_summary(GaussianSplatModelCUDA(), "cuda") == (
         "Fitting backend: GaussianSplatModelCUDA (custom kernels, device=cuda)"
+    )
+    assert model_backend_summary(GaussianSplatModelCUDANvrtc(), "cuda") == (
+        "Fitting backend: GaussianSplatModelCUDANvrtc (nvrtc kernels, device=cuda)"
     )

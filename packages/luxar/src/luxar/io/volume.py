@@ -25,6 +25,19 @@ __all__ = [
 ]
 
 
+class RegionRankError(ValueError):
+    """A ``region`` whose span count does not match the axes it would crop.
+
+    A ``ValueError`` (so existing callers keep catching it), distinct so a CLI
+    can report it as a usage error naming the volume's rank.
+    """
+
+    def __init__(self, n_spans: int, n_axes: int, what: str) -> None:
+        self.n_spans = n_spans
+        self.n_axes = n_axes
+        super().__init__(f"region has {n_spans} axes but {what} {n_axes}")
+
+
 def decode_flat_channel_index(
     channel: int, channel_shape: Tuple[int, ...]
 ) -> Tuple[int, ...]:
@@ -243,9 +256,10 @@ def _apply_axes_spec(
     spatial_indices = [i for i, kind in enumerate(kinds) if kind == "s"]
     if region is not None:
         if len(region) != len(spatial_indices):
-            raise ValueError(
-                f"region has {len(region)} axes but --axes {axes!r} names "
-                f"{len(spatial_indices)} spatial axes"
+            raise RegionRankError(
+                len(region),
+                len(spatial_indices),
+                f"--axes {axes!r} names this many spatial axes:",
             )
         for axis, span in zip(spatial_indices, region, strict=True):
             index[axis] = span
@@ -309,16 +323,23 @@ def _record_tiff_voxel_size(
         return
     from ._tiff_metadata import voxel_info_for_axes
 
-    labels = None
-    if axes is not None:
-        aliases = {"depth": "z", "height": "y", "width": "x"}
-        stripped = [a.strip().lower() for a in axes.split(",") if a.strip()]
-        labels = [
-            aliases.get(label, label) for label in stripped if _axis_kind(label) == "s"
-        ]
+    labels = _spatial_axis_names(axes) if axes is not None else None
     recorded = voxel_info_for_axes(meta, labels, ndim)
     if recorded is not None:
         info.update(recorded)
+
+
+def _spatial_axis_names(axes: str) -> List[str]:
+    """Kept spatial labels from a validated axis spec, in returned array order."""
+    aliases = {"depth": "z", "height": "y", "width": "x"}
+    labels = [a.strip().lower() for a in axes.split(",") if a.strip()]
+    return [aliases.get(label, label) for label in labels if _axis_kind(label) == "s"]
+
+
+def _record_explicit_axes(info: Optional[dict], axes: Optional[str]) -> None:
+    """Expose the kept column names to callers that request loader metadata."""
+    if info is not None and axes is not None:
+        info["axes"] = _spatial_axis_names(axes)
 
 
 def _slice_eager_region(
@@ -327,6 +348,10 @@ def _slice_eager_region(
     """Apply ``region`` only when the reader could not do it lazily."""
     if region is None or is_zarr_path(path):
         return volume
+    if len(region) != volume.ndim:
+        # numpy would silently crop only the leading axes (too few spans) or
+        # raise a bare IndexError (too many).
+        raise RegionRankError(len(region), volume.ndim, "the volume's rank is")
     return np.asarray(volume[region], dtype=np.float32)
 
 
@@ -338,9 +363,10 @@ def _squeezed_region_spans(
         return (slice(None),) * len(shape)
     surviving_axes = [axis for axis, size in enumerate(shape) if size != 1]
     if len(region) != len(surviving_axes):
-        raise ValueError(
-            f"region has {len(region)} axes but positional loading keeps "
-            f"{len(surviving_axes)} axes after squeezing shape {shape}"
+        raise RegionRankError(
+            len(region),
+            len(surviving_axes),
+            f"after squeezing, positional loading of shape {shape} keeps",
         )
     spans = [slice(None)] * len(shape)
     for axis, span in zip(surviving_axes, region, strict=True):
@@ -414,11 +440,12 @@ def load_volume(
             ``channel`` index is decoded across all channel-like axes. Those
             axes are dropped and spatial axes are kept in the given order.
         info: Optional dict, populated with ``source_dtype`` — the element type
-            of the array AS STORED, captured before the float32 cast below. For
-            an OME-TIFF or a calibrated ImageJ TIFF it also receives the
-            recorded voxel spacing of the RETURNED axes, in array order —
-            only when every returned axis has one: ``axes`` (e.g.
-            ``["z", "y", "x"]``), ``voxel_size`` in MICROMETRES with
+            of the array AS STORED, captured before the float32 cast below.
+            With explicit ``axes``, it also receives the kept spatial labels in
+            array order (e.g. ``["x", "y", "z"]``). For an OME-TIFF or a
+            calibrated ImageJ TIFF it also receives the recorded voxel spacing
+            of the RETURNED axes, only when every returned axis has one:
+            ``axes`` (when not already supplied), ``voxel_size`` in MICROMETRES with
             ``voxel_unit="um"`` (nm/mm/Å/... converted; omitted when a unit is
             unknown), the values and units as recorded in ``source_voxel_size``
             / ``source_voxel_units``, and ``voxel_size_source``
@@ -528,6 +555,7 @@ def load_volume(
             f"with shape {volume.shape}"
         )
     _record_tiff_voxel_size(info, tiff_meta, axes, volume.ndim)
+    _record_explicit_axes(info, axes)
 
     assert isinstance(volume, np.ndarray)
     aprint(f"  Shape: {volume.shape}, dtype: float32")

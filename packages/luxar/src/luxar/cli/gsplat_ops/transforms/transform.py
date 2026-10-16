@@ -150,6 +150,22 @@ class _IntensityChangeRecorder:
             drop_content_scoped_stats(stats)
 
 
+def _rebase_intensity_stats(
+    stats: "Optional[dict]",
+    scale_intensity_factor: Optional[float],
+    normalize_intensity: Optional[float],
+) -> None:
+    """Carry the normalisation basis through an intensity edit (see
+    :func:`~luxar.gsplats.fit_basis.rescale_intensity_basis`): ``--scale-intensity``
+    scales it; ``--normalize-intensity`` (an arbitrary target) drops it."""
+    from luxar.gsplats.fit_basis import rescale_intensity_basis
+
+    if normalize_intensity is not None:
+        rescale_intensity_basis(stats, None)
+    elif scale_intensity_factor is not None:
+        rescale_intensity_basis(stats, scale_intensity_factor)
+
+
 def _restamp_tree_after_intensity(
     node: "GSplatNode", source: "GSplatNode", *, changed: bool
 ) -> "GSplatNode":
@@ -424,6 +440,7 @@ def run_transform_dataset(
                             f"target max: {normalize_intensity}"
                         )
                         data = data.normalize_intensity(normalize_intensity)
+                # (The GSplatData intensity methods rebase ``data.stats`` themselves.)
                 result_node = data.tree
             else:
                 # ── Tree-walking path: kind=partition / nested (structure kept) ──
@@ -519,6 +536,9 @@ def run_transform_dataset(
                                 ),
                             )
                 intensity.scrub_root(stats)
+                _rebase_intensity_stats(
+                    stats, scale_intensity_factor, normalize_intensity
+                )
                 node = _restamp_tree_after_intensity(
                     node, source_node, changed=intensity.changed
                 )

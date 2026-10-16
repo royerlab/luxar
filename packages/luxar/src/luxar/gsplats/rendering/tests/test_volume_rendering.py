@@ -49,6 +49,8 @@ def test_render_to_volume_tensor_accepts_auto_device(monkeypatch) -> None:
 
 
 def test_cuda_render_failure_warns_once_and_falls_back(monkeypatch) -> None:
+    monkeypatch.setenv("LUXAR_CUDA_BACKEND", "auto")
+
     class RaisingCUDASplatFunction:
         @staticmethod
         def apply(*_args):
@@ -59,7 +61,7 @@ def test_cuda_render_failure_warns_once_and_falls_back(monkeypatch) -> None:
         sys.modules,
         module_name,
         SimpleNamespace(
-            CUDA_BACKEND_AVAILABLE=True,
+            get_splatting_backend=lambda: object(),
             CUDASplatFunction=RaisingCUDASplatFunction,
         ),
     )
@@ -82,7 +84,45 @@ def test_cuda_render_failure_warns_once_and_falls_back(monkeypatch) -> None:
     assert len(caught) == 1
 
 
+@pytest.mark.parametrize("forced", ["aot", "nvrtc"])
+def test_cuda_render_failure_raises_when_backend_is_forced(monkeypatch, forced) -> None:
+    from luxar.gsplats._nvrtc import NvrtcCompileError
+    from luxar.gsplats.models.gsplats.cuda.backend import BACKEND_ENV
+
+    class RaisingCUDASplatFunction:
+        @staticmethod
+        def apply(*_args):
+            raise NvrtcCompileError(
+                "NVRTC failed to compile CUDA program", "error: boom"
+            )
+
+    module_name = "luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda"
+    monkeypatch.setitem(
+        sys.modules,
+        module_name,
+        SimpleNamespace(
+            get_splatting_backend=lambda: object(),
+            CUDASplatFunction=RaisingCUDASplatFunction,
+        ),
+    )
+    monkeypatch.setenv(BACKEND_ENV, forced)
+    monkeypatch.setattr(volume_rendering, "_cuda_render_warning_emitted", False)
+    centers, cholesky, amplitudes = _cuda_render_inputs()
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(NvrtcCompileError, match="boom"):
+            volume_rendering._try_cuda_render(
+                centers, cholesky, amplitudes, (4, 4, 4), 3.0, 1e-5
+            )
+
+    assert not caught
+    assert not volume_rendering._cuda_render_warning_emitted
+
+
 def test_cuda_render_warning_points_to_external_caller(monkeypatch) -> None:
+    monkeypatch.setenv("LUXAR_CUDA_BACKEND", "auto")
+
     class RaisingCUDASplatFunction:
         @staticmethod
         def apply(*_args):
@@ -93,7 +133,7 @@ def test_cuda_render_warning_points_to_external_caller(monkeypatch) -> None:
         sys.modules,
         module_name,
         SimpleNamespace(
-            CUDA_BACKEND_AVAILABLE=True,
+            get_splatting_backend=lambda: object(),
             CUDASplatFunction=RaisingCUDASplatFunction,
         ),
     )
@@ -145,7 +185,7 @@ def test_cuda_render_skips_unsupported_dimensions_without_warning(monkeypatch) -
         sys.modules,
         module_name,
         SimpleNamespace(
-            CUDA_BACKEND_AVAILABLE=True,
+            get_splatting_backend=lambda: object(),
             CUDASplatFunction=UnexpectedCUDASplatFunction,
         ),
     )

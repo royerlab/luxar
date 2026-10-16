@@ -23,12 +23,21 @@ pip install "luxar[gsplats]"
 > construction and intensity editing all need it; the `luxar.gsplats` package
 > docstring states exactly where the line falls.
 
-> **⚠️ torch ABI coupling.** The optional CUDA extension
-> (`models/gsplats/cuda/cuda_splatting_backend*.so`) is compiled against a
-> specific PyTorch ABI. **After any `torch` upgrade you must rebuild it** with
-> `make build-cuda`, otherwise importing the backend fails with an ABI/symbol
-> mismatch. The `torch>=2.2.0,<3.0` pin in `pyproject.toml` exists to prevent a
-> silent major-version jump from breaking the prebuilt extension.
+> **CUDA kernels: two ways in, no build step required.** On Linux with a CUDA
+> build of torch, the splatting and NLM kernels are compiled at runtime by NVRTC
+> (shipped in torch's NVIDIA wheels) the first time a given dimensionality is
+> used, loaded through the CUDA driver API, and cached under
+> `$XDG_CACHE_HOME/luxar/cuda` (default `~/.cache`). That path has no torch C++
+> ABI to match. The ahead-of-time extension
+> (`models/gsplats/cuda/cuda_splatting_backend*.so`, `make build-cuda`) is still
+> preferred when it imports; see `models/gsplats/cuda/README.md` for the order
+> and the `LUXAR_CUDA_BACKEND=aot|nvrtc|torch` override.
+>
+> **⚠️ torch ABI coupling (AOT extension only).** The `make build-cuda` `.so`
+> is compiled against a specific PyTorch ABI. **After any `torch` upgrade you
+> must rebuild it**, otherwise importing it fails with an ABI/symbol mismatch
+> (the NVRTC path then takes over). The `torch>=2.2.0,<3.0` pin in
+> `pyproject.toml` exists to prevent a silent major-version jump.
 
 ## Key Features
 
@@ -171,6 +180,33 @@ reconstruction = render_gaussians_numpy(image.shape, result, truncate=3.0)
 - `stats`: Dict[str, Any] - Optimization statistics
 
 The result can be directly passed to `render_gaussians_numpy()` or `render_gaussians_pytorch()` for rendering, or added to a Scene (see below).
+
+### Anisotropic Stacks in Physical Units
+
+From the command line, an anisotropic OME-Zarr or OME-TIFF/ImageJ stack becomes a
+physically scaled, correctly oriented scene in two commands:
+
+```bash
+luxar gsplat fit stack.ome.tif stack.gsplats.zarr --physical   # spacing from the file
+luxar gsplat convert stack.gsplats.zarr stack.luxar.zarr --tone-mapping ACES
+```
+
+`--physical` reads the recorded voxel size (NGFF scale, OME-TIFF `PhysicalSize*`,
+calibrated ImageJ spacing); `--voxel-size Z,Y,X` (µm, array order) states it
+explicitly and wins. `--region z0:z1,y0:y1,x0:x1` fits a crop whose splats keep
+their full-volume position. See the CLI README (`luxar gsplat fit`) for the
+precedence rules. From Python, pass the spacing yourself:
+
+```python
+result = fit_gaussian_splats(volume, voxel_size=(0.29, 0.108, 0.108))
+# centers / cholesky_factors are in µm (output_space="real", the default);
+# result.stats["voxel_size"] and result.stats["physical_coordinates"] record it.
+```
+
+A fit with a `voxel_size` records `voxel_size` and `physical_coordinates` in its
+stats (saved under `fitting/`); the CLI adds `voxel_unit`, `voxel_size_source`
+and, for a crop, `source_region`. A physical fit's `dimension_metadata` names the
+axes with their unit, which `gsplat convert` turns into µm scene dimensions.
 
 ### Tiled Fitting for Large Volumes
 
@@ -1197,6 +1233,12 @@ gsplats/
 ├── calibration_report.py          # Optional matplotlib PDF report for `luxar gsplat cal --pdf`
 ├── gpu_profile.py                 # GPU benchmark profile management
 ├── spatial_hash.py                # Online and batched nD proximity-query grids
+├── exposure.py                    # Opening-view brightness: predict_projected_sum (additive
+│                                  #   per-pixel sum down the view axis) + plan_projected_exposure
+│                                  #   (the dimming factor `gsplat convert` folds into display_gain)
+│                                  #   + data_unit_display_attrs / amplitude_unit_attrs (the attrs
+│                                  #   an add_gsplats_* call passes with normalize_amplitudes=False
+│                                  #   to keep data units, as convert does)
 │
 ├── lod/                            # Level-of-Detail post-processing (additive + substitutive)
 │   ├── additive.py                 # compute_additive_order, make_additive_lod

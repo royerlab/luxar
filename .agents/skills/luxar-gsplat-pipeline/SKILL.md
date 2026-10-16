@@ -19,10 +19,14 @@ older v3.x files are still read transparently).
 All commands below are subcommands of `luxar gsplat`.
 
 GSplats need optional deps: `pip install "luxar[gsplats]"` (PyTorch, scipy). GPU
-(CUDA or Apple MPS) is auto-detected; pass `--device cpu` to force CPU. On Apple
-MPS the 3D Metal kernels compile at runtime (torch >= 2.7, no Xcode); a fit that
-logs "Metal splatting kernels: none, using PyTorch" runs orders of magnitude
-slower — upgrade torch, or see `LUXAR_METAL_BACKEND` in the metal README.
+(CUDA or Apple MPS) is auto-detected; pass `--device cpu` to force CPU. On Linux
+with a CUDA build of torch, the custom CUDA kernels compile automatically on first
+use (NVRTC, cached under `~/.cache/luxar/cuda`); no `make build-cuda` needed. On
+Apple MPS the 3D Metal kernels likewise compile at runtime (torch >= 2.7, no
+Xcode); a fit that logs "Metal splatting kernels: none, using PyTorch" runs orders
+of magnitude slower — upgrade torch, or see `LUXAR_METAL_BACKEND` in the metal
+README. The fit log says which kernels ran (`aot`, `nvrtc`, or PyTorch with the
+reason), and `LUXAR_CUDA_BACKEND=aot|nvrtc|torch` forces one.
 
 ## The canonical pipeline: cal -> fit -> lod
 
@@ -70,6 +74,13 @@ somewhat more, never fewer. The preset silently moves `max_eccentricity` too
 
 Supported `fit` inputs: `.zarr`, `.zarr.zip`, `.tiff`, `.npy`, `.npz`. For a
 nested zarr group use `--array-key h2afva/fused`.
+
+Anisotropic stack → physically scaled, image-oriented scene:
+`luxar gsplat fit stack.ome.tif s.gsplats.zarr --physical` then `luxar gsplat
+convert s.gsplats.zarr s.luxar.zarr`. `--physical` reads NGFF / OME-TIFF / ImageJ
+spacing (one line says which); `--voxel-size Z,Y,X` (µm, array order) wins.
+`--region z0:z1,y0:y1,x0:x1` fits a crop placed at its full-volume position
+(`fitting/source_region`); `cal` takes the same three flags.
 
 ### Background floor suppression (`--floor`, default `auto`)
 
@@ -749,7 +760,21 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
 ```
 
 The CLI shortcut `luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --center`
-does (a) for you and writes a ready-to-serve scene.
+does (a) for you and writes a ready-to-serve scene. It keeps the amplitudes in
+source data units (labelled `amplitude_unit`, floor in `amplitude_offset`) and
+auto-exposes a separate `display_gain`: dimmed (never brightened) so the opening
+view's predicted additive p99.9 is `--target-brightness` (2.0; 0.9 under
+`--tone-mapping None|Linear`) instead of a saturated blob (side views and other
+timepoints capped at 4x); `--no-auto-exposure` = per-splat gain only. The Python
+adders keep per-splat normalisation by default. For the same result in Python,
+use the public helper — the gain is per-splat normalisation × `plan.factor`:
+
+```python
+from luxar.gsplats.exposure import data_unit_display_attrs, plan_projected_exposure
+# plan = plan_projected_exposure(..., amps * per_splat, ...)  (as convert does), optional
+attrs = data_unit_display_attrs(stats, amplitudes=amps, plan=plan)  # or gain=...
+scene.add_gsplats_from_file("g", path, normalize_amplitudes=False, **attrs)
+```
 
 ## Notes
 

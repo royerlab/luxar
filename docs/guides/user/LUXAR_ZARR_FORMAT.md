@@ -1356,6 +1356,58 @@ and `luxar optimize` carries the file into a re-chunked store for the same reaso
 `master_gain`, `panning_model` `"equalpower"` | `"HRTF"`, per-bus gains, and
 `duck_db` — the ambient attenuation while anything on the voice bus plays).
 
+### Amplitude units and display gain
+
+A scene written by `luxar gsplat convert` / `view` keeps a fit's amplitudes in
+**source data units** — the fit already stores them that way (detector counts
+above the subtracted background for an integer source) — so the Layers panel
+reads in the data's own units. Note what those numbers are: a stored amplitude is
+one Gaussian's PEAK value. Overlapping Gaussians sum to the voxel value in 3D (and
+the view additionally sums along each ray), so the amplitude window
+(`amplitude_data_range`, p0.1–p99.9 of the peaks) sits well below the data's own
+range — a 12,000-count stack can show peaks of 7–1,800. The source's range is
+therefore recorded separately as `source_data_range`. Brightness is carried
+separately too. Four render attrs, all gsplats-only (the writer refuses them on
+points / lines / mesh, which have no amplitude) and all written only when the
+producer passes them; the Python adders refuse them while `normalize_amplitudes`
+would rescale the amplitudes (anything but `False` / `AmplitudeScale(1.0)`):
+
+| Attr | Meaning |
+|------|---------|
+| `display_gain` | Positive float, identity `1.0`. The brightness the viewer applies to the stored amplitudes: it multiplies the amplitude in EVERY amplitude-linear term of the draw — the emitted radiance (all modes), the `max`-mode peak, the `normal`-mode coverage, the `volumetric` optical depth (`τ = κ · opacity · gain · rayMass`, so in `volumetric` it scales density exactly as `opacity` does, but unbounded) and the visibility/footprint culling — and NEVER the colormap lookup, which windows the amplitude in its stored units against `amplitude_data_range`. The render is therefore identical to pre-multiplying the stored amplitudes by it. Composes **multiplicatively** along the ancestry like `intensity` (it is a compositing attr), so one gain on a `kind=partition` / `kind=lod` wrapper scales every part and level alike. The Layers panel shows it as **Brightness**. |
+| `amplitude_unit` | Non-empty string labelling the stored amplitudes (and so the display window): `"counts above background"` (a floor was subtracted), `"counts above minimum"` (only the source minimum was), `"counts"`, the same three with `"data units"` for a float source, or `"a.u."` when the store records no normalisation basis (imported classical splat files, merges of disagreeing fits or of splats without a basis, or after an edit that drops it: `--normalize-intensity`, an intensity offset, a clamp or a per-splat reweight), and also after a pure `--scale-intensity`, which keeps the basis (scaled, `intensity_scale` ≠ 1) but leaves the values out of source units. Display-only; sits on every leaf. |
+| `amplitude_offset` | Finite float: the level subtracted before fitting (`image_min`, the background floor), in the source's units. Display-only (the Layers panel's window tooltip); the amplitudes are NOT shifted by it. May be negative (a float source's minimum). Not written when the store records no basis, when the subtracted level is below 1e-6 of the range, or after an intensity edit (the raw floor no longer describes the amplitudes). |
+| `source_data_range` | `[lo, hi]` finite floats: the fitted intensity span in amplitude units — `[0, intensity_range]` (`= image_max − image_min` before an intensity edit). Display-only: the Layers panel lists it in the window's tooltip ("Data range: 0 – 12,000 (floor 100)"), for colormapped and direct-colour layers alike. Absent when the store records no basis. For a fit run with `--downscale`, the span is that of the downscaled volume the fitter saw (block averaging can lower the peak). `gsplat transform --scale-intensity` scales `intensity_range` with the amplitudes, leaves raw `image_min` / `image_max` intact and records the cumulative `intensity_scale`; the converted scene then says `a.u.` and omits the raw floor. `--normalize-intensity` drops the amplitude basis (the scene says `a.u.`, with no data range). |
+
+Which `amplitude_unit` a fit gets depends on its recorded `source_dtype`: every
+fit path records it (flat, uniform-tiled, content-tiled and batch-fit merges), so
+an integer stack reads `counts`; a store that lost it reads `data units`.
+
+An old scene carries none of them and renders bit-identically (the gain's
+identity is exactly `1.0`). From Python, opt in with
+`add_gsplats_from_data(..., normalize_amplitudes=False, display_gain=…,
+amplitude_unit=…, amplitude_offset=…, source_data_range=…)`; the default insertion still normalises
+(see `docs/specs/GSPLATS_ZARR_FORMAT.md`).
+
+### GSplats amplitude provenance
+
+`gsplat convert` records how it chose the `display_gain`, so the brightness can
+be reconciled with the fit and with the opening-view prediction. None of these
+attrs is read by the viewer; on a `kind=lod` / `kind=partition` subtree they sit
+on every leaf, with one shared value.
+
+| Attr | Meaning |
+|------|---------|
+| `amplitude_normalization_factor` | Written only by the Python adders' insertion-time normalisation (`normalize_amplitudes=True`, the default outside convert): the raw→stored factor, `stored = raw × factor`. A `gsplat convert` scene does not rescale its amplitudes, so it carries none. |
+| `amplitude_normalization_mode` | Which rule produced convert's `display_gain`: `"projected"` — auto exposure; `"per_splat"` — the per-splat p99.9 normalisation alone (`--no-auto-exposure`, a non-summing blending mode, or a failed prediction); `"manual"` — `--scale-intensity`. |
+| `projected_sum_p999` | Auto exposure only: the predicted p99.9 of the per-pixel additive sum of the opening view, after the gain (HDR, before tone mapping). |
+| `projected_sum_target` | Auto exposure only: the `--target-brightness` it was dimmed to (never brightened past the per-splat normalization). `projected_sum_p999` falls below it when the side-view cap (side views ≤ 4× target) set the gain. |
+| `projected_sum_axis` | Auto exposure only: the scene dimension the opening view looks along. |
+
+The source `.gsplats.zarr` is never rewritten, so `luxar gsplat render` /
+`compare` / `export` — which read the gsplats store, and refuse a scene — see the
+fit's own amplitudes.
+
 ## Scalar Colormap Attributes
 
 For Points, Lines and Mesh, an optional per-element `scalars` zarr array
@@ -1564,7 +1616,11 @@ Any scene-graph node — `points`, `lines`, `gsplats`, `mesh`, or a container
 `group` — may be exposed as a layer in the viewer's Layers panel by setting
 `layer: true` in its zarr attrs. The panel (toggled with **L**) provides
 per-layer visibility, display-range, gamma, opacity, absorption (volumetric
-mode's κ), blending mode, and colormap controls, plus mesh shading controls
+mode's κ), blending mode, and colormap controls; for gsplats also a
+**Brightness** control (the `display_gain`, shown relative to the authored
+gain, ×1 = the opening exposure), and on a gsplats layer carrying an
+`amplitude_unit` the display range is labelled **Splat amplitude** and reads in
+those units; plus mesh shading controls
 (ambient, shade falloff, specular, shininess, alpha cutoff) — or, for a
 `material: "physical"` mesh, live sliders for its physical knobs in place of
 those sliders plus a Refract data switch (the two colour knobs are read-only
@@ -1600,8 +1656,9 @@ eye icon in the panel and is **not** persisted back to zarr.
 
 Rendering attributes compose along the scene graph (nearest data/group root → leaf):
 
-- `opacity`, `absorption`, `gamma`, `intensity` — multiplied (`absorption`
-  has identity 1.0, is floored at 0, and has no upper clamp)
+- `opacity`, `absorption`, `gamma`, `intensity`, `display_gain` — multiplied
+  (`absorption` and `display_gain` have identity 1.0, are floored at 0, and have
+  no upper clamp; `display_gain` is read on gsplats only)
 - `offset` — summed
 - `blending_mode`, `join`, `colormap`, `layer_order` — the nearest ancestor that
   sets it wins (`join` is lines-only; a `colormap='custom'` carries its sibling
@@ -1672,9 +1729,11 @@ retroactively remove a gray already stamped on existing leaves.
 
 ### Edits Are Viewer-Only
 
-Changes made in the panel (range, gamma, opacity, blending, colormap) are
-not written back to the zarr store; reloading the page restores the
-authored state.
+Changes made in the panel (range, Brightness, gamma, opacity, blending,
+colormap) are not written back to the zarr store; reloading the page restores
+the authored state. A shared view bookmark carries them, and records the scene
+`content_hash` so a gsplats window or Brightness saved on one build of a scene
+is not applied to a re-converted build (whose amplitudes may be in other units).
 
 ## Overlays (Screen-Space Annotations)
 

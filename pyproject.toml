@@ -117,11 +117,12 @@ Repository = "https://github.com/royerlab/luxar.git"
 Changelog = "https://github.com/royerlab/luxar/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-# Upper bounds are intentional. IMPORTANT: the prebuilt CUDA extension
-# (cuda_splatting_backend*.so) is compiled against a specific torch ABI — after
-# any torch upgrade you MUST rebuild it with `make build-cuda`, or imports will
-# fail with an ABI/symbol mismatch. The `<3.0` torch cap guards against a silent
-# major-version jump that would break the prebuilt .so.
+# Upper bounds are intentional. IMPORTANT: the optional prebuilt CUDA extension
+# (cuda_splatting_backend*.so, `make build-cuda`) is compiled against a specific
+# torch ABI — after any torch upgrade you MUST rebuild it, or it fails to import
+# (fitting then falls back to the NVRTC runtime-compiled kernels, which have no
+# ABI coupling). The `<3.0` torch cap guards against a silent major-version jump
+# that would break the prebuilt .so.
 gsplats = [
     "scipy>=1.9.0,<2.0",
     "torch>=2.2.0,<3.0"
