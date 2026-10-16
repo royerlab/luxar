@@ -28,6 +28,9 @@ _SUPPLIED_SIGMA_MIN_DIAG_RTOL = 1e-3
 # parameter starts where the forward clamp still passes a gradient.
 _WARM_AMP_MAX_RTOL = 1e-6
 
+# Backend summaries already printed by quiet fits in this process.
+_ANNOUNCED_BACKENDS: set[str] = set()
+
 
 def apply_sigma_min_diag_floor(
     sigma_diag: np.ndarray, sigma_min_diag: Sequence[float] | np.ndarray
@@ -338,20 +341,12 @@ def initialize_optimization(
             device=config.device,
         )
         device_type = config.device.type
-        if device_type == "cpu":
-            aprint(
-                "WARNING: Gaussian splat fitting running on CPU — "
-                "this can be orders of magnitude SLOWER than GPU (hardware-dependent)! "
-                "For serious work, use device='cuda' or device='mps'."
-            )
-            warnings.warn(
-                "Gaussian splat fitting running on CPU — this can be orders of magnitude SLOWER than GPU (hardware-dependent). "
-                "For production use, install GPU support.",
-                UserWarning,
-                stacklevel=2,
-            )
+        # No CPU warning here: the device is the fitter's own, and
+        # GaussianSplatFitter.__init__ already warned (once) when it is CPU.
         if config.verbose:
             aprint(f"Model class: GaussianSplatModel (PyTorch, device={device_type})")
+
+    _announce_model_backend(model, config)
 
     # Setup optimizer - always use standard PyTorch Adam (fast, vectorized)
     if config.verbose:
@@ -489,3 +484,33 @@ def _try_metal_model(config: FitConfig, model_kwargs: dict[str, Any]) -> Any | N
             "(substantially faster on Apple Silicon; speedup depends on chip)"
         )
     return model
+
+
+def model_backend_summary(model: Any, device_type: str) -> str:
+    """One line naming the model class and kernel backend a fit runs on."""
+    name = type(model).__name__
+    if type(model) is GaussianSplatModel:
+        detail = "PyTorch renderer, no custom kernels"
+    else:
+        kernels = getattr(model, "kernel_backend", None)
+        detail = f"{kernels} kernels" if kernels else "custom kernels"
+    return f"Fitting backend: {name} ({detail}, device={device_type})"
+
+
+def _announce_model_backend(model: Any, config: FitConfig) -> None:
+    """Print the backend summary for a quiet fit, once per distinct backend.
+
+    A verbose fit narrates its backend in detail; a ``--quiet`` one used to say
+    nothing, hiding a silent fall back to the (much slower) PyTorch renderer.
+    Deduplicated per process so a calibration sweep or a content-tiled fit —
+    many quiet inner fits — states it once rather than once per fit.
+    """
+    if config.verbose:  # the verbose narration already names the backend
+        return
+    from luxar.utils.verbosity import aprint_heartbeat
+
+    summary = model_backend_summary(model, config.device.type)
+    if summary not in _ANNOUNCED_BACKENDS:
+        _ANNOUNCED_BACKENDS.add(summary)
+        # A heartbeat: survives a driver's `quiet_narration()` (content boxes).
+        aprint_heartbeat(summary)

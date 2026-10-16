@@ -478,6 +478,13 @@ def recompute_archive(work_dir: Path) -> Path:
             "stream",
             "--n-lods",
             str(EXPECTED_RUNGS),
+            # The archive was fitted when a preset-less `fit` fell through to
+            # the fitting API's 1000 iterations; a bare `fit` is now the
+            # `standard` preset (5000). Pinned so a rebuild reproduces it — the
+            # preset's other knobs (early_stop_patience 300, eccentricity 10,
+            # cull_retention 0.999) equal what that build already used.
+            "--iters",
+            "1000",
         )
         run_luxar_cli(
             "gsplat",

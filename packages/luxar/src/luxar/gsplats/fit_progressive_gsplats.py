@@ -222,6 +222,90 @@ def _final_foreground_score(
     )
 
 
+def _closing_cull(
+    final_result: GSplatData,
+    V_original: np.ndarray,
+    cull_retention: float,
+    *,
+    verbose: bool,
+    device: Optional[str],
+    voxel_size: Any,
+    output_space: str,
+) -> GSplatData:
+    """The fit's closing cumulative trim, then a re-score of the saved set."""
+    from luxar.gsplats._data.filtering import (
+        measured_stats_snapshot,
+        restore_measured_stats,
+    )
+
+    n_before = final_result.n_splats
+    # The per-pass and overall PSNRs were measured above, on the pre-trim
+    # splats. `cull` drops inherited scores (#1600), but this trim is the
+    # last step of the FIT, so they are carried across first — then the
+    # OVERALL score is re-measured on the saved set below. The per-pass
+    # ladder (`cumulative_psnr_db`, `pass_psnrs`) stays what the passes
+    # measured during fitting, before this trim.
+    measured = measured_stats_snapshot(final_result)
+    final_result = final_result.cull(method="cumulative", retention=cull_retention)
+    restore_measured_stats(final_result, measured)
+    n_removed = n_before - final_result.n_splats
+    if verbose:
+        aprint(
+            f"Post-fit culling (cumulative, retention={cull_retention:.1%}): "
+            f"{n_before} -> {final_result.n_splats} splats "
+            f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%)"
+        )
+    if n_removed > 0 and final_result.n_splats > 0:
+        _rescore_progressive_after_cull(
+            final_result,
+            V_original,
+            verbose=verbose,
+            device=device,
+            voxel_size=voxel_size,
+            output_space=output_space,
+        )
+    return final_result
+
+
+def _rescore_progressive_after_cull(
+    result: GSplatData,
+    V_original: np.ndarray,
+    *,
+    verbose: bool,
+    device: Optional[str],
+    voxel_size: Any,
+    output_space: str,
+) -> None:
+    """Re-measure the overall scores of the SAVED (post-cull) progressive result.
+
+    Uses this fitter's own chunked definitions (memory-bounded, as the per-pass
+    scores are) against ``V_original``, which already has the floor removed —
+    so no ``image_min`` shift is applied again. Failure handling is
+    :func:`luxar.gsplats.fit_gsplats._rescore_saved_model`'s.
+    """
+    from luxar.gsplats.fit_gsplats import _rescore_saved_model
+
+    def score(rendered: torch.Tensor) -> dict[str, float]:
+        psnr = _compute_psnr_chunked(rendered, V_original)
+        fg, threshold, fraction = _compute_foreground_psnr_chunked(rendered, V_original)
+        return {
+            "psnr_db": psnr,
+            "foreground_psnr_db": fg,
+            "foreground_threshold": threshold,
+            "foreground_fraction": fraction,
+        }
+
+    _rescore_saved_model(
+        result,
+        V_original,
+        verbose=verbose,
+        device=device,
+        voxel_size=voxel_size,
+        output_space=output_space,
+        scorer=score,
+    )
+
+
 def fit_progressive_gaussian_splats(
     V: np.ndarray,
     max_splats: int = 50000,
@@ -744,26 +828,15 @@ def fit_progressive_gaussian_splats(
         and 0 < cull_retention < 1.0
         and final_result.n_splats > 0
     ):
-        from luxar.gsplats._data.filtering import (
-            measured_stats_snapshot,
-            restore_measured_stats,
+        final_result = _closing_cull(
+            final_result,
+            V_original,
+            cull_retention,
+            verbose=verbose,
+            device=device,
+            voxel_size=caller_voxel_size,
+            output_space=caller_output_space,
         )
-
-        n_before = final_result.n_splats
-        # The per-pass and overall PSNRs were measured above, on the pre-trim
-        # splats. `cull` drops inherited scores (#1600), but this trim is the
-        # last step of the FIT — carried across rather than re-rendered, and
-        # rather than shipping a progressive fit with no ladder scores at all.
-        measured = measured_stats_snapshot(final_result)
-        final_result = final_result.cull(method="cumulative", retention=cull_retention)
-        restore_measured_stats(final_result, measured)
-        n_removed = n_before - final_result.n_splats
-        if verbose:
-            aprint(
-                f"Post-fit culling (cumulative, retention={cull_retention:.1%}): "
-                f"{n_before} -> {final_result.n_splats} splats "
-                f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%)"
-            )
 
     # Density is quoted against the splats actually DELIVERED, so it is stamped
     # here rather than beside the other source-grid stamps above: the post-fit

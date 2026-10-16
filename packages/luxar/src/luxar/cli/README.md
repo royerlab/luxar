@@ -47,7 +47,10 @@ print(result.stdout)
 ## Module Structure
 
 - `__init__.py` - Package initialization, exports the main app
-- `main.py` - Main CLI application with the top-level commands
+- `main.py` - Main CLI application with the top-level commands. Its root
+  callback switches stdout/stderr to line buffering, so `luxar … > log`,
+  `nohup` and `| tee` stream progress as it happens instead of only at exit
+  (worker subprocesses are `luxar` invocations and inherit the same behavior)
 - `_traceback.py` - Shared quiet-error reporting with the `LUXAR_TRACEBACK` opt-in escape hatch
 - `serving.py` - HTTP serving internals (`create_server_app`, data/viewer servers; re-exported by `main.py`)
 - `info_command.py` - The `luxar info` command implementation
@@ -326,7 +329,11 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --config params.yaml
 luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config template
 ```
 
-**Presets:** `draft` (fast preview), `standard` (balanced), `hifi` (high quality), `ultra` (max quality)
+**Presets:** `draft` (fast preview), `standard` (balanced), `hifi` (high quality), `ultra` (max quality). With no `--preset`, `fit` uses `standard` (5000 iterations with early stopping); a `--config` without `--preset` layers on top of `standard`. The Python `fit_gaussian_splats` keeps its own signature defaults (1000 iterations). `--lr`, `--loss`, `--seed-method`, `--downscale` and `--cull-retention` are listed under **Advanced** in `fit --help`.
+
+`--cull-retention` removes, after fitting, the weakest splats that together contribute less than `(1 - value)` of the total amplitude. Every preset uses `0.999` (near-lossless), as does `--tiling content`; `0` keeps every splat. An aggressive `0.95` drops the bottom 5% of cumulative amplitude, and on a sparse, heavy-tailed volume that can be most of the splats. A `--tile k/M` worker applies the cull to its own tile, and `batch-fit` does the same before merging, so `--flat` approximates rather than exactly matches one global cull over the merged splats. The fit summary reports the compression of the SAVED (post-cull) store, and its quality: a whole-volume fit and a `--progressive` fit re-score the culled splats, so the stored `psnr_db` (and, for a whole-volume fit, SSIM/MSE/foreground PSNR) describe the saved model, with the pre-cull line printed separately and labelled. Two scores stay pre-cull by design: a progressive fit's per-pass ladder (`pass_psnrs`), and on a tiled partition each part's own tile score; the merged whole-volume score of a tiled fit is measured on the saved set. If a re-score fails, one warning is printed, the pre-cull score stands, and the reason is recorded as `quality_error`.
+
+`--quiet` drops the fit narration but still prints the one-line `Fitting backend: …` summary (model class + kernel backend), so a silent fall back to the slow PyTorch renderer is visible; quiet inner fits (`cal`, content boxes) print it once per process. A content-tiled fit (`--tiling content`) quiets its inner box fits (no per-box fit tree; each distinct warning, such as the CPU-fallback ones, is shown once for the run) and prints one progress stream instead: a start line per box (zero-based `--plan-box` number, one-based position in the run, budget), iteration lines at 25/50/75% of each box, and a completion line with kept splats, the box PSNR (on its padded crop), elapsed time and a budget-weighted ETA. `-j N` prints the completion (or FAILED) line per finished worker.
 
 `--floor specimen` is the opt-in specimen-in-medium mode. It first excludes the bright signal class with a full-distribution Otsu cut, then splits the remaining background band and accepts its upper mode only when both background populations are compact; otherwise it falls back to `auto`. The chosen branch is recorded as `floor_strategy` next to the applied `floor`. `batch-fit` rejects this spec because its one-level-across-time reduction cannot safely combine selected and fallback slices; calibrate a representative volume and pass the measured numeric floor instead.
 
@@ -423,6 +430,7 @@ Compare reconstruction quality against a reference volume (PSNR, SSIM, MSE). Par
 luxar gsplat compare fitted.gsplats.zarr original.tiff
 luxar gsplat compare fitted.gsplats.zarr original.npy --device cuda --output-json metrics.json
 ```
+`-q/--quiet` silences all terminal output (pair it with `--output-json`); a failure is still reported, on stderr.
 
 #### `luxar gsplat cal`
 Calibrate the splat count `K` via blind-spot cross-validation. Sweeps `K`, identifies the held-out PSNR peak (`K*`) using the manuscript's Noise2Self protocol (5% donut-median masking), and reports the noise floor. Defaults to the `n2s` fit preset so the held-out curve has enough optimizer budget to reach the overfit regime.
@@ -540,13 +548,13 @@ Direct content fits warn and ignore `--denoise`, `--progressive`, and the explic
 #### `luxar gsplat transform`
 Apply spatial and intensity transforms to a Gaussian splat dataset. Multiple transforms can be combined; they are applied in fixed order: scale, rotate, translate, center, scale-intensity, normalize-intensity.
 ```bash
-luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --scale 4,1,1,1 --center
+luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --scale 4,1,1 --center
 luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --rotate-z 90
 luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --normalize-intensity 1.0
 luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --translate 0,100,0 --scale-intensity 0.5
 ```
 
-**Spatial options**: `--scale/-s` (per-axis factors), `--translate/-t` (per-axis offset), `--rotate-x/--rotate-y/--rotate-z` (degrees; rotates the three `--spatial-dims` center dims, default `0,1,2` — the first three, matching the partitioner and the stack-last time/channel convention — other dims are left unrotated), `--spatial-dims i,j,k` (which 3 center dims the rotation acts on, e.g. `1,2,3` for a direct nD fit whose leading axis is time; the listed order assigns the rotation frame's X/Y/Z roles, so `3,2,1` is a different transform from `1,2,3` — unlike `filter`'s order-insensitive `--spatial-dims`), `--center` (center at amplitude-weighted centroid).
+**Spatial options**: `--scale/-s` and `--translate/-t` (one value per center column, in array axis order — Z,Y,X for a ZYX volume), `--rotate-x/--rotate-y/--rotate-z` (degrees; rotates the three `--spatial-dims` center dims, default `0,1,2` — the first three, matching the partitioner and the stack-last time/channel convention — other dims are left unrotated), `--spatial-dims i,j,k` (which 3 center dims the rotation acts on, e.g. `1,2,3` for a direct nD fit whose leading axis is time; the listed order assigns the rotation frame's X/Y/Z roles, so `3,2,1` is a different transform from `1,2,3` — unlike `filter`'s order-insensitive `--spatial-dims`), `--center` (center at amplitude-weighted centroid).
 **Intensity options**: `--scale-intensity` (multiply amplitudes), `--normalize-intensity` (normalize max amplitude to value).
 **Output options**: `--encoding/-e` (auto/precision/memory), `--compress/-c` (zip/tar.gz).
 

@@ -17,6 +17,7 @@ padded crop, and the keep-core mask — they can never drift.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import gc
 import time
@@ -31,7 +32,9 @@ from luxar.gsplats.merged_quality import (
     resolve_merged_reference,
     stamp_merged_quality,
 )
+from luxar.utils.verbosity import quiet_narration
 
+from .box_progress import BoxProgress, OncePerRunWarnings
 from .spec import FitPlan, PlanBox
 
 if TYPE_CHECKING:
@@ -302,6 +305,7 @@ def _fit_one_box(
     overlap: int,
     cap: int,
     content_physical: bool = False,
+    box_report: Optional[dict[str, Any]] = None,
     **fit_kwargs: Any,
 ) -> GSplatData:
     """Fit a single plan box and return its core-kept splats in GLOBAL coords.
@@ -324,6 +328,10 @@ def _fit_one_box(
     per-box ``stats``. A content result then refused to
     ``GSplatData.concatenate`` with a uniform-tiled one fitted from the same
     config ("Truncation radius mismatch") — issue #1637.
+
+    ``box_report``, when given, receives the fit's ``psnr_db`` on the PADDED
+    crop — for the progress line only; it is deliberately not kept in the
+    part's stats (#1600).
     """
     from luxar.gsplats._data.filtering import (
         _REGION_SCOPED_STATS_KEYS,
@@ -359,6 +367,8 @@ def _fit_one_box(
     gd = fit_gaussian_splats(
         sub, seeds=budget, _carry_scale_population=True, **fit_kwargs
     )
+    if box_report is not None:
+        box_report["psnr_db"] = gd.stats.get("psnr_db")
     origin = np.array([pz0, py0, px0], np.float32)
     core_lo = np.array([z0, y0, x0], np.float32)
     core_hi = np.array([z1, y1, x1], np.float32)
@@ -454,12 +464,118 @@ def _fit_one_box(
     return out
 
 
+def _scaled_plan_budgets(plan: FitPlan, boxes: Sequence[int]) -> dict[int, int]:
+    """Padded-crop seed budget (:func:`_scaled_budget`) of each of ``boxes``.
+
+    The one budget both drivers fit by and weigh their progress ETA with.
+    """
+    shape = (
+        int(plan.volume_shape[0]),
+        int(plan.volume_shape[1]),
+        int(plan.volume_shape[2]),
+    )
+    cap = int(plan.density.get("saturation_cap", 0)) if plan.density else 0
+    return {
+        i: _scaled_budget(plan.boxes[i], int(plan.overlap), shape, cap) for i in boxes
+    }
+
+
+def _fitted_box_budgets(plan: FitPlan) -> dict[int, int]:
+    """Scaled seed budget of every box that will actually be fitted (> 0)."""
+    budgeted = [i for i, b in enumerate(plan.boxes) if b.budget > 0]
+    return {i: b for i, b in _scaled_plan_budgets(plan, budgeted).items() if b > 0}
+
+
+def _with_box_progress(
+    fit_kwargs: dict[str, Any],
+    progress: Optional[BoxProgress],
+    box: int,
+    report: dict[str, Any],
+) -> dict[str, Any]:
+    """Box ``box``'s fit kwargs, wired to ``progress`` when it is active.
+
+    Adds the PSNR ``box_report`` and an iteration-progress ``iter_callback``;
+    a caller's own ``iter_callback`` is left alone.
+    """
+    if progress is None:
+        return fit_kwargs
+    box_kwargs = {**fit_kwargs, "box_report": report}
+    if fit_kwargs.get("iter_callback") is None:
+        n_iters = fit_kwargs.get("n_iters")
+        if n_iters is None:  # left to the fitter: read ITS default, not a copy
+            import inspect
+
+            from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+
+            n_iters = (
+                inspect.signature(fit_gaussian_splats).parameters["n_iters"].default
+            )
+        box_kwargs["iter_callback"] = progress.iter_callback(box, n_iters)
+    return box_kwargs
+
+
+def _quiet_box(
+    progress: Optional[BoxProgress], run_warnings: OncePerRunWarnings, box: int
+) -> contextlib.AbstractContextManager[Any]:
+    """Quiet box ``box``'s inner fit, announcing it when ``progress`` is on.
+
+    Always — verbose or not — the inner fit's arbol narration is silenced
+    (progress heartbeats and the backend summary still print) and each distinct
+    warning (the per-fit CPU-fallback ones) is shown once for the run rather
+    than once per box.
+    """
+    if progress is not None:
+        progress.box_started(box)
+    scope = contextlib.ExitStack()
+    # Warnings first: they are re-emitted after the narration is restored, so
+    # they display in the tree like any other warning.
+    scope.enter_context(run_warnings.once())
+    scope.enter_context(quiet_narration())
+    return scope
+
+
+def _report_box_result(
+    progress: Optional[BoxProgress],
+    box: int,
+    fitted: bool,
+    n_kept: int,
+    report: dict[str, Any],
+) -> None:
+    if progress is None:
+        return
+    if fitted:
+        progress.box_done(box, n_kept=n_kept, psnr_db=report.get("psnr_db"))
+    else:
+        progress.box_resumed(box)
+
+
+def _run_box_fit(
+    V: np.ndarray,
+    b: PlanBox,
+    pad: int,
+    cap: int,
+    *,
+    content_physical: bool,
+    fit_kwargs: dict[str, Any],
+    progress: Optional[BoxProgress],
+    run_warnings: OncePerRunWarnings,
+    box: int,
+    report: dict[str, Any],
+) -> GSplatData:
+    """Run a fresh box with its fit progress and muted inner narration."""
+    box_kwargs = _with_box_progress(fit_kwargs, progress, box, report)
+    with _quiet_box(progress, run_warnings, box):
+        return _fit_one_box(
+            V, b, pad, cap, content_physical=content_physical, **box_kwargs
+        )
+
+
 def _fit_or_resume_box(
     checkpoint: "Optional[BoxCheckpoint]",
     i: int,
     resumed: bool,
     fit: "Callable[[], GSplatData]",
-) -> "Optional[GSplatData]":
+) -> "tuple[Optional[GSplatData], bool]":
     """Reload a checkpointed box, or fit it (and checkpoint it when enabled).
 
     With a checkpoint, both resumed and freshly fitted boxes are merged from
@@ -470,14 +586,14 @@ def _fit_or_resume_box(
         assert checkpoint is not None
         ok, stored = checkpoint.load_or_discard(i)
         if ok:
-            return stored
+            return stored, False
         # Marked done but unreadable: discarded above, refit below.
     region = fit()
     if checkpoint is None:
-        return region
+        return region, True
     checkpoint.save_region(i, region)
     del region
-    return checkpoint.load_region(i)
+    return checkpoint.load_region(i), True
 
 
 def fit_planned(
@@ -557,28 +673,38 @@ def fit_planned(
     n = len(plan.boxes)
     n_fit = 0
     t0 = time.perf_counter()
+    budgets = _fitted_box_budgets(plan)
+    # The inner fits always run quiet; `verbose` buys ONE per-box progress stream
+    # instead (start / iteration / completion lines with PSNR, elapsed, ETA),
+    # never the full per-fit tree. A caller's own progress_callback replaces it,
+    # so a library caller never gets the same box reported twice.
+    progress = BoxProgress(budgets) if verbose and progress_callback is None else None
+    run_warnings = OncePerRunWarnings()
     for i, b in enumerate(plan.boxes):
-        if b.budget <= 0:
-            continue
-        budget = _scaled_budget(b, pad, V.shape, cap)
+        budget = budgets.get(i, 0)
         if budget <= 0:
             continue
         resumed = checkpoint is not None and checkpoint.is_done(i)
         if progress_callback is not None:
             state = "resumed from checkpoint" if resumed else f"budget={budget}"
             progress_callback(i, n, f"box {i + 1}/{n} {state}")
-        region = _fit_or_resume_box(
+        report: dict[str, Any] = {}
+        region, fitted = _fit_or_resume_box(
             checkpoint,
             i,
             resumed,
             functools.partial(
-                _fit_one_box,
+                _run_box_fit,
                 V,
                 b,
                 pad,
                 cap,
                 content_physical=content_physical,
-                **fit_kwargs,
+                fit_kwargs=fit_kwargs,
+                progress=progress,
+                run_warnings=run_warnings,
+                box=i,
+                report=report,
             ),
         )
         n_fit += 1
@@ -588,10 +714,7 @@ def fit_planned(
             # stats reach the merge instead of being rebuilt away (#1637).
             regions.append(region)
             region_boxes.append(i)
-        if verbose and progress_callback is None:
-            from arbol import aprint
-
-            aprint(f"  box {i + 1}/{n}: kept {n_kept:,} splats")
+        _report_box_result(progress, i, fitted, n_kept, report)
 
     elapsed = time.perf_counter() - t0
     if not regions:

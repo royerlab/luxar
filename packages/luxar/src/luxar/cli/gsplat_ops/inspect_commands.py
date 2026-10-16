@@ -6,6 +6,7 @@ the shared ``app_gsplat`` Typer.
 
 from __future__ import annotations
 
+import contextlib
 import math
 import shutil
 from pathlib import Path
@@ -14,9 +15,9 @@ from typing import TYPE_CHECKING, Any, Optional
 import typer
 from arbol import aprint, asection
 
-from .._traceback import exit_with_error, report_error
+from .._traceback import _report_line, exit_with_error, report_error
 from ..common_options import CorsOriginOption, HostOption, make_port_option
-from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size
+from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size, store_size
 
 if TYPE_CHECKING:
     import numpy as np
@@ -291,6 +292,49 @@ def _is_node_tree(path: Path) -> bool:
         return False
 
 
+#: Inputs `gsplat fit` accepts that are IMAGES, not splat stores.
+_IMAGE_VOLUME_SUFFIXES = (".tif", ".tiff", ".npy", ".npz")
+#: Root attributes a `.gsplats.zarr` (any format version) carries.
+_GSPLAT_ROOT_ATTRS = ("format_type", "format_version", "kind", "type")
+
+
+def _image_volume_reason(path: Path) -> Optional[str]:
+    """Why ``path`` looks like an image volume rather than a splat store, or None.
+
+    ``gsplat info`` is the first thing people point at a raw stack, and the
+    loader's own error for that ("missing centers", a zarr KeyError) never says
+    the useful thing: fit it first. Conservative on purpose — anything carrying
+    a gsplats root attribute or ``centers``/``amplitudes`` arrays is left to the
+    normal loader (and its own error).
+    """
+    from luxar._zarr_compat import read_array_meta, read_node_attrs
+
+    name = path.name.lower()
+    for suffix in _IMAGE_VOLUME_SUFFIXES:
+        if name.endswith(suffix):
+            return f"a {suffix} file"
+    if not path.is_dir():
+        return None
+    if read_array_meta(path) is not None:
+        return "a bare zarr array"
+    attrs = read_node_attrs(path)
+    if attrs is None or any(key in attrs for key in _GSPLAT_ROOT_ATTRS):
+        return None
+    if "multiscales" in attrs or "ome" in attrs:
+        return "an OME-Zarr image"
+    if (path / "centers").exists() or (path / "amplitudes").exists():
+        return None
+    return "a zarr store with no Gaussian-splat structure"
+
+
+def _report_image_volume(path: Path, reason: str) -> None:
+    aprint(
+        f"❌ {path.name} is an image volume ({reason}), not a .gsplats.zarr — "
+        f"fit it first with `luxar gsplat fit {path.name} "
+        f"<output>.gsplats.zarr`, then run `gsplat info` on the output."
+    )
+
+
 def _load_info_data(
     path: Path, *, full_provenance: bool
 ) -> tuple["Optional[GSplatData]", bool]:
@@ -301,6 +345,10 @@ def _load_info_data(
     with asection(f"Loading dataset: {path.name}"):
         zarr_path = path
         tmp = None
+        reason = _image_volume_reason(path)
+        if reason is not None:
+            _report_image_volume(path, reason)
+            return None, False
         try:
             if path.is_file():
                 from tarfile import TarError
@@ -316,6 +364,12 @@ def _load_info_data(
                     TarError,
                 ) as resolve_exc:
                     aprint(f"❌ {resolve_exc}")
+                    return None, False
+
+            if zarr_path != path:
+                reason = _image_volume_reason(zarr_path)
+                if reason is not None:
+                    _report_image_volume(path, reason)
                     return None, False
 
             # Ask the store what shape it is BEFORE loading anything. A partition
@@ -407,7 +461,7 @@ def _info_report(
         aprint("DATASET INFORMATION")
         aprint("═" * 70)
 
-        stored_bytes = _store_size(path)
+        stored_bytes = store_size(path)
         aprint(f"\nFile: {path.name}")
         aprint(f"Size: {format_memory_size(stored_bytes)}")
 
@@ -872,7 +926,12 @@ def _print_quality_comparison(
     aprint(f"  Rel L2:          {metrics['rel_l2']:.6g}")
     aprint(f"  Max Abs Error:   {metrics['max_abs_error']:.6g}")
     if "compression_ratio" in metrics:
-        aprint(f"  Compression:     {metrics['compression_ratio']:.1f}x")
+        from luxar.gsplats.fitting.visualization import format_compression_ratio
+
+        aprint(
+            "  Compression:     "
+            f"{format_compression_ratio(metrics['compression_ratio'])} vs raw voxels"
+        )
     aprint("=" * 50)
 
 
@@ -933,6 +992,15 @@ def _reference_on_dataset_basis(
             f"(from {source}); scores are background-relative, matching the render"
         )
     return reference
+
+
+def _silenced_when(quiet: bool) -> contextlib.AbstractContextManager[None]:
+    """Silence all arbol output for the block when ``quiet``; else a no-op."""
+    if not quiet:
+        return contextlib.nullcontext()
+    from luxar.utils.verbosity import verbosity
+
+    return verbosity("silent")
 
 
 def compare_quality(
@@ -999,144 +1067,158 @@ def compare_quality(
     """
     _validate_image_min_override(image_min)
 
-    try:
-        import json
+    # `-q` silences the whole arbol narration, not just the table; failures
+    # still surface, on stderr (`_report_line` / `exit_with_error` fall back
+    # to it while arbol output is off).
+    with _silenced_when(quiet):
+        try:
+            import json
 
-        import torch
+            import numpy as np
+            import torch
 
-        from luxar.cli.gsplat_config import load_volume, parse_shape
-        from luxar.gsplats.metrics import compute_quality_metrics
-        from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
-        from luxar.gsplats.utils.device import resolve_torch_device
+            from luxar.cli.gsplat_config import load_volume, parse_shape
+            from luxar.gsplats.metrics import compute_quality_metrics
+            from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+            from luxar.gsplats.utils.device import resolve_torch_device
 
-        with asection("Quality Comparison"):
-            # Load gsplat dataset
-            with asection("Loading gsplat dataset"):
-                # Stats come along (`include_stats=True` inside the helper) so
-                # the normalization basis is reachable: a render is
-                # background-relative and the reference is raw, and without the
-                # stored `image_min` the two cannot be reconciled (#1173). This
-                # is metadata only — no extra array decode.
-                data, n_leaves, n_stored_splats = _load_gsplats_for_comparison(
-                    gsplats_path
-                )
-                n_splats = data.n_splats
-                ndim = data.ndim
-                aprint(f"Loaded {n_splats:,} splats ({ndim}D)")
-                aprint(f"Materialized {n_leaves:,} default-rendered leaf/leaves")
-                _announce_unscored_comparison_splats(
-                    n_stored_splats=n_stored_splats, n_scored_splats=n_splats
-                )
-
-            # Resolve truncation radius from dataset if not explicitly set
-            if truncate is None:
-                truncate = data.truncation_radius
-
-            # Load reference volume
-            with asection("Loading reference volume"):
-                ref_np = load_volume(
-                    reference_path, channel=channel, timepoint=timepoint
-                )
-                ref_shape = ref_np.shape
-
-                # Put the reference on the render's basis before anything scores
-                # it. An explicit --image-min wins over the stored level so a
-                # pre-provenance store is still comparable.
-                ref_np = _reference_on_dataset_basis(ref_np, data.stats, image_min)
-
-            # Determine rendering shape
-            if shape is not None:
-                render_shape = parse_shape(shape)
-            else:
-                render_shape = ref_shape
-            aprint(f"Comparison shape: {render_shape}")
-
-            if len(render_shape) != ndim:
-                aprint(
-                    f"Dimension mismatch: gsplats are {ndim}D but "
-                    f"reference/shape is {len(render_shape)}D"
-                )
-                raise typer.Exit(1)
-
-            if shape is not None and tuple(render_shape) != tuple(ref_shape):
-                aprint(
-                    f"Error: --shape {render_shape} does not match "
-                    f"reference shape {ref_shape}. "
-                    f"Omit --shape to use the reference shape."
-                )
-                raise typer.Exit(1)
-
-            # Select device
-            dev = str(resolve_torch_device(device))
-
-            # Render gsplats to tensor (stays on GPU)
-            with torch.no_grad():
-                with asection(f"Rendering on {dev}"):
-                    rendered_t = render_to_volume_tensor(
-                        data, shape=render_shape, device=dev, truncate=truncate
+            with asection("Quality Comparison"):
+                # Load gsplat dataset
+                with asection("Loading gsplat dataset"):
+                    # Stats come along (`include_stats=True` inside the helper) so
+                    # the normalization basis is reachable: a render is
+                    # background-relative and the reference is raw, and without the
+                    # stored `image_min` the two cannot be reconciled (#1173). This
+                    # is metadata only — no extra array decode.
+                    data, n_leaves, n_stored_splats = _load_gsplats_for_comparison(
+                        gsplats_path
                     )
-                    aprint(
-                        f"Rendered: {rendered_t.shape}, "
-                        f"range [{rendered_t.min().item():.4f}, {rendered_t.max().item():.4f}]"
+                    n_splats = data.n_splats
+                    ndim = data.ndim
+                    aprint(f"Loaded {n_splats:,} splats ({ndim}D)")
+                    aprint(f"Materialized {n_leaves:,} default-rendered leaf/leaves")
+                    _announce_unscored_comparison_splats(
+                        n_stored_splats=n_stored_splats, n_scored_splats=n_splats
                     )
 
-                # Upload reference to same device, on the FIT's basis. Scoring
-                # a background-relative render against a pedestal-bearing
-                # reference charges the fit for background it never claimed to
-                # represent, which is the artifact this command most needed
-                # fixing (#1173).
-                ref_t = torch.from_numpy(ref_np).to(rendered_t.device)
+                # Resolve truncation radius from dataset if not explicitly set
+                if truncate is None:
+                    truncate = data.truncation_radius
 
-                # Compute metrics (all on GPU)
-                with asection("Computing metrics"):
-                    metrics = compute_quality_metrics(rendered_t, ref_t)
+                # Load reference volume
+                with asection("Loading reference volume"):
+                    ref_info: dict = {}
+                    ref_np = load_volume(
+                        reference_path,
+                        channel=channel,
+                        timepoint=timepoint,
+                        info=ref_info,
+                    )
+                    ref_shape = ref_np.shape
+                    # Decoded size in the reference's STORED element type (the
+                    # loader hands back float32 whatever the file holds): the same
+                    # `source_bytes` basis `gsplat info` and `fit` quote.
+                    ref_itemsize = (
+                        np.dtype(ref_info["source_dtype"]).itemsize
+                        if ref_info.get("source_dtype")
+                        else ref_np.dtype.itemsize
+                    )
+                    ref_decoded_bytes = int(ref_np.size) * int(ref_itemsize)
 
-            # Compression ratio (handle zarr directories and archives)
-            def _total_size(p: Path) -> int:
-                if p.is_file():
-                    return p.stat().st_size
-                # Directory: sum all file sizes recursively
-                return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+                    # Put the reference on the render's basis before anything scores
+                    # it. An explicit --image-min wins over the stored level so a
+                    # pre-provenance store is still comparable.
+                    ref_np = _reference_on_dataset_basis(ref_np, data.stats, image_min)
 
-            gsplats_size = _total_size(gsplats_path)
-            ref_size = _total_size(reference_path)
-            if ref_size > 0 and gsplats_size > 0:
-                metrics["compression_ratio"] = ref_size / gsplats_size
+                # Determine rendering shape
+                if shape is not None:
+                    render_shape = parse_shape(shape)
+                else:
+                    render_shape = ref_shape
+                aprint(f"Comparison shape: {render_shape}")
 
-        # Print table
-        if not quiet:
-            _print_quality_comparison(
-                metrics,
-                reference_name=reference_path.name,
-                ref_shape=ref_shape,
-                gsplats_name=gsplats_path.name,
-                n_splats=n_splats,
-            )
+                if len(render_shape) != ndim:
+                    _report_line(
+                        f"Dimension mismatch: gsplats are {ndim}D but "
+                        f"reference/shape is {len(render_shape)}D"
+                    )
+                    raise typer.Exit(1)
 
-        # JSON output
-        if output_json is not None:
-            # Replace non-finite floats (inf/nan) with None for valid JSON
-            safe_metrics = {
-                k: (v if isinstance(v, (int, str)) or math.isfinite(v) else None)
-                for k, v in metrics.items()
-            }
-            json_data = {
-                "gsplats": str(gsplats_path),
-                "reference": str(reference_path),
-                "n_splats": n_splats,
-                "ndim": ndim,
-                "shape": list(render_shape),
-                **safe_metrics,
-            }
-            with open(output_json, "w") as f:
-                json.dump(json_data, f, indent=2)
+                if shape is not None and tuple(render_shape) != tuple(ref_shape):
+                    _report_line(
+                        f"Error: --shape {render_shape} does not match "
+                        f"reference shape {ref_shape}. "
+                        f"Omit --shape to use the reference shape."
+                    )
+                    raise typer.Exit(1)
+
+                # Select device
+                dev = str(resolve_torch_device(device))
+
+                # Render gsplats to tensor (stays on GPU)
+                with torch.no_grad():
+                    with asection(f"Rendering on {dev}"):
+                        rendered_t = render_to_volume_tensor(
+                            data, shape=render_shape, device=dev, truncate=truncate
+                        )
+                        aprint(
+                            f"Rendered: {rendered_t.shape}, "
+                            f"range [{rendered_t.min().item():.4f}, {rendered_t.max().item():.4f}]"
+                        )
+
+                    # Upload reference to same device, on the FIT's basis. Scoring
+                    # a background-relative render against a pedestal-bearing
+                    # reference charges the fit for background it never claimed to
+                    # represent, which is the artifact this command most needed
+                    # fixing (#1173).
+                    ref_t = torch.from_numpy(ref_np).to(rendered_t.device)
+
+                    # Compute metrics (all on GPU)
+                    with asection("Computing metrics"):
+                        metrics = compute_quality_metrics(rendered_t, ref_t)
+
+                # Compression ratio: the one definition `gsplat info` and `fit`
+                # quote — decoded reference bytes over the store's bytes on disk.
+                from luxar.gsplats.fitting.visualization import compression_ratio
+
+                ratio = compression_ratio(ref_decoded_bytes, store_size(gsplats_path))
+                if ratio is not None:
+                    metrics["compression_ratio"] = ratio
+
+            # Print table
             if not quiet:
-                aprint(f"\nMetrics written to: {output_json}")
+                _print_quality_comparison(
+                    metrics,
+                    reference_name=reference_path.name,
+                    ref_shape=ref_shape,
+                    gsplats_name=gsplats_path.name,
+                    n_splats=n_splats,
+                )
 
-    except typer.Exit:
-        raise
-    except Exception as e:
-        exit_with_error(f"Error: {e}", e)
+            # JSON output
+            if output_json is not None:
+                # Replace non-finite floats (inf/nan) with None for valid JSON
+                safe_metrics = {
+                    k: (v if isinstance(v, (int, str)) or math.isfinite(v) else None)
+                    for k, v in metrics.items()
+                }
+                json_data = {
+                    "gsplats": str(gsplats_path),
+                    "reference": str(reference_path),
+                    "n_splats": n_splats,
+                    "ndim": ndim,
+                    "shape": list(render_shape),
+                    **safe_metrics,
+                }
+                with open(output_json, "w") as f:
+                    json.dump(json_data, f, indent=2)
+                if not quiet:
+                    aprint(f"\nMetrics written to: {output_json}")
+
+        except typer.Exit:
+            raise
+        except Exception as e:
+            exit_with_error(f"Error: {e}", e)
 
 
 def _print_normalization_block(root: Any) -> None:
@@ -1198,7 +1280,7 @@ def _print_gsplat_tree_summary(
         # Same measurement as the flat report's "Size:" line — a directory store's
         # own stat() is the ~4 KB directory entry, not the chunks in it, and a
         # partition is the shape most likely to BE a directory.
-        aprint(f"Size: {format_memory_size(_store_size(display_path))}")
+        aprint(f"Size: {format_memory_size(store_size(display_path))}")
         aprint(f"\nRoot kind: {summary.kind}")
         aprint(f"Dimensions: {summary.ndim}D")
         aprint(f"Total splats (all leaves): {summary.n_splats:,}")
@@ -1526,21 +1608,6 @@ def register_inspect_commands(app: typer.Typer) -> None:
     app.command("annotate-quality")(annotate_quality)
 
 
-def _store_size(path: Path) -> int:
-    """Bytes a dataset occupies: an archive's own size, a directory store's total.
-
-    ``Path.stat().st_size`` on a `.gsplats.zarr` directory reports the directory
-    entry (typically 4 KB), not the chunks inside it — off by orders of magnitude,
-    and it would contradict the compression line printed from the same number.
-    """
-    try:
-        if path.is_file():
-            return path.stat().st_size
-        return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
-    except OSError:
-        return 0
-
-
 #: ``stats`` keys :func:`_print_source_grid` reports itself. ``info``'s
 #: "Additional Metadata" dump skips exactly these once the source block has run,
 #: so one quantity is never quoted twice in one report: the block RECOMPUTES
@@ -1631,31 +1698,15 @@ def _print_source_grid(data: Any, stored_bytes: int) -> tuple[str, ...]:
     if src_stored:
         aprint(f"  stored source: {format_memory_size(src_stored)} (as downloaded)")
 
-    def _ratio(n: int, d: int) -> str:
-        r = n / d
-        # A whole-number ratio reads best, but a stored artifact LARGER than its
-        # source is a real outcome (few voxels, many splats) and must not round
-        # to a nonsensical "0:1".
-        return f"{r:,.0f}" if r >= 10 else f"{r:.2g}"
+    # TWO ratios, each labelled with its basis (one shared definition, see
+    # `compression_ratio`): `source_bytes` is the DECODED array while the splat
+    # store on disk is compressed, so the first compares unlike things and
+    # flatters the splats by whatever the source codec was already achieving.
+    # It is still the number volumetric compression is normally quoted
+    # against, so both are printed rather than either alone.
+    from luxar.gsplats.fitting.visualization import compression_lines
 
-    # TWO ratios, each labelled with its basis. `source_bytes` is the DECODED
-    # array while the splat store on disk is compressed, so that ratio compares
-    # unlike things and flatters the splats by whatever the source codec was
-    # already achieving. It is still the number volumetric compression is
-    # normally quoted against, so both are printed rather than either alone:
-    # quoting only the first invites reading it as the second.
-    src_bytes = stats.get("source_bytes")
-    lines = []
-    if src_bytes and stored_bytes:
-        lines.append(
-            f"{_ratio(src_bytes, stored_bytes)}:1 vs raw voxels "
-            f"({format_memory_size(src_bytes)} -> {format_memory_size(stored_bytes)})"
-        )
-    if src_stored and stored_bytes:
-        lines.append(
-            f"{_ratio(src_stored, stored_bytes)}:1 vs the stored source "
-            f"({format_memory_size(src_stored)} -> {format_memory_size(stored_bytes)})"
-        )
+    lines = compression_lines(stats.get("source_bytes"), stored_bytes, src_stored)
     for i, line in enumerate(lines):
         aprint(f"  compression: {line}" if i == 0 else f"               {line}")
     return _SOURCE_GRID_STATS_KEYS

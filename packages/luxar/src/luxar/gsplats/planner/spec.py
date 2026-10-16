@@ -82,7 +82,10 @@ class FitPlan:
         return len(self.boxes)
 
     def overlap_fraction(self) -> Tuple[float, float]:
-        """(median, max) per-box halo overhead fraction.
+        """(median, max) per-box HALO OVERHEAD fraction (not box-to-box overlap).
+
+        Reported as "halo overhead": the share of each fitted crop that is
+        padding around the box's core, which is fitted and then discarded.
 
         ``fit_planned`` pads each box by ``overlap`` on *both* sides of every axis,
         so the fitted volume is ``(L + 2*overlap)`` per axis; the wasted (halo)

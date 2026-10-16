@@ -70,7 +70,8 @@ def parse_csv_floats(value: str, expected: int, name: str) -> list[float]:
     parts = [p.strip() for p in value.split(",")]
     if len(parts) != expected:
         raise typer.BadParameter(
-            f"--{name} expects {expected} comma-separated values (one per dimension), "
+            f"--{name} expects {expected} comma-separated values (one per center "
+            "column, in array axis order — Z,Y,X for a ZYX volume), "
             f"got {len(parts)}: '{value}'"
         )
     try:

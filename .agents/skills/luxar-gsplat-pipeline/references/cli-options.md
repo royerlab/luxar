@@ -100,26 +100,24 @@ coordinate frames).
 | `ultra` | 20,000 | 500 | 20 | 0.999 |
 | `n2s` | 20,000 | 500 | 10 | 0.999 (manuscript blind-spot protocol) |
 
-**With NO `--preset`, `fit` runs 1000 iterations — below `draft`.** `--preset` has no
-default, and `load_fit_config` layers one only `if preset is not None`, so a bare
-`luxar gsplat fit` falls through to the *function* defaults: `n_iters=1000`,
-`early_stop_patience=300`, `patience=15`, `max_eccentricity=10.0`,
-`cull_retention=0.999`, `enable_dynamic_ops=True`. Verified by resolving the config:
+**With NO `--preset`, `fit` uses the `standard` preset** (`DEFAULT_FIT_PRESET`):
+`load_fit_config` resolves `preset=None` to it, beneath any `--config`, so a bare
+`luxar gsplat fit` runs `n_iters=5000`, `early_stop_patience=300`,
+`max_eccentricity=10.0`, `cull_retention=0.999`. Verified by resolving the config:
 
-    load_fit_config(None, None, {})["n_iters"] == 1000     # bare CLI fit
+    load_fit_config(None, None, {})["n_iters"] == 5000     # bare CLI fit
     load_fit_config("draft", None, {})["n_iters"] == 2000
 
 `--tiling content` also pins a *command default* of `cull_retention=0.999` between
-the preset and function defaults, so its per-box retention stays fixed if the
-fitter default changes later. `--preset`, a `cull_retention:` in a `--config`,
-and `--cull-retention` all still win. A bare content fit runs 1000 iterations;
+the preset and function defaults (a backstop: every preset sets it too). `--preset`, a `cull_retention:` in a `--config`,
+and `--cull-retention` all still win. A bare content fit runs the `standard` preset;
 a bare `--tiling uniform` uses 0.999, with per-tile culling on a partition merge.
 
-The Python API (`fit_gaussian_splats`, which has no `preset=` argument) shares those
-same defaults. Either way, a fifth of `standard` on thin filaments leaves splats at
-their isotropic σ=1-voxel seed shape and renders axons as bead chains. Treat a bare
-`fit` as a preview; pass `--preset`/`--iters` for anything real. See "BOTH entry
-points default to 1000 iters" in `SKILL.md`.
+The Python API (`fit_gaussian_splats`, which has no `preset=` argument) does NOT
+share that: its signature default is `n_iters=1000`, a fifth of `standard`, which on
+thin filaments leaves splats at their isotropic σ=1-voxel seed shape and renders
+axons as bead chains. Pass `n_iters` for anything real. See "The Python API
+defaults to 1000 iters" in `SKILL.md`.
 
 ### Shape-related knobs not exposed as `fit` flags (Python / `--config` YAML only)
 | Knob | Default | Meaning |

@@ -79,6 +79,73 @@ def test_plan_only_writes_json(tmp_path):
     assert plan.n_boxes >= 1 and plan.total_budget > 0
 
 
+def test_plan_only_with_a_store_output_writes_a_sibling_plan_json(tmp_path):
+    """A `.zarr` OUTPUT must not receive a JSON document under a store name."""
+    vol = _vol(tmp_path)
+    out = tmp_path / "c.gsplats.zarr"
+    res = runner.invoke(
+        app_gsplat, ["fit", str(vol), str(out), *_CONTENT, "--plan-only"]
+    )
+    assert res.exit_code == 0, res.output
+    assert not out.exists()
+    plan_path = tmp_path / "c.plan.json"
+    assert plan_path.is_file()
+    text = " ".join(res.output.split())
+    assert "c.plan.json" in text
+    # Labelled halo overhead (not "overlap"), with the halo-scaled budgets the
+    # boxes actually fit listed beside the core budgets.
+    assert "halo overhead" in text
+    assert "overlap median" not in text
+    assert "after halo scaling" in text
+    assert "box 0:" in text and "fitted" in text
+    assert "overwriting" not in text
+    from luxar.gsplats.planner import FitPlan
+
+    assert FitPlan.from_json(plan_path).n_boxes >= 1
+    # A second run over the same plan says it is replacing it.
+    again = runner.invoke(
+        app_gsplat, ["fit", str(vol), str(out), *_CONTENT, "--plan-only"]
+    )
+    assert again.exit_code == 0, again.output
+    assert "overwriting the existing plan" in " ".join(again.output.split())
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("plan.json", "plan.json"),
+        ("out.gsplats.zarr", "out.plan.json"),
+        ("out.zarr", "out.plan.json"),
+        ("out.gsplats.zarr.zip", "out.plan.json"),
+        ("plan", "plan"),
+    ],
+)
+def test_plan_only_json_path(tmp_path, name, expected):
+    from luxar.cli.gsplat_ops.planner import plan_only_json_path
+
+    assert plan_only_json_path(tmp_path / name) == tmp_path / expected
+
+
+def test_scaled_box_budgets_match_fit_planned(tmp_path):
+    """The budgets the plan summary prints are the ones the fit uses."""
+    from luxar.cli.gsplat_ops.planner import _scaled_box_budgets
+    from luxar.gsplats.planner import FitPlan
+    from luxar.gsplats.planner.fit_planned import _scaled_budget
+
+    vol = _vol(tmp_path)
+    out = tmp_path / "plan.json"
+    res = runner.invoke(
+        app_gsplat, ["fit", str(vol), str(out), *_CONTENT, "--plan-only"]
+    )
+    assert res.exit_code == 0, res.output
+    plan = FitPlan.from_json(out)
+    cap = int(plan.density.get("saturation_cap", 0))
+    shape = tuple(plan.volume_shape)
+    expected = [_scaled_budget(b, plan.overlap, shape, cap) for b in plan.boxes]
+    assert _scaled_box_budgets(plan) == expected
+    assert sum(expected) >= plan.total_budget
+
+
 def test_content_fit_partition_by_default(tmp_path):
     vol = _vol(tmp_path)
     out = tmp_path / "c.gsplats.zarr"
@@ -97,7 +164,10 @@ def test_content_fit_flat_is_leaf(tmp_path):
     assert res.exit_code == 0, res.output
     assert _kind(out) == "GSplatLeaf"  # --flat collapses to a single leaf
     assert "Merged quality:" in res.output
-    assert "kept" not in res.output
+    # ONE per-box progress stream: the library's own box lines, with no CLI
+    # `[i/n] box … budget=…` header duplicating them (#1822).
+    assert "budget=" not in res.output
+    assert res.output.count(" done (1/") == 1
 
 
 def test_content_missing_density_errors(tmp_path):
@@ -351,3 +421,35 @@ def test_content_fit_warns_on_ignored_seeds(tmp_path):
     )
     assert res.exit_code == 0, res.output
     assert "--seeds is ignored" in res.output
+
+
+def test_content_fit_prints_per_box_progress(tmp_path):
+    """The silent inner box fits still leave a heartbeat in the log."""
+    vol = _vol(tmp_path)
+    out = tmp_path / "progress.gsplats.zarr"
+    res = runner.invoke(
+        app_gsplat,
+        ["fit", str(vol), str(out), *_CONTENT, *_CPU, "--iters", "100"],
+    )
+    assert res.exit_code == 0, res.output
+    assert ": fitting, budget" in res.output
+    assert ": iter 25/100" in res.output
+    assert " done (1/" in res.output and "dB (padded crop)" in res.output
+    assert "elapsed" in res.output
+    # The inner fits are quiet: no per-box "Fitting Gaussian Splats" tree.
+    assert "Generating seeds" not in res.output
+
+
+def test_quiet_content_fit_has_no_per_box_sections(tmp_path):
+    """`--quiet` must never be noisier than the default: no box fit trees."""
+    vol = _vol(tmp_path)
+    out = tmp_path / "quiet.gsplats.zarr"
+    res = runner.invoke(
+        app_gsplat,
+        ["fit", str(vol), str(out), *_CONTENT, *_CPU, "--iters", "30", "--quiet"],
+    )
+    assert res.exit_code == 0, res.output
+    # Only the command's own top-level "Fitting Gaussian Splats: vol.npy".
+    assert res.output.count("Fitting Gaussian Splats") == 1
+    assert "Generating seeds" not in res.output
+    assert res.output.count("UserWarning: Gaussian splat fitting will run") <= 1

@@ -36,9 +36,11 @@ from luxar.gsplats.fit_tiled_parallel import luxar_argv0
 from luxar.gsplats.gsplat_data import scrub_measured_stats, scrub_region_scoped_stats
 
 from .box_checkpoint import BoxCheckpoint, plan_fingerprint
+from .box_progress import BoxProgress
 from .fit_planned import (
     _padded_bounds,
     _planned_merge_stats,
+    _scaled_plan_budgets,
     _score_planned_merge,
     _stamp_planned_normalization,
 )
@@ -101,9 +103,9 @@ def _default_worker_cmd_builder(
     forwarded: a content box's budget comes from the plan, and ``run_content_fit``
     pops it. Each of these is omitted from the argv when ``None`` (as
     ``device``/``floor`` already are), leaving the worker to resolve its own
-    default — ``preset=None`` included, because a preset the user did not ask for
-    would layer its own ``n_iters``/``cull_retention`` on top of the config and
-    make the worker fit with different parameters than the sequential path.
+    default — ``preset=None`` included: the worker's ``load_fit_config`` then
+    resolves ``DEFAULT_FIT_PRESET`` exactly as the sequential path's does, so
+    forwarding a call-site default instead could only let the two drift apart.
 
     ``floor`` is expected to be the parent's already-RESOLVED background level (a
     number, or ``"none"`` when suppression is off) rather than a spec like
@@ -186,6 +188,17 @@ def _boxes_to_fit(
     if preloaded and verbose:
         aprint(f"Resuming: {len(preloaded)} of {len(budgeted)} boxes already done")
     return to_fit, preloaded
+
+
+def _start_box_progress(
+    plan: FitPlan, budgeted: list[int], preloaded: dict[int, Any], verbose: bool
+) -> Optional[BoxProgress]:
+    if not verbose:
+        return None
+    progress = BoxProgress(_scaled_plan_budgets(plan, budgeted))
+    for i in preloaded:
+        progress.box_resumed(i)
+    return progress
 
 
 class _BoxWorkers:
@@ -426,20 +439,19 @@ def fit_planned_parallel(
         else contextlib.nullcontext()
     )
     with section:
+        progress = _start_box_progress(plan, budgeted, preloaded, verbose)
         with ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
-            done = len(budgeted) - len(to_fit)
             try:
                 futures = [ex.submit(_run, i) for i in to_fit]
                 for fut in as_completed(futures):
                     i, rc, stream = fut.result()
-                    done += 1
                     if rc != 0:
                         tail = "\n".join(stream.strip().splitlines()[-20:])
                         failures.append((i, tail))
-                        if verbose:
-                            aprint(f"Box {i} FAILED (exit {rc}) [{done}/{n}]")
-                    elif verbose:
-                        aprint(f"Box {i} done [{done}/{n}]")
+                    if progress is not None:
+                        progress.box_done(
+                            i, failed=rc != 0, detail=f"exit {rc}" if rc else None
+                        )
             except KeyboardInterrupt:
                 # Cancel queued boxes BEFORE the ``with`` block's __exit__ would
                 # otherwise drain them, terminate the running workers (so none

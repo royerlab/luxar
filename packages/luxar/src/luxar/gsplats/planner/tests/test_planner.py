@@ -8,6 +8,7 @@ import sys
 import textwrap
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -701,9 +702,9 @@ class TestDefaultWorkerCmdBuilder:
         # A content box's budget comes from the PLAN, never from --seeds.
         assert "--seeds" not in cmd
         # Nothing supplied -> no flags (the worker resolves its own defaults).
-        # `--preset` included: a "standard" default would layer that preset's
-        # n_iters (5000) / cull_retention on a box the sequential path fits with
-        # `load_fit_config(preset=None)` (1000 iterations).
+        # `--preset` included: the worker's `load_fit_config(preset=None)`
+        # resolves the same default preset the sequential path does, so
+        # forwarding nothing keeps the two identical (#1637).
         bare = [
             str(c)
             for c in _default_worker_cmd_builder("in.zarr", "plan.json")(
@@ -959,8 +960,9 @@ class TestContentFitSharedFloor:
         ``cull_retention=`` kwargs are deleted from the ``run_content_fit`` call
         site — this is where that is caught. ``truncate:`` is YAML-only, so an
         unforwarded ``--config`` left every ``-j N`` box fitted at the 2.75 default
-        (#1637), and a ``preset or "standard"`` default made a box resolve 5000
-        iterations where ``-j 1`` resolves 1000.
+        (#1637), and a call-site preset default could make a box resolve a
+        different preset than ``-j 1`` (both now resolve ``load_fit_config``'s
+        own default).
         """
         V = _pedestal_blobs(shape=(16, 16, 32))
         cfg = tmp_path / "fit.yaml"
@@ -979,9 +981,9 @@ class TestContentFitSharedFloor:
             assert argv[argv.index("--config") + 1] == str(cfg)
             assert argv[argv.index("--iters") + 1] == "9"
             assert float(argv[argv.index("--cull-retention") + 1]) == pytest.approx(0.5)
-            # No --preset was asked for, so none is forwarded: "standard" would
-            # layer 5000 iterations / cull_retention 0.999 on a box the sequential
-            # path fits with `load_fit_config(preset=None)`.
+            # No --preset was asked for, so none is forwarded: the worker's
+            # `load_fit_config(preset=None)` resolves the same default preset
+            # the sequential path does.
             assert "--preset" not in argv
         # An explicit preset IS forwarded, verbatim.
         with_preset = self._capture_worker_argvs(
@@ -1065,12 +1067,8 @@ class TestContentFitSharedFloor:
 class TestContentFitCullRetention:
     """`fit --tiling content` fits every box near-losslessly (#1729).
 
-    The planner meant to install a content default of 0.999 with
-    ``fk.setdefault("cull_retention", 0.999)``, which could never fire: the
-    resolved config always already carries the fitter's own signature default of
-    0.95. So a preset-less content fit culled the bottom 5% of cumulative
-    amplitude out of EVERY box (and the boxes are re-merged, so the cull
-    compounds) while the code claimed otherwise.
+    The content default is a backstop beneath presets. A bare CLI fit now
+    resolves the standard preset, which also retains 0.999.
     """
 
     @staticmethod
@@ -1097,9 +1095,7 @@ class TestContentFitCullRetention:
     def _spy_boxes(monkeypatch) -> list:
         """Patch ``_fit_one_box`` with a spy recording each box's resolved kwargs.
 
-        Records ``n_iters`` alongside the retention: 0.999 alone cannot tell a
-        preset apart from the command default (they agree), so a preset test needs
-        a knob only the preset layer sets.
+        Records ``n_iters`` alongside retention to check preset resolution.
         """
         import importlib
 
@@ -1231,11 +1227,7 @@ class TestContentFitCullRetention:
         assert list(tmp_path.glob(f".{output.name}.plan.*.json")) == []
 
     def test_bare_content_fit_is_near_lossless(self, tmp_path, monkeypatch):
-        """No preset, no --config, no --cull-retention → 0.999 for every box.
-
-        FAILS pre-fix with 0.95 (the fitter's signature default falling all the
-        way through), which is the regression this pins.
-        """
+        """No explicit preset or retention still gives 0.999 for every box."""
         assert self._run(tmp_path, monkeypatch) == [
             pytest.approx(CONTENT_CULL_RETENTION),
             pytest.approx(CONTENT_CULL_RETENTION),
@@ -1244,9 +1236,8 @@ class TestContentFitCullRetention:
     def test_preset_still_gives_its_own_retention(self, tmp_path, monkeypatch):
         """A preset keeps outranking the command default.
 
-        ``standard``'s retention is ALSO 0.999, so the retention alone cannot tell
-        which layer supplied it. ``n_iters`` can: 5000 is the preset's, 1000 the
-        harvested function default a preset-less run resolves.
+        ``standard``'s retention is also 0.999, so ``n_iters`` checks that the
+        preset layer applied.
         """
         seen = self._run_boxes(tmp_path, monkeypatch, preset="standard")
         assert [r["cull_retention"] for r in seen] == [
@@ -1449,7 +1440,7 @@ class TestFitPlannedParallel:
         assert sorted(spawned) == [0, 1]  # box 2 (budget 0) never spawned
         assert merged.n_splats == 5 * 2
 
-    def test_worker_failure_raises_and_retains_tmp(self, tmp_path):
+    def test_worker_failure_raises_and_retains_tmp(self, tmp_path, capsys):
         plan = _toy_plan(n_boxes=3)
         d = tmp_path / "boxes"
         ok = _fake_box_builder(5)
@@ -1463,10 +1454,16 @@ class TestFitPlannedParallel:
                 ]
             return ok(i, out_path)
 
-        with pytest.raises(RuntimeError, match="box fits failed"):
+        with pytest.raises(RuntimeError, match=r"boxes: 1\)") as exc:
             fit_planned_parallel(
-                plan, jobs=2, tmp_dir=d, worker_cmd_builder=builder, verbose=False
+                plan, jobs=2, tmp_dir=d, worker_cmd_builder=builder, verbose=True
             )
+        failed = [
+            line for line in capsys.readouterr().out.splitlines() if "FAILED" in line
+        ]
+        assert len(failed) == 1
+        assert "box 1 FAILED" in failed[0]
+        assert "boxes: 1" in str(exc.value)
         assert d.exists()  # retained for inspection on failure
 
     def test_clean_exit_no_output_raises(self, tmp_path):
@@ -2597,6 +2594,42 @@ def _recording(builder, spawned: list[int], fail: tuple[int, ...] = ()):
 
 
 class TestParallelBoxResume:
+    def test_resumed_progress_counts_boxes_and_remaining_budget(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        from luxar.gsplats.planner import box_progress
+
+        plan = _toy_plan(n_boxes=3)
+        d = tmp_path / "boxes"
+        with pytest.raises(RuntimeError, match="box fits failed"):
+            fit_planned_parallel(
+                plan,
+                jobs=1,
+                tmp_dir=d,
+                worker_cmd_builder=_recording(_fake_box_builder(5), [], (1, 2)),
+                fingerprint="fp",
+                verbose=False,
+            )
+        capsys.readouterr()
+        ticks = iter((0.0, 10.0, 20.0, 20.0, 30.0))
+        monkeypatch.setattr(
+            box_progress,
+            "time",
+            SimpleNamespace(perf_counter=lambda: next(ticks)),
+        )
+        fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=d,
+            worker_cmd_builder=_fake_box_builder(5),
+            fingerprint="fp",
+            verbose=True,
+        )
+        out = capsys.readouterr().out
+        assert "box 0 resumed from checkpoint (1/3)" in out
+        assert "box 1 done (2/3): 10s elapsed, ETA 8s" in out
+        assert "box 2 done (3/3):" in out
+
     def test_rerun_after_failure_refits_only_the_failed_box(self, tmp_path):
         plan = _toy_plan(n_boxes=3)
         d = tmp_path / "boxes"
@@ -2690,7 +2723,7 @@ class TestParallelBoxResume:
         )
         assert sorted(spawned) == [0, 1]
 
-    def test_done_but_unreadable_box_is_refit(self, tmp_path):
+    def test_done_but_unreadable_box_is_refit(self, tmp_path, capsys):
         plan = _toy_plan(n_boxes=2)
         d = tmp_path / "boxes"
         fit_planned_parallel(
@@ -2713,8 +2746,12 @@ class TestParallelBoxResume:
             tmp_dir=d,
             worker_cmd_builder=_recording(_fake_box_builder(5), spawned),
             fingerprint="fp",
-            verbose=False,
+            verbose=True,
         )
+        out = capsys.readouterr().out
+        assert "box 0 resumed from checkpoint (1/2)" in out
+        assert "box 1 done (2/2):" in out
+        assert "box 1 resumed from checkpoint" not in out
         assert spawned == [1]
         assert merged.n_splats == 10
 
@@ -2920,7 +2957,9 @@ class TestPlanFingerprint:
         assert base != bc.plan_fingerprint(plan, source=src)
 
 
-def test_fit_planned_resumes_finished_boxes_after_an_interrupt(monkeypatch, tmp_path):
+def test_fit_planned_resumes_finished_boxes_after_an_interrupt(
+    monkeypatch, tmp_path, capsys
+):
     """Sequential path: a kill after box 0 leaves it on disk; the rerun skips it."""
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.planner.box_checkpoint import BoxCheckpoint
@@ -2956,7 +2995,19 @@ def test_fit_planned_resumes_finished_boxes_after_an_interrupt(monkeypatch, tmp_
 
     interrupt_at["box"] = None
     calls.clear()
-    merged = fit_planned_mod.fit_planned(vol, plan, device="cpu", checkpoint=ck)
+    from luxar.gsplats.planner import box_progress
+
+    ticks = iter((0.0, 10.0, 10.0, 20.0, 20.0, 20.0, 30.0))
+    monkeypatch.setattr(
+        box_progress, "time", SimpleNamespace(perf_counter=lambda: next(ticks))
+    )
+    merged = fit_planned_mod.fit_planned(
+        vol, plan, device="cpu", checkpoint=ck, verbose=True
+    )
+    out = capsys.readouterr().out
+    assert "box 0 resumed from checkpoint (1/3)" in out
+    assert "box 1 done (2/3): kept 4 splats, 10s elapsed, ETA 8s" in out
+    assert "box 2 done (3/3):" in out
     assert calls == [1, 2]  # box 0 reloaded from the checkpoint, not refit
     assert merged.n_splats == 12
     np.testing.assert_allclose(
