@@ -27,10 +27,10 @@ def _skip_if_no_cuda():
     """Skip if CUDA or backend not available."""
     if not torch.cuda.is_available():
         pytest.skip("CUDA not available")
-    try:
-        import cuda_splatting_backend  # noqa: F401
-    except ImportError:
-        pytest.skip("CUDA backend not compiled")
+    from .conftest import CUDA_BACKEND_AVAILABLE
+
+    if not CUDA_BACKEND_AVAILABLE:
+        pytest.skip("no CUDA kernel backend (compiled extension or NVRTC)")
 
 
 def _make_model(shape, N, dim, seed=42, device="cuda"):

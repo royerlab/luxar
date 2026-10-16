@@ -14,13 +14,8 @@ from .conftest import Tolerances
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
 
-# Check if CUDA backend is compiled
-try:
-    import cuda_splatting_backend  # noqa: F401
-
-    CUDA_BACKEND_AVAILABLE = True
-except ImportError:
-    CUDA_BACKEND_AVAILABLE = False
+# Resolved kernel backend (AOT extension or NVRTC); honors LUXAR_CUDA_BACKEND.
+from .conftest import CUDA_BACKEND_AVAILABLE, cuda_splatting_backend  # noqa: E402, F401
 
 pytestmark = pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
 
@@ -55,7 +50,6 @@ class Test4DDiagnostics:
 
     def test_single_centered_splat_4d(self):
         """Test a single isotropic splat centered in a 4D volume."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -206,7 +200,6 @@ class Test4DDiagnostics:
 
     def test_binning_4d(self):
         """Verify splats are being binned to tiles correctly in 4D."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -238,7 +231,6 @@ class Test4DDiagnostics:
 
     def test_4d_multiple_splats_detailed(self):
         """Detailed test with multiple splats to identify pattern of discrepancy."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -322,7 +314,6 @@ class Test4DDiagnostics:
 
     def test_4d_binning_individual_splats(self):
         """Test binning of individual splats at different positions."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -362,7 +353,6 @@ class Test4DDiagnostics:
 
     def test_4d_tile_boundary_positions(self):
         """Test splats specifically at tile boundaries."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -424,7 +414,6 @@ class TestGlobalSplatHandling:
         Creates a volume large enough (128^3 = 4096 tiles with tile_size=8) and
         a splat large enough to touch >1024 tiles, triggering global handling.
         """
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -484,7 +473,6 @@ class TestGlobalSplatHandling:
         With a high intensity_floor, far pixels should have zero contribution
         from the global splat, matching PyTorch reference behavior.
         """
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -559,7 +547,6 @@ class TestGlobalSplatHandling:
         This verifies the backward kernel properly applies intensity_floor
         and produces gradients matching finite differences.
         """
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -636,7 +623,6 @@ class TestGlobalSplatHandling:
         Verifies that large splats covering many voxels are rendered
         correctly alongside small, localized splats.
         """
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -726,7 +712,6 @@ class TestGlobalSplatHandling:
         Each test creates a volume with a large splat that
         triggers global handling, then compares CUDA output to PyTorch reference.
         """
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -789,7 +774,6 @@ class TestGlobalSplatHandling:
 
         Verifies that gradients are computed correctly for global splats.
         """
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,

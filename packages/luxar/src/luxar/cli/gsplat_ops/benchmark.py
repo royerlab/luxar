@@ -171,9 +171,9 @@ def benchmark_gpu(
             run_benchmark,
             run_splat_sweep,
         )
-    except ImportError:
-        aprint("Error: CUDA splatting backend is not compiled.")
-        aprint("Build it with: make build-cuda")
+    except ImportError as exc:
+        aprint(f"Error: the CUDA splatting benchmark could not be imported ({exc}).")
+        aprint("It needs the gsplats extra: pip install 'luxar[gsplats]'")
         raise typer.Exit(1)
 
     with asection(f"Benchmarking GPU: {gpu_name_detected}"):

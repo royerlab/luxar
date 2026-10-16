@@ -14,13 +14,8 @@ from .conftest import Tolerances
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
 
-# Check if CUDA backend is compiled
-try:
-    import cuda_splatting_backend  # noqa: F401
-
-    CUDA_BACKEND_AVAILABLE = True
-except ImportError:
-    CUDA_BACKEND_AVAILABLE = False
+# Resolved kernel backend (AOT extension or NVRTC); honors LUXAR_CUDA_BACKEND.
+from .conftest import CUDA_BACKEND_AVAILABLE, cuda_splatting_backend  # noqa: E402, F401
 
 pytestmark = pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
 
@@ -244,7 +239,6 @@ class TestOptimizedVsGenericPath:
     @pytest.mark.parametrize("shape", [(32, 32), (48, 48), (24, 32)])
     def test_2d_optimized_vs_generic(self, shape: tuple):
         """Test 2D optimized path matches generic 4D path."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -310,7 +304,6 @@ class TestOptimizedVsGenericPath:
     @pytest.mark.parametrize("shape", [(16, 16, 16), (24, 24, 24), (12, 16, 20)])
     def test_3d_optimized_vs_generic(self, shape: tuple):
         """Test 3D optimized path matches generic 4D path."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -375,7 +368,6 @@ class TestOptimizedVsGenericPath:
 
     def test_2d_anisotropic_optimized_vs_generic(self):
         """Test 2D optimized path with anisotropic splats matches generic path."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -434,7 +426,6 @@ class TestOptimizedVsGenericPath:
 
     def test_3d_anisotropic_optimized_vs_generic(self):
         """Test 3D optimized path with anisotropic splats matches generic path."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
