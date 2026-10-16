@@ -45,16 +45,6 @@ DEFAULT_MIN_EXTENT_VOX = 0.6
 #: brightness (config/YAML key ``min_extent_max_mass_share``).
 DEFAULT_MIN_EXTENT_MAX_MASS_SHARE = 0.02
 
-#: Stats keys this module writes (also persisted by the store writer).
-MIN_EXTENT_STATS_KEYS = (
-    "min_extent_vox",
-    "min_extent_removed",
-    "min_extent_removed_mass_share",
-    "min_extent_input_mass",
-    "min_extent_skipped",
-)
-
-
 def validate_min_extent(min_extent: "float | None") -> float:
     """Normalize ``min_extent``: ``None``/``0`` disable (-> ``0.0``)."""
     if min_extent is None:
