@@ -92,7 +92,8 @@ pip install "luxar[gsplats,io]"
   print(torch.cuda.is_available())"` must print `True`).
   `LUXAR_CUDA_BACKEND=aot|nvrtc|torch` forces a backend.
 - Which path a fit took is printed near its start: `Model class:
-  GaussianSplatModelCUDA` / `GaussianSplatModelMetal, runtime kernels` (fast) or
+  GaussianSplatModelCUDA`, `GaussianSplatModelMetal, runtime kernels`, or
+  `GaussianSplatModelCPUNative (numba, N threads, ...)` (native kernels); or
   `GaussianSplatModel (PyTorch, device=...)` (reference path).
 - *CPU*: 3D fits run on fused numba kernels (in `[gsplats]`; compiled on first use,
   then cached), on several threads automatically (`LUXAR_CPU_THREADS` overrides;
