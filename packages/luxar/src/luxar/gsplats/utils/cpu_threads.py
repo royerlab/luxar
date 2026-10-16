@@ -19,8 +19,9 @@ command — but only when torch still has one thread:
   took effect), it is left alone. An OMP-only export may leave torch at one
   thread under the hatch MKL pin; in that case the CLI still widens it. To
   explicitly run one thread, set ``LUXAR_CPU_THREADS=1``.
-* A tile/box WORKER (``fit --tile`` / ``--plan-box``) is left alone: it is one
-  of N concurrent processes whose count the parent sized against the CPU count.
+* A tile/box WORKER (``fit --tile`` / ``--plan-box``) is left alone unless its
+  parent supplied a ``LUXAR_CPU_THREADS`` share. That share sets torch's count
+  as well as the native kernels' count.
 
 Scope is the CLI only, and the previous count is restored on exit, so a
 library caller (``fit_gaussian_splats`` from Python) never has process-global
@@ -30,35 +31,20 @@ torch state changed under it, and an in-process CLI invocation (Typer's
 
 from __future__ import annotations
 
-import importlib
 import os
 from contextlib import contextmanager
 from typing import Iterator, Mapping, Optional
+
+from .device import CPU_THREADS_ENV, physical_core_count
 
 #: Upper bound on the automatic width. Measured on an M4 Max: 4 and 8 threads
 #: tie, 16 is slower than 4 (system time dominates), so more never helps.
 AUTO_CPU_THREADS_CAP = 8
 
-#: Environment variable that overrides the automatic choice (``0`` = disable).
-CPU_THREADS_ENV = "LUXAR_CPU_THREADS"
-
 
 def physical_cpu_count() -> int:
-    """Physical cores available to this process (logical count as fallback)."""
-    from .device import _effective_cpu_count
-
-    physical: Optional[int] = None
-    try:
-        # Looked up dynamically: psutil is optional and ships no type stubs.
-        psutil = importlib.import_module("psutil")
-        physical = psutil.cpu_count(logical=False)
-    except ImportError:  # pragma: no cover - psutil is not a declared dependency
-        # Logical count instead; the AUTO_CPU_THREADS_CAP bound does most of
-        # the work anyway (8 is below the logical count of any machine with
-        # more than 8 physical cores).
-        physical = None
-    available = _effective_cpu_count()
-    return max(1, min(physical or available, available))
+    """Physical cores available to both torch and the native CPU kernels."""
+    return physical_core_count()
 
 
 def _parse_override(value: Optional[str]) -> Optional[int]:
