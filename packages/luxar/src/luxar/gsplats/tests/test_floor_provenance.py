@@ -125,6 +125,13 @@ class TestAgreementRule:
         merged = GSplatData.concatenate([_leaf(stats=stats), _leaf(stats=stats)])
         assert merged.stats["intensity_scale"] == 0.5
 
+    def test_mixed_intensity_scales_drop_the_amplitude_basis(self) -> None:
+        scaled = {**BLOCK, "intensity_range": 1950.0, "intensity_scale": 0.5}
+        unscaled = {**BLOCK, "intensity_range": 1950.0}
+        merged = GSplatData.concatenate([_leaf(stats=scaled), _leaf(stats=unscaled)])
+        assert "intensity_range" not in merged.stats
+        assert "intensity_scale" not in merged.stats
+
     def test_unanimous_block_is_carried(self) -> None:
         assert agreed_normalization_stats([dict(BLOCK), dict(BLOCK)]) == BLOCK
 

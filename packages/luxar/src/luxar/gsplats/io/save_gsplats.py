@@ -353,6 +353,16 @@ def agreed_normalization_stats(
         first = values[0]
         if all(v == first for v in values):
             agreed[key] = first
+    # An absent scale on a fitted input means identity. Equal post-edit ranges
+    # from differently scaled inputs do not share one amplitude unit.
+    scales = [
+        s.get("intensity_scale", 1.0)
+        for s in stats_list
+        if s is not None and "intensity_range" in s
+    ]
+    if scales and any(scale != scales[0] for scale in scales[1:]):
+        agreed.pop("intensity_range", None)
+        agreed.pop("intensity_scale", None)
     return agreed
 
 
