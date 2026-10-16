@@ -17,7 +17,8 @@ import { FOLDER_ICONS } from '../folder-icons';
 import {
   HDR_HEADROOM_MAX,
   HDR_HEADROOM_MIN,
-  storeHdrHeadroom,
+  HdrHeadroomController,
+  type HdrHeadroomResolution,
 } from '../../../utils/hdr/hdr-headroom';
 
 /**
@@ -133,29 +134,66 @@ export function setupHDRControls(context: SetupContext): SetupResult {
 
   // Display headroom — only while the canvas is an extended-range HDR
   // canvas (PROTOTYPE, `?hdr` on WebGPU). Not part of the per-scene
-  // settings: it describes the DISPLAY, so it persists per browser instead.
-  if (postProcessing.isHdrOutputActive()) {
-    const headroomState = { headroom: postProcessing.getHdrHeadroom() };
-    const headroomControl = hdrFolder
-      .add(headroomState, 'headroom', HDR_HEADROOM_MIN, HDR_HEADROOM_MAX, 0.1)
-      .name('Headroom')
-      .onChange((value: number) => {
-        postProcessing.setHdrHeadroom(value);
-        storeHdrHeadroom(value);
-        triggerAnimation();
-      });
-    headroomControl.domElement.setAttribute(
-      'title',
-      'Headroom: how far above SDR white this display can go (HDR output)\n' +
-        '• 1 = SDR (no highlights above white)\n' +
-        '• 2 = default, safe on almost every HDR display\n' +
-        '• Raise it until the brightest highlights stop gaining detail;\n' +
-        '  past the real headroom the OS clips them\n' +
-        '• Depends on the OS brightness setting (dimmer panel = more headroom)'
-    );
-  }
+  // settings: it describes the DISPLAY, so the controller resolves it per
+  // display (URL > hand-set > measured > model guess > default) and follows
+  // the window across displays and brightness changes.
+  const cleanup = postProcessing.isHdrOutputActive()
+    ? setupHeadroomControls(hdrFolder, postProcessing, triggerAnimation)
+    : undefined;
 
   return {
     controllers,
+    ...(cleanup ? { cleanup } : {}),
   };
+}
+
+const SOURCE_TEXT: Record<HdrHeadroomResolution['source'], string> = {
+  url: 'set by the ?hdr=<n> URL parameter',
+  manual: 'set by hand for this display (Detect re-measures)',
+  measured: 'measured live from the display',
+  model: 'conservative guess for the identified display model',
+  default: 'conservative default (display not identified)',
+  sdr: 'this display is in SDR mode',
+};
+
+/** Headroom slider + Detect button, driven by an {@link HdrHeadroomController}. */
+function setupHeadroomControls(
+  hdrFolder: ReturnType<SetupContext['gui']['addFolder']>,
+  postProcessing: SetupContext['postProcessing'],
+  triggerAnimation: () => void
+): () => void {
+  const state = {
+    headroom: postProcessing.getHdrHeadroom(),
+    detect: (): void => {
+      void controller.detect();
+    },
+  };
+  const headroomControl = hdrFolder
+    .add(state, 'headroom', HDR_HEADROOM_MIN, HDR_HEADROOM_MAX, 0.1)
+    .name('Headroom')
+    .onChange((value: number) => {
+      controller.setManual(value);
+    });
+  const controller = new HdrHeadroomController((r) => {
+    postProcessing.setHdrHeadroom(r.value);
+    headroomControl.setValue(r.value);
+    headroomControl.domElement.setAttribute(
+      'title',
+      'Headroom: how far above SDR white the display can go (HDR output)\n' +
+        `• Now ${r.value.toFixed(2)}x — ${SOURCE_TEXT[r.source]}\n` +
+        `• Display: ${r.display}\n` +
+        '• Drag to override for this display; past the real headroom the OS clips highlights'
+    );
+    triggerAnimation();
+  });
+  if (controller.canMeasure()) {
+    const detectControl = hdrFolder.add(state, 'detect').name('Detect Display');
+    detectControl.domElement.setAttribute(
+      'title',
+      "Measure this display's live HDR headroom (asks permission to see your displays;\n" +
+        'needs chrome://flags "Experimental Web Platform features" in Chrome 155)'
+    );
+  }
+  void controller.start();
+  return () => controller.dispose();
 }

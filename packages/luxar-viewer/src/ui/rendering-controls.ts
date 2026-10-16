@@ -106,6 +106,9 @@ export function decadeStep(v: number): number {
  * ```
  */
 export class RenderingControls {
+  /** Removes the HDR headroom controller's display listeners. */
+  private hdrCleanup: (() => void) | undefined;
+
   /** The custom GUI instance */
   private gui: GUI;
 
@@ -256,6 +259,7 @@ export class RenderingControls {
 
     // Store controller references
     Object.assign(this.controllers, hdrResult.controllers);
+    this.hdrCleanup = hdrResult.cleanup;
 
     // Anti-aliasing controls
     const aaResult = setupAntiAliasingControls({
@@ -1091,6 +1095,9 @@ export class RenderingControls {
    * After calling dispose(), the RenderingControls instance cannot be reused.
    */
   dispose(): void {
+    this.hdrCleanup?.();
+    this.hdrCleanup = undefined;
+
     // Clean up clipping display RAF loop
     this.clippingDisplay.dispose();
 

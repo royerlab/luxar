@@ -8,7 +8,7 @@
  * methods + re-saves settings + triggers a re-render.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
 import type { SetupContext } from '../../../../ui/rendering-controls/types';
 import { setupHDRControls } from '../../../../ui/rendering-controls/setup/hdr-setup';
@@ -16,6 +16,7 @@ import { setupHDRControls } from '../../../../ui/rendering-controls/setup/hdr-se
 interface ControllerStub {
   name: ReturnType<typeof vi.fn>;
   onChange: ReturnType<typeof vi.fn>;
+  setValue: ReturnType<typeof vi.fn>;
   domElement: HTMLElement;
   /** Captured by the stub so the test can fire it. */
   _onChangeFn: ((value: unknown) => void) | null;
@@ -25,10 +26,12 @@ function makeController(): ControllerStub {
   const ctrl: ControllerStub = {
     name: vi.fn(),
     onChange: vi.fn(),
+    setValue: vi.fn(),
     domElement: document.createElement('div'),
     _onChangeFn: null,
   };
   ctrl.name.mockReturnValue(ctrl);
+  ctrl.setValue.mockReturnValue(ctrl);
   ctrl.onChange.mockImplementation((fn: (value: unknown) => void) => {
     ctrl._onChangeFn = fn;
     return ctrl;
@@ -206,38 +209,50 @@ describe('setupHDRControls', () => {
   describe('Headroom control (HDR output)', () => {
     beforeEach(() => {
       localStorage.clear();
+      vi.spyOn(window, 'matchMedia').mockImplementation(
+        (q: string) =>
+          ({
+            matches: q.includes('dynamic-range: high'),
+            media: q,
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+          }) as unknown as MediaQueryList
+      );
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
     });
 
     it('is absent while the canvas is SDR', () => {
-      setupHDRControls(stubs.context);
+      const result = setupHDRControls(stubs.context);
       expect(stubs.folder.add).toHaveBeenCalledTimes(4);
+      expect(result.cleanup).toBeUndefined();
     });
 
-    it('appears with the live headroom when HDR output is active', () => {
+    it('appears and applies the resolved headroom when HDR output is active', () => {
       stubs.postProcessing.isHdrOutputActive.mockReturnValue(true);
-      stubs.postProcessing.getHdrHeadroom.mockReturnValue(2.5);
-      setupHDRControls(stubs.context);
+      const result = setupHDRControls(stubs.context);
 
-      expect(stubs.folder.add).toHaveBeenCalledTimes(5);
-      const [state, key, min, max] = stubs.folder.add.mock.calls[4] as [
-        Record<string, number>,
-        string,
-        number,
-        number,
-      ];
-      expect(state[key]).toBe(2.5);
+      const [, , min, max] = stubs.folder.add.mock.calls[4] as [unknown, string, number, number];
       expect([min, max]).toEqual([1, 16]);
+      // jsdom identifies no display: the conservative default.
+      expect(stubs.postProcessing.setHdrHeadroom).toHaveBeenCalledWith(2);
+      expect(result.cleanup).toBeTypeOf('function');
+      result.cleanup?.();
     });
 
-    it('applies and persists a change without touching the per-scene settings', () => {
+    it('remembers a hand-set value for the current display', () => {
       stubs.postProcessing.isHdrOutputActive.mockReturnValue(true);
-      setupHDRControls(stubs.context);
+      const result = setupHDRControls(stubs.context);
       stubs.folder.controllers[4]._onChangeFn?.(6);
 
-      expect(stubs.postProcessing.setHdrHeadroom).toHaveBeenCalledWith(6);
-      expect(localStorage.getItem('luxar.hdrHeadroom')).toBe('6');
+      expect(stubs.postProcessing.setHdrHeadroom).toHaveBeenLastCalledWith(6);
+      expect(Object.values(JSON.parse(localStorage.getItem('luxar.hdrHeadroom') ?? '{}'))).toEqual([
+        6,
+      ]);
       expect(stubs.saveSettings).not.toHaveBeenCalled();
       expect(stubs.triggerAnimation).toHaveBeenCalled();
+      result.cleanup?.();
     });
   });
 });
