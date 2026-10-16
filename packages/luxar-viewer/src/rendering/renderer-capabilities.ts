@@ -72,6 +72,16 @@ export interface RendererCapabilities {
    */
   readonly apiSurface: 'webgl2' | 'webgpu';
   /**
+   * Which GPU API actually runs, which `apiSurface` deliberately does not say:
+   *
+   * - `'webgl'` → `THREE.WebGLRenderer` (GLSL materials);
+   * - `'webgpu-native'` → `WebGPURenderer` on a real WebGPU device (WGSL);
+   * - `'webgpu-gl'` → `WebGPURenderer` on three's internal WebGL2 backend
+   *   (TSL compiled to GLSL): `?webgpuForceWebgl`, or `?renderer=webgpu` in a
+   *   browser without a WebGPU adapter.
+   */
+  readonly backendKind: 'webgl' | 'webgpu-native' | 'webgpu-gl';
+  /**
    * True when the effective framebuffer presented by the renderer has
    * row 0 at the **top** of the viewport (real WebGPU; also
    * WebGPURenderer running on its WebGL2 compat backend, which Three.js
@@ -263,6 +273,7 @@ export function createRendererCapabilities(
 
     return {
       apiSurface: 'webgl2',
+      backendKind: 'webgl',
       framebufferYDown,
       readbackYDown: false,
       hdr,
@@ -331,6 +342,7 @@ export function createRendererCapabilities(
 
   return {
     apiSurface: 'webgpu',
+    backendKind: backend?.isWebGPUBackend === true ? 'webgpu-native' : 'webgpu-gl',
     framebufferYDown,
     readbackYDown: backend?.isWebGPUBackend === true,
     hdr,

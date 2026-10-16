@@ -538,6 +538,7 @@ describe('SceneManager', () => {
         renderer: webgpuRenderer as never,
         capabilities: {
           apiSurface: 'webgpu',
+          backendKind: 'webgpu-native',
           framebufferYDown: true,
           readbackYDown: true,
           hdr: {
@@ -2240,6 +2241,30 @@ describe('SceneManager', () => {
       // And createWebGPURenderer was called exactly once before falling
       // through; setupWebGPURenderer doesn't re-attempt the WebGPU path.
       expect(mockedCreateWebGPURenderer).toHaveBeenCalledTimes(1);
+    });
+
+    it('an explicit renderer:webgpu may run on the WebGL2 bridge; an env-var selection may not', async () => {
+      vi.mocked(mockedCreateWebGPURenderer).mockResolvedValueOnce({ fallback: true });
+      await sceneManager.init({ canvas: mockCanvas as any, renderer: 'webgpu' });
+      expect(mockedCreateWebGPURenderer).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ requireNativeAdapter: false })
+      );
+
+      vi.stubEnv('VITE_LUXAR_USE_WEBGPU', '1');
+      try {
+        const envManager = new SceneManager();
+        vi.mocked(mockedCreateWebGPURenderer).mockResolvedValueOnce({ fallback: true });
+        await envManager.init({ canvas: mockCanvas as any });
+        expect(mockedCreateWebGPURenderer).toHaveBeenLastCalledWith(
+          expect.anything(),
+          expect.objectContaining({ requireNativeAdapter: true })
+        );
+        expect((envManager.renderer as { isWebGLRenderer?: boolean }).isWebGLRenderer).toBe(true);
+        envManager.dispose();
+      } finally {
+        vi.unstubAllEnvs();
+      }
     });
   });
 });

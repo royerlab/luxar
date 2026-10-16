@@ -544,7 +544,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * - Fullscreen immersive experience
    */
   private async setupRenderer(): Promise<void> {
-    const { backend, source } = selectBackend(this.rendererOverride);
+    const { backend, source, requireNativeAdapter } = selectBackend(this.rendererOverride);
     log.info(
       Modules.RENDERER,
       `Backend selection: ${backend === 'webgl' ? 'WebGLRenderer (GLSL)' : 'WebGPURenderer (TSL)'} ` +
@@ -554,7 +554,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       await this.setupWebGLRenderer();
       return;
     }
-    await this.setupWebGPURenderer();
+    await this.setupWebGPURenderer(requireNativeAdapter);
   }
 
   private async setupWebGLRenderer(): Promise<void> {
@@ -588,15 +588,17 @@ export class SceneManager extends THREE.EventDispatcher<{
    * or `VITE_LUXAR_USE_WEBGPU=1`. Constructs a `WebGPURenderer` and
    * runs its async `init()`. On browsers with WebGPU support, the
    * renderer acquires a WebGPU adapter and dispatches TSL graphs
-   * to WGSL. On browsers without WebGPU (Firefox today, older
-   * Safari), Three's WebGPURenderer transparently falls back to a
-   * WebGL2 backend — the TSL graphs target both from one source.
+   * to WGSL. On browsers without a native WebGPU adapter (Firefox
+   * outside Windows, older Safari, most Linux setups) the session drops
+   * to `WebGLRenderer` when `requireNativeAdapter` is set (every selection
+   * but an explicit `?renderer=webgpu`); otherwise three runs the same TSL
+   * graphs on its internal WebGL2 backend.
    *
    * NOTE: WebGL is the **production default**; this method is
    * reached only when the user explicitly opts into WebGPU.
    * See `BROWSER_SUPPORT_POLICY.md` for the policy.
    */
-  private async setupWebGPURenderer(): Promise<void> {
+  private async setupWebGPURenderer(requireNativeAdapter: boolean): Promise<void> {
     const result = await createWebGPURenderer(this.canvasElement, {
       debug: this.debug,
       webgpuForceWebGL: this.webgpuForceWebGL,
@@ -604,10 +606,12 @@ export class SceneManager extends THREE.EventDispatcher<{
       hdr: this.hdr,
       hdrHeadroom: this.hdrHeadroom,
       rendererOverride: this.rendererOverride,
+      requireNativeAdapter,
     });
     if (result.fallback) {
-      // Adapter below the WebGPU spec minimum (< 8 vertex buffers)
-      // and the user didn't force the path; drop to WebGL.
+      // No native device where one was required, or an adapter below the
+      // WebGPU spec minimum (< 8 vertex buffers) the user didn't force: drop
+      // to WebGL. `createWebGPURenderer` logged which.
       await this.setupWebGLRenderer();
       return;
     }
