@@ -43,6 +43,7 @@ vi.mock('../../../../data/scene-loader-manager', () => ({
   SceneLoaderManager: {
     getInstance: () => ({
       getDefaultLoader: () => ({
+        requestReprocess: vi.fn(),
         lodGroupRegistry: {
           setSelectorMode: (path: string, mode: unknown) => selectorModes.set(path, mode),
           get: (path: string) => ({

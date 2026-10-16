@@ -42,6 +42,7 @@ import { LayerApplyEngine } from './layer-apply';
 import { LayerControls } from './layer-controls';
 import { ALWAYS_GLOBAL_KEYS } from '../help-overlay/type-to-filter';
 import { SceneLoaderManager } from '../../data/scene-loader-manager';
+import { sceneDimsManager } from '../../scene/scene-dims-manager';
 
 /**
  * What the panel needs from the sound layer for its `sound` rows
@@ -157,6 +158,7 @@ export class LayersPanel {
   private applyEngine = new LayerApplyEngine({
     getRootGroup: () => this.rootGroup,
     getSceneNodeIndex: () => this.sceneNodeIndex,
+    getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? null,
     state: this.state,
     requestRender: () => this.requestRender(),
     requestReprocess: (paths) =>
