@@ -8,6 +8,7 @@ from typing import Optional
 import typer
 from arbol import aprint
 
+from luxar.cli.gsplat_ops.fitting.fit_utils import validate_hygiene_flags
 from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES_HELP
 
 from .help_text import BATCH_PROGRESSIVE_HELP
@@ -525,6 +526,7 @@ def run_batch_submit(
         luxar gsplat batch-fit submit keller.zarr.zip out/ -p gpu --tile-size 128 \\
             --axes time,camera,channel,z,y,x
     """
+    validate_hygiene_flags(batch_min_extent, batch_reseed_sigma)
     if partition is None:
         aprint("Error: --partition is required")
         raise typer.Exit(1)

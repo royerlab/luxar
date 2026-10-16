@@ -8,6 +8,8 @@ from typing import Optional
 import typer
 from arbol import aprint
 
+from luxar.cli.gsplat_ops.fitting.fit_utils import validate_hygiene_flags
+
 from .help_text import BATCH_PROGRESSIVE_HELP
 from .plan_configs import build_plan_configs
 from .run_orchestration import run_batch_local_orchestration
@@ -307,6 +309,7 @@ def run_batch_run(
 
         luxar gsplat batch-fit run vol.zarr out/ --gpus cpu   # CPU fallback
     """
+    validate_hygiene_flags(batch_min_extent, batch_reseed_sigma)
     tiling = tiling.lower()
     if tiling not in ("uniform", "content"):
         aprint(f"Error: --tiling must be uniform|content, got {tiling!r}")
