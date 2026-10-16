@@ -216,8 +216,14 @@ export async function restoreBookmark(app: LuxarApp, bookmark: ViewBookmark): Pr
   app.restoreSnapshot(bookmark.snapshot);
   app.setRenderingSettings(bookmark.rendering);
   for (const layer of bookmark.layers) {
-    if (app.getLayers().some((current) => current.path === layer.path)) {
-      app.setLayer(layer.path, layer.appearance);
+    const current = app.getLayers().find((entry) => entry.path === layer.path);
+    if (current) {
+      app.setLayer(layer.path, {
+        ...layer.appearance,
+        ...(current.type === 'gsplats' && layer.appearance.brightness === undefined
+          ? { brightness: current.authoredBrightness ?? 1 }
+          : {}),
+      });
     }
   }
   await app.flyTo(bookmark.snapshot.camera, { durationMs: 0 });
