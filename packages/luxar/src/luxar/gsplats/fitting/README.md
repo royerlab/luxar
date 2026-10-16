@@ -315,7 +315,8 @@ iterations late.
 **Purpose:** Optional visualization of results.
 
 **Key Functions:**
-- `display_compression_analysis()`: Shows compression statistics
+- `compression_ratio()`: THE compression ratio Luxar quotes everywhere (`fit`, `info`, `compare`, `cull`): decoded source bytes (`source_bytes` fit stat, voxels x stored itemsize) over the saved store's bytes on disk. `compression_lines()` / `format_compression_ratio()` format it with its basis named.
+- `display_compression_analysis()`: Shows that ratio for a SAVED store (the CLI calls it after the post-fit cull and the save; the fitter itself prints no pre-save estimate)
 - `show_optimization_movie()`: Displays napari convergence movie
 
 **Design Choice:** Visualization is separate from core fitting pipeline, allowing headless operation.
@@ -335,6 +336,31 @@ Permutes all model parameters, optimizer state, and relocation tracker state to 
 - `downscale_volume(V, factors)` - Gaussian blur + decimation
 - `rescale_centers(centers, factors)` - Scale centers back to original coordinates
 - `rescale_cholesky_packed(cholesky_packed, factors)` - Scale packed Cholesky factors back
+
+### `splat_hygiene.py` - Closing Speck Pruning
+**Purpose:** The closing speck-pruning step every fitter (single-pass, uniform-tiled, content, progressive) shares, so they agree on one definition.
+
+**`min_extent` (default `0.6` fitted voxels; `0` disables).** Relocation reseeds a moved splat as an isotropic Gaussian of `relocation_reseed_sigma_vox` (0.5 voxel). A share of those never grow and end the fit as sub-voxel "specks" that render as glitter. After the fit and before the cumulative cull, every splat whose geometric-mean **spatial** sigma (`spatial_extent_vox`; a zero-variance stacked axis is ignored, and `voxel_size` / `downscale` are undone so the threshold is in the voxels the optimizer saw) is below the threshold is dropped. No polish follows. The fit then re-scores once, so the stored quality is that of the saved model. Stats: `min_extent_vox`, `min_extent_removed`, `min_extent_removed_mass_share`, `min_extent_input_mass`, `min_extent_skipped`. Tiles and boxes prune their own splats and the merge (including the `batch-fit` streaming merge) sums the record; progressive fits prune once, on the accumulated result. `gsplat cal` pins `min_extent=0`, so K\* is the unpruned count.
+
+**Mass guard.** Under the default `--floor auto` the specks carry 0.5-0.75% of the fitted brightness. After a high floor (`p95`) the same threshold removed 4.3-15%, i.e. real structure fitted small. So when pruning would remove more than `min_extent_max_mass_share` (default `0.02`, `DEFAULT_MIN_EXTENT_MAX_MASS_SHARE`; a config/YAML key, not a CLI flag) of the brightness, the fit, tile or box keeps its splats, prints one note, and records `min_extent_skipped: true`.
+
+**nD note.** The geometric mean is taken over the axes with non-zero variance: a STACKED time/channel axis (sigma 0 for every splat) is ignored, but in a native nD fit where time is itself a fitted axis, its sigma (in time steps) counts like a spatial one.
+
+Measured with held-out (Noise2Self) scoring, default 0.5-voxel reseed, pruned at 0.6 vs unpruned:
+
+| volume | splats | held-out fg PSNR | speck share (sigma 0.45-0.55) |
+|---|---|---|---|
+| A549 (K=4000) | -14% | -0.03 dB | 11% -> 0 |
+| A549 (K=16000) | -19% | -0.07 dB | 17% -> 0 |
+| Tribolium light-sheet | -23% | +0.40 dB | 23% -> 0 |
+| Allen DNA crop | -67% | -0.03 dB | 66% -> 0 |
+| cells3d nuclei | -16% | -0.05 dB | 14% -> 0 |
+| cells3d membrane | -8% | -0.06 dB | 7% -> 0 |
+| thin stack | -11% | -0.01 dB | 9% -> 0 |
+| A549 (K=8000, branch re-check) | -17% | -0.05 dB | 15% -> 0 |
+| Allen DNA crop (K=16000, branch re-check) | -70% | -0.04 dB | 67% -> 0 |
+
+`relocation_reseed_sigma_vox` (CLI `--reseed-sigma`, opt-in; default unchanged at 0.5) removes the specks at the source instead: 0.75-1.0 left none and fitted up to 2x faster, with held-out PSNR moving -0.02 to +0.41 dB across the first seven fits.
 
 ## Data Flow
 

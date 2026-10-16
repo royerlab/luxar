@@ -4,61 +4,138 @@ Visualization helpers for Gaussian splat fitting.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 from arbol import aprint, asection
 
-from luxar.gsplats.gsplat_data import GSplatData
 
+def _format_bytes(n_bytes: float) -> str:
+    """Human-readable size, formatted exactly like ``cli.utils.format_memory_size``.
 
-def display_compression_analysis(V: np.ndarray, result: GSplatData) -> None:
+    Duplicated rather than imported: ``gsplats`` sits below ``cli`` in the
+    import-linter layering contract.
     """
-    Calculate and display compression ratio analysis.
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if n_bytes < 1024.0:
+            return f"{n_bytes:.1f} {unit}"
+        n_bytes /= 1024.0
+    return f"{n_bytes:.1f} PB"
 
-    Compares the storage requirements of the original image vs the Gaussian splat representation.
+
+def compression_ratio(
+    source_bytes: Optional[float], stored_bytes: Optional[float]
+) -> Optional[float]:
+    """THE compression ratio Luxar quotes: decoded source bytes / stored bytes.
+
+    ``source_bytes`` is the source array's DECODED size in its own element type
+    (``voxels x itemsize`` — the ``source_bytes`` fit stat), and ``stored_bytes``
+    the bytes the ``.gsplats.zarr`` occupies ON DISK (``luxar.cli.utils.
+    store_size``). ``gsplat info``, ``fit``, ``compare`` and ``cull`` all quote
+    this one definition, so the same store gets the same number everywhere.
+    Returns None when either side is unknown or non-positive.
+    """
+    if not source_bytes or not stored_bytes or source_bytes <= 0 or stored_bytes <= 0:
+        return None
+    return float(source_bytes) / float(stored_bytes)
+
+
+def format_compression_ratio(ratio: float) -> str:
+    """``"1,234:1"`` for a whole-number-sized ratio, ``"0.52:1"`` below 10.
+
+    A stored artifact LARGER than its source (few voxels, many splats) is a real
+    outcome and must not round to a nonsensical ``"0:1"``.
+    """
+    return f"{ratio:,.0f}:1" if ratio >= 10 else f"{ratio:.2g}:1"
+
+
+def compression_lines(
+    source_bytes: Optional[int],
+    stored_bytes: Optional[int],
+    source_stored_bytes: Optional[int] = None,
+) -> List[str]:
+    """The compression figures, each labelled with its basis.
+
+    The primary figure is :func:`compression_ratio` (vs raw voxels). When the
+    source's own STORED size is known (``source_stored_bytes``, e.g. a
+    compressed download), a second line quotes the ratio against that too:
+    the raw-voxel figure flatters the splats by whatever the source codec was
+    already achieving, so quoting it alone invites reading it as the second.
+    """
+    lines: List[str] = []
+    raw = compression_ratio(source_bytes, stored_bytes)
+    if raw is not None:
+        lines.append(
+            f"{format_compression_ratio(raw)} vs raw voxels "
+            f"({_format_bytes(float(source_bytes or 0))} -> "
+            f"{_format_bytes(float(stored_bytes or 0))})"
+        )
+    vs_stored = compression_ratio(source_stored_bytes, stored_bytes)
+    if vs_stored is not None:
+        lines.append(
+            f"{format_compression_ratio(vs_stored)} vs the stored source "
+            f"({_format_bytes(float(source_stored_bytes or 0))} -> "
+            f"{_format_bytes(float(stored_bytes or 0))})"
+        )
+    return lines
+
+
+def display_compression_analysis(
+    source_bytes: Optional[int],
+    stored_bytes: Optional[int],
+    *,
+    n_splats: int,
+    source_voxels: Optional[int] = None,
+    source_stored_bytes: Optional[int] = None,
+) -> Optional[float]:
+    """Display the compression of a SAVED splat store against its source.
+
+    Uses the single :func:`compression_ratio` definition (decoded source bytes
+    over the store's bytes on disk), so the figure matches ``gsplat info``. It
+    needs a written store: an in-memory estimate from float32 parameter counts
+    is a different (and flattering-or-not, depending on the encoding) number,
+    which is why the fitter no longer prints one before saving.
 
     Parameters
     ----------
-    V : np.ndarray
-        Original input image/volume
-    result : GSplatData
-        Fitted Gaussian splat result
+    source_bytes : int or None
+        Decoded source size (``voxels x itemsize``), e.g. ``stats["source_bytes"]``.
+    stored_bytes : int or None
+        Bytes the saved store occupies on disk.
+    n_splats : int
+        Splats in the saved store (after any post-fit cull).
+    source_voxels : int, optional
+        Voxel count of the source, for the bits-per-voxel line.
+    source_stored_bytes : int, optional
+        The source's own on-disk size, for the "vs the stored source" line.
+
+    Returns
+    -------
+    float or None
+        The compression ratio, or None when it is not computable.
     """
     with asection("Compression Analysis"):
-        # Original image storage (assuming float32)
-        original_bytes = V.size * 4  # 4 bytes per float32
-        original_bits = original_bytes * 8
-
-        # Gaussian splat representation storage
-        # result contains: centers (d floats) + packed L matrix (tril_size(d) floats)
-        # + amplitude (1 float per splat)
-        n_splats = len(result.amplitudes)
-        d = len(V.shape)
-
-        from luxar.gsplats.utils.trils import tril_size
-
-        floats_per_splat = d + tril_size(d) + 1  # centers + covariance + amplitude
-        splat_bytes = n_splats * floats_per_splat * 4  # 4 bytes per float32
-        splat_bits = splat_bytes * 8
-
-        # Calculate compression metrics
-        compression_ratio = (
-            original_bytes / splat_bytes if splat_bytes > 0 else float("inf")
-        )
-        compression_percent = (
-            (1.0 - splat_bytes / original_bytes) * 100.0 if original_bytes > 0 else 0.0
-        )
-        bits_per_pixel = splat_bits / V.size
-
-        aprint(f"Original image: {original_bytes:,} bytes ({original_bits:,} bits)")
-        aprint(f"Splat representation: {splat_bytes:,} bytes ({splat_bits:,} bits)")
-        aprint(f"Compression ratio: {compression_ratio:.2f}:1")
-        aprint(f"Space savings: {compression_percent:.1f}%")
-        aprint(f"Bits per pixel: {bits_per_pixel:.3f} (original: 32.000)")
-        aprint(
-            f"Storage efficiency: {n_splats} splats ({floats_per_splat} floats each)"
-        )
+        lines = compression_lines(source_bytes, stored_bytes, source_stored_bytes)
+        if not lines:
+            reason = (
+                "source size not recorded"
+                if not source_bytes
+                else "store size unavailable"
+            )
+            aprint(f"Compression ratio: unknown ({reason})")
+            return None
+        for k, line in enumerate(lines):
+            aprint(
+                f"Compression ratio: {line}" if k == 0 else f"                   {line}"
+            )
+        if source_voxels and stored_bytes:
+            src_bits = 8.0 * float(source_bytes or 0) / float(source_voxels)
+            aprint(
+                f"Bits per voxel: {8.0 * stored_bytes / source_voxels:.3f} "
+                f"(source: {src_bits:.3f})"
+            )
+        aprint(f"Splats stored: {n_splats:,}")
+        return compression_ratio(source_bytes, stored_bytes)
 
 
 def show_optimization_movie(movie_frames: Dict[str, Any], shape: tuple) -> None:

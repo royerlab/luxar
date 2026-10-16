@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { isMacPlatform } from '../../../utils/platform';
+import { isMacPlatform, platformName } from '../../../utils/platform';
 
 describe('isMacPlatform', () => {
   const realNavigator = globalThis.navigator;
@@ -85,5 +85,34 @@ describe('isMacPlatform', () => {
     it('returns false when navigator is undefined (Node/SSR fallback)', () => {
       expect(isMacPlatform()).toBe(false);
     });
+  });
+});
+
+describe('platformName', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('returns an empty name outside a browser', () => {
+    vi.stubGlobal('navigator', undefined);
+    expect(platformName()).toBe('');
+  });
+
+  it('prefers the UA client hint when present', () => {
+    vi.stubGlobal('navigator', { platform: 'MacIntel', userAgentData: { platform: 'Windows' } });
+    expect(platformName()).toBe('Windows');
+  });
+
+  it('maps a Mac platform to macOS when the client hint is absent', () => {
+    vi.stubGlobal('navigator', { platform: 'MacIntel' });
+    expect(platformName()).toBe('macOS');
+  });
+
+  it('uses the raw platform when it is not a Mac', () => {
+    vi.stubGlobal('navigator', { platform: 'Linux x86_64', userAgentData: { platform: '' } });
+    expect(platformName()).toBe('Linux x86_64');
+  });
+
+  it('returns an empty name when the platform is not a string', () => {
+    vi.stubGlobal('navigator', { platform: undefined });
+    expect(platformName()).toBe('');
   });
 });

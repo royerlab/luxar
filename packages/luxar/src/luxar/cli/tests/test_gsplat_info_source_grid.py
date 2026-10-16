@@ -200,7 +200,8 @@ def test_info_says_when_the_source_grid_was_declared_rather_than_measured(
     """
     from types import SimpleNamespace
 
-    from luxar.cli.gsplat_ops.inspect_commands import _print_source_grid, _store_size
+    from luxar.cli.gsplat_ops.inspect_commands import _print_source_grid
+    from luxar.cli.utils import store_size as _store_size
 
     store = tmp_path / "declared.gsplats.zarr"
     store.mkdir()
@@ -244,7 +245,8 @@ def test_an_artifact_larger_than_its_source_is_not_reported_as_0_to_1(
     """
     from types import SimpleNamespace
 
-    from luxar.cli.gsplat_ops.inspect_commands import _print_source_grid, _store_size
+    from luxar.cli.gsplat_ops.inspect_commands import _print_source_grid
+    from luxar.cli.utils import store_size as _store_size
 
     store = tmp_path / "expanded.gsplats.zarr"
     store.mkdir()
@@ -279,7 +281,8 @@ def test_both_compression_ratios_are_printed_with_their_bases_named(
     """
     from types import SimpleNamespace
 
-    from luxar.cli.gsplat_ops.inspect_commands import _print_source_grid, _store_size
+    from luxar.cli.gsplat_ops.inspect_commands import _print_source_grid
+    from luxar.cli.utils import store_size as _store_size
 
     store = tmp_path / "both.gsplats.zarr"
     store.mkdir()

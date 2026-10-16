@@ -24,10 +24,18 @@ from .fit_utils import (
     resolve_denoise_h,
     resolve_floor_with_calibration,
     validate_and_build_recipe,
+    validate_hygiene_flags,
     warn_ignored_density_flags,
 )
 from .fit_utils import (
     resolve_tiling as _resolve_tiling_impl,
+)
+
+#: Where the long-form `fit` flag semantics live (``--floor``,
+#: ``--cull-retention``). A URL, not a source path: a pip install has no README.
+FIT_CLI_DOCS_URL = (
+    "https://github.com/royerlab/luxar/blob/main/packages/luxar/src/luxar/"
+    "cli/README.md#luxar-gsplat-fit"
 )
 
 
@@ -202,16 +210,25 @@ def run_fit_volume(
         ),
     ),
     iters: Optional[int] = typer.Option(
-        None, "--iters", "-n", help="Max optimization iterations"
+        None,
+        "--iters",
+        "-n",
+        help="Max optimization iterations (default: the preset's; 5000 for the "
+        "standard preset used when --preset is omitted).",
     ),
     device: Optional[str] = typer.Option(
         None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
     ),
     preset: Optional[str] = typer.Option(
-        None, "--preset", help="Parameter preset: draft/standard/hifi/ultra/n2s"
+        None,
+        "--preset",
+        help="Parameter preset: draft/standard/hifi/ultra/n2s (default: standard).",
     ),
     loss: Optional[str] = typer.Option(
-        None, "--loss", help="Loss function: l1/mse/poisson"
+        None,
+        "--loss",
+        help="Loss function: l1/mse/poisson",
+        rich_help_panel="Advanced",
     ),
     config: Optional[Path] = typer.Option(
         None, "--config", help="YAML config file for full parameter control"
@@ -252,27 +269,14 @@ def run_fit_volume(
         rich_help_panel="Input selection",
     ),
     # Frequently used fit params
-    lr: Optional[float] = typer.Option(None, "--lr", help="Learning rate"),
+    lr: Optional[float] = typer.Option(
+        None, "--lr", help="Learning rate", rich_help_panel="Advanced"
+    ),
     floor: Optional[str] = typer.Option(
         None,
         "--floor",
-        help="Background floor / DC-offset suppression before normalization "
-        "(default: auto). auto = histogram-mode estimate (capped at median; "
-        "no-op on clean data) | specimen = upper compact mode above a "
-        "bimodal low-band split, falling back to auto | pN = Nth percentile "
-        "(e.g. p10) | <float> = "
-        "fixed value | none or 0 = disable (hard-min normalization). auto and "
-        "pN ignore exact-zero padding. Negative user levels are rejected; a "
-        "negative estimate from dark-frame-corrected data is preserved. The "
-        "erase-all guard compares against a `norm_range:` supplied in "
-        "--config; "
-        "otherwise it uses the data maximum, not the configured normalization "
-        "percentile's high endpoint. A configured "
-        "norm_percentile may still raise the applied low endpoint above the "
-        "requested floor. Unset lets a "
-        "`floor:` in --config/preset apply, else defaults to auto. Under any "
-        "--tiling the spec is resolved against the WHOLE volume — never a tile "
-        "or box crop — so every tile/box works from the same level.",
+        help="Background floor subtracted before normalization: auto (default) "
+        f"| specimen | pN | <float> | none. Details: {FIT_CLI_DOCS_URL}",
     ),
     norm_range: Optional[str] = typer.Option(
         None,
@@ -293,7 +297,10 @@ def run_fit_volume(
         help="Internal batch worker handoff: enable physical content-box geometry.",
     ),
     seed_method: Optional[str] = typer.Option(
-        None, "--seed-method", help="Seed generation method"
+        None,
+        "--seed-method",
+        help="Seed generation method",
+        rich_help_panel="Advanced",
     ),
     verbose: bool = typer.Option(True, "--verbose/--quiet", help="Verbose output"),
     # Downscaling
@@ -303,6 +310,7 @@ def run_fit_volume(
         help="Downsample volume by integer factor before fitting. "
         "Single value (e.g., '4') or per-axis comma-separated (e.g., '1,4,4'). "
         "Anti-alias Gaussian blur applied before decimation.",
+        rich_help_panel="Advanced",
     ),
     # Tiled fitting
     tiling: str = typer.Option(
@@ -567,7 +575,8 @@ def run_fit_volume(
     plan_only: bool = typer.Option(
         False,
         "--plan-only",
-        help="With --tiling content: write the FitPlan JSON to OUTPUT and stop.",
+        help="With --tiling content: write the FitPlan JSON to OUTPUT and stop "
+        "(a store-like OUTPUT such as out.gsplats.zarr becomes out.plan.json).",
         rich_help_panel="Plan I/O",
     ),
     plan_box: Optional[int] = typer.Option(
@@ -610,17 +619,29 @@ def run_fit_volume(
     cull_retention: Optional[float] = typer.Option(
         None,
         "--cull-retention",
-        help="After fitting, remove the weakest splats that collectively "
-        "contribute less than (1 - value) of the total amplitude. "
-        "A --tile k/M worker applies this independently to its tile; batch-fit "
-        "does the same before merging, so --flat approximates rather than exactly "
-        "matches one global cull over the merged splats. "
-        "For example, an aggressive 0.95 discards splats "
-        "in the bottom 5% of cumulative amplitude; how many splats that is "
-        "depends on how heavy-tailed the data is, and on a sparse volume it can "
-        "be most of them. The bare fitter and every --preset use 0.999 "
-        "(near-lossless), as does --tiling content without a preset. "
-        "Set to 0 to keep every splat.",
+        help="Post-fit cull: drop the weakest splats holding less than "
+        "(1 - value) of the total amplitude (every preset: 0.999; 0 keeps "
+        f"all). Details: {FIT_CLI_DOCS_URL}",
+        rich_help_panel="Advanced",
+    ),
+    # Speck pruning (post-fit)
+    min_extent: Optional[float] = typer.Option(
+        None,
+        "--min-extent",
+        help="After the fit, drop sub-voxel 'specks': splats whose geometric-mean "
+        "spatial sigma is below this many fitted voxels (default: 0.6; 0 keeps "
+        "them). Measured on nine fits: 8-70% fewer splats, held-out PSNR "
+        "within -0.07 dB. Skipped (with a note) when it would remove >2% of "
+        "the brightness. The removed count and brightness share are reported "
+        "and stored.",
+    ),
+    reseed_sigma: Optional[float] = typer.Option(
+        None,
+        "--reseed-sigma",
+        help="Sigma (voxels) a relocated splat is reseeded at (default: 0.5). "
+        "0.75-1.0 leaves no specks and fits up to 2x faster; held-out PSNR "
+        "moved -0.02 to +0.41 dB across seven measured fits. Opt-in.",
+        rich_help_panel="Advanced",
     ),
     # Denoising
     denoise: bool = typer.Option(
@@ -666,9 +687,9 @@ def run_fit_volume(
     splats. Use presets for quick configuration or a YAML config file for
     full control over all ~35 parameters.
 
-    Presets:
+    Presets (no --preset = standard):
         draft    - Fast preview (2000 iters)
-        standard - Balanced quality/speed (5000 iters)
+        standard - Balanced quality/speed (5000 iters) [default]
         hifi     - High quality (10000 iters)
         ultra    - Maximum quality (20000 iters)
 
@@ -691,13 +712,14 @@ def run_fit_volume(
         luxar gsplat fit volume.tiff splats.gsplats.zarr --progressive --seeds 50000 --splats-per-pass 5000 --psnr-patience 0.3
     """
     from luxar.cli.gsplat_config import (
+        DEFAULT_FIT_PRESET,
         dump_default_config,
         load_volume,
     )
 
     # Handle --dump-config: print and exit (no input/output needed)
     if dump_config:
-        typer.echo(dump_default_config(preset or "standard"))
+        typer.echo(dump_default_config(preset or DEFAULT_FIT_PRESET))
         raise typer.Exit(0)
 
     # Validate required args (optional for --dump-config)
@@ -710,6 +732,7 @@ def run_fit_volume(
     if not input_path.exists():
         aprint(f"Error: Input file not found: {input_path}")
         raise typer.Exit(1)
+    validate_hygiene_flags(min_extent, reseed_sigma)
     parsed_norm_range = _parse_norm_range(norm_range)
     parsed_voxel_size = _parse_voxel_size(voxel_size)
     parsed_tile_region, parsed_tile_volume_shape = _parse_tile_worker_metadata(
@@ -829,6 +852,8 @@ def run_fit_volume(
                 psnr_patience=psnr_patience,
                 max_passes=max_passes,
                 cull_retention=cull_retention,
+                min_extent=min_extent,
+                reseed_sigma=reseed_sigma,
                 denoise=denoise,
                 denoise_h=denoise_h,
                 denoise_2d=denoise_2d,
@@ -903,6 +928,8 @@ def run_fit_volume(
                     voxel_size=parsed_voxel_size,
                     physical_coordinates=physical_coordinates,
                     cull_retention=cull_retention,
+                    min_extent=min_extent,
+                    reseed_sigma=reseed_sigma,
                     device=device,
                     jobs=jobs,
                     keep_boxes=keep_tiles,

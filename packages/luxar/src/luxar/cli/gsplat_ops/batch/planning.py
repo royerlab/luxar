@@ -57,6 +57,8 @@ class FitConfig:
     psnr_patience: Optional[float] = None
     max_passes: Optional[int] = None
     cull_retention: Optional[float] = None
+    min_extent: Optional[float] = None
+    reseed_sigma: Optional[float] = None
 
 
 @dataclass
@@ -1972,14 +1974,17 @@ def _assemble_fit_args(
     # writer of that key (it forwards the resolved LEVEL, not the spec, #1174).
     if fit.progressive:
         fit_args["progressive"] = ""  # boolean flag, no value
-    if fit.splats_per_pass is not None:
-        fit_args["splats-per-pass"] = str(fit.splats_per_pass)
-    if fit.psnr_patience is not None:
-        fit_args["psnr-patience"] = str(fit.psnr_patience)
-    if fit.max_passes is not None:
-        fit_args["max-passes"] = str(fit.max_passes)
-    if fit.cull_retention is not None:
-        fit_args["cull-retention"] = str(fit.cull_retention)
+    # Optional valued flags: forwarded only when set (a table, not a branch each).
+    for flag, value in (
+        ("splats-per-pass", fit.splats_per_pass),
+        ("psnr-patience", fit.psnr_patience),
+        ("max-passes", fit.max_passes),
+        ("cull-retention", fit.cull_retention),
+        ("min-extent", fit.min_extent),
+        ("reseed-sigma", fit.reseed_sigma),
+    ):
+        if value is not None:
+            fit_args[flag] = str(value)
 
     denoise_mode: Optional[str] = None
     if denoise.denoise:
@@ -2490,7 +2495,7 @@ def plan_batch(
             med, mx = content_plan.overlap_fraction()
             aprint(
                 f"Plan: {content_plan.n_boxes} boxes, total budget "
-                f"{content_plan.total_budget:,} splats, overlap median "
+                f"{content_plan.total_budget:,} splats, halo overhead median "
                 f"{med:.0%} / max {mx:.0%} → {plan_path_obj}"
             )
         n_tiles = content_plan.n_boxes

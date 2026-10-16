@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
+import sys
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -230,6 +232,35 @@ class TestLoadFitConfig:
         assert "n_iters" in config
         assert "lr" in config
 
+    def test_no_preset_resolves_the_standard_preset(self) -> None:
+        """A bare CLI fit is the ``standard`` preset, not the 1000-iteration
+        function defaults (which stay what Python callers of
+        ``fit_gaussian_splats`` get)."""
+        import inspect
+
+        from luxar.cli.gsplat_config import DEFAULT_FIT_PRESET
+        from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+
+        assert DEFAULT_FIT_PRESET == "standard"
+        assert load_fit_config() == load_fit_config(preset="standard")
+        assert load_fit_config()["n_iters"] == PRESETS["standard"]["n_iters"]
+        assert (
+            load_fit_config()["early_stop_patience"]
+            == PRESETS["standard"]["early_stop_patience"]
+        )
+        # The Python API default is deliberately unchanged.
+        sig = inspect.signature(fit_gaussian_splats)
+        assert sig.parameters["n_iters"].default == 1000
+
+    def test_partial_yaml_without_preset_layers_on_standard(
+        self, tmp_path: Path
+    ) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("lr: 0.02\n")
+        config = load_fit_config(config_path=yaml_path)
+        assert config["lr"] == 0.02
+        assert config["n_iters"] == PRESETS["standard"]["n_iters"]
+
     def test_preset_overrides_defaults(self) -> None:
         config = load_fit_config(preset="draft")
         assert config["n_iters"] == 2000
@@ -298,9 +329,10 @@ class TestLoadFitConfig:
         This is the only layer that can: `setdefault` on the resolved config is a
         no-op, because every signature default is already a key by then.
         """
-        assert load_fit_config()["cull_retention"] == 0.999  # function default
-        config = load_fit_config(command_defaults={"cull_retention": 0.75})
-        assert config["cull_retention"] == 0.75
+        # `lr` is set by no preset, so the default preset leaves it alone.
+        assert load_fit_config()["lr"] == 0.01  # function default
+        config = load_fit_config(command_defaults={"lr": 0.075})
+        assert config["lr"] == 0.075
 
     def test_preset_beats_command_defaults(self) -> None:
         config = load_fit_config(
@@ -329,8 +361,8 @@ class TestLoadFitConfig:
 
     def test_command_defaults_skip_none_values(self) -> None:
         """A sentinel-free dict: a None entry leaves the layer below alone."""
-        config = load_fit_config(command_defaults={"cull_retention": None})
-        assert config["cull_retention"] == 0.999
+        config = load_fit_config(command_defaults={"lr": None})
+        assert config["lr"] == 0.01
 
     def test_omitting_command_defaults_changes_nothing(self) -> None:
         assert load_fit_config() == load_fit_config(command_defaults=None)
@@ -632,6 +664,7 @@ _DUMP_CONFIG_HIFI_GOLDEN = """\
 # Luxar Gaussian Splat Fitting Configuration
 # ============================================================
 # Base preset: hifi
+# (`luxar gsplat fit` with no --preset uses the standard preset)
 # Priority: CLI flags > YAML config > preset > command defaults > function defaults
 #
 # Usage:
@@ -676,9 +709,12 @@ early_stop_patience: 400  # Stop after N iters without improvement
 # --- Dynamic Operations ---
 enable_dynamic_ops: true  # Enable splat relocation during optimization
 dynamic_ops_verbose: false  # Verbose logging for dynamic ops
+relocation_reseed_sigma_vox: null  # Reseed sigma of relocated splats, voxels (null=0.5; --reseed-sigma)
 
 # --- Post-Processing ---
 cull_retention: 0.999  # Post-fit cumulative culling (0-1, null=disabled)
+min_extent: 0.6         # Drop sub-voxel specks: spatial sigma < N fitted voxels (0=keep; --min-extent)
+min_extent_max_mass_share: 0.02  # Skip that pruning when it would remove more of the brightness
 voxel_footprint_correction: false  # Inflate covariances by voxel footprint
 
 # --- Boundary Containment ---
@@ -734,6 +770,112 @@ class TestFitCommand:
         parsed = yaml.safe_load(result.stdout)
         assert parsed["floor"] == "auto"
 
+    def test_fit_help_exposes_speck_flags(self, runner: CliRunner) -> None:
+        result = runner.invoke(app, ["gsplat", "fit", "--help"])
+        assert result.exit_code == 0
+        text = _plain(result.stdout)
+        assert "--min-extent" in text
+        assert "--reseed-sigma" in text
+
+    def test_dump_config_includes_speck_keys(self, runner: CliRunner) -> None:
+        result = runner.invoke(app, ["gsplat", "fit", "--dump-config"])
+        assert result.exit_code == 0
+        parsed = yaml.safe_load(result.stdout)
+        assert parsed["min_extent"] == 0.6
+        assert parsed["min_extent_max_mass_share"] == 0.02
+        assert parsed["relocation_reseed_sigma_vox"] is None
+
+    def test_fit_forwards_min_extent_and_reseed_sigma(
+        self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
+    ) -> None:
+        """`--min-extent` / `--reseed-sigma` reach the fitter and the store."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out = tmp_path / "speck.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(out),
+                "--iters",
+                "5",
+                "--seeds",
+                "10",
+                "--device",
+                "cpu",
+                "--min-extent",
+                "0.7",
+                "--reseed-sigma",
+                "0.9",
+                "--quiet",
+            ],
+        )
+        assert result.exit_code == 0, f"fit failed: {result.stdout}"
+        stats = GSplatData.load(out, include_stats=True).stats
+        assert stats["relocation_reseed_sigma_vox_effective"] == pytest.approx(0.9)
+        assert stats["min_extent_vox"] == pytest.approx(0.7)
+        assert "min_extent_removed" in stats
+
+    @pytest.mark.parametrize(
+        "flag, value", [("--min-extent", "-1"), ("--reseed-sigma", "0")]
+    )
+    def test_fit_rejects_bad_speck_flags(
+        self,
+        runner: CliRunner,
+        small_volume_npy: Path,
+        tmp_path: Path,
+        flag: str,
+        value: str,
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(tmp_path / "bad.gsplats.zarr"),
+                flag,
+                value,
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        assert flag in _plain(result.output)
+        assert not (tmp_path / "bad.gsplats.zarr").exists()
+
+    def test_tile_and_box_workers_forward_speck_flags(self) -> None:
+        from luxar.gsplats.fit_tiled_parallel import build_worker_cmd
+        from luxar.gsplats.planner.fit_planned_parallel import (
+            _default_worker_cmd_builder,
+        )
+
+        cmd = build_worker_cmd(
+            ["luxar"],
+            "in.npy",
+            "out.zarr",
+            0,
+            2,
+            64,
+            8,
+            min_extent=0.0,
+            reseed_sigma=0.9,
+        )
+        assert cmd[cmd.index("--min-extent") + 1] == "0.0"
+        assert cmd[cmd.index("--reseed-sigma") + 1] == "0.9"
+        bare = build_worker_cmd(["luxar"], "in.npy", "out.zarr", 0, 2, 64, 8)
+        assert "--min-extent" not in bare and "--reseed-sigma" not in bare
+
+        box = _default_worker_cmd_builder(
+            "in.npy", "plan.json", min_extent=0.8, reseed_sigma=1.0
+        )(0, Path("box.zarr"))
+        assert box[box.index("--min-extent") + 1] == "0.8"
+        assert box[box.index("--reseed-sigma") + 1] == "1.0"
+        bare_box = _default_worker_cmd_builder("in.npy", "plan.json")(
+            0, Path("box.zarr")
+        )
+        assert "--min-extent" not in bare_box
+
     def test_cal_help_exposes_floor_flag(self, runner: CliRunner) -> None:
         result = runner.invoke(app, ["gsplat", "cal", "--help"])
         assert result.exit_code == 0
@@ -761,6 +903,75 @@ class TestFitCommand:
         )
         assert result.exit_code == 0, f"fit failed: {result.stdout}"
         assert out.exists()
+
+    def test_cpu_fit_warns_once_in_cli_output(
+        self, small_volume_npy: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "cpu.gsplats.zarr"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from luxar.cli import app; app()",
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(out),
+                "--device",
+                "cpu",
+                "--iters",
+                "1",
+                "--seeds",
+                "2",
+                "--tiling",
+                "none",
+                "--quiet",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        output = result.stdout + result.stderr
+        assert result.returncode == 0, f"fit failed: {output}"
+        assert output.count("Gaussian splat fitting is running on CPU") == 1
+
+    def test_tiled_cpu_fit_warns_once_in_cli_output(self, tmp_path: Path) -> None:
+        volume_path = tmp_path / "tiled-volume.npy"
+        np.save(volume_path, np.ones((40, 40, 40), dtype=np.float32))
+        out = tmp_path / "tiled-cpu.gsplats.zarr"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from luxar.cli import app; app()",
+                "gsplat",
+                "fit",
+                str(volume_path),
+                str(out),
+                "--device",
+                "cpu",
+                "--iters",
+                "2",
+                "--seeds",
+                "40",
+                "--tiling",
+                "uniform",
+                "--tile-size",
+                "24",
+                "--overlap",
+                "4",
+                "--quiet",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        output = result.stdout + result.stderr
+        assert result.returncode == 0, f"fit failed: {output}"
+        assert (out / "part_7").is_dir()
+        assert output.count("Gaussian splat fitting is running on CPU") == 1
 
     def test_fit_accepts_auto_device(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
@@ -10293,8 +10504,8 @@ class TestInfoPartitionSize:
         assert r.exit_code == 0, f"failed:\n{r.stdout}"
         text = _plain(r.stdout)
         assert "Root kind: partition" in text  # the tree-summary path, not the flat one
-        from luxar.cli.gsplat_ops.inspect_commands import _store_size
         from luxar.cli.utils import format_memory_size
+        from luxar.cli.utils import store_size as _store_size
 
         assert f"Size: {format_memory_size(_store_size(out))}" in text, text
 
@@ -10636,4 +10847,227 @@ class TestRefineVolumeRejectsARescaledFrame:
         """A spacing of 1 is an identity, not a frame change."""
         self._run_past_the_guard(
             runner, tmp_path, monkeypatch, "voxel_size: 1.0\n", "unit"
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# WP2: fit defaults, sizes, compression basis, help text, info on images
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestFitHelpAndDefaults:
+    def test_fit_help_names_the_default_preset_and_iterations(
+        self, runner: CliRunner
+    ) -> None:
+        result = runner.invoke(app, ["gsplat", "fit", "--help"])
+        assert result.exit_code == 0
+        text = _plain(result.stdout)
+        assert "default: standard" in text
+        assert "5000" in text
+
+    def test_fit_help_groups_tuning_knobs_under_advanced(
+        self, runner: CliRunner
+    ) -> None:
+        result = runner.invoke(app, ["gsplat", "fit", "--help"])
+        text = _plain(result.stdout)
+        assert "Advanced" in text
+        advanced = text.split("Advanced", 1)[1]
+        for flag in (
+            "--lr",
+            "--loss",
+            "--seed-method",
+            "--downscale",
+            "--cull-retention",
+        ):
+            assert flag in advanced, f"{flag} is not in the Advanced panel"
+
+    def test_fit_help_floor_and_cull_retention_are_short(self) -> None:
+        """Long-form semantics live in the CLI README, not in ``--help``."""
+        import inspect
+
+        from luxar.cli.gsplat_ops.fitting.fit import run_fit_volume
+
+        params = inspect.signature(run_fit_volume).parameters
+        helps = {
+            name: params[name].default.help or ""
+            for name in ("floor", "cull_retention")
+        }
+        from luxar.cli.gsplat_ops.fitting.fit import FIT_CLI_DOCS_URL
+
+        assert FIT_CLI_DOCS_URL.startswith("https://")
+        for name in ("floor", "cull_retention"):
+            assert FIT_CLI_DOCS_URL in helps[name]
+            prose = helps[name].replace(FIT_CLI_DOCS_URL, "")
+            assert len(prose) < 220, f"--{name} help is long again"
+
+    def test_gsplat_group_help_says_standard_preset(self, runner: CliRunner) -> None:
+        result = runner.invoke(app, ["gsplat", "--help"])
+        text = " ".join(_plain(result.stdout).replace("│", " ").split())
+        assert "auto settings" not in text
+        assert "standard preset" in text
+
+
+class TestStoreSizeReporting:
+    def test_store_size_sums_a_directory_store(self, sample_gsplats: Path) -> None:
+        from luxar.cli.utils import store_size
+
+        total = sum(f.stat().st_size for f in sample_gsplats.rglob("*") if f.is_file())
+        assert store_size(sample_gsplats) == total
+        # The directory entry itself is NOT the store's size.
+        assert store_size(sample_gsplats) > sample_gsplats.stat().st_size
+
+    def test_store_size_of_a_file_and_a_missing_path(self, tmp_path: Path) -> None:
+        from luxar.cli.utils import store_size
+
+        f = tmp_path / "a.bin"
+        f.write_bytes(b"x" * 1234)
+        assert store_size(f) == 1234
+        assert store_size(tmp_path / "missing") == 0
+
+    def test_transform_reports_the_real_output_size(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        from luxar.cli.utils import format_memory_size, store_size
+
+        out = tmp_path / "scaled.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "transform", str(sample_gsplats), str(out), "--scale", "2,2,2"],
+        )
+        assert result.exit_code == 0, result.stdout
+        assert f"Size: {format_memory_size(store_size(out))}" in _plain(result.stdout)
+
+
+class TestTransformArity:
+    def test_scale_arity_error_names_the_axis_order(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "transform",
+                str(sample_gsplats),
+                str(tmp_path / "o.gsplats.zarr"),
+                "--scale",
+                "4,1,1,1",
+            ],
+        )
+        assert result.exit_code != 0
+        text = normalized_cli_output(result)
+        assert "expects 3" in text
+        assert "array axis order" in text
+
+    def test_scale_help_and_docstring_agree(self, runner: CliRunner) -> None:
+        result = runner.invoke(app, ["gsplat", "transform", "--help"])
+        text = _plain(result.stdout)
+        assert "--scale 4,1,1 " in text
+        assert "'4,1,1'" in text
+        assert "4,1,1,1" not in text
+        assert "1,1,1,4" not in text
+
+
+class TestInfoOnImageVolume:
+    @pytest.mark.parametrize("suffix", [".tif", ".tiff", ".npy", ".npz"])
+    def test_info_on_an_image_file_says_fit_it_first(
+        self, runner: CliRunner, tmp_path: Path, suffix: str
+    ) -> None:
+        path = tmp_path / f"stack{suffix}"
+        path.write_bytes(b"\0" * 64)
+        result = runner.invoke(app, ["gsplat", "info", str(path)])
+        assert result.exit_code == 1
+        text = _plain(result.stdout)
+        assert "image volume" in text
+        assert "luxar gsplat fit" in text
+        assert "Traceback" not in result.output
+
+    def test_info_on_a_plain_image_zarr_says_fit_it_first(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "vol.zarr"
+        root = zc_open_group(str(path), mode="w")
+        create_array(
+            root,
+            "0",
+            data=np.zeros((4, 8, 8), dtype=np.uint16),
+            chunks=(4, 8, 8),
+            compressor=None,
+        )
+        root.attrs["multiscales"] = [{"datasets": [{"path": "0"}]}]
+        result = runner.invoke(app, ["gsplat", "info", str(path)])
+        assert result.exit_code == 1
+        text = _plain(result.stdout)
+        assert "OME-Zarr image" in text
+        assert "luxar gsplat fit" in text
+
+    def test_info_on_a_real_store_is_unaffected(
+        self, runner: CliRunner, sample_gsplats: Path
+    ) -> None:
+        result = runner.invoke(app, ["gsplat", "info", str(sample_gsplats)])
+        assert result.exit_code == 0, result.stdout
+        assert "image volume" not in _plain(result.stdout)
+
+
+class TestSingleCompressionRatio:
+    def test_info_and_compare_quote_the_same_ratio(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """`compare` and `info` share one basis: decoded source / stored store."""
+        pytest.importorskip("torch")
+        import json
+
+        from luxar.cli.utils import store_size
+        from luxar.gsplats.fitting.visualization import (
+            compression_ratio,
+            format_compression_ratio,
+        )
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        vol = np.zeros((8, 16, 16), dtype=np.uint16)
+        vol[3:5, 6:10, 6:10] = 1000
+        ref = tmp_path / "ref.npy"
+        np.save(ref, vol)
+        n = 4
+        data = GSplatData(
+            centers=np.array(
+                [[4, 8, 8], [4, 7, 7], [3, 8, 9], [4, 9, 8]], dtype=np.float32
+            ),
+            amplitudes=np.full(n, 100.0, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (n, 1)
+            ),
+            stats={
+                "source_shape": list(vol.shape),
+                "source_voxels": int(vol.size),
+                "source_dtype": "uint16",
+                "source_bytes": int(vol.nbytes),
+            },
+        )
+        store = tmp_path / "s.gsplats.zarr"
+        data.save(store)
+        expected = compression_ratio(vol.nbytes, store_size(store))
+        assert expected is not None
+
+        metrics = tmp_path / "m.json"
+        r = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "compare",
+                str(store),
+                str(ref),
+                "--device",
+                "cpu",
+                "--output-json",
+                str(metrics),
+            ],
+        )
+        assert r.exit_code == 0, r.stdout
+        got = json.loads(metrics.read_text())["compression_ratio"]
+        assert got == pytest.approx(expected)
+
+        info = runner.invoke(app, ["gsplat", "info", str(store), "--no-histograms"])
+        assert info.exit_code == 0, info.stdout
+        assert f"compression: {format_compression_ratio(expected)} vs raw voxels" in (
+            _plain(info.stdout)
         )

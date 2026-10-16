@@ -264,6 +264,12 @@ _FITTING_INFO_KEYS = (
     "splats_near_relocation_init_sigma_unrelocated_count",
     "splats_near_sigma_min_count",
     "splats_near_sigma_min_fraction",
+    # Closing speck pruning (`min_extent`).
+    "min_extent_vox",
+    "min_extent_removed",
+    "min_extent_removed_mass_share",
+    "min_extent_input_mass",
+    "min_extent_skipped",
     # Internal packed classifications carried only by intermediate tile stores.
     "_fit_scale_population_bits",
     # What the splats represent. These describe the fit's INPUT, so they belong

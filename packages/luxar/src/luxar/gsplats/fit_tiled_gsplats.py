@@ -37,6 +37,10 @@ from luxar.gsplats.fitting.preprocessing import (
     resolve_volume_norm_range_denoised,
 )
 from luxar.gsplats.fitting.results import stamp_voxels_per_splat
+from luxar.gsplats.fitting.splat_hygiene import (
+    aggregate_min_extent_stats,
+    format_min_extent_line,
+)
 from luxar.gsplats.fitting.validation import _validate_floor
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.merged_quality import stamp_merged_quality
@@ -374,9 +378,14 @@ def _cull_keeping_measured_scores(data: GSplatData, retention: float) -> GSplatD
 
     ``cull`` drops inherited reconstruction scores, because a score describes the
     splat set it was taken on (#1600). This trim is the last step of the FIT
-    rather than a rewrite of a published artifact, and re-scoring would cost a
-    second full render of the volume — so the measurement is carried across, the
-    way it always was. See
+    rather than a rewrite of a published artifact, so the measurement is carried
+    across. What that leaves PRE-cull is precise: on the partition path each
+    PART keeps its own tile fit's score of its (apodized) crop, measured before
+    this trim — re-rendering every tile crop again is not paid for. The
+    WHOLE-VOLUME merged score is not carried: ``stamp_merged_quality`` measures
+    it afterwards on the culled, saved set (flat merge and partition alike), and
+    when its memory budget declines there is no merged score at all rather than
+    a stale one. See
     :func:`luxar.gsplats._data.filtering.content_scoped_stats` for why a later
     ``gsplat cull`` gets no such exemption.
     """
@@ -1061,7 +1070,20 @@ def _merged_fit_stats(
     )
     stamp_voxels_per_splat(stats, delivered_splats)
     _aggregate_relocation_diagnostics(stats, results)
+    aggregate_min_extent_stats([result.stats or {} for result in results], stats)
     return stats
+
+
+def _report_merged_min_extent(stats: dict[str, Any], *, verbose: bool) -> None:
+    """Print the merged speck-pruning record.
+
+    Each tile/box pruned its own specks (``min_extent`` rides in the per-tile
+    fit kwargs) and recorded them; :func:`_merged_fit_stats` summed those.
+    """
+    if verbose:
+        line = format_min_extent_line(stats)
+        if line:
+            aprint(line)
 
 
 def fit_tiled(
@@ -1581,6 +1603,7 @@ def merge_tile_results(
             image_min=fit_image_min(node.meta),
             stats=fit_stats,
         )
+        _report_merged_min_extent(fit_stats, verbose=verbose)
         node.meta["fit_stats"] = fit_stats
         if verbose:
             lod_note = f", per-part recipe={recipe}" if recipe else ""
@@ -1645,6 +1668,7 @@ def merge_tile_results(
         verbose=verbose,
         image_min=fit_image_min(merged.stats),
     )
+    _report_merged_min_extent(merged.stats, verbose=verbose)
 
     return merged
 

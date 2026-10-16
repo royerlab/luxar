@@ -72,6 +72,9 @@ function wireRenderOnChange(
       'Render audit on (?renderAudit): every tick renders and is checked'
     );
     events.add(() => animationController.setRenderAudit(null));
+    // The audit reads the canvas back through an 8-bit 2D canvas, which clips
+    // an HDR canvas above SDR white: audit the SDR curve instead.
+    events.add(sceneManager.postProcessing.holdSdrOutput());
   }
 }
 
@@ -182,6 +185,8 @@ export async function runInitPipeline(
     renderer: ports.options.renderer,
     webgpuForceWebGL: ports.options.webgpuForceWebGL,
     perfTimestamp: ports.options.perfTimestamp,
+    hdr: ports.options.hdr ?? true,
+    hdrHeadroom: ports.options.hdrHeadroom,
     // Mobile GPUs can spend 50-300 ms linking each blend variant, and Safari
     // before 18.2 has no requestIdleCallback to hide that work. Resolve the
     // device default here so direct LuxarApp embedders get the same protection
