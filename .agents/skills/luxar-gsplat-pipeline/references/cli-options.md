@@ -117,8 +117,8 @@ This near-lossless trim keeps 99.9% of cumulative amplitude. The earlier 0.95
 flat default could produce a false `signal_limited` curve in `cal`, along with
 too few iterations at high K; the tiled default could remove overlap signal.
 `cal` therefore defaults to the `n2s` preset
-(20,000 iters, retention 0.999). A bare `fit` and both tiling paths now use 0.999
-without a preset. Still, **`--seeds` proposes and `cull_retention` disposes**: a post-fit
+(20,000 iters, retention 0.999). A bare `fit` (= the `standard` preset) and both tiling
+paths use 0.999. Still, **`--seeds` proposes and `cull_retention` disposes**: a post-fit
 cumulative-amplitude cull discards the tail, and on heavy-tailed sparse data that
 tail is a lot of splats — the final count is not `--seeds`. A bigger preset is not
 free either: `early_stop_patience` grows with it (200 → 500), and since the counter
@@ -127,26 +127,24 @@ resets only on an improvement and the stop is tested only on eval iterations (ev
 somewhat more, never fewer. The preset silently moves `max_eccentricity` too
 (10 → 20 from `draft` to `ultra`; `n2s` stays at 10).
 
-**With NO `--preset`, `fit` runs 1000 iterations — below `draft`.** `--preset` has no
-default, and `load_fit_config` layers one only `if preset is not None`, so a bare
-`luxar gsplat fit` falls through to the *function* defaults: `n_iters=1000`,
-`early_stop_patience=300`, `patience=15`, `max_eccentricity=10.0`,
-`cull_retention=0.999`, `enable_dynamic_ops=True`. Verified by resolving the config:
+**With NO `--preset`, `fit` uses the `standard` preset** (`DEFAULT_FIT_PRESET`):
+`load_fit_config` resolves `preset=None` to it, beneath any `--config`, so a bare
+`luxar gsplat fit` runs `n_iters=5000`, `early_stop_patience=300`,
+`max_eccentricity=10.0`, `cull_retention=0.999`. Verified by resolving the config:
 
-    load_fit_config(None, None, {})["n_iters"] == 1000     # bare CLI fit
+    load_fit_config(None, None, {})["n_iters"] == 5000     # bare CLI fit
     load_fit_config("draft", None, {})["n_iters"] == 2000
 
 `--tiling content` also pins a *command default* of `cull_retention=0.999` between
-the preset and function defaults, so its per-box retention stays fixed if the
-fitter default changes later. `--preset`, a `cull_retention:` in a `--config`,
-and `--cull-retention` all still win. A bare content fit runs 1000 iterations;
+the preset and function defaults (a backstop: every preset sets it too). `--preset`, a `cull_retention:` in a `--config`,
+and `--cull-retention` all still win. A bare content fit runs the `standard` preset;
 a bare `--tiling uniform` uses 0.999, with per-tile culling on a partition merge.
 
-The Python API (`fit_gaussian_splats`, which has no `preset=` argument) shares those
-same defaults. Either way, a fifth of `standard` on thin filaments leaves splats at
-their isotropic σ=1-voxel seed shape and renders axons as bead chains. Treat a bare
-`fit` as a preview; pass `--preset`/`--iters` for anything real. See "BOTH entry
-points default to 1000 iters" in `SKILL.md`.
+The Python API (`fit_gaussian_splats`, which has no `preset=` argument) does NOT
+share that: its signature default is `n_iters=1000`, a fifth of `standard`, which on
+thin filaments leaves splats at their isotropic σ=1-voxel seed shape and renders
+axons as bead chains. Pass `n_iters` for anything real. See "The Python API
+defaults to 1000 iters" in `SKILL.md`.
 
 ### Shape-related knobs not exposed as `fit` flags (Python / `--config` YAML only)
 | Knob | Default | Meaning |

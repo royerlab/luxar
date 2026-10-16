@@ -373,18 +373,8 @@ def initialize_optimization(
             device=config.device,
         )
         device_type = config.device.type
-        if device_type == "cpu":
-            aprint(
-                "WARNING: Gaussian splat fitting running on CPU — "
-                "this can be orders of magnitude SLOWER than GPU (hardware-dependent)! "
-                "For serious work, use device='cuda' or device='mps'."
-            )
-            warnings.warn(
-                "Gaussian splat fitting running on CPU — this can be orders of magnitude SLOWER than GPU (hardware-dependent). "
-                "For production use, install GPU support.",
-                UserWarning,
-                stacklevel=2,
-            )
+        # No CPU warning here: the device is the fitter's own, and
+        # GaussianSplatFitter.__init__ already warned (once) when it is CPU.
         if config.verbose:
             aprint(f"Model class: GaussianSplatModel (PyTorch, device={device_type})")
 

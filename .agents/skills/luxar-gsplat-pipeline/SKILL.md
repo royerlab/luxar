@@ -67,9 +67,10 @@ blind-spot protocol, and `cal`'s default). Override any preset knob, e.g.
 `luxar gsplat fit --dump-config --preset hifi > config.yaml`, then `--config config.yaml`.
 
 Every preset and all three Python fitters default to `cull_retention=0.999`, a
-near-lossless trim keeping 99.9% of cumulative amplitude (the old 0.95 default
-faked `signal_limited` curves in `cal`, which therefore defaults to `n2s`:
-20,000 iters). Still, **`--seeds` proposes and `cull_retention` disposes**: on
+near-lossless trim keeping 99.9% of cumulative amplitude (the earlier 0.95 flat
+default could produce a false `signal_limited` curve in `cal`, which therefore
+defaults to `n2s`: 20,000 iters). A bare `fit` (= the `standard` preset) and both
+tiling paths use 0.999. Still, **`--seeds` proposes and `cull_retention` disposes**: on
 heavy-tailed sparse data the culled tail is a lot of splats, so the final count
 is not `--seeds`. A bigger preset is not free either: `early_stop_patience` grows
 with it (200 → 500, tested only every 25th iteration, so the larger one burns AT
@@ -180,7 +181,7 @@ An index into the measured sections, not a substitute for them.
 | `compare` says a known-good archive is mediocre | you compared a stacked 4D store whole, or across a transform — "Scoring a STACKED or TRANSFORMED archive" |
 | Noise survives a denoising pass that measured well | you measured displacement, not removal — "Denoising before a fit"; on isolated-voxel noise use a component-size filter |
 | Background haze survives | the viewer's display window and opacity, not a higher floor ([references/background-floor.md](references/background-floor.md)); or `filter --soft-highpass p90` (the `luxar-gsplat-edit` skill) |
-| Thin filaments render as chains of beads | the six-knob schedule under "BOTH entry points default to 1000 iters" below. NOT more seeds (measured *worse*), and NOT a preset: a preset moves `n_iters`, `early_stop_patience` and `max_eccentricity` — but nothing on this schedule, so `enable_dynamic_ops`, `patience` (the plateau LR-decay one, default 15, NOT `early_stop_patience`) and `l1_diag` all stay where they are and you must set them yourself |
+| Thin filaments render as chains of beads | the six-knob schedule under "The Python API defaults to 1000 iters" below. NOT more seeds (measured *worse*), and NOT a preset: a preset moves `n_iters`, `early_stop_patience` and `max_eccentricity` — but nothing on this schedule, so `enable_dynamic_ops`, `patience` (the plateau LR-decay one, default 15, NOT `early_stop_patience`) and `l1_diag` all stay where they are and you must set them yourself |
 | Blobby, over-smoothed detail | more K first, then a preset for iterations (early stopping makes a preset's `n_iters` a ceiling, so raise them when the loss is still falling at the cap) — but on thin structure read the beading row first |
 | Elongated streak artifacts | lower `max_eccentricity` — no `fit` flag, set it in a `--config` YAML (`--dump-config` writes a template). It only starts binding once the fit is converged, and there it measured 2.65 dB ([references/cli-options.md](references/cli-options.md)) |
 | Result far bigger than needed | `decimate --target N` / `-f 0.1`, or `cull --target vol.npy -p 95` — not a lower `--cull-retention` and a refit |
@@ -397,19 +398,19 @@ result.save("fitted.gsplats.zarr", ordering="hilbert")
 `fit_gaussian_splats` has NO `preset=`: presets expand to `n_iters` /
 `early_stop_patience` / `max_eccentricity` / `cull_retention` ([references/cli-options.md](references/cli-options.md)).
 
-### BOTH entry points default to 1000 iters — BELOW `draft`. Always set a schedule.
+### The Python API defaults to 1000 iters — BELOW `draft`. Always set a schedule.
 
-`n_iters` defaults to **1000**: below the CLI's lowest preset (`draft` = 2000) and a
-fifth of `standard` (5000). This is NOT only a Python-API quirk — `--preset` has no
-default either, and `load_fit_config` layers one only `if preset is not None`, so:
+`fit_gaussian_splats`'s `n_iters` defaults to **1000**: below the CLI's lowest preset
+(`draft` = 2000) and a fifth of `standard` (5000). The CLI does NOT share it: with no
+`--preset`, `load_fit_config` resolves the `standard` preset, so:
 
 ```bash
-luxar gsplat fit vol.tiff out.gsplats.zarr                   # 1000 iters (!)
-luxar gsplat fit vol.tiff out.gsplats.zarr --preset standard # 5000
+luxar gsplat fit vol.tiff out.gsplats.zarr                   # standard: 5000 iters
+luxar gsplat fit vol.tiff out.gsplats.zarr --preset draft    # 2000
 ```
 
-**Pass `--preset` (or `--iters`) on every real fit; a bare `fit` is a preview.**
-Calling either path without it is not "default quality", and the failure looks
+**From Python, pass `n_iters` (and `early_stop_patience`) on every real fit.**
+Calling it without them is not "default quality", and the failure looks
 like a rendering problem: **thin filaments render as chains of beads**, because
 under-converged splats never leave their isotropic σ = 1-voxel seed shape. Six
 defaults must move TOGETHER; any one alone underperforms:

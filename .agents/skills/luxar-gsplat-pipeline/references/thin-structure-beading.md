@@ -1,6 +1,6 @@
 # Thin filaments render as chains of beads: the six-knob schedule
 
-Loaded from the `luxar-gsplat-pipeline` skill ("BOTH entry points default to 1000
+Loaded from the `luxar-gsplat-pipeline` skill ("The Python API defaults to 1000
 iters"). Measured on a 1-voxel-wide neuron dataset.
 
 **Symptom: thin filaments (axons, vessels, fibres) render as chains of beads.**
