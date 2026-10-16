@@ -424,17 +424,9 @@ describe('RangeSlider — dispose', () => {
 });
 
 describe('RangeSlider data-unit window (WP16)', () => {
-  it('shows a unit caption under the track, hidden when empty', () => {
-    const { slider } = makeSlider({ label: 'Display range' });
-    const caption = host.querySelector<HTMLElement>('.luxar-range-slider__caption')!;
-    expect(caption.hidden).toBe(true);
-    slider.setCaption('counts above background', 'tooltip text');
-    expect(caption.hidden).toBe(false);
-    expect(caption.textContent).toBe('counts above background');
-    expect(caption.title).toBe('tooltip text');
-    slider.setCaption(undefined);
-    expect(caption.hidden).toBe(true);
-    expect(caption.hasAttribute('title')).toBe(false);
+  it('adds no caption: the control takes the height of any range control', () => {
+    makeSlider({ label: 'Display range' });
+    expect(host.querySelector('.luxar-range-slider__caption')).toBeNull();
   });
 
   it('keeps the 0.001 step on unit-or-wider tracks and refines it on tiny ones', () => {
@@ -460,5 +452,8 @@ describe('RangeSlider data-unit window (WP16)', () => {
     expect(bounds[1].textContent).toBe('24271.5');
     slider.setDataUnits(true);
     expect(bounds[1].textContent).toBe('24,272');
+    // One formatter for header and bounds, so the same value reads the same.
+    const values = host.querySelectorAll<HTMLElement>('.luxar-range-slider__value');
+    expect(values[1].textContent).toBe('24,271');
   });
 });

@@ -56,26 +56,32 @@ export const BRIGHTNESS_TOOLTIP =
   'data values, the display range or the colormap.';
 
 /**
- * Format a data value for the display-range readouts. Values under 1000 keep the
- * historical 3-decimal form (normalised scenes read exactly as before); data
- * units get thousands separators ("4,200"), and magnitudes the fixed form would
- * print as "0" or as a long digit string use scientific notation.
+ * Format a data-unit value for every readout of a unit-bearing layer — the
+ * window's header values, its track bounds and the tooltip — so one value reads
+ * the same everywhere: four significant digits below 1000 ("5.252", "208.9"),
+ * whole numbers with thousands separators from 1000 ("1,597"), scientific
+ * notation at the extremes. Scenes without a unit keep
+ * {@link formatLegacyRangeValue}.
  */
 export function formatDataValue(v: number): string {
   if (!Number.isFinite(v)) return String(v);
   const magnitude = Math.abs(v);
-  if (magnitude >= 1e6 || (magnitude > 0 && magnitude < 1e-3)) return v.toExponential(2);
+  if (magnitude === 0) return '0';
+  if (magnitude >= 1e6 || magnitude < 1e-3) return v.toExponential(2);
   if (magnitude >= 1000) {
     return Math.round(v)
       .toString()
       .replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   }
-  return v.toFixed(3).replace(/\.?0+$/, '');
+  return String(Number(v.toPrecision(4)));
 }
 
 const SCALAR_RANGE_LABEL = 'Display range';
 const SPLAT_AMPLITUDE_LABEL = 'Splat amplitude';
 const SCALAR_RANGE_TOOLTIP = 'Scalar data values in this range are mapped across the colormap.';
+const PEAK_NOTE =
+  "Each value is one splat's peak. Overlapping splats sum to the data value, " +
+  'and the view also sums along each ray.';
 
 /**
  * Format a value in the HISTORICAL display-range style (3 decimals, trailing
@@ -87,69 +93,54 @@ export function formatLegacyRangeValue(v: number): string {
 }
 
 /**
- * The window label, tooltip and unit caption for a colormapped layer.
- *
- * A layer whose amplitudes carry a unit is windowing SPLAT AMPLITUDES: each is
- * one Gaussian's PEAK value in that unit. Overlapping Gaussians sum to the data
- * value in 3D, and the view additionally sums along each ray — so the window
- * sits well below the data's own range, which the panel shows separately
- * ({@link dataReferenceText}). The label says so ("Splat amplitude"), the unit
- * rides as a caption under the track (a long unit never wraps the label), and
- * the tooltip explains the relationship and gives the subtracted floor. A layer
- * without a unit (every pre-WP16 scene) keeps the historical label and text.
+ * "Data range: 0 – 1,597 (floor 405)" — the SOURCE's span above the subtracted
+ * floor (`source_data_range` / `amplitude_offset`), or `undefined` when the
+ * scene records none. A tooltip line: the panel body stays as compact as any
+ * other range control.
  */
-export function scalarRangeLabel(layer: Pick<LayerInfo, 'amplitudeUnit' | 'amplitudeOffset'>): {
-  label: string;
-  tooltip: string;
-  caption?: string;
-} {
-  const unit = layer.amplitudeUnit;
-  if (!unit) return { label: SCALAR_RANGE_LABEL, tooltip: SCALAR_RANGE_TOOLTIP };
-  const parts = [
-    'Splat amplitudes in this range are mapped across the colormap. Each value is ' +
-      `one Gaussian splat's PEAK amplitude in ${unit}: overlapping splats sum to the ` +
-      'data value in 3D, and the view additionally sums along each ray, so these ' +
-      'peaks sit below the range of the data itself (shown underneath as Data).',
-  ];
-  if (layer.amplitudeOffset !== undefined) {
-    parts.push(
-      `Background floor subtracted before fitting: ${formatDataValue(layer.amplitudeOffset)}.`
-    );
-  }
-  return { label: SPLAT_AMPLITUDE_LABEL, tooltip: parts.join(' '), caption: unit };
-}
-
-/**
- * The read-only data-range reference line ("Data: 0 – 12,000 counts above
- * background (floor 100)"), or `undefined` when the scene records no source
- * range. Shown for colormapped AND direct-colour layers alike: the data's span
- * is a fact about the source, whatever the window controls.
- */
-export function dataReferenceText(
-  layer: Pick<LayerInfo, 'sourceDataRange' | 'amplitudeUnit' | 'amplitudeOffset'>,
-  precise = false
+export function dataRangeLine(
+  layer: Pick<LayerInfo, 'sourceDataRange' | 'amplitudeOffset'>
 ): string | undefined {
   const range = layer.sourceDataRange;
   if (!range) return undefined;
-  const unit = layer.amplitudeUnit ? ` ${layer.amplitudeUnit}` : '';
-  // The visible line rounds the floor to three significant digits ("99.6");
-  // the tooltip (`precise`) carries the recorded value.
-  const format = precise ? formatDataValue : formatSignificant;
   const floor =
-    layer.amplitudeOffset !== undefined ? ` (floor ${format(layer.amplitudeOffset)})` : '';
-  return `Data: ${formatDataValue(range[0])} \u2013 ${formatDataValue(range[1])}${unit}${floor}`;
+    layer.amplitudeOffset !== undefined ? ` (floor ${formatDataValue(layer.amplitudeOffset)})` : '';
+  return `Data range: ${formatDataValue(range[0])} \u2013 ${formatDataValue(range[1])}${floor}`;
 }
 
 /**
- * A short readout: three significant digits below 1000 (`99.608` → `99.6`,
- * `0.0731` → `0.0731`), whole numbers with separators above, scientific at the
- * extremes — the precision a reference line needs, not the recorded one.
+ * The window label and tooltip for a colormapped layer.
+ *
+ * A layer whose amplitudes carry a unit is windowing SPLAT AMPLITUDES — each one
+ * Gaussian's PEAK in that unit, which sits below the data's own range wherever
+ * Gaussians overlap. The label says so; everything else (the unit, the data
+ * range with its floor, the one-line peak/sum explanation) lives in the label's
+ * tooltip, a few short lines, so the control takes exactly the space a normal
+ * range control takes. A layer without a unit keeps the historical label/text.
  */
-export function formatSignificant(v: number): string {
-  const magnitude = Math.abs(v);
-  if (!Number.isFinite(v) || magnitude >= 1000 || magnitude === 0) return formatDataValue(v);
-  if (magnitude < 1e-3) return v.toExponential(2);
-  return String(Number(v.toPrecision(3)));
+export function scalarRangeLabel(
+  layer: Pick<LayerInfo, 'amplitudeUnit' | 'amplitudeOffset' | 'sourceDataRange'>
+): { label: string; tooltip: string } {
+  const unit = layer.amplitudeUnit;
+  if (!unit) return { label: SCALAR_RANGE_LABEL, tooltip: SCALAR_RANGE_TOOLTIP };
+  const lines = [`Unit: ${unit}`];
+  const data = dataRangeLine(layer);
+  if (data) lines.push(data);
+  lines.push(PEAK_NOTE);
+  return { label: SPLAT_AMPLITUDE_LABEL, tooltip: lines.join('\n') };
+}
+
+/**
+ * The colour-range tooltip, with the data range appended when the scene records
+ * one (an RGB / multichannel gsplats layer still has a source range).
+ */
+export function colourRangeTooltip(
+  base: string,
+  layer: Pick<LayerInfo, 'amplitudeUnit' | 'amplitudeOffset' | 'sourceDataRange'>
+): string {
+  const data = dataRangeLine(layer);
+  if (!data) return base;
+  return [base, layer.amplitudeUnit ? `${data} ${layer.amplitudeUnit}` : data].join('\n');
 }
 
 /**

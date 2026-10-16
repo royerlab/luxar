@@ -72,8 +72,6 @@ export class RangeSlider {
   private boundsLowLabel: HTMLElement;
   private boundsHighLabel: HTMLElement;
   private trackFill: HTMLElement;
-  /** Optional caption under the track (e.g. the data unit); hidden when empty. */
-  private captionEl: HTMLElement;
   /** Data-unit readouts (thousands separators, scientific extremes) — see setDataUnits. */
   private dataUnits = false;
   private options: RangeSliderOptions;
@@ -210,11 +208,6 @@ export class RangeSlider {
     trackRow.appendChild(trackContainer);
     trackRow.appendChild(this.boundsHighLabel);
     this.wrapper.appendChild(trackRow);
-
-    this.captionEl = document.createElement('div');
-    this.captionEl.className = 'luxar-range-slider__caption';
-    this.captionEl.hidden = true;
-    this.wrapper.appendChild(this.captionEl);
 
     // Event listeners
     this.lowInput.addEventListener('input', this.onLowChange);
@@ -356,9 +349,12 @@ export class RangeSlider {
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'luxar-range-slider__bound-input';
-    // Plain digits, no thousands separators: the field is parsed back with
-    // parseFloat, which would read "4,200" as 4.
-    input.value = this.formatValue(currentValue).replace(/,/g, '');
+    // The value as plain, unrounded digits: the field is parsed back with
+    // parseFloat (which would read "4,200" as 4), and the 4-significant-digit
+    // data-unit readout would move an untouched bound on Enter.
+    input.value = this.dataUnits
+      ? String(Number(currentValue.toPrecision(12)))
+      : this.formatValue(currentValue);
     input.style.width = `${Math.max(label.offsetWidth, 28)}px`;
 
     // Replace label with input
@@ -480,17 +476,6 @@ export class RangeSlider {
     this.labelEl.classList.toggle('luxar-range-slider__label--with-tooltip', Boolean(tooltip));
     if (tooltip) this.labelEl.title = tooltip;
     else this.labelEl.removeAttribute('title');
-  }
-
-  /**
-   * Show `text` under the track (the data unit of the window), with `tooltip`
-   * carrying the full text; an empty / absent text hides the caption.
-   */
-  setCaption(text?: string, tooltip?: string): void {
-    this.captionEl.textContent = text ?? '';
-    this.captionEl.hidden = !text;
-    if (text) this.captionEl.title = tooltip ?? text;
-    else this.captionEl.removeAttribute('title');
   }
 
   /** Update the slider bounds */

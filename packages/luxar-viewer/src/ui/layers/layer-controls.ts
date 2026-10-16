@@ -42,7 +42,7 @@ import {
   BRIGHTNESS_FLOOR,
   brightnessSliderRange,
   brightnessTooltip,
-  dataReferenceText,
+  colourRangeTooltip,
   formatBrightness,
   relativeBrightness,
   remapWindowForLayer,
@@ -135,8 +135,6 @@ export class LayerControls {
   private opacitySlider: LabeledSlider | null = null;
   private absorptionSlider: LabeledSlider | null = null;
   private brightnessSlider: LabeledSlider | null = null;
-  /** Read-only "Data: 0 – 12,000 counts above background (floor 100)" line. */
-  private dataReferenceEl: HTMLElement | null = null;
   /**
    * Mesh-only appearance sliders (spec §6.2). Hidden for every other geometry type —
    * mesh is the only SHADED type, so a shade floor and a falloff exponent have nothing
@@ -258,7 +256,6 @@ export class LayerControls {
     this.opacitySlider = null;
     this.absorptionSlider = null;
     this.brightnessSlider = null;
-    this.dataReferenceEl = null;
     this.ambientSlider = null;
     this.shadeExponentSlider = null;
     this.specularSlider = null;
@@ -316,12 +313,6 @@ export class LayerControls {
         this.controlsInteracting = false;
       },
     });
-
-    this.dataReferenceEl = document.createElement('div');
-    this.dataReferenceEl.className =
-      'luxar-range-slider__caption luxar-layers-panel__data-reference';
-    this.dataReferenceEl.hidden = true;
-    rangeContainer.appendChild(this.dataReferenceEl);
 
     this.buildBrightnessSlider(this.controlsEl);
 
@@ -911,12 +902,6 @@ export class LayerControls {
    */
   private renderAmplitudeControls(primary: LayerInfo): void {
     this.rangeSlider?.setDataUnits(primary.amplitudeUnit !== undefined);
-    if (this.dataReferenceEl) {
-      const text = dataReferenceText(primary);
-      this.dataReferenceEl.textContent = text ?? '';
-      this.dataReferenceEl.hidden = !text;
-      if (text) this.dataReferenceEl.title = dataReferenceText(primary, true) ?? text;
-    }
     if (this.brightnessSlider) {
       const relative = relativeBrightness(primary);
       this.brightnessSlider.setRange(...rangeTuple(brightnessSliderRange(relative)));
@@ -941,11 +926,7 @@ export class LayerControls {
       const scalar = scalarRangeLabel(primary);
       this.rangeSlider.setLabel(
         primary.scalarWindow ? scalar.label : COLOUR_RANGE_LABEL,
-        primary.scalarWindow ? scalar.tooltip : COLOUR_RANGE_TOOLTIP
-      );
-      this.rangeSlider.setCaption(
-        primary.scalarWindow ? scalar.caption : undefined,
-        scalar.tooltip
+        primary.scalarWindow ? scalar.tooltip : colourRangeTooltip(COLOUR_RANGE_TOOLTIP, primary)
       );
       this.rangeSlider.setBounds(primary.dataMin, primary.dataMax);
       this.rangeSlider.setValues(primary.displayMin, primary.displayMax);

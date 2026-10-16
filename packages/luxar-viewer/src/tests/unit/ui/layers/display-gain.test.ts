@@ -22,11 +22,11 @@ import {
   BRIGHTNESS_FLOOR,
   brightnessSliderRange,
   brightnessTooltip,
-  dataReferenceText,
+  colourRangeTooltip,
+  dataRangeLine,
   formatBrightness,
   formatDataValue,
   formatLegacyRangeValue,
-  formatSignificant,
   relativeBrightness,
   remapWindowForLayer,
   scalarRangeLabel,
@@ -82,61 +82,55 @@ describe('brightness-range helpers', () => {
     expect(formatBrightness(0)).toBe('×0');
   });
 
-  it('keeps normalised readouts unchanged and groups data units', () => {
+  it('formats data units with four significant digits and separators', () => {
     expect(formatDataValue(0.5)).toBe('0.5');
     expect(formatDataValue(0)).toBe('0');
-    expect(formatDataValue(123.4567)).toBe('123.457');
+    expect(formatDataValue(5.25212621689)).toBe('5.252');
+    // The header value and the end label read the same, however the input snaps.
+    expect(formatDataValue(208.912979126)).toBe('208.9');
+    expect(formatDataValue(208.912)).toBe('208.9');
     expect(formatDataValue(4200)).toBe('4,200');
     expect(formatDataValue(65535.4)).toBe('65,535');
     expect(formatDataValue(2.5e-5)).toBe('2.50e-5');
     expect(formatDataValue(3.2e7)).toBe('3.20e+7');
   });
 
-  it('labels a unit-bearing window as splat amplitude, unit as caption', () => {
+  it('puts the unit, data range and peak note in the label tooltip', () => {
     const labelled = scalarRangeLabel({
       amplitudeUnit: 'counts above background',
-      amplitudeOffset: 112,
+      amplitudeOffset: 405,
+      sourceDataRange: [0, 1597.2],
     });
-    // A splat amplitude is one Gaussian's PEAK, not a voxel intensity.
     expect(labelled.label).toBe('Splat amplitude');
-    expect(labelled.caption).toBe('counts above background');
-    expect(labelled.tooltip).toContain('PEAK amplitude in counts above background');
-    expect(labelled.tooltip).toContain('overlapping splats sum to the data value in 3D');
-    expect(labelled.tooltip).toContain('additionally sums along each ray');
-    expect(labelled.tooltip).toContain('Background floor subtracted before fitting: 112.');
-    // No unit (every pre-WP16 scene): the historical label, untouched.
+    expect(labelled.tooltip.split('\n')).toEqual([
+      'Unit: counts above background',
+      'Data range: 0 \u2013 1,597 (floor 405)',
+      "Each value is one splat's peak. Overlapping splats sum to the data value, " +
+        'and the view also sums along each ray.',
+    ]);
+    // Floors are rounded with the same formatter as every other readout.
+    expect(dataRangeLine({ sourceDataRange: [0, 12000.39], amplitudeOffset: 99.6083984375 })).toBe(
+      'Data range: 0 \u2013 12,000 (floor 99.61)'
+    );
+    expect(dataRangeLine({ amplitudeOffset: 1 })).toBeUndefined();
+    // No data range recorded: unit and note only.
+    expect(scalarRangeLabel({ amplitudeUnit: 'a.u.' }).tooltip.split('\n')).toHaveLength(2);
+    // No unit (every pre-WP16 scene): the historical label and text, untouched.
     expect(scalarRangeLabel({}).label).toBe('Display range');
-    expect(scalarRangeLabel({}).tooltip).not.toContain('per-splat');
-    expect(scalarRangeLabel({}).caption).toBeUndefined();
+    expect(scalarRangeLabel({}).tooltip).toBe(
+      'Scalar data values in this range are mapped across the colormap.'
+    );
+  });
+
+  it('appends the data range to a direct-colour tooltip only when recorded', () => {
+    expect(colourRangeTooltip('base', {})).toBe('base');
+    expect(colourRangeTooltip('base', { sourceDataRange: [0, 10], amplitudeUnit: 'counts' })).toBe(
+      'base\nData range: 0 \u2013 10 counts'
+    );
   });
 });
 
-describe('data reference and relative controls', () => {
-  it('states the data range with unit and floor, or nothing', () => {
-    expect(
-      dataReferenceText({
-        sourceDataRange: [0, 12000],
-        amplitudeUnit: 'counts above background',
-        amplitudeOffset: 100,
-      })
-    ).toBe('Data: 0 \u2013 12,000 counts above background (floor 100)');
-    expect(dataReferenceText({ sourceDataRange: [0, 2.5] })).toBe('Data: 0 \u2013 2.5');
-    // The visible line rounds the floor; the tooltip keeps the recorded value.
-    const blobs = {
-      sourceDataRange: [0, 12000.39] as [number, number],
-      amplitudeUnit: 'counts above background',
-      amplitudeOffset: 99.6083984375,
-    };
-    expect(dataReferenceText(blobs)).toBe(
-      'Data: 0 \u2013 12,000 counts above background (floor 99.6)'
-    );
-    expect(dataReferenceText(blobs, true)).toContain('(floor 99.608)');
-    expect(formatSignificant(731.125)).toBe('731');
-    expect(formatSignificant(0.07312)).toBe('0.0731');
-    expect(formatSignificant(4.2e-5)).toBe('4.20e-5');
-    expect(dataReferenceText({ amplitudeUnit: 'a.u.' })).toBeUndefined();
-  });
-
+describe('relative controls', () => {
   it('shows Brightness relative to the authored gain, absolute in the tooltip', () => {
     const layer = { brightness: 5e-4, authoredBrightness: 2.5e-4 };
     expect(relativeBrightness(layer)).toBeCloseTo(2, 12);

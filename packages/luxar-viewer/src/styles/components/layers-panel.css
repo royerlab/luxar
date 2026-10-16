@@ -456,30 +456,6 @@
   border-radius: 2px;
 }
 
-/* The data unit of a gsplats window ("counts above background"): a muted
-   micro-caption under the track. Dataset-controlled text, so single line with
-   an ellipsis and the full text in its title (UI_DESIGN_GUIDE §7.6). */
-.luxar-range-slider__caption {
-  margin-top: 2px;
-  font-size: var(--luxar-text-xs);
-  color: var(--luxar-text-muted);
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
-
-/* The read-only "Data: … (floor …)" reference is a caption, not a label beside a
-   value (the UI_DESIGN_GUIDE §7.6 no-wrap rule protects label/value ROWS), so it
-   wraps onto a second line rather than hiding the floor behind an ellipsis. */
-.luxar-layers-panel__data-reference {
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-  overflow-wrap: anywhere;
-}
-
 .luxar-range-slider__track-row {
   display: flex;
   align-items: center;

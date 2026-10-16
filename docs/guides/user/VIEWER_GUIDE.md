@@ -455,13 +455,12 @@ Displays a list of all data nodes in the scene with toggles for visibility
 and opacity control.
 
 For a Gaussian-splat layer converted with `luxar gsplat convert`, the window is
-labelled **Splat amplitude** and is in the data's own units (a caption under the
-slider names them, e.g. "counts above background"). These are not voxel
-intensities: each value is one Gaussian's PEAK amplitude. Overlapping splats sum
-to the data value in 3D, and the view additionally sums along each ray, so the
-window sits well below the data's range — which the panel shows underneath as a
-read-only line, e.g. "Data: 0 – 12,000 counts above background (floor 100)"
-(also for RGB / multichannel layers). How bright the layer renders is the
+labelled **Splat amplitude** and is in the data's own units. Hover the label for
+the unit (e.g. "counts above background"), the data's own range with its floor
+(e.g. "Data range: 0 – 1,597 (floor 405)"; RGB / multichannel layers show it in
+the Colour range tooltip) and why the window sits below it: each value is one
+Gaussian's PEAK amplitude, overlapping splats sum to the data value, and the view
+additionally sums along each ray. How bright the layer renders is the
 separate **Brightness** control (the node's `display_gain`, on a logarithmic
 track). It reads RELATIVE to the brightness the scene opened with — ×1 is the
 opening exposure, double-click returns to it, and the tooltip gives the absolute

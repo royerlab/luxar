@@ -359,9 +359,9 @@ luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --no-auto-exposure    
 **True data units.** The scene keeps the fit's amplitudes exactly as the
 `.gsplats.zarr` stores them — source data units above the subtracted background
 (detector counts for an integer source) — so the viewer's Layers panel reads in
-the data's own units: the **Splat amplitude** window is captioned with the unit
-(e.g. "counts above background") and the data's own range is shown under it
-(`source_data_range`, "Data: 0 – 12,000 counts above background (floor 100)").
+the data's own units: the **Splat amplitude** window's tooltip gives the unit
+(e.g. "counts above background") and the data's own range with its floor
+(`source_data_range`, "Data range: 0 – 12,000 (floor 100)").
 A splat amplitude is one Gaussian's PEAK; overlapping splats sum to the data
 value, so the window sits below the data range. Brightness is a separate
 per-node `display_gain` attr (the panel's **Brightness** control), which the
