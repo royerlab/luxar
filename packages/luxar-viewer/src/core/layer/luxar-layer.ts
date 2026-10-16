@@ -131,10 +131,11 @@ import {
   reduceGpuByteBudgetForContextLoss,
 } from '../../rendering/gpu-byte-budget';
 import {
-  WebGLBlendWarmupManager,
+  BlendWarmupManager,
   registerBlendWarmupManager,
   unregisterBlendWarmupManager,
-} from '../../rendering/webgl-blend-warmup';
+  type WarmupRenderer,
+} from '../../rendering/blend-warmup';
 import { DepthSortCoordinator, releaseDepthSortNode } from '../../rendering/depth-sort-coordinator';
 import { releaseWorkerPool, retainWorkerPool } from '../../workers/worker-pool';
 import type { DatasetFaultPayload } from '../app/embedder/events';
@@ -228,8 +229,8 @@ export interface LuxarLayerOptions {
    */
   densityCap?: number;
   /**
-   * WebGL blend-program warm-up, as `LuxarAppOptions.blendWarmup`. Default
-   * true on laptops/desktops; always off on phones/tablets and under WebGPU.
+   * Blend-program warm-up, as `LuxarAppOptions.blendWarmup`. Default true on
+   * laptops/desktops (WebGL and WebGPU hosts alike); always off on phones/tablets.
    */
   blendWarmup?: boolean;
   /**
@@ -339,7 +340,7 @@ export class LuxarLayer {
    * Registered so node commits in the host scene are routed here rather than
    * to the LuxarApp's warm-up (which targets the app's own renderer).
    */
-  private readonly blendWarmup = new WebGLBlendWarmupManager();
+  private readonly blendWarmup = new BlendWarmupManager();
   private disposed = false;
   /** Guards against overlapping `load()` calls — see {@link LuxarLayer.load}. */
   private inFlightLoad: Promise<THREE.Group> | null = null;
@@ -923,15 +924,14 @@ export class LuxarLayer {
   }
 
   private configureBlendWarmup(): void {
-    const renderer = isWebGLRenderer(this.options.renderer) ? this.options.renderer : null;
+    const renderer = this.options.renderer;
     this.blendWarmup.configure({
-      enabled:
-        renderer !== null &&
-        this.options.blendWarmup !== false &&
-        getInputProfile().deviceClass !== 'mobile',
-      renderer,
+      enabled: this.options.blendWarmup !== false && getInputProfile().deviceClass !== 'mobile',
+      renderer: renderer as WarmupRenderer,
       camera: this.options.getCamera(),
       targetScene: this.options.scene,
+      // WebGPU keys its pipelines on the blend state too (see blend-warmup.ts).
+      pipelineVariants: !isWebGLRenderer(renderer),
     });
   }
 

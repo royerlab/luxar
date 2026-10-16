@@ -18,7 +18,7 @@ import {
   syncLineMaterialWithGeometry,
   syncPointMaterialWithGeometry,
 } from '../../../rendering/material-sync-helpers';
-import { getBlendModeProgramWarmupStats } from '../../../rendering/webgl-blend-warmup';
+import { getBlendModeProgramWarmupStats } from '../../../rendering/blend-warmup';
 import { materialManager, type BlendingMode } from '../../../rendering/material-manager';
 import { normalizeBlendingMode } from '../../../rendering/blending-state';
 import { getDepthSortWorkerStatus } from '../../../rendering/depth-sort-coordinator';

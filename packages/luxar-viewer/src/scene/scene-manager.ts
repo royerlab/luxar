@@ -34,7 +34,8 @@ import {
   clearBlendModeProgramWarmup,
   configureBlendModeProgramWarmup,
   warmSceneBlendModePrograms,
-} from '../rendering/webgl-blend-warmup';
+  type WarmupRenderer,
+} from '../rendering/blend-warmup';
 import {
   type Renderer,
   type RendererCapabilities,
@@ -474,7 +475,7 @@ export class SceneManager extends THREE.EventDispatcher<{
   /** HDR output requested (`?hdr`) and its optional pinned headroom; WebGPU only. */
   private hdr = false;
   private hdrHeadroom: number | undefined;
-  /** WebGL-only blend-variant warm-up (`?noBlendWarmup` disables). */
+  /** Blend-variant warm-up, both renderers (`?noBlendWarmup` disables). */
   private blendWarmup = true;
 
   /**
@@ -512,11 +513,10 @@ export class SceneManager extends THREE.EventDispatcher<{
     hdr?: boolean;
     hdrHeadroom?: number;
     /**
-     * WebGL-only blend warm-up. When true, classic `THREE.WebGLRenderer`
-     * sessions pre-compile each DISTINCT blend-mode program variant a
-     * material can reach, one compile per post-frame idle opportunity, so the first
-     * Layers-panel blend switch does not pay SwiftShader's synchronous
-     * link cost on the click path.
+     * Blend warm-up. When true, sessions pre-compile each DISTINCT blend-mode
+     * program variant (WebGL) or render pipeline (WebGPU) a material can
+     * reach, one compile per post-frame idle opportunity, so the first
+     * Layers-panel blend switch does not pay the compile on the click path.
      */
     blendWarmup?: boolean;
     /**
@@ -719,6 +719,9 @@ export class SceneManager extends THREE.EventDispatcher<{
         this.dispatchEvent({ type: 'webgpu-device-lost', ...info });
       },
       onRestored: () => {
+        // The keepers pinned pipelines of the lost renderer: warm the new one.
+        this.configureBlendWarmup();
+        void this.warmBlendModePrograms();
         this.dispatchEvent({ type: 'webgpu-device-restored' });
         this.dispatchEvent({ type: 'change' });
       },
@@ -793,12 +796,13 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   private configureBlendWarmup(): void {
-    const renderer = isWebGLRenderer(this.renderer) ? this.renderer : null;
     configureBlendModeProgramWarmup({
-      enabled: this.blendWarmup && this.capabilities.apiSurface === 'webgl2' && renderer !== null,
-      renderer,
+      enabled: this.blendWarmup,
+      renderer: this.renderer as WarmupRenderer,
       camera: this.camera,
       targetScene: this.scene,
+      // WebGPU keys its pipelines on the blend state too (see blend-warmup.ts).
+      pipelineVariants: !isWebGLRenderer(this.renderer),
     });
   }
 
@@ -1147,7 +1151,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     });
   }
 
-  /** Arm WebGL blend warm-up after all scene-dependent dataset setup completes. */
+  /** Arm blend warm-up after all scene-dependent dataset setup completes. */
   public warmBlendModePrograms(): Promise<void> {
     return warmSceneBlendModePrograms(this.scene);
   }

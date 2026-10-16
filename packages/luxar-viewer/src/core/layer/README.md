@@ -45,7 +45,7 @@ camera, resize or teardown reaches another:
 | `SceneDimsManager`, resolved from the layer's own root | a host scene holding two layers handed the second the first's dims                                                   |
 | `MaterialManager`                                      | materials take the layer's renderer capabilities and only its camera broadcast; its dispose frees only its materials |
 | `DepthSortCoordinator`                                 | its nodes sort against the host camera and wake only `requestRender`                                                 |
-| `WebGLBlendWarmupManager` (registered)                 | commits in the host scene warm against the host renderer, not the app's                                              |
+| `BlendWarmupManager` (registered)                      | commits in the host scene warm against the host renderer, not the app's                                              |
 
 The LuxarApp's instances are the module singletons
 (`SceneLoaderManager.getInstance()`, `sceneDimsManager`, `materialManager` outside

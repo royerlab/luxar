@@ -392,7 +392,7 @@ const mockShowLoading = notifierMocks.showLoading;
 const mockHideLoading = notifierMocks.hideLoading;
 const mockShowError = notifierMocks.error;
 
-vi.mock('../../../rendering/webgl-blend-warmup', () => ({
+vi.mock('../../../rendering/blend-warmup', () => ({
   configureBlendModeProgramWarmup: blendWarmupMocks.configure,
   clearBlendModeProgramWarmup: blendWarmupMocks.clear,
   warmSceneBlendModePrograms: blendWarmupMocks.warmScene,
@@ -530,7 +530,7 @@ describe('SceneManager', () => {
       expect(height).toBe(window.innerHeight);
     });
 
-    it('keeps WebGL blend warm-up disabled on the WebGPU backend', async () => {
+    it('warms one pipeline variant per blend mode on the WebGPU backend', async () => {
       const webgpuRenderer = Object.assign(new THREE.WebGLRenderer(), {
         isWebGLRenderer: false,
       });
@@ -562,10 +562,11 @@ describe('SceneManager', () => {
       await sceneManager.init({ canvas: mockCanvas as any, renderer: 'webgpu' });
 
       expect(blendWarmupMocks.configure).toHaveBeenCalledWith({
-        enabled: false,
-        renderer: null,
+        enabled: true,
+        renderer: sceneManager.renderer,
         camera: sceneManager.camera,
         targetScene: sceneManager.scene,
+        pipelineVariants: true,
       });
     });
   });
