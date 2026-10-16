@@ -17,6 +17,15 @@
  * `WebGPURenderer({ forceWebGL: true })` only initialises inside a
  * browser.
  *
+ * Two TSL arms, chosen by the Playwright project. In the default `chromium`
+ * project the TSL side runs on `WebGPURenderer({ forceWebGL: true })`, so the
+ * comparison is GLSL vs TSL-compiled-to-GLSL. In the opt-in `chromium-webgpu`
+ * project (`pnpm test:e2e:webgpu`) the same cases run the TSL side as WGSL on
+ * the real WebGPU backend (`native: true`), so every assertion here becomes a
+ * GLSL ↔ native-WGSL parity check; the harness fails closed if no hardware
+ * adapter came up. Tolerances are shared — a case that only holds on the
+ * fallback is a finding, not a reason to widen them per project.
+ *
  * Captured GLSL-string snapshot diffs are deferred — the path through
  * Three.js's internal `_objects` ChainMap that holds compiled shader
  * source isn't reconstructible from the harness yet. A follow-up will
@@ -30,6 +39,7 @@ import { test, expect, type Page } from '@playwright/test';
 import type { GeometryTypeName } from '../../types/format-contract';
 import type { PrimitiveVariant } from '../helpers/geometry-materials';
 import { PICK_VISIBILITY_RULES } from '../_conformance/pick-visibility-rules';
+import { isWebGPUProject } from './webgpu-project';
 
 const HARNESS_URL = '/tsl-harness.html';
 
@@ -45,10 +55,48 @@ type BloomChainResult = {
 };
 
 async function bootHarness(page: Page): Promise<string[]> {
-  await page.goto(HARNESS_URL);
+  // The native arm refuses a software (SwiftShader) adapter unless the run
+  // opted in, mirroring `waitForLuxarReady`'s gate for the viewer.
+  const allowFallback = process.env.LUXAR_E2E_WEBGPU_ALLOW_FALLBACK === '1';
+  await page.goto(allowFallback ? `${HARNESS_URL}?allowFallbackAdapter` : HARNESS_URL);
   await page.waitForFunction(() => Boolean(window.__tslHarness));
   await page.evaluate(() => window.__tslHarness!.ready);
   return page.evaluate(() => window.__tslHarness!.listShaders());
+}
+
+/**
+ * Whether a mesh pick's element-id channel can be compared across the two arms.
+ *
+ * The pick shader's per-vertex id rides a `flat` varying, sourced from the
+ * LAST corner of a triangle on WebGL and the FIRST on WebGPU. Production (and
+ * this harness) align WebGL to first-vertex through `WEBGL_provoking_vertex`,
+ * but where the extension is missing the divergence is the documented
+ * exception of MESH_NODE_SPEC §6.5: every corner is a valid answer. That only
+ * matters in the native arm — on the WebGL fallback both arms share one
+ * convention — and on obsidian's ANGLE-on-Vulkan (Chrome 146) the extension is
+ * absent, so the id byte reads 255 on GLSL and 0 on native WGSL for the same
+ * triangle. When it is not comparable, {@link maskMeshPickElementId} drops that
+ * byte from both arms; the discard pattern, node id and brightness, which is
+ * what the pick cases assert, stay compared exactly as before.
+ */
+async function meshPickIdsComparable(page: Page): Promise<boolean> {
+  if (!isWebGPUProject()) return true;
+  return page.evaluate(() => window.__tslHarness!.provokingVertexAlignable());
+}
+
+/**
+ * Zero the element-id channel (G — see `tsl-harness/mesh.ts`) of a mesh pick
+ * readback when {@link meshPickIdsComparable} says the two arms legitimately
+ * disagree on it. A no-op for every other shader.
+ */
+async function maskMeshPickElementId(
+  page: Page,
+  shaderName: string,
+  pixels: number[]
+): Promise<number[]> {
+  if (!shaderName.startsWith('mesh-pick') || (await meshPickIdsComparable(page))) return pixels;
+  for (let i = 1; i < pixels.length; i += 4) pixels[i] = 0;
+  return pixels;
 }
 
 async function runGLSL(
@@ -56,10 +104,11 @@ async function runGLSL(
   shaderName: string,
   uniforms?: Record<string, number>
 ): Promise<number[]> {
-  return page.evaluate(
+  const pixels = await page.evaluate(
     ([name, overrides]) => Array.from(window.__tslHarness!.renderGLSL(name, overrides)),
     [shaderName, uniforms] as const
   );
+  return maskMeshPickElementId(page, shaderName, pixels);
 }
 
 async function runTSL(
@@ -67,17 +116,19 @@ async function runTSL(
   shaderName: string,
   uniforms?: Record<string, number>
 ): Promise<TSLResult> {
-  return page.evaluate(
-    async ([name, overrides]) => {
-      const result = await window.__tslHarness!.renderTSL(name, { uniforms: overrides });
+  const result = await page.evaluate(
+    async ([name, overrides, native]) => {
+      const result = await window.__tslHarness!.renderTSL(name, { native, uniforms: overrides });
       return {
         pixels: Array.from(result.pixels),
         vertexShader: result.vertexShader,
         fragmentShader: result.fragmentShader,
       };
     },
-    [shaderName, uniforms] as const
+    [shaderName, uniforms, isWebGPUProject()] as const
   );
+  result.pixels = await maskMeshPickElementId(page, shaderName, result.pixels);
+  return result;
 }
 
 async function runBloomChain(
@@ -86,14 +137,16 @@ async function runBloomChain(
   fixture: 'radial' | 'ramp-y'
 ): Promise<BloomChainResult> {
   return page.evaluate(
-    async ([selectedBackend, selectedFixture]) => {
+    async ([selectedBackend, selectedFixture, native]) => {
       const result =
         selectedBackend === 'glsl'
           ? await window.__tslHarness!.renderBloomChainGLSL(selectedFixture as 'radial' | 'ramp-y')
-          : await window.__tslHarness!.renderBloomChainTSL(selectedFixture as 'radial' | 'ramp-y');
+          : await window.__tslHarness!.renderBloomChainTSL(selectedFixture as 'radial' | 'ramp-y', {
+              native,
+            });
       return { pixels: Array.from(result.pixels), mipCount: result.mipCount };
     },
-    [backend, fixture] as const
+    [backend, fixture, isWebGPUProject()] as const
   );
 }
 
@@ -2577,11 +2630,12 @@ test.describe('TSL ↔ GLSL shader parity', () => {
   // bottom-up, WGSL's is top-down) and therefore FORCED viewer-facing in both
   // shaders rather than assumed.
   //
-  // Note the limit of this harness: it drives `WebGPURenderer({ forceWebGL: true })`,
-  // so the TSL side is compiled to GLSL. That catches graph-shape and math
-  // divergence — the whole point — but NOT a WGSL-only convention difference. The
-  // sign forcing above is what makes that untested axis safe by construction rather
-  // than by luck.
+  // Note the limit of this harness in the default project: it drives
+  // `WebGPURenderer({ forceWebGL: true })`, so the TSL side is compiled to GLSL.
+  // That catches graph-shape and math divergence — the whole point — but NOT a
+  // WGSL-only convention difference; the `chromium-webgpu` project's native arm
+  // does. The sign forcing above is what keeps that axis safe by construction
+  // wherever only the default project runs.
   for (const variant of [
     'mesh',
     'mesh-additive',
@@ -2608,7 +2662,13 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       const glslPixels = await runGLSL(page, variant);
       const tslResult = await runTSL(page, variant);
 
-      assertBothRendered(glslPixels, tslResult.pixels, variant);
+      // NOT `assertBothRendered`: this fixture's quad fills the frame, so pixel 0
+      // is a SHADED corner, not background, and an exact match there is the
+      // bit-exactness demand that helper's own comment rules out. GLSL against
+      // TSL-on-the-WebGL-backend happens to agree to the bit; against native
+      // WGSL `mesh-texture` lands 1 LSB apart (red 186 vs 187), well inside the
+      // mean-diff bound below.
+      assertNeitherFrameEmpty(glslPixels, tslResult.pixels, variant);
       const diff = meanAbsDiff(glslPixels, tslResult.pixels);
       const samplePx = (px: number[], x: number, y: number) =>
         `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;

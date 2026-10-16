@@ -83,6 +83,59 @@ Under load the first touch move can arrive seconds after the press; before
 #2595 the loop had idle-paused by then and the whole drag moved nothing — on
 `dev` with a mouse too.
 
+### Native WebGPU project (`chromium-webgpu`)
+
+```bash
+pnpm test:e2e:webgpu                                # every spec, on native WebGPU
+pnpm test:e2e:webgpu blending-modes.spec.ts         # a subset
+LUXAR_E2E_WEBGPU=1 pnpm exec playwright test --project=chromium --project=chromium-webgpu x.spec.ts
+```
+
+The default `chromium` project drives `THREE.WebGLRenderer`, and the specs that
+ask for `?renderer=webgpu` there land on `WebGPURenderer`'s internal WebGL2
+backend: Playwright's bundled headless Chromium has no hardware WebGPU adapter.
+The `chromium-webgpu` project runs the same specs on real WebGPU. It is
+**opt-in** (`LUXAR_E2E_WEBGPU=1`, or naming it with `--project`), so `pnpm
+test:e2e` and CI are unchanged, and it needs a machine with a GPU.
+
+What the project changes, all in `webgpu-project.ts`:
+
+- **Browser.** System Chrome (`channel: 'chrome'`), with `--enable-unsafe-webgpu
+--enable-webgpu-developer-features` and, on Linux, `--use-angle=vulkan
+--enable-features=WebGPU` — but not the `Vulkan` feature, which puts Chrome's
+  compositor on Skia-Vulkan and loses the first WebGL frame's context headless.
+  Measured on obsidian (RTX 3070): bundled Chromium 153 only offers a SwiftShader
+  WebGPU adapter (`isFallbackAdapter: true`) whatever the flags; system Chrome 146
+  with the flags above gets the NVIDIA card. `LUXAR_E2E_WEBGPU_BROWSER=chromium`
+  tries the bundled build anyway.
+- **URLs.** The shared fixture appends `renderer=webgpu` to every `page.goto` to
+  the viewer page (`/` or `/index.html` on a loopback origin) that does not
+  already carry a `renderer=` parameter. Harness pages, embed examples and
+  explicitly pinned `renderer=webgl` loads are untouched.
+- **Fail closed.** `waitForLuxarReady` throws if such a page came up on three's
+  WebGL2 fallback or on a software adapter, rather than letting the project
+  quietly re-run the WebGL suite. `LUXAR_E2E_WEBGPU_ALLOW_FALLBACK=1` accepts a
+  SwiftShader adapter (for a GPU-less box; slow, and not what users run).
+  Pages with `webgpuForceWebgl` are exempt: they ask for the fallback.
+- **GL error checks.** `getWebGLErrors` drains the renderer's uncaptured GPU
+  errors on a WebGPU canvas instead of the (nonexistent) GL queue, so the same
+  `toEqual([])` assertions hold on both backends.
+- **WebGL-only specs** call `skipUnlessWebGL(reason)` and are skipped with that
+  reason: `webgl-errors.spec.ts`, `context-restore.spec.ts`, and the
+  `WEBGL_lose_context` block of `error-recovery.spec.ts`. Use the same helper
+  for any new spec that drives a `webgl2` context itself.
+- **TSL parity** (`tsl-shader-parity.spec.ts`) switches its TSL arm from
+  `forceWebGL: true` to native WGSL, so every parity case becomes GLSL against
+  WGSL on the GPU.
+- **Visual baselines.** `@visual` cases compare against the `chromium`
+  project's (WebGL-recorded) baselines at the shared tolerance. The config
+  refuses `--update-snapshots` while the project is enabled, because that would
+  overwrite those baselines with WebGPU pixels.
+
+Specs that import `test` from `@playwright/test` directly do not get the URL
+rewrite. The viewer specs among them import `rendererTest` from `./fixtures`
+instead, which adds only the rewrite (see [Shared Fixture](#shared-fixture-fixturests)).
+
 ### Parallelism is sized to the machine
 
 The local worker count is not a constant. `playwright.config.ts` asks
@@ -145,6 +198,7 @@ unconditionally serial.
 | `pnpm test:e2e:smoke`        | An explicit five-file allowlist: `viewer-initialization`, `url-parameters`, `dataset-switching`, `controls-interaction`, `keyboard-input-system` |
 | `pnpm test:e2e:smoke:strict` | The smoke allowlist with strict browser-console handling                                                                                         |
 | `pnpm test:e2e:browsers`     | Three fixture-backed specs under Chromium, Firefox and WebKit                                                                                    |
+| `pnpm test:e2e:webgpu`       | Everything `pnpm test:e2e` runs, under the opt-in native-WebGPU `chromium-webgpu` project (system Chrome, GPU required)                          |
 | `pnpm test:e2e:mobile`       | Only `src/tests/e2e/mobile/`, under `playwright.mobile.config.ts`                                                                                |
 | `pnpm test:perf:e2e`         | Only `*perf-bench.spec.ts`, under `playwright.perf.config.ts` (which shares this global setup)                                                   |
 
@@ -190,6 +244,7 @@ e2e/
 ├── helpers.ts           # ~40 Playwright helper utilities (wait/get/assert)
 ├── global-setup.ts      # Parallelism stamp; pre-flight: servers, datasets, fixtures; makes dirs
 ├── render-ticks.ts      # Confirmed render-tick flushing for detector specs
+├── webgpu-project.ts    # The opt-in chromium-webgpu project: URL rewrite, native gate, skipUnlessWebGL
 ├── harnesses/
 │   └── tsl-harness.ts   # TSL ↔ GLSL parity harness (loaded by tsl-harness.html)
 ├── mobile/              # touch-helpers.ts + five device-emulated specs
@@ -217,7 +272,9 @@ be unit-tested against a fake page; see
 `test` so **a spec that imports it dismisses the timed control-rail hint before
 navigation and auto-asserts no console errors after each test**. Specs that
 import `test` from `@playwright/test` directly get neither normalization nor
-fixture teardown. New specs must use:
+fixture teardown. `rendererTest`, also exported here, is the layer underneath:
+only the native-WebGPU project's `renderer=webgpu` URL rewrite, for older specs
+that predate the console gate. New specs must use:
 
 ```ts
 import { test, expect } from './fixtures';
@@ -290,13 +347,13 @@ exports group into the categories below.
 
 ### Lifecycle and readiness
 
-| Helper                                 | Use when                                                                                                       |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `waitForLuxarReady`                    | Wait for `window.__luxarDebug.getState().initialized` (45 s default). The first thing nearly every spec calls. |
-| `waitForDebugInterfaceReady`           | Lighter check that just asserts `window.__luxarDebug` is present.                                              |
-| `waitForConsoleInterceptor`            | Wait for the viewer's debug-console interceptor to install before reading captured logs.                       |
-| `waitForDataLoaded`                    | Wait for at least one geometry to have committed data.                                                         |
-| `waitForPointsLoaded(page, minPoints)` | Wait until `getState().totalPoints >= minPoints`.                                                              |
+| Helper                                 | Use when                                                                                                                                                                                                                            |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `waitForLuxarReady`                    | Wait for `window.__luxarDebug.getState().initialized` (45 s default). The first thing nearly every spec calls. In the `chromium-webgpu` project it also fails unless a `renderer=webgpu` page is on a native, non-fallback adapter. |
+| `waitForDebugInterfaceReady`           | Lighter check that just asserts `window.__luxarDebug` is present.                                                                                                                                                                   |
+| `waitForConsoleInterceptor`            | Wait for the viewer's debug-console interceptor to install before reading captured logs.                                                                                                                                            |
+| `waitForDataLoaded`                    | Wait for at least one geometry to have committed data.                                                                                                                                                                              |
+| `waitForPointsLoaded(page, minPoints)` | Wait until `getState().totalPoints >= minPoints`.                                                                                                                                                                                   |
 
 ### Render / animation pacing
 
@@ -327,7 +384,7 @@ exports group into the categories below.
 | `assertConsoleContains(page, pattern)` / `assertConsoleDoesNotContain` | Positive / negative assertion on the captured stream.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `assertNoConsoleErrors(page, allow)`                                   | Strict no-error gate on the in-app buffer against an allow-list. NOT called by the [shared fixture](#shared-fixture-fixturests) (#1760) — specs opt in, four of them from their own `test.afterEach` with no allow-list at all.                                                                                                                                                                                                                                                                                                            |
 | `assertNoShaderErrors(page)`                                           | Read the debug renderer for shader-compile / link failures specifically.                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `getWebGLErrors(page)`                                                 | Drain accumulated WebGL errors from the renderer.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `getWebGLErrors(page)`                                                 | Drain accumulated WebGL errors from the renderer. On a native WebGPU canvas, drains the renderer's uncaptured GPU errors instead (hooked by `waitForLuxarReady` in the `chromium-webgpu` project).                                                                                                                                                                                                                                                                                                                                         |
 | `waitForWebGLError(page, predicate)`                                   | Block until accumulated WebGL errors satisfy a predicate. Each read is bounded by the remaining budget, after the first one none is dispatched into a remainder shorter than one poll interval (a discarded read has already drained the GL queue), and a read that spent the whole remainder is not followed by one more poll past that deadline. It does not throw on give-up (it returns data) but warns once, saying whether any read answered and how many errors the union held; a rejecting read or a closed page still propagates. |
 
 ### Cache, UI, and input
@@ -572,11 +629,23 @@ Why a dedicated page rather than reusing the main viewer:
 - The TSL path drives `GLSLNodeBuilder` so the generated GLSL
   strings are recoverable for snapshot diff.
 
-Not in scope: real WebGPU dispatch. That requires Chrome stable +
-`?renderer=webgpu` and runs in a separate spec
-(`webgpu-native-smoke.spec.ts`). This harness validates the
-WebGL2-via-WebGPU-backend fallback parity, which is what
-`forceWebGL: true` covers.
+Two TSL arms. By default the TSL side runs on `forceWebGL: true`, the
+WebGL2-via-WebGPU-backend fallback parity. `renderTSL(name, { native: true })`
+and `renderBloomChainTSL(fixture, { native: true })` run the same graphs as WGSL
+on the real WebGPU backend instead, and throw if three fell back to WebGL or the
+adapter is a software one (`?allowFallbackAdapter` on the harness URL accepts
+that). `tsl-shader-parity.spec.ts` picks the native arm in the
+[`chromium-webgpu` project](#native-webgpu-project-chromium-webgpu); native
+readbacks are row-flipped to the WebGL bottom-up order before they are returned,
+so both arms compare against `renderGLSL` directly.
+
+Both WebGL arms call `alignProvokingVertexWithWebGPU` on their renderer, as
+`PickingSystem` does in production, so a mesh pick's `flat` per-vertex id comes
+from the same triangle corner as on WebGPU wherever `WEBGL_provoking_vertex`
+exists. Where it does not (obsidian's ANGLE-on-Vulkan, Chrome 146), the two
+conventions legitimately disagree (MESH_NODE_SPEC §6.5), and in the native arm
+the parity spec drops the element-id byte of `mesh-pick*` readbacks from both
+sides; `provokingVertexAlignable()` is how it decides.
 
 ### Window API exposed by the harness
 
@@ -584,7 +653,7 @@ WebGL2-via-WebGPU-backend fallback parity, which is what
 window.__tslHarness = {
   ready: Promise<void>,
   renderGLSL: (shaderName: string) => Uint8Array,
-  renderTSL: (shaderName: string) => Promise<{
+  renderTSL: (shaderName: string, opts?: { native?: boolean; uniforms?: Record<string, number> }) => Promise<{
     pixels: Uint8Array;
     vertexShader: string;
     fragmentShader: string;
@@ -593,11 +662,12 @@ window.__tslHarness = {
     pixels: Uint8Array;
     mipCount: number;
   }>,
-  renderBloomChainTSL: (fixture?: 'radial' | 'ramp-y') => Promise<{
+  renderBloomChainTSL: (fixture?: 'radial' | 'ramp-y', opts?: { native?: boolean }) => Promise<{
     pixels: Uint8Array;
     mipCount: number;
   }>,
   listShaders: () => string[],
+  provokingVertexAlignable: () => boolean,
 };
 ```
 
@@ -658,7 +728,8 @@ centre so FXAA's edge-detection path actually triggers.
 ### Specs that use the harness
 
 - `tsl-shader-parity.spec.ts` — pixel diff (GLSL vs TSL) for every
-  entry in the registry.
+  entry in the registry; TSL on the WebGL fallback by default, native WGSL
+  in the `chromium-webgpu` project.
 - `tsl-codegen-snapshot.spec.ts` — snapshot the generated GLSL
   strings into `src/tests/__codegen__/` so unintended codegen
   regressions surface as text diffs.
