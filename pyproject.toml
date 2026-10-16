@@ -162,7 +162,7 @@ dev = [
     # ruff. `>=0.1.0` also let every machine resolve a different formatter.
     # Keep in lockstep with `.pre-commit-config.yaml`'s ruff-pre-commit `rev`,
     # or the hook and the gate disagree about the same file.
-    "ruff>=0.16,<0.17",
+    "ruff>=0.16,<0.18",
     # Pinned because mypy's bundled typeshed defines what all three typing gates
     # accept; a new minor can otherwise turn an unrelated change red. The floor
     # must include Python 3.14's stdlib types.
