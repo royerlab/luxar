@@ -15,6 +15,32 @@ if TYPE_CHECKING:
     import numpy as np
 
 
+def _print_cull_compression(
+    source_bytes: Optional[int], input_path: Path, output_path: Path
+) -> None:
+    """Report compression before -> after on the one shared basis.
+
+    Decoded source bytes over each store's bytes ON DISK (the definition
+    `gsplat info` quotes), measured on the written output so the encoding the
+    save chose is what is counted. Silent when the source size is unknown.
+    """
+    from luxar.gsplats.fitting.visualization import (
+        compression_ratio,
+        format_compression_ratio,
+    )
+
+    from ...utils import store_size
+
+    before = compression_ratio(source_bytes, store_size(input_path))
+    after = compression_ratio(source_bytes, store_size(output_path))
+    if before is None or after is None:
+        return
+    aprint(
+        f"Compression: {format_compression_ratio(before)} -> "
+        f"{format_compression_ratio(after)} vs raw voxels"
+    )
+
+
 def _target_on_fit_basis(
     target: "np.ndarray", stats: Optional[Mapping[str, Any]]
 ) -> "np.ndarray":
@@ -76,14 +102,27 @@ def run_cull_dataset(
 
             # Load target volume if provided
             target_np = None
+            # Decoded source size, the numerator of the one compression ratio
+            # (`compression_ratio`): the fit's own record first, else the
+            # target volume in its stored element type.
+            source_bytes = (data.stats or {}).get("source_bytes")
             if target_path is not None:
                 from luxar.cli.gsplat_config import load_volume
 
                 with asection("Loading target volume"):
+                    target_info: dict = {}
                     target_np = load_volume(
-                        target_path, channel=channel, timepoint=timepoint
+                        target_path,
+                        channel=channel,
+                        timepoint=timepoint,
+                        info=target_info,
                     )
                     aprint(f"Target shape: {target_np.shape}")
+                    if not source_bytes:
+                        import numpy as np
+
+                        dtype = target_info.get("source_dtype") or target_np.dtype
+                        source_bytes = int(target_np.size) * np.dtype(dtype).itemsize
                     if len(target_np.shape) != data.ndim:
                         aprint(
                             f"Dimension mismatch: gsplats are {data.ndim}D "
@@ -139,18 +178,6 @@ def run_cull_dataset(
                 aprint(f"  Kept:     {culled_data.n_splats:,} splats")
                 aprint(f"  Method:   {resolved}")
 
-                # Compression stats
-                ndim = data.ndim
-                tril = ndim * (ndim + 1) // 2
-                floats_per_splat = ndim + tril + 1
-                bits_orig = n_original * floats_per_splat * 32
-                bits_culled = culled_data.n_splats * floats_per_splat * 32
-                if target_np is not None:
-                    vol_bits = int(target_np.size) * 32
-                    aprint(
-                        f"  Compression: {vol_bits / max(bits_orig, 1):.1f}x -> {vol_bits / max(bits_culled, 1):.1f}x"
-                    )
-
                 if resolved in ("error_budget", "redundancy"):
                     aprint(
                         f"  Error budget: {culled_data.stats.get('error_budget', 'N/A')}"
@@ -174,6 +201,7 @@ def run_cull_dataset(
                     root_attrs=read_rebuild_root_attrs(input_path),
                 )
                 aprint(f"Saved to {output_path}")
+                _print_cull_compression(source_bytes, input_path, output_path)
 
     except typer.Exit:
         raise

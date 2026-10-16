@@ -702,9 +702,9 @@ class TestDefaultWorkerCmdBuilder:
         # A content box's budget comes from the PLAN, never from --seeds.
         assert "--seeds" not in cmd
         # Nothing supplied -> no flags (the worker resolves its own defaults).
-        # `--preset` included: a "standard" default would layer that preset's
-        # n_iters (5000) / cull_retention on a box the sequential path fits with
-        # `load_fit_config(preset=None)` (1000 iterations).
+        # `--preset` included: the worker's `load_fit_config(preset=None)`
+        # resolves the same default preset the sequential path does, so
+        # forwarding nothing keeps the two identical (#1637).
         bare = [
             str(c)
             for c in _default_worker_cmd_builder("in.zarr", "plan.json")(
@@ -960,8 +960,9 @@ class TestContentFitSharedFloor:
         ``cull_retention=`` kwargs are deleted from the ``run_content_fit`` call
         site — this is where that is caught. ``truncate:`` is YAML-only, so an
         unforwarded ``--config`` left every ``-j N`` box fitted at the 2.75 default
-        (#1637), and a ``preset or "standard"`` default made a box resolve 5000
-        iterations where ``-j 1`` resolves 1000.
+        (#1637), and a call-site preset default could make a box resolve a
+        different preset than ``-j 1`` (both now resolve ``load_fit_config``'s
+        own default).
         """
         V = _pedestal_blobs(shape=(16, 16, 32))
         cfg = tmp_path / "fit.yaml"
@@ -980,9 +981,9 @@ class TestContentFitSharedFloor:
             assert argv[argv.index("--config") + 1] == str(cfg)
             assert argv[argv.index("--iters") + 1] == "9"
             assert float(argv[argv.index("--cull-retention") + 1]) == pytest.approx(0.5)
-            # No --preset was asked for, so none is forwarded: "standard" would
-            # layer 5000 iterations / cull_retention 0.999 on a box the sequential
-            # path fits with `load_fit_config(preset=None)`.
+            # No --preset was asked for, so none is forwarded: the worker's
+            # `load_fit_config(preset=None)` resolves the same default preset
+            # the sequential path does.
             assert "--preset" not in argv
         # An explicit preset IS forwarded, verbatim.
         with_preset = self._capture_worker_argvs(
@@ -1066,12 +1067,8 @@ class TestContentFitSharedFloor:
 class TestContentFitCullRetention:
     """`fit --tiling content` fits every box near-losslessly (#1729).
 
-    The planner meant to install a content default of 0.999 with
-    ``fk.setdefault("cull_retention", 0.999)``, which could never fire: the
-    resolved config always already carries the fitter's own signature default of
-    0.95. So a preset-less content fit culled the bottom 5% of cumulative
-    amplitude out of EVERY box (and the boxes are re-merged, so the cull
-    compounds) while the code claimed otherwise.
+    The content default is a backstop beneath presets. A bare CLI fit now
+    resolves the standard preset, which also retains 0.999.
     """
 
     @staticmethod
@@ -1098,9 +1095,7 @@ class TestContentFitCullRetention:
     def _spy_boxes(monkeypatch) -> list:
         """Patch ``_fit_one_box`` with a spy recording each box's resolved kwargs.
 
-        Records ``n_iters`` alongside the retention: 0.999 alone cannot tell a
-        preset apart from the command default (they agree), so a preset test needs
-        a knob only the preset layer sets.
+        Records ``n_iters`` alongside retention to check preset resolution.
         """
         import importlib
 
@@ -1232,11 +1227,7 @@ class TestContentFitCullRetention:
         assert list(tmp_path.glob(f".{output.name}.plan.*.json")) == []
 
     def test_bare_content_fit_is_near_lossless(self, tmp_path, monkeypatch):
-        """No preset, no --config, no --cull-retention → 0.999 for every box.
-
-        FAILS pre-fix with 0.95 (the fitter's signature default falling all the
-        way through), which is the regression this pins.
-        """
+        """No explicit preset or retention still gives 0.999 for every box."""
         assert self._run(tmp_path, monkeypatch) == [
             pytest.approx(CONTENT_CULL_RETENTION),
             pytest.approx(CONTENT_CULL_RETENTION),
@@ -1245,9 +1236,8 @@ class TestContentFitCullRetention:
     def test_preset_still_gives_its_own_retention(self, tmp_path, monkeypatch):
         """A preset keeps outranking the command default.
 
-        ``standard``'s retention is ALSO 0.999, so the retention alone cannot tell
-        which layer supplied it. ``n_iters`` can: 5000 is the preset's, 1000 the
-        harvested function default a preset-less run resolves.
+        ``standard``'s retention is also 0.999, so ``n_iters`` checks that the
+        preset layer applied.
         """
         seen = self._run_boxes(tmp_path, monkeypatch, preset="standard")
         assert [r["cull_retention"] for r in seen] == [

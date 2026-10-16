@@ -215,9 +215,10 @@ WHY THESE VALUES:
                     `signal_limited` with K* = 512,000 and diminishing returns
                     flagged at 256,000; 256k is the operating point chosen. Re-run
                     `cal` and it will say 512,000 -- that is not a contradiction.
-  --preset standard LOAD-BEARING. Omit it and `--preset` defaults to None, falls
-                    through to the fitting API's n_iters=1000, and reports
-                    converged=False at exactly the cap. The preset also supplies
+  --preset standard The preset this archive was built with, and since then
+                    also what a preset-less `fit` uses. (Before that, omitting
+                    it fell through to the fitting API's n_iters=1000 and
+                    reported converged=False at exactly the cap.) The preset also supplies
                     the post-fit cull, which took 256,000 -> 200,023 splats, so
                     the cull is not a separate command.
   --floor auto      Pin the PROCEDURE, never the number. `auto` is a

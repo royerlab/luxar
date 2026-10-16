@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 import torch
 
@@ -391,3 +393,63 @@ def test_auto_worker_hard_cap_env_override(monkeypatch) -> None:
     monkeypatch.setenv("LUXAR_AUTO_WORKER_HARD_CAP", "12")
 
     assert device_mod._auto_worker_hard_cap() == 12
+
+
+class TestCpuFallbackHint:
+    """The CPU-fallback advice branches on what is TRUE of this torch install."""
+
+    def test_macos_with_mps_points_at_mps(self, monkeypatch) -> None:
+        monkeypatch.setattr(device_mod, "is_mps_available", lambda: True)
+        hint = device_mod.cpu_fallback_hint(platform="darwin")
+        assert "device='mps'" in hint
+        assert "CUDA" not in hint
+
+    def test_macos_without_mps(self, monkeypatch) -> None:
+        monkeypatch.setattr(device_mod, "is_mps_available", lambda: False)
+        assert "No MPS device" in device_mod.cpu_fallback_hint(platform="darwin")
+
+    def test_cuda_build_without_a_visible_gpu_is_a_driver_problem(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(torch.version, "cuda", "12.8")
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        hint = device_mod.cpu_fallback_hint(platform="linux")
+        assert "no CUDA GPU is visible" in hint
+        assert "CUDA_VISIBLE_DEVICES" in hint
+        assert "install" not in hint
+
+    def test_cuda_build_with_a_gpu_says_cpu_was_chosen(self, monkeypatch) -> None:
+        monkeypatch.setattr(torch.version, "cuda", "12.8")
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        assert "device='cuda'" in device_mod.cpu_fallback_hint(platform="linux")
+
+    @pytest.mark.parametrize("platform", ["linux", "win32"])
+    def test_cpu_only_torch_says_install_a_cuda_build(
+        self, monkeypatch, platform: str
+    ) -> None:
+        monkeypatch.setattr(torch.version, "cuda", None)
+        hint = device_mod.cpu_fallback_hint(platform=platform)
+        assert "install a CUDA build of torch" in hint
+        assert "make" not in hint
+
+    def test_warning_uses_python_warning_channel_once(
+        self, monkeypatch, capsys
+    ) -> None:
+        monkeypatch.setattr(device_mod, "_CPU_WARNING_ISSUED", False)
+        with pytest.warns(UserWarning, match="running on CPU"):
+            device_mod.warn_cpu_fitting()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            device_mod.warn_cpu_fitting()
+        assert caught == []
+        out = capsys.readouterr().out
+        assert "running on CPU" not in out
+
+    def test_warning_as_error_does_not_silence_a_retry(self, monkeypatch) -> None:
+        monkeypatch.setattr(device_mod, "_CPU_WARNING_ISSUED", False)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            with pytest.raises(UserWarning, match="running on CPU"):
+                device_mod.warn_cpu_fitting()
+        with pytest.warns(UserWarning, match="running on CPU"):
+            device_mod.warn_cpu_fitting()
