@@ -255,6 +255,24 @@ def convert_to_scene(
 
                 with asection("Creating Luxar scene"):
                     orientation = orient(data.centers, remap=True)
+                    # The writer stores float32 centers. Keep the original
+                    # extent for validation before remapping, but include any
+                    # extrema moved outward by the eventual float32 cast.
+                    rounded_bounds = np.array(
+                        [data.centers.min(axis=0), data.centers.max(axis=0)],
+                        dtype=np.float32,
+                    )
+                    names = orientation.dim_order or orientation.dimensions.names
+                    for i, name in enumerate(names):
+                        dim = orientation.dimensions.dimensions[
+                            orientation.dimensions.names.index(name)
+                        ]
+                        assert dim.range is not None
+                        low, high = dim.range
+                        dim.range = (
+                            min(low, float(rounded_bounds[0, i])),
+                            max(high, float(rounded_bounds[1, i])),
+                        )
                     dims = orientation.dimensions
                     viewer_config = _scene_viewer_config(orientation, tone_mapping)
                     with LuxarZarrCompiler(
