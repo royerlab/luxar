@@ -72,6 +72,7 @@ describe('manual headroom persistence', () => {
   beforeEach(() => {
     localStorage.clear();
   });
+  afterEach(() => vi.unstubAllGlobals());
 
   it('remembers one value per display', () => {
     storeManualHeadroom('label:M28U', 1.4);
@@ -88,6 +89,33 @@ describe('manual headroom persistence', () => {
     localStorage.setItem('luxar.hdrHeadroom', '{"a": "x", "b": 3}');
     expect(loadManualHeadroom('a')).toBeNull();
     expect(loadManualHeadroom('b')).toBe(3);
+  });
+
+  it('works without localStorage', () => {
+    vi.stubGlobal('localStorage', undefined);
+    expect(loadManualHeadroom('screen:1512x982')).toBeNull();
+    expect(() => storeManualHeadroom('screen:1512x982', 4)).not.toThrow();
+  });
+
+  it('treats a storage read error as an empty map', () => {
+    const setItem = vi.fn();
+    vi.stubGlobal('localStorage', {
+      getItem: () => {
+        throw new Error('storage blocked');
+      },
+      setItem,
+    });
+    expect(loadManualHeadroom('screen:1512x982')).toBeNull();
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it('does not throw when a storage write is blocked', () => {
+    const setItem = vi.fn(() => {
+      throw new Error('storage blocked');
+    });
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem });
+    expect(() => storeManualHeadroom('screen:1512x982', 4)).not.toThrow();
+    expect(setItem).toHaveBeenCalledWith('luxar.hdrHeadroom', '{"screen:1512x982":4}');
   });
 });
 
@@ -113,7 +141,7 @@ function stubScreenDetails(screen: { label: string; hdrHeadroom?: number }, gran
   );
   vi.stubGlobal('getScreenDetails', getScreenDetails);
   Object.assign(window, { getScreenDetails });
-  return { currentScreen, getScreenDetails };
+  return { currentScreen, details, getScreenDetails };
 }
 
 describe('HdrHeadroomController', () => {
@@ -166,6 +194,17 @@ describe('HdrHeadroomController', () => {
     c.dispose();
   });
 
+  it('Detect without the screen-details API leaves headroom unchanged', async () => {
+    stubMatchMedia({ hdr: true });
+    const c = new HdrHeadroomController(apply, { pinned: null, gpuRenderer: null });
+    await c.start();
+    expect(c.canMeasure()).toBe(false);
+    expect(await c.detect()).toBe('denied');
+    expect(c.current()).toMatchObject({ value: 2, source: 'default' });
+    expect(localStorage.getItem('luxar.hdrHeadroom')).toBeNull();
+    c.dispose();
+  });
+
   it('Detect measures, migrates the geometry-keyed value, then lets the measurement win', async () => {
     stubMatchMedia({ hdr: true });
     const { currentScreen } = stubScreenDetails(
@@ -199,6 +238,130 @@ describe('HdrHeadroomController', () => {
     expect(outcomes).toEqual(['measured', 'measured']);
     expect(getScreenDetails).toHaveBeenCalledTimes(1);
     c.dispose();
+  });
+
+  it('starts watching an EventTarget screen and detaches it on dispose', async () => {
+    stubMatchMedia({ hdr: true });
+    const screen = Object.assign(new EventTarget(), { width: 1512, height: 982 });
+    vi.stubGlobal('screen', screen);
+    const c = new HdrHeadroomController(apply, { pinned: null, gpuRenderer: null });
+    await c.start();
+    vi.spyOn(window, 'matchMedia').mockImplementation(() => ({ matches: false }) as MediaQueryList);
+    screen.dispatchEvent(new Event('change'));
+    expect(c.current()).toMatchObject({ value: 1, source: 'sdr' });
+    c.dispose();
+    const count = applied.length;
+    screen.dispatchEvent(new Event('change'));
+    expect(applied).toHaveLength(count);
+  });
+
+  it('attaches screen details at startup only with an already granted permission', async () => {
+    stubMatchMedia({ hdr: true });
+    const { getScreenDetails } = stubScreenDetails(
+      { label: 'Built-in Retina Display', hdrHeadroom: 2 },
+      true
+    );
+    const query = vi.fn().mockResolvedValue({ state: 'granted' });
+    vi.stubGlobal('navigator', { platform: 'MacIntel', permissions: { query } });
+    const c = new HdrHeadroomController(apply, { pinned: null, gpuRenderer: null });
+    await c.start();
+    expect(query).toHaveBeenCalledWith({ name: 'window-management' });
+    expect(getScreenDetails).toHaveBeenCalledTimes(1);
+    expect(c.current()).toMatchObject({ value: 4, source: 'measured' });
+    c.dispose();
+  });
+
+  it('does not request screen details at startup without a grant', async () => {
+    stubMatchMedia({ hdr: true });
+    const { getScreenDetails } = stubScreenDetails(
+      { label: 'Built-in Retina Display', hdrHeadroom: 2 },
+      true
+    );
+    vi.stubGlobal('navigator', {
+      platform: 'MacIntel',
+      permissions: { query: vi.fn().mockResolvedValue({ state: 'prompt' }) },
+    });
+    const c = new HdrHeadroomController(apply, { pinned: null, gpuRenderer: null });
+    await c.start();
+    expect(getScreenDetails).not.toHaveBeenCalled();
+    expect(c.current()).toMatchObject({ value: 2, source: 'default' });
+    c.dispose();
+  });
+
+  it('keeps a geometry-keyed value when the detailed screen has no label', async () => {
+    stubMatchMedia({ hdr: true });
+    stubScreenDetails({ label: '' }, true);
+    const c = new HdrHeadroomController(apply, { pinned: null, gpuRenderer: null });
+    await c.start();
+    c.setManual(5);
+    const setItem = vi.spyOn(localStorage, 'setItem');
+    expect(await c.detect()).toBe('unmeasurable');
+    expect(c.current()).toMatchObject({ value: 5, source: 'manual' });
+    expect(setItem).not.toHaveBeenCalled();
+    c.dispose();
+  });
+
+  it('does not overwrite a hand-set value already stored under the display label', async () => {
+    stubMatchMedia({ hdr: true });
+    stubScreenDetails({ label: 'Built-in Retina Display' }, true);
+    const c = new HdrHeadroomController(apply, { pinned: null, gpuRenderer: null });
+    await c.start();
+    c.setManual(5);
+    storeManualHeadroom('label:Built-in Retina Display', 6);
+    const setItem = vi.spyOn(localStorage, 'setItem');
+    expect(await c.detect()).toBe('unmeasurable');
+    expect(c.current()).toMatchObject({ value: 6, source: 'manual' });
+    expect(loadManualHeadroom('label:Built-in Retina Display')).toBe(6);
+    expect(setItem).not.toHaveBeenCalled();
+    c.dispose();
+  });
+
+  it('stops watching the previous screen when the current screen disappears', async () => {
+    stubMatchMedia({ hdr: true });
+    const { currentScreen, details } = stubScreenDetails(
+      { label: 'Built-in Retina Display', hdrHeadroom: 2 },
+      true
+    );
+    vi.stubGlobal('navigator', {
+      platform: 'MacIntel',
+      permissions: { query: vi.fn().mockResolvedValue({ state: 'granted' }) },
+    });
+    const c = new HdrHeadroomController(apply, { pinned: null, gpuRenderer: null });
+    await c.start();
+    Object.assign(details, { currentScreen: null });
+    details.dispatchEvent(new Event('currentscreenchange'));
+    expect(c.current()).toMatchObject({ value: 2, source: 'default' });
+    const count = applied.length;
+    Object.assign(currentScreen, { hdrHeadroom: 3 });
+    currentScreen.dispatchEvent(new Event('hdrheadroomchange'));
+    expect(applied).toHaveLength(count);
+    c.dispose();
+  });
+
+  it('ignores a screen-details request completed after disposal', async () => {
+    stubMatchMedia({ hdr: true });
+    const currentScreen = Object.assign(new EventTarget(), {
+      label: 'Built-in Retina Display',
+      hdrHeadroom: 2,
+    });
+    const details = Object.assign(new EventTarget(), { currentScreen });
+    const onDetails = vi.spyOn(details, 'addEventListener');
+    const onScreen = vi.spyOn(currentScreen, 'addEventListener');
+    let resolveDetails!: (value: typeof details) => void;
+    const pending = new Promise<typeof details>((resolve) => {
+      resolveDetails = resolve;
+    });
+    Object.assign(window, { getScreenDetails: () => pending });
+    const c = new HdrHeadroomController(apply, { pinned: null, gpuRenderer: null });
+    await c.start();
+    const detecting = c.detect();
+    c.dispose();
+    resolveDetails(details);
+    expect(await detecting).toBe('denied');
+    expect(c.current()).toMatchObject({ value: 2, source: 'default' });
+    expect(onDetails).not.toHaveBeenCalled();
+    expect(onScreen).not.toHaveBeenCalled();
+    expect(localStorage.getItem('luxar.hdrHeadroom')).toBeNull();
   });
 
   it('stores a hand-set value under the geometry key too (startup reads it)', async () => {

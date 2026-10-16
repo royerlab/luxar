@@ -40,6 +40,7 @@ describe('identifyDisplay', () => {
 
   it('uses the 14" Pro size list to tell a base-chip MacBook Pro from an Air', () => {
     expect(identifyDisplay(signals({ gpuRenderer: M4 }))?.name).toContain('XDR');
+    expect(identifyDisplay(signals({ gpuRenderer: M4, width: 1728, height: 1117 }))).toBeNull();
     // 13" Air default scaled size: same panel shape, no XDR.
     expect(identifyDisplay(signals({ gpuRenderer: M4, width: 1470, height: 956 }))).toBeNull();
   });

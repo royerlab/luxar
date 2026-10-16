@@ -288,13 +288,15 @@ export class HdrHeadroomController {
   private async doAttachScreenDetails(): Promise<void> {
     const getDetails = getScreenDetailsFn();
     if (getDetails === null) return;
+    let details: ScreenDetailsLike;
     try {
-      this.details = await getDetails();
+      details = await getDetails();
     } catch {
       log.info(Modules.HDR, 'Display details unavailable (permission not granted)');
       return;
     }
     if (this.disposed) return;
+    this.details = details;
     // Geometry read AFTER the prompt: the window may have moved meanwhile.
     migrateManualHeadroom(this.geometryKey(), displayKey(this.signals()));
     this.events.on(this.details, 'currentscreenchange', this.onScreenSwitch);
