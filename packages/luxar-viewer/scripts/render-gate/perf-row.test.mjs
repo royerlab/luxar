@@ -16,6 +16,19 @@ it('keeps unpaced and non-WebGL throughput comparable', () => {
   expect(scorePerfMetric('throughputMs', 'webgpu', [15], [17.3], [15]).verdict).toBe('fail');
 });
 
+it('widens the A/A floor across the run-wide timing family', () => {
+  const base = [10, 10, 10, 10, 10];
+  const cand = [10.12, 10.12, 10.12, 10.12, 10.12];
+  const single = scorePerfMetric('gpuMs', 'webgpu', base, cand, base);
+  const family = scorePerfMetric('gpuMs', 'webgpu', base, cand, base, 0, 4);
+
+  expect(single.verdict).toBe('fail');
+  expect(single.floor).toBe(0.01);
+  expect(family.verdict).toBe('pass');
+  expect(family.aaFloor).toBe(0.01);
+  expect(family.floor).toBeCloseTo(0.012761, 6);
+});
+
 it('reports an unavailable baseline measurement as n/a', () => {
   const metric = scorePerfMetric('unpacedThroughputMs', 'webgl', [undefined], [1], [undefined]);
   expect(metric.verdict).toBe('n/a');
