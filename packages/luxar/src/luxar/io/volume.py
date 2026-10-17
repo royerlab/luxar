@@ -25,6 +25,19 @@ __all__ = [
 ]
 
 
+class RegionRankError(ValueError):
+    """A ``region`` whose span count does not match the axes it would crop.
+
+    A ``ValueError`` (so existing callers keep catching it), distinct so a CLI
+    can report it as a usage error naming the volume's rank.
+    """
+
+    def __init__(self, n_spans: int, n_axes: int, what: str) -> None:
+        self.n_spans = n_spans
+        self.n_axes = n_axes
+        super().__init__(f"region has {n_spans} axes but {what} {n_axes}")
+
+
 def decode_flat_channel_index(
     channel: int, channel_shape: Tuple[int, ...]
 ) -> Tuple[int, ...]:
@@ -243,9 +256,10 @@ def _apply_axes_spec(
     spatial_indices = [i for i, kind in enumerate(kinds) if kind == "s"]
     if region is not None:
         if len(region) != len(spatial_indices):
-            raise ValueError(
-                f"region has {len(region)} axes but --axes {axes!r} names "
-                f"{len(spatial_indices)} spatial axes"
+            raise RegionRankError(
+                len(region),
+                len(spatial_indices),
+                f"--axes {axes!r} names this many spatial axes:",
             )
         for axis, span in zip(spatial_indices, region, strict=True):
             index[axis] = span
@@ -334,6 +348,10 @@ def _slice_eager_region(
     """Apply ``region`` only when the reader could not do it lazily."""
     if region is None or is_zarr_path(path):
         return volume
+    if len(region) != volume.ndim:
+        # numpy would silently crop only the leading axes (too few spans) or
+        # raise a bare IndexError (too many).
+        raise RegionRankError(len(region), volume.ndim, "the volume's rank is")
     return np.asarray(volume[region], dtype=np.float32)
 
 
@@ -345,9 +363,10 @@ def _squeezed_region_spans(
         return (slice(None),) * len(shape)
     surviving_axes = [axis for axis, size in enumerate(shape) if size != 1]
     if len(region) != len(surviving_axes):
-        raise ValueError(
-            f"region has {len(region)} axes but positional loading keeps "
-            f"{len(surviving_axes)} axes after squeezing shape {shape}"
+        raise RegionRankError(
+            len(region),
+            len(surviving_axes),
+            f"after squeezing, positional loading of shape {shape} keeps",
         )
     spans = [slice(None)] * len(shape)
     for axis, span in zip(surviving_axes, region, strict=True):

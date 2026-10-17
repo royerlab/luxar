@@ -24,7 +24,7 @@ import { GSplatPickingTSLMaterial } from '../../../../rendering/picking/gsplat/m
 import { LinePickingTSLMaterial } from '../../../../rendering/picking/line/material-tsl';
 import { MeshPickingTSLMaterial } from '../../../../rendering/picking/mesh/material-tsl';
 import { PointPickingTSLMaterial } from '../../../../rendering/picking/point/material-tsl';
-import { buildWGSL } from '../wgsl-builder';
+import { wgslFragmentFor } from '../../helpers/wgsl-build';
 
 /** viewZToOrthographicDepth as three emits it. */
 const ORTHO_DEPTH =
@@ -38,11 +38,8 @@ describe('TSL pick depth is chosen per draw, not per build', () => {
     ['gsplat', () => new GSplatPickingTSLMaterial({ nodeId: 1 })],
     ['mesh', () => new MeshPickingTSLMaterial({ nodeId: 1 })],
   ])('%s: a perspective build writes the ortho depth under an ortho camera', (_n, make) => {
-    const persp = buildWGSL(make(), new THREE.PerspectiveCamera(50, 1, 0.1, 100)).fragmentShader;
-    const ortho = buildWGSL(
-      make(),
-      new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100)
-    ).fragmentShader;
+    const persp = wgslFragmentFor(make(), new THREE.PerspectiveCamera(50, 1, 0.1, 100));
+    const ortho = wgslFragmentFor(make(), new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100));
     expect(persp).toContain('frag_depth');
     expect(persp).toMatch(ORTHO_DEPTH);
     // The inverse projection feeding both select arms must run before the

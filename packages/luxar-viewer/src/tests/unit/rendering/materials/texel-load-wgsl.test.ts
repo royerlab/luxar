@@ -7,7 +7,12 @@ import { PointTSLMaterial } from '../../../../rendering/materials/point/material
 import { GSplatPickingTSLMaterial } from '../../../../rendering/picking/gsplat/material-tsl';
 import { LinePickingTSLMaterial } from '../../../../rendering/picking/line/material-tsl';
 import { PointPickingTSLMaterial } from '../../../../rendering/picking/point/material-tsl';
-import { buildWGSL } from '../wgsl-builder';
+import { wgslVertexFor } from '../../helpers/wgsl-build';
+
+const geometry = new THREE.BufferGeometry();
+geometry.setAttribute('aSortedIndex', new THREE.Uint32BufferAttribute([0], 1));
+geometry.setAttribute('aSortedIndexB', new THREE.Uint32BufferAttribute([0], 1));
+geometry.setAttribute('aQuadCorner', new THREE.Float32BufferAttribute([0, 0], 2));
 
 describe('element texture loads in generated WGSL', () => {
   // geometry-subset: Mesh reads vertex buffers rather than element data textures.
@@ -29,7 +34,7 @@ describe('element texture loads in generated WGSL', () => {
       10,
     ], // 6 segment + 2x2 partner
   ] as const)('%s uses untransformed integer texel coordinates', (_name, make, loadCount) => {
-    const vertex = buildWGSL(make(), new THREE.PerspectiveCamera(50, 1, 0.1, 100)).vertexShader;
+    const vertex = wgslVertexFor(make(), new THREE.PerspectiveCamera(50, 1, 0.1, 100), geometry);
     const loads = vertex.split('\n').filter((line) => line.includes('textureLoad('));
     expect(loads).toHaveLength(loadCount);
     for (const load of loads) {
