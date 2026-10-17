@@ -194,6 +194,10 @@ async function defaultCompileOne(
   signal: AbortSignal
 ): Promise<void> {
   const compileScene = new THREE.Scene();
+  compileScene.environment = targetScene.environment;
+  compileScene.environmentRotation.copy(targetScene.environmentRotation);
+  compileScene.environmentIntensity = targetScene.environmentIntensity;
+  compileScene.fog = targetScene.fog;
   compileScene.add(compileObject);
   try {
     assertWarmupContext(renderer, signal);

@@ -411,6 +411,59 @@ describe('WebGLBlendWarmupManager', () => {
     expect(setScissorTest).toHaveBeenLastCalledWith(true);
   });
 
+  it('draws with the live scene environment and fog used to compile the keeper', async () => {
+    const environment = new THREE.CubeTexture();
+    const fog = new THREE.Fog(0x123456);
+    const targetScene = new THREE.Scene();
+    targetScene.environment = environment;
+    targetScene.environmentRotation.set(0.1, 0.2, 0.3);
+    targetScene.environmentIntensity = 0.6;
+    targetScene.fog = fog;
+    let target: THREE.RenderTarget | null = null;
+    const renderedScenes: THREE.Scene[] = [];
+    const renderer = {
+      compile: (scene: THREE.Scene) =>
+        new Set([(scene.children[0] as THREE.Mesh).material as THREE.Material]),
+      getContext: () => ({ isContextLost: () => false }),
+      properties: { get: () => ({ currentProgram: { isReady: () => true } }) },
+      getRenderTarget: () => target,
+      setRenderTarget: (next: THREE.RenderTarget | null) => {
+        target = next;
+      },
+      getViewport: () => new THREE.Vector4(),
+      getScissor: () => new THREE.Vector4(),
+      getScissorTest: () => false,
+      setViewport: () => undefined,
+      setScissor: () => undefined,
+      setScissorTest: () => undefined,
+      info: { render: { calls: 0, triangles: 0, points: 0, lines: 0 } },
+      render: (scene: THREE.Scene) => {
+        renderedScenes.push(scene);
+      },
+    } as unknown as THREE.WebGLRenderer;
+    const manager = new WebGLBlendWarmupManager(
+      async () => undefined,
+      undefined,
+      activateImmediately
+    );
+    manager.configure({
+      enabled: true,
+      renderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene,
+    });
+
+    await manager.warmScene(makeRenderableMesh('mesh'));
+
+    expect(renderedScenes).toHaveLength(3);
+    for (const scene of renderedScenes) {
+      expect(scene.environment).toBe(environment);
+      expect(scene.environmentRotation.equals(targetScene.environmentRotation)).toBe(true);
+      expect(scene.environmentIntensity).toBe(0.6);
+      expect(scene.fog).toBe(fog);
+    }
+  });
+
   it('restores shared geometry and renderer state if a keeper draw fails', async () => {
     let target: THREE.RenderTarget | null = null;
     let draws = 0;
