@@ -226,6 +226,10 @@ describe('createRendererCapabilities (GL probes)', () => {
 });
 
 describe('createRendererCapabilities (WebGPU MSAA)', () => {
+  it('uses the core limit before a backend is available', () => {
+    expect(createRendererCapabilities({} as Renderer).maxMSAASamples).toBe(4);
+  });
+
   it('reports 4 for native core and 0 for native compatibility mode', () => {
     const backend = { isWebGPUBackend: true, compatibilityMode: false };
     const renderer = { backend } as unknown as Renderer;
@@ -238,6 +242,19 @@ describe('createRendererCapabilities (WebGPU MSAA)', () => {
     const gl = { MAX_SAMPLES, getParameter: (param: number) => (param === MAX_SAMPLES ? 8 : 0) };
     const renderer = { backend: { isWebGLBackend: true, gl } } as unknown as Renderer;
     expect(createRendererCapabilities(renderer).maxMSAASamples).toBe(8);
+  });
+
+  it.each([NaN, -1, 0, 2.5])('rejects invalid bridge MAX_SAMPLES %s', (samples) => {
+    const gl = { MAX_SAMPLES, getParameter: () => samples };
+    const renderer = { backend: { isWebGLBackend: true, gl } } as unknown as Renderer;
+    expect(createRendererCapabilities(renderer).maxMSAASamples).toBe(0);
+  });
+
+  it('handles a bridge context without a parameter probe', () => {
+    const renderer = {
+      backend: { isWebGLBackend: true, gl: { MAX_SAMPLES } },
+    } as unknown as Renderer;
+    expect(createRendererCapabilities(renderer).maxMSAASamples).toBe(4);
   });
 });
 

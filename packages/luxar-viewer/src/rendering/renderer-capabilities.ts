@@ -330,20 +330,23 @@ export function createRendererCapabilities(
     }
   }
 
-  const bridgeSamples = backend?.gl?.getParameter(backend.gl.MAX_SAMPLES) as number | null;
+  let maxMSAASamples = 4;
+  if (backend?.isWebGPUBackend === true) {
+    maxMSAASamples = backend.compatibilityMode === true ? 0 : 4;
+  } else if (backend?.gl && typeof backend.gl.getParameter === 'function') {
+    const bridgeSamples: unknown = backend.gl.getParameter(backend.gl.MAX_SAMPLES);
+    maxMSAASamples =
+      typeof bridgeSamples === 'number' && Number.isInteger(bridgeSamples) && bridgeSamples > 0
+        ? bridgeSamples
+        : 0;
+  }
 
   return {
     apiSurface: 'webgpu',
     framebufferYDown,
     readbackYDown: backend?.isWebGPUBackend === true,
     hdr,
-    maxMSAASamples: backend?.isWebGPUBackend
-      ? backend.compatibilityMode
-        ? 0
-        : 4
-      : typeof bridgeSamples === 'number'
-        ? bridgeSamples
-        : 0,
+    maxMSAASamples,
     maxTextureSize,
     maxRenderbufferSize,
     pointSizeRange: [1, 1024],
