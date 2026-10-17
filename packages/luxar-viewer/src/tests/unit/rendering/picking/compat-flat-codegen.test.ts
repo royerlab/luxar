@@ -33,7 +33,7 @@ it('every rendering flat interpolation specifies compatibility-safe sampling', (
   expect(violations).toEqual([]);
 });
 
-function wgsl(material: NodeMaterial, compatibilityMode = true): string {
+function wgsl(material: NodeMaterial, compatibilityMode: boolean | null = true, omitMode = false): string {
   const renderer = {
     getRenderTarget: () => null,
     getMRT: () => null,
@@ -45,7 +45,7 @@ function wgsl(material: NodeMaterial, compatibilityMode = true): string {
     hasFeature: () => false,
     hasCompatibility: () => false,
     backend: {
-      compatibilityMode,
+      ...(!omitMode && { compatibilityMode }),
       capabilities: { getUniformBufferLimit: () => 65536 },
       utils: { getTextureSampleData: () => ({ samples: 1, primarySamples: 1, isMSAA: false }) },
     },
@@ -94,4 +94,13 @@ it('mesh picking keeps first-corner sampling on core WebGPU', () => {
   const source = wgsl(material, false);
   expect(source.match(/@interpolate\( flat, first \)/g)).toHaveLength(1);
   expect(source.match(/@interpolate\( flat, either \)/g)).toHaveLength(1);
+});
+
+it.each([
+  ['null', null, false],
+  ['undefined', true, true],
+] as const)('mesh picking uses either-corner sampling for unknown mode %s', (_name, mode, omitMode) => {
+  const source = wgsl(new MeshPickingTSLMaterial({ nodeId: 1 }), mode, omitMode);
+  expect(source.match(/@interpolate\( flat, either \)/g)).toHaveLength(2);
+  expect(source).not.toContain('@interpolate( flat, first )');
 });

@@ -79,8 +79,10 @@ const max: (a: TSLNode, b: TSLNode) => TSLNode = _max as TSLNode;
 
 /**
  * Keep core WebGPU's first-corner result; compatibility mode cannot use first.
- * This is a stopgap until #3164 makes the corner choice deterministic. Before
- * WebGPUBackend.init, compatibilityMode is null and this selects core's first.
+ * An unknown mode (null before WebGPUBackend.init, or absent on a bridge backend)
+ * must use either so a compatibility device can still build the shader.
+ * #3164 aligns WebGL with core; compatibility still needs fragment-stage corner
+ * selection to make its result deterministic.
  */
 class MeshElementIdNode extends Node {
   constructor(private readonly elementId: TSLNode) {
@@ -88,10 +90,10 @@ class MeshElementIdNode extends Node {
   }
 
   override setup(builder: NodeBuilder): TSLNode {
-    const backend = builder.renderer.backend as { compatibilityMode?: boolean };
+    const backend = builder.renderer.backend as { compatibilityMode?: boolean | null };
     return varying(this.elementId).setInterpolation(
       'flat',
-      backend.compatibilityMode ? 'either' : 'first'
+      backend.compatibilityMode === false ? 'first' : 'either'
     );
   }
 }
