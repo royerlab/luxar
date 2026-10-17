@@ -516,6 +516,7 @@ describe('WebGLBlendWarmupManager', () => {
     keeper.addEventListener('dispose', disposed);
     manager.clear();
     await completion;
+    await new Promise((resolve) => setTimeout(resolve, 30));
     expect(disposed).not.toHaveBeenCalled();
     finishLink?.();
     await vi.waitFor(() => expect(disposed).toHaveBeenCalledTimes(1));
@@ -562,6 +563,7 @@ describe('WebGLBlendWarmupManager', () => {
   it('continues with a later node when a removed node link never settles', async () => {
     vi.useFakeTimers();
     try {
+      let finishOld: (() => void) | undefined;
       const compileOne = vi
         .fn(
           (
@@ -571,7 +573,12 @@ describe('WebGLBlendWarmupManager', () => {
             _object: THREE.Object3D
           ): Promise<void> | void => undefined
         )
-        .mockImplementationOnce(() => new Promise<void>(() => undefined))
+        .mockImplementationOnce(
+          () =>
+            new Promise<void>((resolve) => {
+              finishOld = resolve;
+            })
+        )
         .mockImplementation(() => undefined);
       const manager = new WebGLBlendWarmupManager(
         async () => undefined,
@@ -598,9 +605,12 @@ describe('WebGLBlendWarmupManager', () => {
         makeRenderableMesh('points', new FakeWarmupMaterial('normal', { OTHER: 1 }))
       );
       await vi.advanceTimersByTimeAsync(5000);
-      expect(disposed).toHaveBeenCalledTimes(1);
+      expect(disposed).not.toHaveBeenCalled();
       expect(compileOne).toHaveBeenCalledTimes(4);
       expect(manager.getStats().compiled).toBe(3);
+      finishOld?.();
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      expect(disposed).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

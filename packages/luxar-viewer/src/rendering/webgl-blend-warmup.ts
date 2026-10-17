@@ -210,7 +210,7 @@ async function defaultCompileOne(
   }
 }
 
-function awaitCompile(compile: () => Promise<void> | void, abort: AbortController): Promise<void> {
+function awaitCompile(compile: Promise<void>, abort: AbortController): Promise<void> {
   const signal = abort.signal;
   let timeout: ReturnType<typeof setTimeout>;
   let onAbort: () => void;
@@ -221,11 +221,7 @@ function awaitCompile(compile: () => Promise<void> | void, abort: AbortControlle
       reject(new Error('Blend warm-up link timed out'));
       abort.abort();
     }, WARMUP_LINK_TIMEOUT_MS);
-    Promise.resolve()
-      .then(() => {
-        if (!signal.aborted) return compile();
-      })
-      .then(resolve, reject);
+    void compile.then(resolve, reject);
   }).finally(() => {
     clearTimeout(timeout);
     signal.removeEventListener('abort', onAbort);
@@ -412,8 +408,8 @@ export class WebGLBlendWarmupManager {
   private sourceStates = new Map<THREE.Material, SourceWarmupState>();
   private warmCompletions = new Set<WarmCompletion>();
   private drainPromise: Promise<void> | null = null;
-  private inFlight: WarmupTask | null = null;
-  private inFlightAbort: AbortController | null = null;
+  private inFlight = new Set<THREE.Material>();
+  private inFlightAbort = new Map<THREE.Material, AbortController>();
   // Cross-node dedupe. A program variant is keyed by its FULL fingerprint
   // (material lineage + blend defines + geometry layout); every source material
   // that uses it is a "user", and exactly one user — the "owner" — holds the
@@ -693,7 +689,7 @@ export class WebGLBlendWarmupManager {
     // A link from the old renderer may still be pending. Cancel its readiness
     // check so it does not hold up the next scene.
     this.drainPromise = null;
-    this.inFlightAbort?.abort();
+    for (const abort of this.inFlightAbort.values()) abort.abort();
     this.queue = [];
     for (const completion of Array.from(this.warmCompletions)) {
       this.settleWarmCompletion(completion);
@@ -746,7 +742,7 @@ export class WebGLBlendWarmupManager {
     state.objects.clear();
 
     for (const keeper of state.keepers) {
-      if (keeper !== this.inFlight?.keeperMaterial) keeper.dispose();
+      if (!this.inFlight.has(keeper)) keeper.dispose();
     }
     state.keepers.clear();
     this.releaseVariants(sourceMaterial, state);
@@ -828,12 +824,23 @@ export class WebGLBlendWarmupManager {
       const targetScene = this.targetScene;
       try {
         const abort = new AbortController();
-        this.inFlight = task;
-        this.inFlightAbort = abort;
-        await awaitCompile(
-          () => this.compileOne(renderer, camera, targetScene, task.compileObject, abort.signal),
-          abort
-        );
+        this.inFlight.add(task.keeperMaterial);
+        this.inFlightAbort.set(task.keeperMaterial, abort);
+        const compile = Promise.resolve().then(() => {
+          if (!abort.signal.aborted) {
+            return this.compileOne(renderer, camera, targetScene, task.compileObject, abort.signal);
+          }
+        });
+        void compile
+          .finally(() => {
+            this.inFlight.delete(task.keeperMaterial);
+            this.inFlightAbort.delete(task.keeperMaterial);
+            if (!this.sourceStates.get(task.sourceMaterial)?.keepers.has(task.keeperMaterial)) {
+              task.keeperMaterial.dispose();
+            }
+          })
+          .catch(() => undefined);
+        await awaitCompile(compile, abort);
         if (generation !== this.generation) return;
         if (this.sourceStates.get(task.sourceMaterial)?.keepers.has(task.keeperMaterial)) {
           this.stats.compiled += 1;
@@ -844,14 +851,6 @@ export class WebGLBlendWarmupManager {
           Modules.RENDERER,
           `Blend warm-up compile skipped after a WebGL compile failure: ${String(error)}`
         );
-      } finally {
-        if (!this.sourceStates.get(task.sourceMaterial)?.keepers.has(task.keeperMaterial)) {
-          task.keeperMaterial.dispose();
-        }
-        if (this.inFlight === task) {
-          this.inFlight = null;
-          this.inFlightAbort = null;
-        }
       }
     }
   }
