@@ -426,6 +426,21 @@ def _floor_tile_amplitudes(data: GSplatData, floor: float) -> GSplatData:
     return out
 
 
+def _validate_tile_amplitude_floor(floor: float | None) -> None:
+    if floor is not None and (not np.isfinite(floor) or floor < 0):
+        raise ValueError("tile_amplitude_floor must be finite and non-negative")
+
+
+def _stamp_tile_amplitude_floor(merged: Any, floor: float | None, pruned: int) -> None:
+    if floor is None:
+        return
+    fit_stats = (
+        merged.stats if isinstance(merged, GSplatData) else merged.meta["fit_stats"]
+    )
+    fit_stats["tile_amplitude_floor"] = floor
+    fit_stats["tile_amplitude_pruned"] = pruned
+
+
 def _merge_flat_population_stats(
     results: Sequence[GSplatData], merged: GSplatData, has_lods: bool
 ) -> None:
@@ -1137,7 +1152,6 @@ def fit_tiled(
     psnr_patience: float = 0.5,
     max_passes: Optional[int] = None,
     cull_retention: float | None = 0.999,
-    tile_amplitude_floor: float | None = None,
     partition: bool = False,
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
@@ -1149,6 +1163,7 @@ def fit_tiled(
     source_shape: Optional[Sequence[int]] = None,
     source_dtype: Optional[str] = None,
     source_stored_bytes: Optional[int] = None,
+    tile_amplitude_floor: float | None = None,
     **fit_kwargs: Any,
 ) -> "Any":
     """Fit Gaussian splats to a large volume using tiled decomposition.
@@ -1362,12 +1377,10 @@ def fit_tiled(
     )
     _validate_tile_seed_counts(tile_seed_counts, len(specs))
     _reject_nonpositive_shared_seed_budget(fit_kwargs.get("seeds"), tile_seed_counts)
-    if tile_amplitude_floor is not None and (
-        not np.isfinite(tile_amplitude_floor) or tile_amplitude_floor < 0
-    ):
-        raise ValueError("tile_amplitude_floor must be finite and non-negative")
+    _validate_tile_amplitude_floor(tile_amplitude_floor)
 
     results: list[GSplatData] = []
+    amplitude_pruned = 0
     t0 = time.perf_counter()
 
     with asection(
@@ -1407,9 +1420,11 @@ def fit_tiled(
                 if floor_strategy is not None:
                     tile_result.stats["floor_strategy"] = floor_strategy
                 if tile_amplitude_floor is not None:
+                    n_before_floor = tile_result.n_splats
                     tile_result = _floor_tile_amplitudes(
                         tile_result, tile_amplitude_floor
                     )
+                    amplitude_pruned += n_before_floor - tile_result.n_splats
                 n = tile_result.n_splats
                 if verbose:
                     t_tile = tile_result.stats.get("time_seconds", 0)
@@ -1455,6 +1470,7 @@ def fit_tiled(
         device=fit_kwargs.get("device"),
         fold_tile_slivers=fold_tile_slivers,
     )
+    _stamp_tile_amplitude_floor(merged, tile_amplitude_floor, amplitude_pruned)
     return merged
 
 
