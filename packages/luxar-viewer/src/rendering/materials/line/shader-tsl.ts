@@ -323,7 +323,7 @@ export function lineWebGPUFactory(
   const vClipZW: TSLNode = clipDepthVarying();
   const vPerpNorm: TSLNode = varying(float(0.0));
   const vT: TSLNode = varying(float(0.0));
-  const vSegmentLength: TSLNode = varying(float(0.0)).setInterpolation('flat');
+  const vSegmentLength: TSLNode = varying(float(0.0)).setInterpolation('flat', 'either');
   const vWidthAtT: TSLNode = varying(float(0.0));
   const vPixelWidth: TSLNode = varying(float(0.0));
   const vWidthFade: TSLNode = varying(float(0.0));
@@ -339,8 +339,8 @@ export function lineWebGPUFactory(
   const vViewZ: TSLNode | null = fixedOrtho === true ? null : varying(float(0.0));
   // Continuous [0, 1] cap-suppression scalars, one per endpoint —
   // per-instance, same across all 4 quad verts.
-  const vCapSuppressStart: TSLNode = varying(float(0.0)).setInterpolation('flat');
-  const vCapSuppressEnd: TSLNode = varying(float(0.0)).setInterpolation('flat');
+  const vCapSuppressStart: TSLNode = varying(float(0.0)).setInterpolation('flat', 'either');
+  const vCapSuppressEnd: TSLNode = varying(float(0.0)).setInterpolation('flat', 'either');
   // Per-endpoint opacity, interpolated along the segment (deliberately
   // NON-flat: the start/end alphas differ, matching the GLSL twin's
   // smooth `out float vAlpha`).

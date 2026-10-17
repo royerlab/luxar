@@ -155,9 +155,9 @@ export function capsuleLineWebGPUFactory(
   // normals stay FULL precision per #1502).
   // vCutN = (nAx, nAy, nBx, nBy); vPack halves = (gradA,qlA) (gradB,qlB)
   // (rA,rB) (1/abLen, capFlags); vAbLen = full-precision length.
-  const vCutN: TSLNode = varying(vec4(-1.0, 0.0, 1.0, 0.0)).setInterpolation('flat');
-  const vPack: TSLNode = varying(uvec4(0, 0, 0, 0)).setInterpolation('flat');
-  const vAbLen: TSLNode = varying(float(1.0)).setInterpolation('flat');
+  const vCutN: TSLNode = varying(vec4(-1.0, 0.0, 1.0, 0.0)).setInterpolation('flat', 'either');
+  const vPack: TSLNode = varying(uvec4(0, 0, 0, 0)).setInterpolation('flat', 'either');
+  const vAbLen: TSLNode = varying(float(1.0)).setInterpolation('flat', 'either');
   // The packed packet lanes carry the partner's radius gradient (px/px,
   // either sign) + its projected length, which doubles as packet validity
   // (0 = hard cut) — the gate opens for every deficit source (#1495).

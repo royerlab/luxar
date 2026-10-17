@@ -94,9 +94,9 @@ export function capsuleLinePickWebGPUFactory(
   const vLocal: TSLNode = varying(vec2(0.0, 0.0));
   // PACKED joint state — mirrors the visual TSL twin exactly (normals
   // full precision per #1502; halves for packets/radii/invLen/flags).
-  const vCutN: TSLNode = varying(vec4(-1.0, 0.0, 1.0, 0.0)).setInterpolation('flat');
-  const vPack: TSLNode = varying(uvec4(0, 0, 0, 0)).setInterpolation('flat');
-  const vAbLen: TSLNode = varying(float(1.0)).setInterpolation('flat');
+  const vCutN: TSLNode = varying(vec4(-1.0, 0.0, 1.0, 0.0)).setInterpolation('flat', 'either');
+  const vPack: TSLNode = varying(uvec4(0, 0, 0, 0)).setInterpolation('flat', 'either');
+  const vAbLen: TSLNode = varying(float(1.0)).setInterpolation('flat', 'either');
   // The packed packet lanes carry the partner's radius gradient (px/px,
   // either sign) + its projected length, which doubles as packet validity
   // (0 = hard cut) — the gate opens for every deficit source (#1495).
@@ -106,7 +106,7 @@ export function capsuleLinePickWebGPUFactory(
   const vSharp: TSLNode = varying(float(0.5));
   // Per-element alpha along the span (texel5.zw), sanitized as the visual twin.
   const vAlpha: TSLNode = varying(float(1.0));
-  const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat');
+  const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat', 'either');
   // Storage index split into two 16-bit halves — see the screen-space
   // pick factory (`pick.tsl.ts`) for the float32-mantissa rationale.
   const elementIdInt: TSLNode = int(aSortedIndex);
@@ -114,7 +114,7 @@ export function capsuleLinePickWebGPUFactory(
   const elementIdLo: TSLNode = elementIdInt.sub(elementIdHi.mul(int(65536)));
   const vElementId: TSLNode = varying(
     vec2(float(elementIdLo), float(elementIdHi))
-  ).setInterpolation('flat');
+  ).setInterpolation('flat', 'either');
 
   const nearCull: TSLNode = max(uNearCull, float(1e-20));
 
