@@ -658,9 +658,16 @@ export async function idle({ ms = 1000 }) {
  * - `wraps`, `durationMs`.
  *
  * @param {{ dim?: number, fps?: number, durationMs?: number, loops?: number,
- *   timeoutMs?: number }} opts `dim` defaults to the first non-displayed dimension.
+ *   timeoutMs?: number, settleLodTimepoints?: boolean }} opts `dim` defaults to the first non-displayed dimension.
  */
-export async function playback({ dim, fps = 10, durationMs = 6000, loops, timeoutMs = 180000 }) {
+export async function playback({
+  dim,
+  fps = 10,
+  durationMs = 6000,
+  loops,
+  timeoutMs = 180000,
+  settleLodTimepoints = false,
+}) {
   const dbg = window.__luxarDebug;
   const app = dbg.app;
   const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
@@ -673,8 +680,36 @@ export async function playback({ dim, fps = 10, durationMs = 6000, loops, timeou
   const valueOf = () =>
     dbg.sceneDimsManager?.getDims?.()?.currentStep?.[d] ?? app.getDimensions().currentStep[d];
 
-  app.setDimensionValue(d, lo);
-  await app.awaitDimensionUpdate();
+  if (settleLodTimepoints) {
+    const step = dims.metadata[d]?.step;
+    const count = Math.round((hi - lo) / step) + 1;
+    if (!(step > 0) || !Number.isFinite(count) || count < 2) {
+      throw new Error(`playback: cannot settle non-discrete dimension ${d}`);
+    }
+    const registry = dbg.getSceneLoader?.()?.getDefaultLoader?.()?.lodGroupRegistry;
+    if (!registry?.isCaptureQuiescent || !registry?.list?.()?.length) {
+      throw new Error('playback: LOD settle requires a LOD registry');
+    }
+    const deadline = performance.now() + timeoutMs;
+    const waitForLod = async (timepoint) => {
+      while (performance.now() < deadline) {
+        await frame();
+        if (dbg.getPerf?.()?.isSettled && registry.isCaptureQuiescent()) return;
+      }
+      throw new Error(`playback: LOD did not settle at timepoint ${timepoint}`);
+    };
+    for (let i = 0; i < count; i++) {
+      app.setDimensionValue(d, lo + i * step);
+      await app.awaitDimensionUpdate();
+      await waitForLod(i);
+    }
+    app.setDimensionValue(d, lo);
+    await app.awaitDimensionUpdate();
+    await waitForLod(0);
+  } else {
+    app.setDimensionValue(d, lo);
+    await app.awaitDimensionUpdate();
+  }
   for (let i = 0; i < 10; i++) await frame();
   dbg.resetPerfCounters?.();
   window.__gateExtReset?.();

@@ -333,7 +333,10 @@ Notes on method:
   after moving the axis to its minimum; `dim` defaults to the first hidden
   dimension. Ticks come from the `playback.tick` records when the build has
   them, else from the axis value observed each animation frame.
-  `lastTimepointShown` is 1 when the range maximum was ever applied.
+  `lastTimepointShown` is 1 when the range maximum was ever applied. The LOD
+  timelapse case first visits every discrete timepoint and waits for final LOD
+  quality, then returns to the first timepoint and resets counters. Its measured
+  window still uses the viewer's playback clock and includes per-tick uploads.
 - `scrub` in drag mode counts the frames in which committed geometry changed,
   from a build-independent signature of every geometry node (effective
   visibility, geometry id, attribute and index `version`s, drawn count, draw

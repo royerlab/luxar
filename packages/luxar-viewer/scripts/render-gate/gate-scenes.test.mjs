@@ -100,6 +100,25 @@ describe('render-gate scene manifest', () => {
     expect(judged.verdict).toBe('win');
   });
 
+  it('gates LOD playback uploads and swaps after settling every timepoint', () => {
+    const c = manifest.suites.playback.cases.find((x) => x.id === 'playback_lod_timelapse');
+    expect(c.workload.settleLodTimepoints).toBe(true);
+    for (const name of [
+      'gpu.uploadBytes/tick',
+      'gpu.uploadBytes.texture/tick',
+      'render.count/tick',
+      'lod.levelSwaps',
+    ]) {
+      const metric = c.metrics.find((m) => m.name === name);
+      expect(metric.report).toBe(false);
+    }
+    const upload = c.metrics.find((m) => m.name === 'gpu.uploadBytes/tick');
+    const arm = (bytes) => [{ 'gpu.uploadBytes': bytes, ticks: 10 }];
+    expect(judgeMetric(upload, { base: arm(100), base2: arm(100), cand: arm(200) }).verdict).toBe(
+      'fail'
+    );
+  });
+
   it('declares every suite metric in its known direction', () => {
     expect(() => validateMetricDirections(manifest.suites)).not.toThrow();
     // Every metric the shipped manifest gates on has its direction pinned, so
