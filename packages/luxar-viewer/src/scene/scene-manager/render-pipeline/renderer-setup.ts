@@ -298,6 +298,111 @@ export interface CreateWebGPUOptions {
   hdr?: boolean;
   /** Pinned HDR headroom (`?hdr=<n>`); omitted = resolved per display. */
   hdrHeadroom?: number;
+  /** One-shot device request started by standalone bootstrap. Never use for recovery. */
+  preRequestedWebGPUDevice?: Promise<WebGPUDeviceRequest>;
+}
+
+/** The result of Luxar's core-adapter negotiation, before constructing Three's renderer. */
+export type WebGPUDeviceRequest = { fallback: true } | { fallback: false; device: unknown };
+
+interface GPUAdapterLike {
+  readonly features: ReadonlySet<string>;
+  readonly limits: Record<string, number | undefined>;
+  requestDevice: (descriptor: {
+    requiredFeatures?: string[];
+    requiredLimits?: Record<string, number>;
+  }) => Promise<unknown>;
+}
+
+type NavigatorWithGPU = Navigator & {
+  gpu?: {
+    requestAdapter?: (options?: {
+      featureLevel?: 'core' | 'compatibility';
+      powerPreference?: 'low-power' | 'high-performance';
+    }) => Promise<GPUAdapterLike | null>;
+  };
+};
+
+async function requestCoreAdapter(): Promise<GPUAdapterLike | null> {
+  const gpu = (navigator as NavigatorWithGPU).gpu;
+  if (!gpu?.requestAdapter) return null;
+  let adapter: GPUAdapterLike | null = null;
+  try {
+    adapter = await gpu.requestAdapter({
+      featureLevel: 'core',
+      powerPreference: 'high-performance',
+    });
+  } catch {
+    // Older browsers reject the `featureLevel` option — fall through.
+  }
+  return adapter ?? gpu.requestAdapter().catch(() => null);
+}
+
+/** Start adapter/device acquisition without loading Three's WebGPU chunk. */
+export async function requestWebGPUDevice(
+  rendererOverride?: 'webgl' | 'webgpu'
+): Promise<WebGPUDeviceRequest> {
+  const adapter = await requestCoreAdapter();
+  if (!adapter) return { fallback: false, device: undefined };
+  const adapterMax = adapter.limits?.maxVertexBuffers;
+  const minVertexBuffers = 8;
+  if (
+    typeof adapterMax === 'number' &&
+    adapterMax < minVertexBuffers &&
+    rendererOverride !== 'webgpu'
+  ) {
+    log.warning(
+      Modules.RENDERER,
+      `WebGPU adapter advertises maxVertexBuffers=${adapterMax}, below the WebGPU spec minimum ` +
+        `of ${minVertexBuffers}. Auto-falling back to the default WebGLRenderer ` +
+        'path. Override with `?renderer=webgpu` to force WebGPU anyway (for debugging).'
+    );
+    return { fallback: true };
+  }
+
+  const requestedMax = typeof adapterMax === 'number' ? Math.min(adapterMax, 16) : undefined;
+  const requiredLimits = requestedDeviceLimits(adapter.limits, requestedMax);
+  logRequestedDeviceLimits(adapter.limits, requiredLimits, requestedMax);
+  try {
+    const device = await adapter.requestDevice({
+      requiredFeatures: [...adapter.features],
+      requiredLimits,
+    });
+    return { fallback: false, device };
+  } catch (err) {
+    log.warning(
+      Modules.RENDERER,
+      `WebGPU requestDevice failed (${err}); falling through to Three's internal compat-mode init.`
+    );
+    return { fallback: false, device: undefined };
+  }
+}
+
+function requestedDeviceLimits(
+  limits: GPUAdapterLike['limits'],
+  requestedMax: number | undefined
+): Record<string, number> {
+  const requiredLimits: Record<string, number> = forwardedAdapterLimits(limits);
+  if (requestedMax !== undefined) requiredLimits.maxVertexBuffers = requestedMax;
+  return requiredLimits;
+}
+
+function logRequestedDeviceLimits(
+  limits: GPUAdapterLike['limits'],
+  requiredLimits: Record<string, number>,
+  requestedMax: number | undefined
+): void {
+  log.info(
+    Modules.RENDERER,
+    `WebGPU adapter advertises maxVertexBuffers=${limits.maxVertexBuffers}, ` +
+      `maxBufferSize=${limits.maxBufferSize}, ` +
+      `maxStorageBufferBindingSize=${limits.maxStorageBufferBindingSize}, ` +
+      `maxTextureDimension2D=${limits.maxTextureDimension2D}; ` +
+      `requesting maxVertexBuffers=${requestedMax}, ` +
+      `maxBufferSize=${requiredLimits.maxBufferSize ?? 'default'}, ` +
+      `maxStorageBufferBindingSize=${requiredLimits.maxStorageBufferBindingSize ?? 'default'}, ` +
+      `maxTextureDimension2D=${requiredLimits.maxTextureDimension2D ?? 'default'}`
+  );
 }
 
 /**
@@ -409,6 +514,11 @@ function confirmHdrOutput(
  */
 export type CreateWebGPUResult = (CreatedRenderer & { fallback: false }) | { fallback: true };
 
+function resolveWebGPUDeviceRequest(options: CreateWebGPUOptions): Promise<WebGPUDeviceRequest> {
+  if (options.webgpuForceWebGL) return Promise.resolve({ fallback: false, device: undefined });
+  return options.preRequestedWebGPUDevice ?? requestWebGPUDevice(options.rendererOverride);
+}
+
 /**
  * Construct a `WebGPURenderer`. Negotiates a "core" adapter with
  * raised vertex-buffer / buffer-size / texture-dimension limits to
@@ -424,7 +534,7 @@ export async function createWebGPURenderer(
   canvas: HTMLCanvasElement,
   options: CreateWebGPUOptions = {}
 ): Promise<CreateWebGPUResult> {
-  const { webgpuForceWebGL = false, perfTimestamp = false, rendererOverride } = options;
+  const { webgpuForceWebGL = false, perfTimestamp = false } = options;
 
   log.info(Modules.SCENE_MANAGER, 'Constructing WebGPURenderer…');
   if (webgpuForceWebGL) {
@@ -444,90 +554,9 @@ export async function createWebGPURenderer(
   // Workaround: build a core adapter + device with raised limits
   // and pass the device to `WebGPURenderer`.
   // ============================================================
-  type GPUAdapterLike = {
-    readonly features: ReadonlySet<string>;
-    readonly limits: Record<string, number | undefined>;
-    requestDevice: (descriptor: {
-      requiredFeatures?: string[];
-      requiredLimits?: Record<string, number>;
-    }) => Promise<unknown>;
-  };
-  type NavigatorWithGPU = Navigator & {
-    gpu?: {
-      requestAdapter?: (options?: {
-        featureLevel?: 'core' | 'compatibility';
-        powerPreference?: 'low-power' | 'high-performance';
-      }) => Promise<GPUAdapterLike | null>;
-    };
-  };
-  const gpu = webgpuForceWebGL ? undefined : (navigator as NavigatorWithGPU).gpu;
-  let adapter: GPUAdapterLike | null = null;
-  if (gpu?.requestAdapter) {
-    try {
-      adapter = await gpu.requestAdapter({
-        featureLevel: 'core',
-        powerPreference: 'high-performance',
-      });
-    } catch {
-      // Older browsers reject the `featureLevel` option — fall through.
-    }
-    if (!adapter) {
-      adapter = await gpu.requestAdapter().catch(() => null);
-    }
-  }
-
-  const LUXAR_MIN_VERTEX_BUFFERS_REQUIRED = 8;
-
-  let device: unknown;
-  let adapterMax: number | undefined;
-  if (adapter) {
-    adapterMax = adapter.limits?.maxVertexBuffers;
-
-    // Auto-fallback only when even the spec minimum isn't met.
-    if (
-      typeof adapterMax === 'number' &&
-      adapterMax < LUXAR_MIN_VERTEX_BUFFERS_REQUIRED &&
-      rendererOverride !== 'webgpu'
-    ) {
-      log.warning(
-        Modules.RENDERER,
-        `WebGPU adapter advertises maxVertexBuffers=${adapterMax}, below the WebGPU spec minimum ` +
-          `of ${LUXAR_MIN_VERTEX_BUFFERS_REQUIRED}. Auto-falling back to the default WebGLRenderer ` +
-          'path. Override with `?renderer=webgpu` to force WebGPU anyway (for debugging).'
-      );
-      return { fallback: true };
-    }
-
-    const requestedMax = typeof adapterMax === 'number' ? Math.min(adapterMax, 16) : undefined;
-
-    const requiredFeatures: string[] = [];
-    for (const name of adapter.features) {
-      requiredFeatures.push(name);
-    }
-    // Buffer + element-texture ceilings forwarded from the adapter —
-    // see forwardedAdapterLimits for the row-ceiling rationale.
-    const requiredLimits: Record<string, number> = forwardedAdapterLimits(adapter.limits);
-    if (requestedMax !== undefined) requiredLimits.maxVertexBuffers = requestedMax;
-    log.info(
-      Modules.RENDERER,
-      `WebGPU adapter advertises maxVertexBuffers=${adapterMax}, ` +
-        `maxBufferSize=${adapter.limits?.maxBufferSize}, ` +
-        `maxStorageBufferBindingSize=${adapter.limits?.maxStorageBufferBindingSize}, ` +
-        `maxTextureDimension2D=${adapter.limits?.maxTextureDimension2D}; ` +
-        `requesting maxVertexBuffers=${requestedMax}, ` +
-        `maxBufferSize=${requiredLimits.maxBufferSize ?? 'default'}, ` +
-        `maxStorageBufferBindingSize=${requiredLimits.maxStorageBufferBindingSize ?? 'default'}, ` +
-        `maxTextureDimension2D=${requiredLimits.maxTextureDimension2D ?? 'default'}`
-    );
-    try {
-      device = await adapter.requestDevice({ requiredFeatures, requiredLimits });
-    } catch (err) {
-      log.warning(
-        Modules.RENDERER,
-        `WebGPU requestDevice failed (${err}); falling through to Three's internal compat-mode init.`
-      );
-    }
-  }
+  const request = await resolveWebGPUDeviceRequest(options);
+  if (request.fallback) return request;
+  const { device } = request;
 
   // Loaded HERE, not at module scope: a static `import { WebGPURenderer }`
   // makes the ~182 kB gzipped `three-webgpu` chunk a dependency of the entry

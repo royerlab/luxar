@@ -1,6 +1,7 @@
 import type { LoaderConfig } from '../../data/data-loader-types';
 import type { AppFactories } from './factories';
 import type { ViewAxis } from '../../types/view-axis';
+import type { WebGPUDeviceRequest } from '../../scene/scene-manager/render-pipeline/renderer-setup';
 
 /**
  * Init-time options for {@link LuxarApp.init}.
@@ -113,6 +114,8 @@ export interface LuxarAppOptions {
    *   env vars, then the WebGL default.
    */
   renderer?: 'webgl' | 'webgpu';
+  /** One-shot standalone startup request; omitted by embedders and on recovery. */
+  preRequestedWebGPUDevice?: Promise<WebGPUDeviceRequest>;
 
   /**
    * Diagnostic mode for `renderer: 'webgpu'`: construct

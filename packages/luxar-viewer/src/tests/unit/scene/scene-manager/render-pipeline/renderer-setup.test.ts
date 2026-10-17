@@ -59,6 +59,7 @@ import * as THREE from 'three';
 import {
   createWebGPURenderer,
   forwardedAdapterLimits,
+  requestWebGPUDevice,
   selectBackend,
 } from '../../../../../scene/scene-manager/render-pipeline/renderer-setup';
 
@@ -258,6 +259,36 @@ describe('createWebGPURenderer', () => {
       maxTextureDimension2D: 16384,
       maxVertexBuffers: 16,
     });
+  });
+
+  it('uses a pre-requested device once without negotiating a second adapter', async () => {
+    const device = { label: 'early device' };
+    let resolveDevice!: (device: unknown) => void;
+    const requestDevice = vi.fn(() => new Promise<unknown>((resolve) => (resolveDevice = resolve)));
+    const adapter = makeAdapter({ maxVertexBuffers: 16, requestDevice });
+    const requestAdapter = vi.fn().mockResolvedValue(adapter);
+    stubNavigatorGpu(requestAdapter);
+
+    const early = requestWebGPUDevice('webgpu');
+    await vi.waitFor(() => expect(requestDevice).toHaveBeenCalledTimes(1));
+    const creating = createWebGPURenderer(makeCanvas(), { preRequestedWebGPUDevice: early });
+    expect(webgpuConstructorArgs).toHaveLength(0);
+    resolveDevice(device);
+    expect(await creating).toMatchObject({ fallback: false });
+    expect(webgpuConstructorArgs[0]).toMatchObject({ device });
+    expect(requestAdapter).toHaveBeenCalledTimes(1);
+    expect(requestDevice).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves early adapter fallback without constructing a WebGPU renderer', async () => {
+    const adapter = makeAdapter({ maxVertexBuffers: 4 });
+    stubNavigatorGpu(vi.fn().mockResolvedValue(adapter));
+
+    const early = requestWebGPUDevice();
+    const result = await createWebGPURenderer(makeCanvas(), { preRequestedWebGPUDevice: early });
+    expect(result).toEqual({ fallback: true });
+    expect(adapter.requestDevice).not.toHaveBeenCalled();
+    expect(webgpuConstructorArgs).toHaveLength(0);
   });
 
   it('requestDevice failure recovers silently: renderer constructed without device option', async () => {

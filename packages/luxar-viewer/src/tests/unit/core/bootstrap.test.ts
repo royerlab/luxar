@@ -249,6 +249,37 @@ describe('bootstrapStandalone', () => {
     });
   });
 
+  describe('WebGPU startup', () => {
+    it('starts device acquisition before app init and skips it for WebGL or forceWebGL', async () => {
+      const requestDevice = vi.fn().mockResolvedValue({});
+      const requestAdapter = vi.fn().mockResolvedValue({
+        features: new Set<string>(),
+        limits: { maxVertexBuffers: 16 },
+        requestDevice,
+      });
+      vi.stubGlobal('navigator', { ...navigator, gpu: { requestAdapter } });
+      let release!: () => void;
+      mocks.init.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)));
+
+      const booted = bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, renderer: 'webgpu' },
+      });
+      await vi.waitFor(() => expect(requestDevice).toHaveBeenCalledTimes(1));
+      expect(mocks.init).toHaveBeenCalledTimes(1);
+      expect(mocks.init.mock.calls[0]?.[0]).toHaveProperty('preRequestedWebGPUDevice');
+      release();
+      await booted;
+
+      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, renderer: 'webgpu', webgpuForceWebGL: true },
+      });
+      expect(requestAdapter).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('session overrides', () => {
     it('applies the OPFS read concurrency URL override', async () => {
       const original = config.cache.opfsReadConcurrency;
