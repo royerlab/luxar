@@ -58,6 +58,12 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type TSLNode = any;
 
+/** Fetch an element texel without applying the texture's UV matrix to its integer coordinate. */
+export function loadTexel(textureNode: TSLNode, coord: TSLNode): TSLNode {
+  // TextureNode.load() clones the base node, so disable the matrix on the clone.
+  return textureNode.load(coord).setUpdateMatrix(false);
+}
+
 /**
  * Double-buffered draw-slot → storage-slot index — the TSL twin of
  * `GLSL_SORTED_INDEX` (depth-sorting spec §2.1 tier 3).
@@ -433,8 +439,8 @@ export function tslLineJoin(args: TSLLineJoinArgs): void {
     const pTexelY: TSLNode = partnerBase.div(lineTexW).toVar();
     const partnerFar: TSLNode = vec3(
       partnerSharesItsStart.select(
-        uLineTex.load(ivec2(pTexelX.add(int(1)), pTexelY)),
-        uLineTex.load(ivec2(pTexelX, pTexelY))
+        loadTexel(uLineTex, ivec2(pTexelX.add(int(1)), pTexelY)),
+        loadTexel(uLineTex, ivec2(pTexelX, pTexelY))
       )
     ).toVar();
 
