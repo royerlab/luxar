@@ -72,6 +72,11 @@ export const ASYNC_OPERATIONS: readonly AsyncOperation[] = [
 
   // ── Covered by their own tests ───────────────────────────────────────────
   {
+    id: 'WebGPU device loss and renderer rebuild',
+    symbols: ['scene/scene-manager/render-pipeline/webgpu-device-recovery.ts#WebGPUDeviceRecovery'],
+    tests: ['scene/scene-manager/render-pipeline/webgpu-device-recovery.test.ts'],
+  },
+  {
     id: 'HDR headroom controller (screen details, display listeners)',
     symbols: ['utils/hdr/hdr-headroom.ts#HdrHeadroomController'],
     tests: ['utils/hdr/hdr-headroom.test.ts'],
@@ -293,11 +298,6 @@ export const ASYNC_OPERATIONS: readonly AsyncOperation[] = [
     id: 'post-processing pipeline',
     symbols: ['rendering/post-processing/post-processing-manager.ts#PostProcessingManager'],
     tests: ['rendering/post-processing-manager-lifecycle.test.ts'],
-  },
-  {
-    id: 'WebGPU device recovery',
-    symbols: ['scene/scene-manager/render-pipeline/webgpu-device-recovery.ts#WebGPUDeviceRecovery'],
-    tests: ['scene/scene-manager/render-pipeline/webgpu-device-recovery.test.ts'],
   },
   {
     id: 'UI panels with async work',

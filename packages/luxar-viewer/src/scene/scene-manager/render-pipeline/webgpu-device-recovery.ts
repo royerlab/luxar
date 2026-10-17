@@ -12,8 +12,8 @@
  * Sequence:
  *
  *   - **Loss**: the current device's `lost` promise resolves. A `'destroyed'`
- *     reason is our own `renderer.dispose()` (three ignores it too) and is not a
- *     loss. Otherwise flip `isLost`, tell the host (`onLost`: event, toast,
+ *     reason means the device was explicitly destroyed and is not a
+ *     recoverable loss. Otherwise flip `isLost`, tell the host (`onLost`: event, toast,
  *     smaller GPU budget), and start recovery.
  *   - **Recovery**: `recreateRenderer()` builds a renderer on a fresh device and
  *     rewires the host. Success re-arms the observer on the new device and calls
@@ -48,7 +48,7 @@ export interface WebGPUDeviceRecoveryDeps {
    * Resolves false (or rejects) when no native device could be obtained.
    */
   recreateRenderer(): Promise<boolean>;
-  /** The device was lost (not destroyed by us); recovery starts right after. */
+  /** The device was lost without an explicit destroy; recovery starts right after. */
   onLost(info: DeviceLostInfo): void;
   /** A new renderer is live and the scene has been rewired to it. */
   onRestored(): void;
@@ -71,6 +71,7 @@ const DEFAULT_RETRY_DELAY_MS = 1000;
 export class WebGPUDeviceRecovery {
   private lost = false;
   private disposed = false;
+  private inFlight: Promise<void> | null = null;
   /** Bumped per armed device, so a stale `lost` resolution is ignored. */
   private generation = 0;
 
@@ -106,11 +107,27 @@ export class WebGPUDeviceRecovery {
     return this.handleLost(info, this.generation);
   }
 
-  private async handleLost(info: DeviceLostInfo, generation: number): Promise<void> {
-    if (this.disposed || generation !== this.generation) return;
-    if (info.reason === 'destroyed') return;
+  private handleLost(info: DeviceLostInfo, generation: number): Promise<void> {
+    if (this.disposed || generation !== this.generation) return Promise.resolve();
+    if (this.lost) return this.inFlight ?? Promise.resolve();
+    if (info.reason === 'destroyed') return Promise.resolve();
     this.generation++; // this device is done: ignore anything else it reports
     this.lost = true;
+    let resolve!: () => void;
+    let reject!: (reason: unknown) => void;
+    const recovery = new Promise<void>((onResolve, onReject) => {
+      resolve = onResolve;
+      reject = onReject;
+    });
+    const inFlight = recovery.finally(() => {
+      if (this.inFlight === inFlight) this.inFlight = null;
+    });
+    this.inFlight = inFlight;
+    void this.runRecovery(info).then(resolve, reject);
+    return inFlight;
+  }
+
+  private async runRecovery(info: DeviceLostInfo): Promise<void> {
     log.error(
       Modules.RENDERER,
       `WebGPU device lost (reason=${info.reason ?? 'unknown'}): ${info.message ?? '(no message)'}. ` +

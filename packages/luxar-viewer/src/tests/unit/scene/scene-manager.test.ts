@@ -646,9 +646,26 @@ describe('SceneManager', () => {
       // move to the WebGL renderer mid-session.
       expect(mockedCreateWebGPURenderer).toHaveBeenLastCalledWith(
         expect.anything(),
-        expect.objectContaining({ requireNativeAdapter: true })
+        expect.objectContaining({ requireNativeAdapter: true, rendererOverride: 'webgpu' })
       );
       expect(sceneManager.isGpuContextLost()).toBe(false);
+    });
+
+    it('disposes a renderer built after the scene manager was disposed', async () => {
+      const first = webgpuResult();
+      const late = webgpuResult();
+      const disposeLate = vi.spyOn(late.renderer, 'dispose');
+      let finish!: (result: typeof late) => void;
+      vi.mocked(mockedCreateWebGPURenderer)
+        .mockResolvedValueOnce(first)
+        .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+      await sceneManager.init({ canvas: mockCanvas as any, renderer: 'webgpu' });
+      const done = sceneManager.simulateWebGPUDeviceLoss();
+      sceneManager.dispose();
+      finish(late);
+      expect(await done).toBe(false);
+      expect(disposeLate).toHaveBeenCalledTimes(1);
+      expect(sceneManager.renderer).toBe(first.renderer);
     });
 
     it('stays lost and reports unrecoverable when no native device comes back', async () => {

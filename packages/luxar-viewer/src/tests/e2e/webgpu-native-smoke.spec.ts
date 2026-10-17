@@ -19,9 +19,9 @@
  * the 256-byte row padding. Hence the shared `probeWebGPUBackend`
  * helper; do not "simplify" the gate back to an `apiSurface` check.
  *
- * The suite is deliberately fast and read-only: a screenshot at an
- * unaligned width (forces `compactWebGPUReadbackRows` to engage) and
- * an HDR capture round-trip in two of its three modes
+ * The suite checks device recovery, a screenshot at an unaligned width
+ * (forces `compactWebGPUReadbackRows` to engage), and an HDR capture
+ * round-trip in two of its three modes
  * (`raw-scene-hdr` is not covered). Heavier validation lives in
  * the TSL parity harness (`tsl-shader-parity.spec.ts`).
  *
@@ -33,6 +33,8 @@ import { test, expect } from './fixtures';
 import { probeWebGPUBackend, waitForLuxarReady, waitForPointsLoaded } from './helpers';
 
 const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr';
+const LABELLED_DATASET =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_labelled_points.luxar.zarr';
 
 const SKIP_REASON =
   'these tests require a real WebGPU adapter; ' +
@@ -62,6 +64,52 @@ test.describe('WebGPU smoke (native-only tests skip on the WebGL2 fallback)', ()
     test.skip(!probe.isNative, SKIP_REASON);
     expect(probe.apiSurface).toBe('webgpu');
     expect(probe.framebufferYDown).toBe(true);
+  });
+
+  test('recovers a native renderer, draws the scene, and resolves a pick', async ({ page }) => {
+    test.skip(!(await probeWebGPUBackend(page)).isNative, SKIP_REASON);
+    test.setTimeout(60_000);
+    await page.goto(`/?renderer=webgpu&src=${LABELLED_DATASET}&debug`);
+    await waitForLuxarReady(page);
+    await waitForPointsLoaded(page);
+
+    const recovered = await page.evaluate(async () => {
+      const dbg = (window as any).__luxarDebug;
+      const previous = dbg.renderer;
+      const success = await dbg.app.sceneManager.simulateWebGPUDeviceLoss();
+      // Capture renders a fresh frame through the rebuilt post-processing pipeline.
+      const image: ImageData = await dbg.postProcessing.renderToImageData();
+      const background = image.data.slice(0, 3);
+      let hasForeground = false;
+      for (let i = 0; i < image.data.length; i += 4) {
+        if (
+          image.data[i] !== background[0] ||
+          image.data[i + 1] !== background[1] ||
+          image.data[i + 2] !== background[2]
+        ) {
+          hasForeground = true;
+          break;
+        }
+      }
+      return { success, replaced: dbg.renderer !== previous, hasForeground };
+    });
+    expect(recovered).toEqual({ success: true, replaced: true, hasForeground: true });
+
+    const overlay = page.locator('[data-overlay-name="__hover_text"]');
+    const target = await page.evaluate(() => {
+      const dbg = (window as any).__luxarDebug;
+      const ndc = dbg.camera.position.clone().set(0, 0, 0).project(dbg.camera);
+      const rect = dbg.renderer.domElement.getBoundingClientRect();
+      return {
+        x: rect.left + ((ndc.x + 1) / 2) * rect.width,
+        y: rect.top + ((1 - ndc.y) / 2) * rect.height,
+      };
+    });
+    await page.mouse.move(target.x + 120, target.y + 120);
+    await page.waitForTimeout(250);
+    await page.mouse.move(target.x, target.y);
+    await expect(overlay).toHaveText('Origin marker', { timeout: 10000 });
+    await expect(overlay).toHaveCSS('opacity', '1');
   });
 
   test('screenshot at an unaligned canvas width returns a non-empty, compact buffer', async ({

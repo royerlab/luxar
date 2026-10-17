@@ -116,7 +116,7 @@ describe('SceneManager setupContextLossHandling — WebGPU device.lost observer'
     expect(listener.mock.calls[0][0].message).toBeUndefined();
   });
 
-  it("ignores a 'destroyed' loss: that is our own renderer.dispose()", async () => {
+  it('ignores an explicitly destroyed device', async () => {
     const sm = new SceneManager();
     (sm as unknown as { renderer: unknown }).renderer = {
       backend: { device: { lost: Promise.resolve({ reason: 'destroyed' }) } },
