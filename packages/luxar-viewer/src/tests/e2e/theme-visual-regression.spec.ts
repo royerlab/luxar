@@ -51,15 +51,10 @@ for (const theme of THEMES) {
     // Navigate with debug enabled so __luxarDebug.showError is exposed.
     await page.goto(`/?theme=${theme}&debug&dpr=1`);
 
-    // Wait for the theme to be applied AND the debug interface to be
-    // populated. The bootstrap seeds __luxarDebug before init() runs, so
-    // showError is available before the first paint.
+    // The debug hook exists before initialization finishes. Wait for the
+    // viewer first so startup errors cannot replace this synthetic dialog.
     await waitForTheme(page, theme);
-    await page.waitForFunction(
-      () => typeof (window as any).__luxarDebug?.showError === 'function',
-      null,
-      { timeout: 10_000 }
-    );
+    await waitForLuxarReady(page);
 
     // Trigger the same message bootstrap.ts uses on init failure so the
     // dialog content matches the production error path.
@@ -73,6 +68,9 @@ for (const theme of THEMES) {
     // class; error-message is kept as an E2E hook for compatibility.
     const errorDialog = page.locator('.luxar-error-dialog');
     await expect(errorDialog).toBeVisible({ timeout: 5000 });
+    await expect(errorDialog.locator('.luxar-error-dialog__message')).toHaveText(
+      'Failed to start the application. Please check the console for details.'
+    );
 
     // Frosted-glass uses backdrop-filter blur + an entrance animation; let
     // it settle so the screenshot is stable.
