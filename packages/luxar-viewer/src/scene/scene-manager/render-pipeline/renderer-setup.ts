@@ -596,10 +596,7 @@ export async function createWebGPURenderer(
     try {
       device = await adapter.requestDevice({ requiredFeatures, requiredLimits });
     } catch (err) {
-      log.warning(
-        Modules.RENDERER,
-        `WebGPU requestDevice failed (${err}).`
-      );
+      log.warning(Modules.RENDERER, `WebGPU requestDevice failed (${err}).`);
     }
   }
 
