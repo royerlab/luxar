@@ -95,6 +95,20 @@ def test_kstar_line_reports_the_stored_count(
     assert "robust peak" in output
 
 
+def test_unsorted_explicit_grid_runs_in_ascending_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    curve = {1000: 30.0, 2000: 31.0, 4000: 32.0, 8000: 33.0}
+    calls: List[int] = []
+    monkeypatch.setattr(driver_module.PointContext, "run", _stub(curve, calls))
+    code, output, out = _cal(
+        tmp_path, "--k-grid", "8000,1000,4000,2000,4000", "--no-extend-below"
+    )
+    assert code == 0, output
+    assert calls == [1000, 2000, 4000, 8000]
+    assert json.loads(out.read_text())["k_values_requested"] == calls
+
+
 def test_ctrl_c_keeps_the_measured_points(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -207,7 +207,7 @@ def _resolve_cal_grid(
     control = SweepControl(early_stop=early_stop, extend_below=extend_below)
     explicit: Optional[list[int]] = None
     if k_grid is not None:
-        explicit = [int(x.strip()) for x in k_grid.split(",") if x.strip()]
+        explicit = sorted({int(x.strip()) for x in k_grid.split(",") if x.strip()})
         control.grid_source = "explicit"
     elif k_min is not None or k_max is not None:
         k_min = 1_000 if k_min is None else k_min
