@@ -1,4 +1,8 @@
 /** Compatibility-mode WebGPU rejects flat varyings with default first sampling. */
+import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import * as THREE from 'three';
 import { context } from 'three/tsl';
 import { WGSLNodeBuilder, type NodeMaterial } from 'three/webgpu';
@@ -8,6 +12,26 @@ import { LineTSLMaterial } from '../../../../rendering/materials/line/material-t
 import { LinePickingTSLMaterial } from '../../../../rendering/picking/line/material-tsl';
 import { GSplatPickingTSLMaterial } from '../../../../rendering/picking/gsplat/material-tsl';
 import { MeshPickingTSLMaterial } from '../../../../rendering/picking/mesh/material-tsl';
+
+const RENDERING = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../../../rendering'
+);
+
+it('every rendering flat interpolation specifies compatibility-safe sampling', () => {
+  const violations: string[] = [];
+  for (const relative of readdirSync(RENDERING, { recursive: true }) as string[]) {
+    if (!relative.endsWith('.ts')) continue;
+    const source = readFileSync(path.join(RENDERING, relative), 'utf8');
+    if (/\.setInterpolation\(\s*['"]flat['"]\s*\)/.test(source)) {
+      violations.push(`${relative}: flat interpolation has no sampling mode`);
+    }
+    if (relative !== path.join('picking', 'mesh', 'pick.tsl.ts') && /['"]first['"]/.test(source)) {
+      violations.push(`${relative}: first sampling is only allowed for mesh picking`);
+    }
+  }
+  expect(violations).toEqual([]);
+});
 
 function wgsl(material: NodeMaterial, compatibilityMode = true): string {
   const renderer = {
