@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import os
+import stat
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -21,6 +23,7 @@ from luxar.gsplats.calibration.grid import (
     K_MAX_CEILING,
     K_MAX_FLOOR,
 )
+from luxar.gsplats.calibration.result import _atomic_write_text
 from luxar.gsplats.calibration.sweep_control import (
     estimate_remaining_seconds,
     extension_below,
@@ -128,6 +131,18 @@ class TestExtensionBelow:
 
     def test_floor_drops_tiny_points(self) -> None:
         assert extension_below([40, 80], floor=16) == [20]
+
+
+def test_atomic_calibration_write_uses_normal_file_permissions(tmp_path: Path) -> None:
+    ordinary = tmp_path / "ordinary.json"
+    ordinary.write_text("first")
+    path = tmp_path / "cal.json"
+    _atomic_write_text(path, "first")
+    assert stat.S_IMODE(path.stat().st_mode) == stat.S_IMODE(ordinary.stat().st_mode)
+    os.chmod(path, 0o640)
+    _atomic_write_text(path, "second")
+    assert path.read_text() == "second"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o640
 
 
 # -----------------------------------------------------------------------------
