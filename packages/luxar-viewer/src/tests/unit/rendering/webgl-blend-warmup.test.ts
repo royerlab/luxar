@@ -39,6 +39,10 @@ class FakeWarmupMaterial extends THREE.ShaderMaterial {
   }
 }
 
+class GlassWarmupMaterial extends THREE.MeshPhysicalMaterial {
+  applyBlendingMode(_mode: BlendingMode): void {}
+}
+
 function makeRenderableMesh(
   nodeType: 'points' | 'lines' | 'gsplats' | 'mesh',
   material: THREE.Material = new FakeWarmupMaterial(),
@@ -462,6 +466,48 @@ describe('WebGLBlendWarmupManager', () => {
       expect(scene.environmentIntensity).toBe(0.6);
       expect(scene.fog).toBe(fog);
     }
+  });
+
+  it('compiles transmissive keepers without allocating a target through a draw', async () => {
+    const render = vi.fn();
+    let target: THREE.RenderTarget | null = null;
+    const renderer = {
+      compile: (scene: THREE.Scene) =>
+        new Set([(scene.children[0] as THREE.Mesh).material as THREE.Material]),
+      getContext: () => ({ isContextLost: () => false }),
+      properties: { get: () => ({ currentProgram: { isReady: () => true } }) },
+      getRenderTarget: () => target,
+      setRenderTarget: (next: THREE.RenderTarget | null) => {
+        target = next;
+      },
+      getViewport: () => new THREE.Vector4(),
+      getScissor: () => new THREE.Vector4(),
+      getScissorTest: () => false,
+      setViewport: () => undefined,
+      setScissor: () => undefined,
+      setScissorTest: () => undefined,
+      info: { render: { calls: 0, triangles: 0, points: 0, lines: 0 } },
+      render,
+    } as unknown as THREE.WebGLRenderer;
+    const manager = new WebGLBlendWarmupManager(
+      async () => undefined,
+      undefined,
+      activateImmediately
+    );
+    manager.configure({
+      enabled: true,
+      renderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+
+    await manager.warmScene(
+      makeRenderableMesh('mesh', new GlassWarmupMaterial({ transmission: 0.5 }))
+    );
+
+    expect(manager.getStats().compiled).toBe(1);
+    expect(render).not.toHaveBeenCalled();
+    expect(target).toBeNull();
   });
 
   it('restores shared geometry and renderer state if a keeper draw fails', async () => {

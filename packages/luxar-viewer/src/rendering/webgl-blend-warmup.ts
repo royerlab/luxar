@@ -213,7 +213,12 @@ async function defaultCompileOne(
       if (materials.size > 0) await new Promise((resolve) => setTimeout(resolve, 10));
     }
     assertWarmupContext(renderer, signal);
-    drawKeeperOnce(renderer, camera, compileScene, compileObject);
+    const material = (compileObject as THREE.Mesh).material;
+    // Three allocates a transmission target per scene on render and does not
+    // release it when this temporary scene is discarded.
+    if (!(material instanceof THREE.MeshPhysicalMaterial && material.transmission > 0)) {
+      drawKeeperOnce(renderer, camera, compileScene, compileObject);
+    }
   } finally {
     compileScene.remove(compileObject);
   }
