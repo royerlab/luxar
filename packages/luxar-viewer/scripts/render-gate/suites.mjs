@@ -54,6 +54,12 @@ export const METRIC_DIRECTIONS = Object.freeze({
   'render.count': 'lower',
   renders: 'lower',
   tailRenders: 'lower',
+  tailSettled: 'higher',
+  tailUploadBytesBuffer: 'lower',
+  tailUploadBytesTexture: 'lower',
+  idleRenders: 'lower',
+  idleUploadBytesBuffer: 'lower',
+  idleUploadBytesTexture: 'lower',
   'gpu.uploadBytes': 'lower',
   'gpu.uploadBytes.texture': 'lower',
   'ext.gpuUploadBytes': 'lower',
@@ -92,6 +98,14 @@ export const METRIC_DIRECTIONS = Object.freeze({
 export function validateMetricDirections(manifestSuites) {
   for (const suite of Object.values(manifestSuites ?? {})) {
     for (const c of suite.cases ?? []) {
+      for (const [name, want] of Object.entries(c.expectations ?? {})) {
+        if (!(c.metrics ?? []).some((m) => m.name === name)) {
+          throw new Error(`${c.id}: expectation names undeclared metric '${name}'`);
+        }
+        if (!EXPECTATIONS.includes(want)) {
+          throw new Error(`${c.id}.${name}: unknown expectation '${want}'`);
+        }
+      }
       for (const m of c.metrics ?? []) {
         const field = m.of ?? m.name;
         const known = METRIC_DIRECTIONS[field];
@@ -136,6 +150,12 @@ export function validateExpectations(raw, manifestSuites) {
       if (!EXPECTATIONS.includes(want)) {
         throw new Error(
           `--expect: ${caseId}.${metric}: '${want}' is not one of ${EXPECTATIONS.join('|')}`
+        );
+      }
+      const shipped = c.expectations?.[metric];
+      if (shipped !== undefined && shipped !== want) {
+        throw new Error(
+          `--expect: ${caseId}.${metric} '${want}' conflicts with shipped expectation '${shipped}'`
         );
       }
     }
@@ -247,26 +267,51 @@ export function serverMetrics(log, { navT, firstFrameMs, latencyMs = 0, maxInfli
  * A drag on the canvas with REAL input events (Playwright's mouse, i.e. CDP
  * `Input.dispatchMouseEvent`): an in-page synthetic `PointerEvent` has no
  * active pointer, so the controls' `setPointerCapture` throws on it. Then a
- * `tailMs` idle. `renders` covers drag + tail, `tailRenders` the tail alone.
+ * `tailMs` is the minimum damping tail; the idle window starts after 30
+ * consecutive frames without a render. `renders` covers both windows; tail
+ * counts start at release.
  */
-async function dragWorkload(page, { px = 4, tailMs = 3000, moves = 8 }) {
+export async function dragWorkload(page, { px = 4, tailMs = 3000, idleMs = 1000, moves = 8 }) {
   const box = await page.evaluate(() => {
     const r = window.__luxarDebug.app.sceneManager.renderer.domElement.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   });
   await page.evaluate(ops.beginRenderCount);
   let tail;
+  let uploadsAtRelease;
+  let uploadsAfterTail;
+  let idle;
+  let uploadsAfterIdle;
   try {
     await page.mouse.move(box.x, box.y);
     await page.mouse.down();
     await page.mouse.move(box.x + px, box.y, { steps: Math.max(1, moves) });
     await page.mouse.up();
-    tail = await page.evaluate(ops.idle, { ms: tailMs });
+    uploadsAtRelease = await page.evaluate(ops.readExtCounters);
+    tail = await page.evaluate(ops.waitForQuiet, { minMs: tailMs, timeoutMs: tailMs + 5000 });
+    uploadsAfterTail = await page.evaluate(ops.readExtCounters);
+    if (!tail.settled) throw new Error('drag tail did not settle (tailSettled=0)');
+    idle = await page.evaluate(ops.idle, { ms: idleMs });
+    uploadsAfterIdle = await page.evaluate(ops.readExtCounters);
   } finally {
     const renders = await page.evaluate(ops.endRenderCount);
     tail = { ...(tail ?? {}), total: renders };
   }
-  return { renders: tail.total, tailRenders: tail.renders, tailFrames: tail.frames };
+  return {
+    renders: tail.total,
+    tailRenders: tail.renders,
+    tailFrames: tail.frames,
+    tailSettled: 1,
+    tailUploadBytesBuffer:
+      uploadsAfterTail.gpuUploadBytesBuffer - uploadsAtRelease.gpuUploadBytesBuffer,
+    tailUploadBytesTexture:
+      uploadsAfterTail.gpuUploadBytesTexture - uploadsAtRelease.gpuUploadBytesTexture,
+    idleRenders: idle.renders,
+    idleUploadBytesBuffer:
+      uploadsAfterIdle.gpuUploadBytesBuffer - uploadsAfterTail.gpuUploadBytesBuffer,
+    idleUploadBytesTexture:
+      uploadsAfterIdle.gpuUploadBytesTexture - uploadsAfterTail.gpuUploadBytesTexture,
+  };
 }
 
 const PAGE_WORKLOADS = {
@@ -413,7 +458,7 @@ export async function runSuite({
   const rows = [];
   const cases = (suite.cases ?? []).filter((c) => !opts.only || opts.only.includes(c.id));
   for (const c of cases) {
-    const expected = expectations?.[c.id];
+    const expected = { ...expectations?.[c.id], ...c.expectations };
     const allowed = c.backends ?? defaults.backends ?? ['webgl', 'webgpu'];
     const backends = (opts.backends ?? allowed).filter((b) => allowed.includes(b));
     if (c.heavy && !opts.heavy) {
@@ -426,7 +471,7 @@ export async function runSuite({
         failures: ['heavy (pass --heavy)'],
         reasons: [],
       };
-      if (expected) {
+      if (Object.keys(expected).length > 0) {
         row.status = 'fail';
         row.reasons.push('expectation');
         row.failures.push('expectation: case skipped as heavy; pass --heavy');
