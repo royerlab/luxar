@@ -72,8 +72,7 @@ for (const theme of THEMES) {
       'Failed to start the application. Please check the console for details.'
     );
 
-    // Frosted-glass uses backdrop-filter blur + an entrance animation; let
-    // it settle so the screenshot is stable.
+    // Let the frosted-glass backdrop-filter settle before capture.
     if (theme === 'frosted-glass') {
       await page.waitForTimeout(500);
     }
