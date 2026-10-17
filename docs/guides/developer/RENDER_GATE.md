@@ -205,6 +205,20 @@ between rounds. Each arm records:
     and the WebGPU wait is asynchronous;
   - `rendersPerFrame`: `postProcessing.render` calls per frame. A frame that
     renders twice costs twice.
+- **`throughputMs`**: the same animation-frame orbit with one GPU sync at the
+  end. Headless WebGL on Linux ANGLE/Vulkan can still pace these frames near
+  60 Hz even with the Chrome flags above. The report marks a WebGL base or
+  candidate median from 16.42 to 18.17 ms as `pacing-bound`; that metric is
+  excluded from the row verdict because it is not a comparable WebGL
+  throughput measurement. Live ANGLE/Vulkan A/A runs reached 17.32–17.46 ms.
+- **`unpacedThroughputMs`**: 180 camera steps and full-pipeline renders back
+  to back, followed by one GPU sync. Each step calls `prepareFrame()` so the
+  per-frame view callbacks still update LOD selection, clipping and sorting.
+  This avoids the animation-frame cap on both backends. The synchronous batch
+  cannot let asynchronous streaming or sort results complete between steps;
+  use the animation-frame metrics to study those effects. Compare this metric
+  for GPU/CPU throughput under camera motion. A baseline without `prepareFrame()`
+  reports `n/a` for this metric; its other measurements remain available.
 - **`wakeRenders`, `wakeBlockMs`**: waking a stopped loop the way an input
   handler does (`startAnimation()` after two idle frames), repeated nine times.
   `wakeRenders` counts renders from the wake up to and including the first
@@ -220,6 +234,8 @@ band a no-change comparison spans: the bootstrap 95% CI of the two baseline arms
 ratio, never below 1%. The candidate's own CI is reported but does not decide,
 because testing one CI edge against another CI's half-width counts the sampling
 noise twice and fails unchanged builds at small round counts.
+The unpaced orbit adds 30 warm-up animation frames and one 180-step render batch
+per arm. A metric missing from either build reads `n/a` and does not decide the row.
 
 Run the perf suite on the machine whose numbers you care about, with nothing else
 heavy on its GPU. In headless Chrome with vsync off, rAF does not wait for the
@@ -227,7 +243,7 @@ GPU: without the per-frame sync an orbit frame times only the CPU submitting it
 (0.1-0.3 ms against a 20-110 ms `gpuMs`), a GPU-bound change is invisible, and a
 CPU stall on a resource the GPU still holds (a blocking `bufferSubData`) moves the
 number by two orders of magnitude at unchanged GPU cost. So read the figures as:
-`frameMs`/`frameP95Ms` are the only frame metrics that include the GPU (the
+`frameMs`/`frameP95Ms` and both throughput metrics include GPU completion (the
 report says so under its Performance heading); `gpuMs` is GPU cost alone at a
 settled pose; `cpuMs` is CPU cost alone. The sync is part of the harness, so both
 arms carry it and the comparison stays like for like; a report measured before
