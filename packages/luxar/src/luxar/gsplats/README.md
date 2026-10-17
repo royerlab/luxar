@@ -83,9 +83,10 @@ luxar gsplat fit vol.tiff small.gsplats.zarr --device cpu --downscale 2 --preset
   available to the process. `luxar gsplat fit` and `cal` also raise torch's own
   intra-op count (the loss and the optimizer step stay on torch) to
   `min(physical cores, 8)` when torch is still on one thread, as it is under the
-  `hatch run` pin, and print `CPU: using N threads`; `fit --tile` / `--plan-box`
-  worker processes keep the count their parent sized. `LUXAR_CPU_THREADS=N` sets
-  both counts. Calling `fit_gaussian_splats` from Python leaves torch's count
+  `hatch run` pin, and print `CPU: using N threads`. `fit --tile` / `--plan-box`
+  workers skip automatic widening, but a parent-provided `LUXAR_CPU_THREADS`
+  share sets torch's count there too. `LUXAR_CPU_THREADS=N` sets both counts.
+  Calling `fit_gaussian_splats` from Python leaves torch's count
   alone: set `OMP_NUM_THREADS` and `MKL_NUM_THREADS` before launching Python (or
   call `torch.set_num_threads(N)`); this matters mainly under the `hatch run` pin.
 - **`--downscale` cuts the cost per iteration roughly by the voxel factor.**

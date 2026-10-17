@@ -20,9 +20,11 @@ onlyBuiltDependencies:
 # pnpm enforces itself with no `engine-strict` needed).
 overrides:
   ws@>=8.0.0 <8.20.1: '>=8.20.1'
-  brace-expansion@>=5.0.0 <5.0.9: '>=5.0.9'
+  brace-expansion@>=5.0.0 <5.0.11: '>=5.0.11'
   esbuild@>=0.17.0 <0.28.1: '>=0.28.1'
   form-data@>=4.0.0 <4.0.6: '>=4.0.6'
   linkify-it@<=5.0.0: '>=5.0.1'
   markdown-it@<=14.1.1: '>=14.2.0'
   js-yaml@>=4.0.0 <=4.1.1: '>=4.2.0 <5.0.0'
+  undici@>=8.0.0 <8.10.2: '>=8.10.2'
+  source-map-js@>=1.0.0 <1.2.2: '>=1.2.2'
