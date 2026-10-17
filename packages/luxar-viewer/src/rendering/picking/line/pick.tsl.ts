@@ -183,7 +183,8 @@ export function linePickWebGPUFactory(
   // Varyings declared up front, `.assign()`ed inside the vertex body.
   // Per-segment-constant values (segment length, cap suppression, node
   // id, element id) use `flat` interpolation — matches the GLSL3
-  // `flat` qualifier on the same fields.
+  // `flat` qualifier on the same fields. `either` is exact for every
+  // per-segment value and valid on compatibility-mode WebGPU.
   const vSharpness: TSLNode = varying(float(0.0));
   const vPerpNorm: TSLNode = varying(float(0.0));
   const vT: TSLNode = varying(float(0.0));

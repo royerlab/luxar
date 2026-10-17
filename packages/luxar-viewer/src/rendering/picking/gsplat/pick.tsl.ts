@@ -190,7 +190,8 @@ export function gsplatPickWebGPUFactory(
 
   const vAmplitude2D: TSLNode = varying(float(0.0));
   // Visual-pass weight (alpha factor x opacity x max(gain, 1)) — the factor
-  // the fragment's visibility test multiplies its falloff by.
+  // the fragment's visibility test multiplies its falloff by. It is per-splat,
+  // so `either` samples the same value at every quad corner.
   const vPickWeight: TSLNode = varying(float(0.0)).setInterpolation('flat', 'either');
   const vL2D: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
   const vCenterScreen: TSLNode = varying(vec2(float(0.0), float(0.0)));

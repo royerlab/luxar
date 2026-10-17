@@ -94,6 +94,7 @@ export function capsuleLinePickWebGPUFactory(
   const vLocal: TSLNode = varying(vec2(0.0, 0.0));
   // PACKED joint state — mirrors the visual TSL twin exactly (normals
   // full precision per #1502; halves for packets/radii/invLen/flags).
+  // Every corner gets the same packed state, so `either` is exact.
   const vCutN: TSLNode = varying(vec4(-1.0, 0.0, 1.0, 0.0)).setInterpolation('flat', 'either');
   const vPack: TSLNode = varying(uvec4(0, 0, 0, 0)).setInterpolation('flat', 'either');
   const vAbLen: TSLNode = varying(float(1.0)).setInterpolation('flat', 'either');

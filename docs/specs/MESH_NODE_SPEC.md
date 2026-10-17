@@ -1327,7 +1327,7 @@ The mesh is drawn **indexed** (`faces` is the index buffer, §6.1), so under `dr
 triangle ordinal (`gl_VertexID / 3` would be meaningless: shared vertices break it, and WebGL2 has no
 `gl_PrimitiveID`). This pick vertex shader is the one place mesh diverges from the shared helper; the
 `mesh-pick.{vertex,fragment}` codegen snapshots of §6.4 cover it. The TSL twin (§6.4) must declare the
-`vElementId` (and `vNodeId`) varyings with `.setInterpolation('flat')`: TSL `varying()` interpolates
+`vElementId` (and `vNodeId`) varyings with flat interpolation: TSL `varying()` interpolates
 linearly by default, and the point TSL pick (`rendering/picking/point/pick.tsl.ts`) only escapes without
 `flat` because a single-instance quad's four corners all carry the same id (interpolation is the
 identity). That identity fails for a mesh — `gl_VertexID` differs at every triangle corner, so a
@@ -1337,8 +1337,8 @@ the point pick, whose implicit-identity interpolation is unsafe for a shared-ver
 
 **Provoking-vertex convention (which corner wins).** A `flat` varying is sourced from **one** corner of
 the triangle, and the two backends do not default to the same one: OpenGL ES 3.0 (the GLSL backend) fixes
-the provoking vertex to the **last** vertex of the primitive, while the WGSL `@interpolate( flat )` three
-emits for `.setInterpolation('flat')` defaults to `first`-vertex sampling. Left there, the same click on
+the provoking vertex to the **last** vertex of the primitive, while core WebGPU explicitly uses
+`@interpolate( flat, first )`. Left there, the same click on
 the same triangle `(i0, i1, i2)` reports `i2` on WebGL and `i0` on WebGPU. The pick **contract** at
 vertex granularity is therefore "a corner vertex of the front-most triangle under the cursor" — the
 cursor is over the face, not a vertex, so every corner is an equally valid answer, and no consumer may
@@ -1347,7 +1347,9 @@ enables the `WEBGL_provoking_vertex` extension when present and sets
 `provokingVertexWEBGL(FIRST_VERTEX_CONVENTION_WEBGL)`, aligning WebGL with WebGPU's first-vertex rule —
 context-wide state, but safe: every other `flat` varying in the shipped materials is a per-**instance**
 constant (point/gsplat quads, line segments), identical at all corners, so the convention flip is
-observable only by mesh. Where the extension is unavailable the last-vs-first divergence stands as a
+observable only by mesh. Compatibility-mode WebGPU forbids `first`, so its mesh pick shader uses
+`@interpolate( flat, either )`; the returned ID remains a corner of the hit triangle, though the chosen
+corner is implementation-defined there. Where the extension is unavailable, the last-vs-first divergence stands as a
 **documented exception** to §6.4's matching-output rule, and pick parity tests must assert the returned
 id is *a corner of the expected face* (membership), not one exact corner. (Making the id
 corner-independent outright would need per-corner pick data — a de-indexed shadow geometry, 3× pick

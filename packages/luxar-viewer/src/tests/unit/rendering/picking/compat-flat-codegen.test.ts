@@ -34,7 +34,7 @@ function wgsl(material: NodeMaterial, compatibilityMode = true): string {
   geometry.setAttribute('aQuadCorner', new THREE.Float32BufferAttribute([0, 0], 2));
   const builder = new WGSLNodeBuilder(
     new THREE.Mesh(geometry, material),
-    renderer as ConstructorParameters<typeof WGSLNodeBuilder>[1]
+    renderer as unknown as ConstructorParameters<typeof WGSLNodeBuilder>[1]
   ) as unknown as {
     camera: THREE.Camera;
     scene: THREE.Scene;
@@ -64,7 +64,9 @@ it.each([
 });
 
 it('mesh picking keeps first-corner sampling on core WebGPU', () => {
-  const source = wgsl(new MeshPickingTSLMaterial({ nodeId: 1 }), false);
+  const material = new MeshPickingTSLMaterial({ nodeId: 1 });
+  expect(wgsl(material, true).match(/@interpolate\( flat, either \)/g)).toHaveLength(2);
+  const source = wgsl(material, false);
   expect(source.match(/@interpolate\( flat, first \)/g)).toHaveLength(1);
   expect(source.match(/@interpolate\( flat, either \)/g)).toHaveLength(1);
 });

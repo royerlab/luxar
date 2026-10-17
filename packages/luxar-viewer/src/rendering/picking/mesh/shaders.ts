@@ -145,12 +145,13 @@ export const MESH_PICK_VERTEX_SHADER = /* glsl */ `
  *
  * A `flat` varying is sourced from ONE corner of the triangle, and the two
  * backends do not default to the same one: OpenGL ES 3.0 fixes the provoking
- * vertex to the **last** vertex of the primitive, while the WGSL
- * `@interpolate(flat)` three emits defaults to **first**-vertex sampling. The
+ * vertex to the **last** vertex of the primitive, while the core WebGPU mesh
+ * pick requests `@interpolate(flat, first)`. Compatibility-mode WebGPU uses
+ * `flat, either`, so the corner there is implementation-defined. The
  * pick contract at vertex granularity is therefore "*a* corner vertex of the
  * front-most triangle under the cursor" — the cursor is over the face, not a
  * vertex, so every corner is an equally valid answer and no consumer may assume a
- * specific one. The GLSL path still aligns with WebGPU where the platform allows
+ * specific one. The GLSL path still aligns with core WebGPU where the platform allows
  * (`WEBGL_provoking_vertex`, see `./material.ts`); where it does not, the
  * divergence stands as a documented §6.4 exception and the parity tests assert
  * *membership* in the expected face rather than one exact corner.

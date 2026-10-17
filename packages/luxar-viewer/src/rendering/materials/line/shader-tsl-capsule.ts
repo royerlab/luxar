@@ -153,6 +153,7 @@ export function capsuleLineWebGPUFactory(
   // PACKED joint state — the exact mirror of the GLSL twin's layout (see
   // shader-glsl-capsule.ts: register pressure is the measured cost; cut
   // normals stay FULL precision per #1502).
+  // `either` is exact: every corner of an instance gets the same joint state.
   // vCutN = (nAx, nAy, nBx, nBy); vPack halves = (gradA,qlA) (gradB,qlB)
   // (rA,rB) (1/abLen, capFlags); vAbLen = full-precision length.
   const vCutN: TSLNode = varying(vec4(-1.0, 0.0, 1.0, 0.0)).setInterpolation('flat', 'either');

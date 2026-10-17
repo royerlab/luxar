@@ -317,7 +317,8 @@ export function lineWebGPUFactory(
   // body (the TSL pattern for Fn-traced vertex stages).
   // Per-segment-constant values use `flat` interpolation so the
   // rasterizer skips the perspective divide — matches the GLSL3 `flat`
-  // qualifier on the same fields.
+  // qualifier on the same fields. `either` is exact for these per-segment values
+  // and permits compatibility-mode WebGPU to build the pipeline.
   const vColor: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
   const vSharpness: TSLNode = varying(float(0.0));
   const vClipZW: TSLNode = clipDepthVarying();
