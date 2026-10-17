@@ -334,6 +334,11 @@ Notes on method:
   dimension. Ticks come from the `playback.tick` records when the build has
   them, else from the axis value observed each animation frame.
   `lastTimepointShown` is 1 when the range maximum was ever applied.
+  In `playback_lod_timelapse`, a late fine LOD can cause an extra coarse-to-fine
+  swap on a wall-clock tick. Upload bytes per tick, texture upload bytes per
+  tick, renders per tick, and `lod.levelSwaps` therefore remain in the report
+  but do not fail the case: identical builds can differ under host load.
+  `achievedFps`, `lastTimepointShown`, and `decode.duplicates` still gate it.
 - `scrub` in drag mode counts the frames in which committed geometry changed,
   from a build-independent signature of every geometry node (effective
   visibility, geometry id, attribute and index `version`s, drawn count, draw

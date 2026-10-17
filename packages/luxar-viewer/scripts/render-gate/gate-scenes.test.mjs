@@ -100,6 +100,27 @@ describe('render-gate scene manifest', () => {
     expect(judged.verdict).toBe('win');
   });
 
+  it('reports load-dependent LOD playback work without failing an A/A run', () => {
+    const c = manifest.suites.playback.cases.find((x) => x.id === 'playback_lod_timelapse');
+    const metrics = new Map(c.metrics.map((m) => [m.name, m]));
+    const loadDependent = [
+      'gpu.uploadBytes/tick',
+      'gpu.uploadBytes.texture/tick',
+      'render.count/tick',
+      'lod.levelSwaps',
+    ];
+    for (const name of loadDependent) expect(metrics.get(name)?.report).toBe(true);
+    expect(c.metrics.filter((m) => !m.report).map((m) => m.name)).toEqual([
+      'achievedFps',
+      'lastTimepointShown',
+      'decode.duplicates',
+    ]);
+
+    const swaps = metrics.get('lod.levelSwaps');
+    const arm = (lod) => Array.from({ length: 5 }, () => ({ 'lod.levelSwaps': lod }));
+    expect(judgeMetric(swaps, { base: arm(0), base2: arm(0), cand: arm(2) }).verdict).toBe('fail');
+  });
+
   it('declares every suite metric in its known direction', () => {
     expect(() => validateMetricDirections(manifest.suites)).not.toThrow();
     // Every metric the shipped manifest gates on has its direction pinned, so

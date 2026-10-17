@@ -620,6 +620,7 @@
           "metrics": [
             {
               "name": "gpu.uploadBytes/tick",
+              "report": true,
               "of": "gpu.uploadBytes",
               "per": "ticks",
               "better": "lower",
@@ -628,6 +629,7 @@
             },
             {
               "name": "gpu.uploadBytes.texture/tick",
+              "report": true,
               "of": "gpu.uploadBytes.texture",
               "per": "ticks",
               "better": "lower",
@@ -636,6 +638,7 @@
             },
             {
               "name": "render.count/tick",
+              "report": true,
               "of": "render.count",
               "per": "ticks",
               "better": "lower",
@@ -665,7 +668,13 @@
               "relTol": 0.05
             },
             { "name": "lastTimepointShown", "better": "higher", "kind": "counter" },
-            { "name": "lod.levelSwaps", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            {
+              "name": "lod.levelSwaps",
+              "report": true,
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
             { "name": "decode.duplicates", "better": "lower", "kind": "counter" }
           ]
         },
