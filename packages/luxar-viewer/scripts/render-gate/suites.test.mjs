@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   caseBackends,
+  countTimingJudgements,
   judgeMetric,
   meetsExpectation,
   METRIC_DIRECTIONS,
@@ -132,6 +133,40 @@ describe('judgeMetric', () => {
       { base: [{}], base2: [{}], cand: [{ x: 1 }] }
     );
     expect(timing.verdict).toBe('n/a');
+  });
+
+  it('widens a timing verdict for the judged family while retaining the A/A floor', () => {
+    const m = { name: 'ms', kind: 'timing' };
+    const samples = {
+      base: arm([100, 100, 100], 'ms'),
+      base2: arm([100, 100, 100], 'ms'),
+      cand: arm([101.2, 101.2, 101.2], 'ms'),
+    };
+    expect(judgeMetric(m, samples, 1)).toMatchObject({ verdict: 'fail', aaFloor: 0.01 });
+    const family = judgeMetric(m, samples, 4);
+    expect(family).toMatchObject({ verdict: 'pass', aaFloor: 0.01 });
+    expect(family.floor).toBeGreaterThan(family.aaFloor);
+  });
+});
+
+describe('countTimingJudgements', () => {
+  it('counts selected, gating timing metrics on each eligible backend', () => {
+    const cases = [
+      { id: 'a', metrics: [{ kind: 'timing' }, { kind: 'timing', report: true }, {}] },
+      { id: 'b', backends: ['webgpu'], metrics: [{ kind: 'timing' }] },
+      { id: 'c', heavy: true, metrics: [{ kind: 'timing' }] },
+    ];
+    const defaults = { backends: ['webgl'] };
+    const opts = { backends: ['webgl', 'webgpu'], heavy: false };
+    expect(countTimingJudgements(cases, defaults, opts)).toBe(3);
+    expect(
+      countTimingJudgements(
+        cases.filter((c) => c.id !== 'b'),
+        defaults,
+        opts
+      )
+    ).toBe(2);
+    expect(countTimingJudgements(cases, defaults, { ...opts, heavy: true })).toBe(5);
   });
 });
 

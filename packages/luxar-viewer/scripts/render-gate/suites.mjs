@@ -23,6 +23,7 @@ import { installExtCounters } from './ext-counters.mjs';
 import * as ops from './page-ops.mjs';
 import {
   anyMissing,
+  familyFloor,
   judgeCounter,
   judgePerf,
   median,
@@ -170,8 +171,9 @@ export function meetsExpectation(want, judged, kind) {
  * @param {{ name: string, of?: string, per?: string, better?: 'lower'|'higher', kind?: 'counter'|'timing', tol?: number, relTol?: number }} m
  *   With `of` and `per`, the judged value is `sample[of] / sample[per]`.
  * @param {{ base: object[], base2: object[], cand: object[] }} samples
+ * @param {number} [tests=1] Gating timing judgements in this suite.
  */
-export function judgeMetric(m, samples) {
+export function judgeMetric(m, samples, tests = 1) {
   const better = m.better ?? 'lower';
   const kind = m.kind ?? 'counter';
   // `of`/`per` judge a ratio of two sample fields, e.g. upload bytes per
@@ -194,11 +196,13 @@ export function judgeMetric(m, samples) {
       ...judgeCounter(base, cand, base2, { better, tol: m.tol ?? 0, relTol: m.relTol ?? 0 }),
     };
   if (anyMissing(base, cand, base2)) return { ...common, verdict: 'n/a' };
+  const aaFloor = noiseFloor(base, base2);
   return {
     ...common,
     baseMedian: median(base),
     candMedian: median(cand),
-    ...judgePerf(base, cand, noiseFloor(base, base2), m.tol ?? 0, { better }),
+    aaFloor,
+    ...judgePerf(base, cand, familyFloor(aaFloor, tests), m.tol ?? 0, { better }),
   };
 }
 
@@ -410,6 +414,15 @@ export function caseBackends(c, defaults, requested) {
 /** The backends `--backends` can widen a suite default to. */
 const SUITE_BACKENDS = ['webgl', 'webgpu'];
 
+/** Count the timing verdicts that can fail among selected suite cases. */
+export function countTimingJudgements(cases, defaults, opts) {
+  return cases.reduce((total, c) => {
+    if (c.heavy && !opts.heavy) return total;
+    const metrics = (c.metrics ?? []).filter((m) => m.kind === 'timing' && !m.report).length;
+    return total + metrics * caseBackends(c, defaults, opts.backends).length;
+  }, 0);
+}
+
 /**
  * The error of a case whose store is not on disk, with the command that
  * writes it. Every gate store is `datasets/gate/<scene>.luxar.zarr[.zip]`,
@@ -460,6 +473,7 @@ export async function runSuite({
   const rounds = opts.rounds ?? defaults.rounds ?? 5;
   const rows = [];
   const cases = (suite.cases ?? []).filter((c) => !opts.only || opts.only.includes(c.id));
+  const timingTests = countTimingJudgements(cases, defaults, opts);
   for (const c of cases) {
     const expected = expectations?.[c.id];
     const backends = caseBackends(c, defaults, opts.backends);
@@ -520,7 +534,8 @@ export async function runSuite({
       // Raw per-arm samples, so a report can be re-judged (or a flaky
       // counter traced to its arms) offline.
       row.samples = samples;
-      for (const m of c.metrics ?? []) row.metrics[m.name] = judgeMetric(m, samples);
+      for (const m of c.metrics ?? [])
+        row.metrics[m.name] = judgeMetric(m, samples, m.report ? 1 : timingTests);
       // A `report` metric is judged and shown but cannot fail the row (a timed
       // total whose per-tick twin is the one that gates).
       const gating = (c.metrics ?? []).filter((m) => !m.report);

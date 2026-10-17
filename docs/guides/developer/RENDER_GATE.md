@@ -240,7 +240,7 @@ The candidate's own CI is reported but does not decide, because testing one CI
 edge against another CI's half-width counts the sampling noise twice and fails
 unchanged builds at small round counts.
 
-That band is for ONE comparison, and a run makes many: 13 cases, two backends
+That band is for ONE comparison, and a perf run makes many: 13 cases, two backends
 and eight metrics are 208 judgements, any one of which fails the run. On an
 obsidian A/A run (identical builds), 0.5-1.4% of the timing comparisons fell
 outside their band, so most full runs of identical builds would FAIL. The
@@ -255,6 +255,12 @@ candidate arm, the share of case/backend pairs caught fell from 81% to 77% for
 widens more). For a small effect, narrow the run with `--only` and
 `--backends` (fewer judgements, a narrower floor) and raise `--rounds` (a
 tighter A/A band).
+
+Manifest suites apply the same correction to their gating `kind: "timing"`
+metrics, counting selected cases and eligible backends within each suite.
+Report-only timings do not count; counters retain their own verdict rules.
+Each gating timing result keeps the original one-comparison band as `aaFloor` and the
+corrected verdict band as `floor` in `report.json`.
 
 Run the perf suite on the machine whose numbers you care about, with nothing else
 heavy on its GPU or CPU. Every arm records the host's 1-minute load average
@@ -361,7 +367,7 @@ metric object. A metric `name` may be:
 one single value, the medians are compared EXACTLY (`|delta| <= tol` passes; a
 move in the `better` direction is a win, the other way a fail). A counter that
 varies between baseline arms falls back to the A/A floor. `kind: "timing"` is
-judged by `judgePerf` against the A/A floor, in the declared `better`
+judged by `judgePerf` against the suite-corrected A/A floor, in the declared `better`
 direction. A metric an arm does not report (an older baseline has no viewer
 counters) reads `n/a`: never a pass for an expected metric.
 
