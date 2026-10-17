@@ -109,9 +109,12 @@ describe('WebGPUDeviceRecovery', () => {
     const h = harness(() => new Promise<boolean>((resolve) => (finish = resolve)));
     const first = h.recovery.simulateLoss();
     const second = h.recovery.simulateLoss();
+    let secondSettled = false;
+    void second.then(() => (secondSettled = true));
     await settle();
     expect(h.deps.recreateRenderer).toHaveBeenCalledTimes(1);
     expect(h.deps.onLost).toHaveBeenCalledTimes(1);
+    expect(secondSettled).toBe(false);
     finish(true);
     await Promise.all([first, second]);
     expect(h.deps.onRestored).toHaveBeenCalledTimes(1);
@@ -122,11 +125,15 @@ describe('WebGPUDeviceRecovery', () => {
     const h = harness(() => new Promise<boolean>((resolve) => (finish = resolve)));
     h.devices[0].lose({ reason: 'unknown' });
     await settle();
-    await h.recovery.simulateLoss();
+    const second = h.recovery.simulateLoss();
+    let secondSettled = false;
+    void second.then(() => (secondSettled = true));
+    await settle();
     expect(h.deps.recreateRenderer).toHaveBeenCalledTimes(1);
     expect(h.deps.onLost).toHaveBeenCalledTimes(1);
+    expect(secondSettled).toBe(false);
     finish(true);
-    await settle();
+    await second;
     expect(h.deps.onRestored).toHaveBeenCalledTimes(1);
   });
 

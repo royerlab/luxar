@@ -71,6 +71,7 @@ const DEFAULT_RETRY_DELAY_MS = 1000;
 export class WebGPUDeviceRecovery {
   private lost = false;
   private disposed = false;
+  private inFlight: Promise<void> | null = null;
   /** Bumped per armed device, so a stale `lost` resolution is ignored. */
   private generation = 0;
 
@@ -106,11 +107,22 @@ export class WebGPUDeviceRecovery {
     return this.handleLost(info, this.generation);
   }
 
-  private async handleLost(info: DeviceLostInfo, generation: number): Promise<void> {
-    if (this.disposed || this.lost || generation !== this.generation) return;
-    if (info.reason === 'destroyed') return;
+  private handleLost(info: DeviceLostInfo, generation: number): Promise<void> {
+    if (this.disposed || generation !== this.generation) return Promise.resolve();
+    if (this.lost) return this.inFlight ?? Promise.resolve();
+    if (info.reason === 'destroyed') return Promise.resolve();
     this.generation++; // this device is done: ignore anything else it reports
     this.lost = true;
+    const inFlight = Promise.resolve()
+      .then(() => this.runRecovery(info))
+      .finally(() => {
+        if (this.inFlight === inFlight) this.inFlight = null;
+      });
+    this.inFlight = inFlight;
+    return inFlight;
+  }
+
+  private async runRecovery(info: DeviceLostInfo): Promise<void> {
     log.error(
       Modules.RENDERER,
       `WebGPU device lost (reason=${info.reason ?? 'unknown'}): ${info.message ?? '(no message)'}. ` +
