@@ -280,8 +280,9 @@ def lod_recipe(
         "--add-method",
         "-m",
         help=f"Additive ordering: {GSPLAT_ADDITIVE_CHOICES_HELP}. auto (the default) is "
-        "greedy at small N, self_energy for large N to avoid greedy's "
-        "O(N·nnz·logN) blowup. radial orders concentric shells around the "
+        "greedy (the quality reference) up to 5,000 splats, self_energy above "
+        "(2-10% worse AUC, no Gram matrix). Greedy at 5,000 dense splats takes "
+        "~1 s on a laptop CPU. radial orders concentric shells around the "
         "bbox center, so a streaming prefix grows outward from the middle "
         "(a reveal); its ladder carries no energy stamps.",
     ),

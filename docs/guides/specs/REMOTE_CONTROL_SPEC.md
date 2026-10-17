@@ -112,8 +112,17 @@ setLayer(path: string, patch: LayerPatch): void      // throws on unknown path
 ```
 
 `LayerPatch` fields: `visible`, `opacity`, `gamma`, `displayRange`, `colormap`
-(`null` = direct colour), `blendingMode`, `absorption`, `layerOrder` (`null` =
-release explicit order). Each field takes the route the Layers panel's own
+(`null` = direct colour), `blendingMode`, `absorption`, `brightness`, `layerOrder`
+(`null` = release explicit order).
+
+**`brightness` is ABSOLUTE**: it is the gsplats `display_gain` itself, not the
+relative "×" factor the Layers panel shows. To double a layer's opening
+exposure send `2 * authoredBrightness` (read from `getLayers()`), not `2`. A
+non-positive value is ignored. `LayerSummary` also reports `brightness` and
+`authoredBrightness` (both `1` on non-gsplats layers; the panel shows their
+ratio) and, when the scene records them, `amplitudeUnit`, `amplitudeOffset` (the
+subtracted background level) and `sourceDataRange` (the source's own
+`[min, max]`). Each field takes the route the Layers panel's own
 control takes (state-manager setter, then apply engine), so row, material and
 stored state cannot drift apart.
 
@@ -614,7 +623,7 @@ and they are three implementations of one protocol:
 |---|---|---|
 | Dev checkout / a served scene | `luxar.cli.control_hub` (asyncio) | `luxar serve <scene> --viewer --control` |
 | Native app (`luxar export --native`) | `packages/luxar-launcher/hub.go` | `LUXAR_LAUNCHER_CONTROL=1` |
-| Exported folder (`luxar export`) | `luxar/cli/_export_serve_template.py` (threads, stdlib) | `python serve.py --control` |
+| Exported folder (`luxar export`) | `luxar/cli/_export_serve_template.py` (threads, stdlib) | `python3 serve.py --control` |
 
 Three implementations of a protocol is three chances to drift, and the third
 one ships inside artifacts nobody rebuilds: a native binary, and a folder that

@@ -39,21 +39,27 @@ def convert_to_scene(
     ),
     scale_intensity: Optional[float] = typer.Option(
         None,
+        "--display-gain",
         "--scale-intensity",
         callback=_positive_scale,
-        help="Multiply the fitted amplitudes by exactly this factor (any tree "
-        "shape); replaces automatic normalization and auto exposure",
+        help="Set the node's display gain (brightness per data unit) to exactly "
+        "this factor instead of auto exposure. The amplitudes are NOT edited: "
+        "they stay in data units (any tree shape). --scale-intensity is the old "
+        "name; `gsplat transform --scale-intensity` is the command that edits "
+        "the data.",
     ),
     auto_exposure: bool = typer.Option(
         True,
         "--auto-exposure/--no-auto-exposure",
         help="Dim splat brightness so the opening view is not saturated: predict "
-        "the per-pixel additive sum down the default view axis and scale "
-        "amplitudes so its p99.9 is --target-brightness (never brightens), "
+        "the per-pixel additive sum down the default view axis and set the "
+        "node's display gain so its p99.9 is --target-brightness (never "
+        "brightens; the amplitudes stay in data units), "
         "dimming further if a side view or another timepoint would exceed 4x "
         "that. Hidden axes are predicted where the viewer opens them (a "
         "timelapse at its first timepoint, up to 4 more sampled for the cap). "
-        "--no-auto-exposure = legacy per-splat p99.9 normalization only.",
+        "--no-auto-exposure = gain from the legacy per-splat p99.9 "
+        "normalization only.",
     ),
     target_brightness: Optional[float] = typer.Option(
         None,
@@ -96,8 +102,9 @@ def convert_to_scene(
     intensity: Optional[float] = typer.Option(
         None,
         "--intensity",
-        help="Display-window intensity relative to amplitudes as stored "
-        "(after auto exposure / normalization, or --scale-intensity)",
+        help="Display-window intensity relative to the display-gained "
+        "amplitudes (after auto exposure / normalization, or "
+        "--display-gain); a colormap window is restated in data units",
     ),
     layer: bool = typer.Option(
         True,
@@ -143,7 +150,8 @@ def convert_to_scene(
     chroma (essentially white by peak 100), while a ``None`` clamp flattens
     everything above 1.0 and shifts hue when channels clip unequally, losing
     saturation too wherever the darkest channel is not already 0. So bring the
-    scene back into [0, 1] with ``--intensity`` and use ``None``, or accept
+    scene back into [0, 1] with ``--display-gain`` (or a lower
+    ``--target-brightness``) and use ``None``, or accept
     ACES's filmic rolloff (#1459).
 
     Orientation follows the IMAGE CONVENTION for fitted volumes: the center
@@ -163,7 +171,7 @@ def convert_to_scene(
     Examples:
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --no-center
-        luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --scale-intensity 0.1
+        luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --display-gain 0.1
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr \\
             --colormap plasma --tone-mapping ACES
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr \\

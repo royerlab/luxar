@@ -906,9 +906,13 @@ class TestFitCommand:
         assert result.exit_code == 0, f"fit failed: {result.stdout}"
         assert out.exists()
 
+    @pytest.mark.parametrize("backend", ["torch", "native"])
     def test_cpu_fit_warns_once_in_cli_output(
-        self, small_volume_npy: Path, tmp_path: Path
+        self, small_volume_npy: Path, tmp_path: Path, backend: str
     ) -> None:
+        """The PyTorch CPU path warns exactly once; the native kernels never."""
+        if backend == "native":
+            pytest.importorskip("numba")
         out = tmp_path / "cpu.gsplats.zarr"
         result = subprocess.run(
             [
@@ -932,13 +936,20 @@ class TestFitCommand:
             capture_output=True,
             text=True,
             check=False,
+            env={**os.environ, "LUXAR_CPU_BACKEND": backend},
         )
 
         output = result.stdout + result.stderr
         assert result.returncode == 0, f"fit failed: {output}"
-        assert output.count("Gaussian splat fitting is running on CPU") == 1
+        expected = 1 if backend == "torch" else 0
+        assert output.count("Gaussian splat fitting is running on CPU") == expected
 
-    def test_tiled_cpu_fit_warns_once_in_cli_output(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("backend", ["torch", "native"])
+    def test_tiled_cpu_fit_warns_once_in_cli_output(
+        self, tmp_path: Path, backend: str
+    ) -> None:
+        if backend == "native":
+            pytest.importorskip("numba")
         volume_path = tmp_path / "tiled-volume.npy"
         np.save(volume_path, np.ones((40, 40, 40), dtype=np.float32))
         out = tmp_path / "tiled-cpu.gsplats.zarr"
@@ -968,12 +979,14 @@ class TestFitCommand:
             capture_output=True,
             text=True,
             check=False,
+            env={**os.environ, "LUXAR_CPU_BACKEND": backend},
         )
 
         output = result.stdout + result.stderr
         assert result.returncode == 0, f"fit failed: {output}"
         assert (out / "part_7").is_dir()
-        assert output.count("Gaussian splat fitting is running on CPU") == 1
+        expected = 1 if backend == "torch" else 0
+        assert output.count("Gaussian splat fitting is running on CPU") == expected
 
     def test_fit_accepts_auto_device(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
@@ -1000,6 +1013,158 @@ class TestFitCommand:
 
         assert result.exit_code == 0, f"fit failed: {result.stdout}"
         assert out.exists()
+
+    def test_fit_on_cpu_applies_and_restores_thread_count(
+        self,
+        runner: CliRunner,
+        small_volume_npy: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """`fit --device cpu` runs at the resolved width, then restores it."""
+        import torch
+
+        previous = torch.get_num_threads()
+        target = 2 if previous != 2 else 3
+        monkeypatch.setenv("LUXAR_CPU_THREADS", str(target))
+        calls: list[int] = []
+        real_set = torch.set_num_threads
+
+        def spy(n: int) -> None:
+            calls.append(n)
+            real_set(n)
+
+        monkeypatch.setattr(torch, "set_num_threads", spy)
+        out = tmp_path / "fitted-cpu.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(out),
+                "--iters",
+                "1",
+                "--seeds",
+                "2",
+                "--tiling",
+                "none",
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"fit failed: {result.stdout}"
+        assert calls == [target, previous]
+        assert torch.get_num_threads() == previous
+        assert f"CPU: using {target} threads" in result.stdout
+
+    def test_fit_config_cpu_fallback_widens_threads(
+        self,
+        runner: CliRunner,
+        small_volume_npy: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import torch
+
+        from luxar.gsplats.utils import cpu_threads
+
+        previous = torch.get_num_threads()
+        target = 2 if previous != 2 else 3
+        monkeypatch.setenv("LUXAR_CPU_THREADS", str(target))
+        config = tmp_path / "cpu.yaml"
+        config.write_text("use_cuda: false\nuse_metal: false\n")
+        calls: list[int] = []
+        thread_options: list[dict[str, Any]] = []
+        real_set = torch.set_num_threads
+        real_context = cpu_threads.cpu_threads_for
+
+        def spy_context(device: str | None, **kwargs: Any) -> Any:
+            thread_options.append(kwargs)
+            return real_context(device, **kwargs)
+
+        def spy(n: int) -> None:
+            calls.append(n)
+            real_set(n)
+
+        monkeypatch.setattr(torch, "set_num_threads", spy)
+        monkeypatch.setattr(cpu_threads, "cpu_threads_for", spy_context)
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(tmp_path / "configured.gsplats.zarr"),
+                "--config",
+                str(config),
+                "--iters",
+                "1",
+                "--seeds",
+                "2",
+                "--tiling",
+                "none",
+            ],
+        )
+        assert result.exit_code == 0, f"fit failed: {result.stdout}"
+        assert len(thread_options) == 1
+        assert thread_options[0]["use_cuda"] is False
+        assert thread_options[0]["use_metal"] is False
+        assert calls == [target, previous]
+        assert f"CPU: using {target} threads" in result.stdout
+
+    def test_tile_worker_does_not_widen_threads(
+        self,
+        runner: CliRunner,
+        small_volume_npy: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import torch
+
+        from luxar.gsplats.utils import cpu_threads
+
+        monkeypatch.delenv("LUXAR_CPU_THREADS", raising=False)
+        monkeypatch.setenv("OMP_NUM_THREADS", "1")
+        monkeypatch.setenv("MKL_NUM_THREADS", "1")
+        monkeypatch.setattr(cpu_threads, "physical_cpu_count", lambda: 4)
+        previous = torch.get_num_threads()
+        torch.set_num_threads(1)
+        calls: list[int] = []
+        real_set = torch.set_num_threads
+
+        def spy(n: int) -> None:
+            calls.append(n)
+            real_set(n)
+
+        monkeypatch.setattr(torch, "set_num_threads", spy)
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "gsplat",
+                    "fit",
+                    str(small_volume_npy),
+                    str(tmp_path / "tile.gsplats.zarr"),
+                    "--tile",
+                    "1/8",
+                    "--tile-size",
+                    "8",
+                    "--overlap",
+                    "0",
+                    "--iters",
+                    "1",
+                    "--seeds",
+                    "2",
+                    "--device",
+                    "cpu",
+                ],
+            )
+            assert result.exit_code == 0, f"tile fit failed: {result.stdout}"
+            assert calls == []
+            assert torch.get_num_threads() == 1
+        finally:
+            real_set(previous)
 
     def test_fit_output_is_loadable(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
@@ -1318,11 +1483,12 @@ class TestConvertCommand:
             f"convert --scale-intensity failed: {result.stdout}"
         )
         attrs = read_node_attrs(out / "gsplats")
-        expected_hi = float(np.percentile(raw_data.amplitudes * 0.5, 99.9))
+        # The amplitudes stay in the fit's data units; the manual factor is
+        # the display gain, replacing normalization and auto exposure.
+        expected_hi = float(np.percentile(raw_data.amplitudes, 99.9))
         assert attrs["amplitude_data_range"][1] == pytest.approx(expected_hi, rel=1e-3)
-        # The manual factor replaces normalization and auto exposure, and is
-        # recorded exactly so the stored amplitudes divide back to the fit's.
-        assert attrs["amplitude_normalization_factor"] == 0.5
+        assert attrs["display_gain"] == 0.5
+        assert "amplitude_normalization_factor" not in attrs
         assert attrs["amplitude_normalization_mode"] == "manual"
         assert "projected_sum_p999" not in attrs
 
@@ -2779,7 +2945,7 @@ class TestViewCommand:
         out = _plain(result.stdout)
         assert result.exit_code == 0, out
         assert "Built a temporary scene" in out
-        assert "Exposure: scaled splat brightness" in out
+        assert "Exposure: display gain" in out
         assert captured["root_format_type"] == "luxar_zarr"
         assert captured["viewer_config"]["camera"]["view_axis"] == "xy"
         attrs = captured["gsplats_attrs"]
@@ -2802,7 +2968,9 @@ class TestViewCommand:
         assert "Exposure:" not in _plain(result.stdout)
         assert captured["viewer_config"]["camera"]["view_axis"] == "xz"
         attrs = captured["gsplats_attrs"]
-        assert "amplitude_normalization_mode" not in attrs
+        # --no-auto-exposure: data units, the per-splat factor as the gain.
+        assert attrs["amplitude_normalization_mode"] == "per_splat"
+        assert attrs["display_gain"] > 0
         assert attrs["colormap"] == "plasma"
 
     @pytest.mark.skipif(not hasattr(signal, "SIGTERM"), reason="no SIGTERM")
@@ -2860,16 +3028,31 @@ class TestViewCommand:
             os.kill(os.getpid(), signal.SIGHUP)
             time.sleep(1)
 
-        with (
-            patch("luxar.cli.utils.check_viewer_built", return_value=True),
-            patch(
-                "luxar.cli.gsplat_ops.scene_build.build_gsplat_scene",
-                side_effect=_hangup,
-            ),
-            patch("luxar.cli.serving._serve_data"),
-            patch("luxar.cli.serving._serve_viewer"),
-        ):
-            result = runner.invoke(app, ["gsplat", "view", str(src), "--no-open"])
+        # `view` deliberately leaves an INHERITED ignore alone (`nohup`, and
+        # agent shells / CI runners that start children with SIGHUP ignored),
+        # so the kill above would be a no-op there and the build would "finish"
+        # — then fall through to real port picking on 8000/5173. Pin the
+        # default disposition the scenario is about, and never touch a real
+        # port: the build is all this test is about.
+        previous = signal.signal(signal.SIGHUP, signal.SIG_DFL)
+        try:
+            with (
+                patch("luxar.cli.utils.check_viewer_built", return_value=True),
+                patch(
+                    "luxar.cli.utils.find_available_port",
+                    side_effect=lambda p, **_kw: p,
+                ),
+                patch("luxar.cli.utils.wait_for_server", return_value=True),
+                patch(
+                    "luxar.cli.gsplat_ops.scene_build.build_gsplat_scene",
+                    side_effect=_hangup,
+                ),
+                patch("luxar.cli.serving._serve_data"),
+                patch("luxar.cli.serving._serve_viewer"),
+            ):
+                result = runner.invoke(app, ["gsplat", "view", str(src), "--no-open"])
+        finally:
+            signal.signal(signal.SIGHUP, previous)
         assert result.exit_code == 128 + signal.SIGHUP, _plain(result.stdout)
         assert list(tmp_path.glob("luxar_gsplat_view_*")) == []
 
@@ -4218,6 +4401,64 @@ def multiblob_volume(tmp_path: Path) -> Path:
 
 
 class TestCalibrateCommand:
+    @pytest.mark.parametrize("device_args", [[], ["--device", "cpu"]])
+    def test_cal_cpu_widens_threads(
+        self,
+        runner: CliRunner,
+        smooth_blob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        device_args: list[str],
+    ) -> None:
+        import torch
+
+        from luxar.gsplats.utils import cpu_threads
+
+        previous = torch.get_num_threads()
+        target = 2 if previous != 2 else 3
+        monkeypatch.setenv("LUXAR_CPU_THREADS", str(target))
+        calls: list[int] = []
+        thread_options: list[dict[str, Any]] = []
+        real_set = torch.set_num_threads
+        real_context = cpu_threads.cpu_threads_for
+
+        def spy_context(device: str | None, **kwargs: Any) -> Any:
+            thread_options.append(kwargs)
+            return real_context(device, **kwargs)
+
+        def spy(n: int) -> None:
+            calls.append(n)
+            real_set(n)
+
+        monkeypatch.setattr(torch, "set_num_threads", spy)
+        monkeypatch.setattr(cpu_threads, "cpu_threads_for", spy_context)
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cal",
+                str(smooth_blob_volume),
+                str(tmp_path / "cal.json"),
+                "--n-grid",
+                "2",
+                "--k-min",
+                "20",
+                "--k-max",
+                "100",
+                "--config",
+                str(fast_fit_config),
+                *device_args,
+            ],
+        )
+        assert result.exit_code == 0, f"cal failed: {result.stdout}"
+        assert len(thread_options) == 1
+        assert thread_options[0]["use_cuda"] is False
+        assert thread_options[0]["use_metal"] is False
+        assert calls == [target, previous]
+        assert torch.get_num_threads() == previous
+        assert f"CPU: using {target} threads" in result.stdout
+
     def test_cal_basic(
         self,
         runner: CliRunner,
@@ -4543,12 +4784,54 @@ class TestCalibrateCommand:
         assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
 
         with open(out_json) as f:
-            region = json.load(f)["calibration_region"]
+            cal = json.load(f)
+        region = cal["calibration_region"]
         assert region is not None and region["strategy"] != "whole"
 
         assert "region-scoped" in result.stdout
         assert "--seeds" in result.stdout
         assert "--tiling content" in result.stdout
+        # ...and it restates the crop K* as a whole-volume --seeds budget, by
+        # the content planner's per-box density transfer.
+        whole = cal["whole_volume_seeds"]
+        assert whole is not None and whole["n_boxes"] > 1
+        assert whole["seeds"] > 0
+        assert f"fit --seeds {whole['seeds']:,}" in " ".join(result.stdout.split())
+
+    def test_cal_region_prints_a_whole_volume_seeds_budget(
+        self,
+        runner: CliRunner,
+        multiblob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """``cal --region``: the crop K* comes with a whole-input --seeds budget."""
+        import json
+
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cal",
+                str(multiblob_volume),
+                str(out_json),
+                "--k-grid",
+                "30,90",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+                "--region",
+                ":20,:20,:",
+            ],
+        )
+        assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
+        whole = json.loads(out_json.read_text())["whole_volume_seeds"]
+        assert whole is not None and whole["n_boxes"] == 4
+        assert "region-scoped" in result.stdout
 
     def test_cal_default_k_star_is_not_flagged(
         self,
@@ -6943,6 +7226,9 @@ class TestLODCarriesAuthoredAppearance:
         # value proves the carry — but a non-zero one also fails loudly if a
         # future change ever starts defaulting it to 0.
         "layer_order": 20,
+        # The data-unit brightness: multiplicative like intensity, and never
+        # stamped by default, so any non-identity value proves the carry.
+        "display_gain": 3.5e-4,
     }
     DIMENSION_METADATA: ClassVar[list[dict[str, Any]]] = [
         {"name": "z", "scale": 2.0},
@@ -11223,3 +11509,35 @@ class TestSingleCompressionRatio:
         assert f"compression: {format_compression_ratio(expected)} vs raw voxels" in (
             _plain(info.stdout)
         )
+
+
+def _cli_fit(tmp_path: Path) -> str:
+    rng = np.random.default_rng(1)
+    zz, yy, xx = np.mgrid[:16, :20, :24].astype(np.float32)
+    vol = np.exp(-((zz - 8) ** 2 + (yy - 9) ** 2 + (xx - 12) ** 2) / 18.0)
+    vol += 0.02 * rng.random(vol.shape)
+    src = tmp_path / "vol.npy"
+    np.save(src, vol.astype(np.float32))
+    out = tmp_path / "out.gsplats.zarr"
+    result = CliRunner().invoke(
+        app,
+        ["gsplat", "fit", str(src), str(out), "--device", "cpu", "--preset", "draft"]
+        + ["--iters", "15", "--seeds", "40"],
+    )
+    assert result.exit_code == 0, result.output
+    assert out.exists()
+    return result.output
+
+
+def test_cli_fit_on_cpu_runs_on_the_native_kernels(tmp_path: Path) -> None:
+    pytest.importorskip("numba")
+    assert "GaussianSplatModelCPUNative" in _cli_fit(tmp_path)
+
+
+def test_cli_fit_falls_back_cleanly_when_forced_to_torch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LUXAR_CPU_BACKEND", "torch")
+    output = _cli_fit(tmp_path)
+    assert "GaussianSplatModelCPUNative" not in output
+    assert "GaussianSplatModel" in output

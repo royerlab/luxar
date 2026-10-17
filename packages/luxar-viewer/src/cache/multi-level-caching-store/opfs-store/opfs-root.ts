@@ -15,6 +15,23 @@
  * @module cache/multi-level-caching-store/opfs-store/opfs-root
  */
 
+/**
+ * Whether this page can reach OPFS at all. `navigator.storage` is only exposed
+ * in a SECURE context, so a viewer opened over plain http from another host
+ * (`http://192.168.x.y:5173`, a LAN kiosk, a port-forwarded VM) has none — an
+ * expected environment, not a fault.
+ */
+export function isOpfsSupported(): boolean {
+  return typeof navigator !== 'undefined' && typeof navigator.storage?.getDirectory === 'function';
+}
+
+/** One human sentence for why {@link isOpfsSupported} is false. */
+export function opfsUnavailableReason(): string {
+  return globalThis.isSecureContext === false
+    ? 'OPFS needs a secure context (https or localhost); this page is plain http from another host'
+    : 'this browser exposes no OPFS (navigator.storage.getDirectory)';
+}
+
 /** Name of the top-level OPFS directory that holds every viewer-owned entry. */
 export const OPFS_NAMESPACE_DIR = 'luxar';
 
@@ -33,6 +50,7 @@ export const OPFS_NAMESPACE_DIR = 'luxar';
 export async function getLuxarOpfsRoot(options: {
   create: boolean;
 }): Promise<FileSystemDirectoryHandle> {
+  if (!isOpfsSupported()) throw new Error(opfsUnavailableReason());
   const root = await navigator.storage.getDirectory();
   return root.getDirectoryHandle(OPFS_NAMESPACE_DIR, { create: options.create });
 }

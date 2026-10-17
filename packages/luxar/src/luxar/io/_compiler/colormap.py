@@ -14,6 +14,19 @@ from luxar._zarr_compat import create_array
 from ...encoding.compression import WIDTH_AWARE_DEFAULT, resolve_compressor
 
 
+def lut_tone_mapping_notice_applies(
+    colormap: Any, scene_tone_mapping: Optional[str]
+) -> bool:
+    """Whether a node with ``colormap`` triggers the ACES/LUT notice at all.
+
+    The same condition :func:`write_colormap_lut_if_needed` tests, so a writer
+    that delegates the warning to a nested call can record it as emitted.
+    """
+    if colormap is None or scene_tone_mapping is not None:
+        return False
+    return not (isinstance(colormap, str) and colormap == "gray")
+
+
 def write_colormap_lut_if_needed(
     group: zarr.Group,
     attrs: Dict[str, Any],
@@ -67,12 +80,10 @@ def write_colormap_lut_if_needed(
     # node is too late to silence the notice. Also skipped for the
     # implicit grayscale default ("gray"), which has no hue for ACES to
     # distort and is not a deliberate LUT choice.
-    is_grayscale_default = isinstance(colormap, str) and colormap == "gray"
     if (
         not lut_tone_mapping_warned
         and warn_on_missing_tone_mapping
-        and scene_tone_mapping is None
-        and not is_grayscale_default
+        and lut_tone_mapping_notice_applies(colormap, scene_tone_mapping)
     ):
         warnings.warn(
             "This scene uses a colormap LUT and sets no tone_mapping, so the "
@@ -80,8 +91,9 @@ def write_colormap_lut_if_needed(
             "which can distort LUT colors. That is usually the look you want; "
             "if exact colormap fidelity matters (e.g. for scientific color "
             "encoding) and the scene stays inside [0, 1], set "
-            "tone_mapping='None' in the scene's viewer_config — an exact "
-            "passthrough — or set 'ACES' explicitly to silence this.",
+            "tone_mapping='None' in the scene's viewer_config (on the "
+            "command line: --tone-mapping None) — an exact passthrough — or "
+            "set 'ACES' explicitly (--tone-mapping ACES) to silence this.",
             UserWarning,
             stacklevel=3,
         )

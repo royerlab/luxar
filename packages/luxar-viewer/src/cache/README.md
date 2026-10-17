@@ -143,6 +143,7 @@ Override cache behavior via URL parameters:
 - `?noCache` - Disable all caching (S-cache + L0 + L1 + L2) for this session
 - `?noSliceCache` - Disable only the SliceCache (S-cache); L0/L1/L2 stay on
 - `?noOpfs` - Disable only the L2 OPFS tier; L0/L1/S-cache stay on. The deterministic sibling of the OPFS circuit breaker, for environments whose OPFS is known to stall (automated Chromium). A deliberate disable does NOT raise the `opfs-unavailable` badge
+- No OPFS at all (plain http from another host is not a secure context, so `navigator.storage` is absent; or `getDirectory()` throws a `SecurityError`): the L2 tier is skipped with ONE `console.debug` line (`isOpfsSupported()` in `opfs-store/opfs-root.ts`) rather than a warning with a stack, and the `opfs-unavailable` badge shows as for any unavailable L2
 - `?opfsReadConcurrency=<N>` - Override the page-wide concurrent OPFS read cap (default 64) for diagnosis
 - `?cacheDebug` - Enable verbose cache logging for all layers
 - `?clearCache` - Clear all persistent/persisted caches (L0 + L1 + L2) before loading dataset (the in-memory S-cache is created fresh per load)
