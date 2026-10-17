@@ -7,6 +7,7 @@ import {
   judgePerf,
   median,
   noiseFloor,
+  normalQuantile,
   ratioCI,
 } from './perf-stats.mjs';
 
@@ -16,6 +17,11 @@ describe('familyFloor', () => {
     expect(familyFloor(0.01, 1)).toBe(0.01);
     expect(familyFloor(0.01, 4)).toBeGreaterThan(0.01);
     expect(familyFloor(0.01, 100)).toBeGreaterThan(familyFloor(0.01, 4));
+    expect(normalQuantile(0.975)).toBeCloseTo(1.959964, 6);
+    expect(normalQuantile(0.01)).toBeCloseTo(-2.326348, 6);
+    expect(normalQuantile(0.999)).toBeCloseTo(3.090232, 6);
+    expect(familyFloor(0.01, 15)).toBeCloseTo(0.015013, 6);
+    expect(familyFloor(0.01, 150)).toBeCloseTo(0.018382, 6);
   });
 });
 
