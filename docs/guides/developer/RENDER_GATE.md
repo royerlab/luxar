@@ -250,6 +250,9 @@ provide the second. Each is a key of the manifest's `suites` block and is run by
 
 ### Declaring a case
 
+This abridged excerpt shows the idle expectations; the manifest also declares
+whole-case render and upload totals and report-only damping-tail metrics.
+
 ```json
 "suites": {
   "counters": {
@@ -322,7 +325,7 @@ behind `?.`.
 | kind | params | returns |
 |---|---|---|
 | `idle` | `ms` | `renders`, `frames` |
-| `drag` | `px`, `tailMs`, `idleMs` | `renders` (drag + tail + idle), `tailRenders`, `tailFrames`, `tailUploadBytesBuffer`, `tailUploadBytesTexture`, `idleRenders`, `idleUploadBytesBuffer`, `idleUploadBytesTexture` |
+| `drag` | `px`, `tailMs`, `idleMs` | `renders` (drag + tail + idle), `tailRenders`, `tailFrames`, `tailSettled`, `tailUploadBytesBuffer`, `tailUploadBytesTexture`, `idleRenders`, `idleUploadBytesBuffer`, `idleUploadBytesTexture` |
 | `playback` | `dim?`, `fps`, `durationMs` or `loops` | `ticks`, `achievedFps`, `renders`, `rendersPerTick`, `lastTimepointShown`, `wraps`, `tickLatencyP50Ms`/`P90Ms` (records only) |
 | `scrub` | `dim?`, `mode: step\|drag`, `steps`, `intervalMs` | step: `stepMs` (p50), `stepP90Ms`; drag: `commitsDuringDrag`, `dragFrames` |
 | `orbit` | `radius?`, `steps`, `revolutions` | `levelFlips`, `renders` |
@@ -335,7 +338,11 @@ Notes on method:
   in-page synthetic `PointerEvent` has no active pointer, and the controls'
   `setPointerCapture` throws on it. Tail counters start at mouse release;
   the tail includes intentional camera damping. The subsequent idle window
-  starts after `tailMs` and is the window that must do no render or upload work.
+  starts after at least `tailMs` and 30 consecutive frames without a render.
+  If the tail does not settle within five more seconds, the row is a harness
+  error (`tailSettled=0`), rather than an idle expectation failure. The suite
+  uses `noBlendWarmup`, which disables the WebGL warm-up keepers; this idle
+  guard does not exercise them.
 - `playback` drives the viewer's own playback
   (`inputHandler.getAnimationManager().play(dim, { targetFPS, loopMode: 'loop' })`)
   after moving the axis to its minimum; `dim` defaults to the first hidden
@@ -396,8 +403,8 @@ with equal medians (for counters); `pass` no regression (pass or win). `n/a`
 never meets an expectation. A case or metric the manifest does not declare is a
 harness error (exit 2). An expectation on a `heavy` case that was skipped fails
 too; pass `--heavy`.
-An `--expect` file adds to the case's shipped expectations; it cannot override
-them.
+An `--expect` file adds to the case's shipped expectations. An entry that
+conflicts with a shipped expectation is rejected as a harness error (exit 2).
 
 ### Server profiles
 
