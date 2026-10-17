@@ -278,6 +278,13 @@ def run_fit_volume(
         help="Background floor subtracted before normalization: auto (default) "
         f"| specimen | pN | <float> | none. Details: {FIT_CLI_DOCS_URL}",
     ),
+    tile_amplitude_floor: Optional[float] = typer.Option(
+        None,
+        "--tile-amplitude-floor",
+        help="Remove fitted tile splats below this fraction of that tile's "
+        "normalization span before saving or merging (uniform tiled fits).",
+        rich_help_panel="Tiling",
+    ),
     norm_range: Optional[str] = typer.Option(
         None,
         "--norm-range",
@@ -733,6 +740,12 @@ def run_fit_volume(
         aprint(f"Error: Input file not found: {input_path}")
         raise typer.Exit(1)
     validate_hygiene_flags(min_extent, reseed_sigma)
+    from luxar.gsplats.fit_tiled_gsplats import _validate_tile_amplitude_floor
+
+    try:
+        _validate_tile_amplitude_floor(tile_amplitude_floor)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--tile-amplitude-floor") from exc
     parsed_norm_range = _parse_norm_range(norm_range)
     parsed_voxel_size = _parse_voxel_size(voxel_size)
     parsed_tile_region, parsed_tile_volume_shape = _parse_tile_worker_metadata(
@@ -784,6 +797,16 @@ def run_fit_volume(
                 tile_size,
                 _has_density,
             )
+            if (
+                tile_amplitude_floor is not None
+                and resolved_tiling != "uniform"
+                and tile is None
+                and parsed_tile_region is None
+            ):
+                raise typer.BadParameter(
+                    "--tile-amplitude-floor requires uniform tiling",
+                    param_hint="--tile-amplitude-floor",
+                )
 
             # A calibration records the floor it subtracted, and measured its
             # density's feature_threshold on that scale — so consume it when the
@@ -815,6 +838,7 @@ def run_fit_volume(
                 axes=axes,
                 lr=lr,
                 floor=floor,
+                tile_amplitude_floor=tile_amplitude_floor,
                 norm_range=parsed_norm_range,
                 voxel_size=parsed_voxel_size,
                 seed_method=seed_method,

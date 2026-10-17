@@ -146,6 +146,7 @@ def build_worker_cmd(
     lr: Optional[float] = None,
     floor: Optional[str] = None,
     floor_resolved: bool = False,
+    tile_amplitude_floor: Optional[float] = None,
     norm_range: "Optional[tuple[float, float]]" = None,
     seed_method: Optional[str] = None,
     downscale: Optional[str] = None,
@@ -216,6 +217,8 @@ def build_worker_cmd(
     if lr is not None:
         cmd += ["--lr", str(lr)]
     cmd += _floor_args(floor, floor_resolved)
+    if tile_amplitude_floor is not None:
+        cmd += ["--tile-amplitude-floor", str(tile_amplitude_floor)]
     cmd += _norm_range_args(norm_range)
     if seed_method:
         cmd += ["--seed-method", seed_method]
@@ -350,6 +353,7 @@ def fit_tiled_parallel(
     source_shape: Optional[Sequence[int]] = None,
     source_dtype: Optional[str] = None,
     floor_strategy: Optional[str] = None,
+    tile_amplitude_floor: Optional[float] = None,
     volume: "Any | None" = None,
     device: Optional[str] = None,
     fold_tile_slivers: bool = True,
@@ -429,6 +433,9 @@ def fit_tiled_parallel(
         grid_name="tile grid",
         missing_reason="this direct parallel tiled call was not given the reference volume",
     )
+    from luxar.gsplats.fit_tiled_gsplats import _validate_tile_amplitude_floor
+
+    _validate_tile_amplitude_floor(tile_amplitude_floor)
     _announce_unscored_reason(unscored_reason)
 
     tmp_dir = Path(tmp_dir)
@@ -510,13 +517,28 @@ def fit_tiled_parallel(
     results: list[GSplatData] = []
     missing: list[int] = []
     corrupt: list[tuple[int, str]] = []
+    amplitude_pruned = 0
+    exact_pruned_count = True
     for i, p in enumerate(tile_paths):
         if p.exists():
             try:
-                results.append(GSplatData.load(p, include_stats=True))
+                tile_result = GSplatData.load(p, include_stats=True)
+                if tile_amplitude_floor is not None:
+                    from luxar.gsplats.fit_tiled_gsplats import _floor_tile_amplitudes
+
+                    n_before = tile_result.n_splats
+                    tile_result = _floor_tile_amplitudes(
+                        tile_result, tile_amplitude_floor
+                    )
+                    amplitude_pruned += int(
+                        tile_result.stats.get("tile_amplitude_pruned", 0)
+                    )
+                    amplitude_pruned += n_before - tile_result.n_splats
+                results.append(tile_result)
             except Exception as exc:  # present but unreadable/partial store
                 corrupt.append((i, repr(exc)))
         elif Path(str(p) + ".empty").exists():
+            exact_pruned_count = False
             # Legitimately-empty tile: append a 0-splat placeholder so the
             # merged `splats_per_tile` stat stays positionally aligned with the
             # sequential path (which keeps every tile's 0-splat result).
@@ -559,6 +581,14 @@ def fit_tiled_parallel(
         device=device,
         fold_tile_slivers=fold_tile_slivers,
     )
+    if tile_amplitude_floor is not None:
+        from luxar.gsplats.fit_tiled_gsplats import _stamp_tile_amplitude_floor
+
+        _stamp_tile_amplitude_floor(
+            merged,
+            tile_amplitude_floor,
+            amplitude_pruned if exact_pruned_count else None,
+        )
 
     if not keep_tiles:
         shutil.rmtree(tmp_dir, ignore_errors=True)

@@ -48,6 +48,85 @@ def _make_sparse_volume(path: Path) -> None:
 
 @pytest.mark.slow
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
+def test_tile_amplitude_floor_matches_sequential_parallel_and_worker(
+    tmp_path: Path,
+) -> None:
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    y, x = np.mgrid[:24, :48]
+    image = np.exp(-((y - 12) ** 2 / 50 + (x - 24) ** 2 / 450)).astype(np.float32)
+    source = tmp_path / "image.npy"
+    np.save(source, image)
+    common = [
+        "gsplat",
+        "fit",
+        str(source),
+        "",
+        "--tiling",
+        "uniform",
+        "--tile-size",
+        "32",
+        "--overlap",
+        "8",
+        "--flat",
+        "--seeds",
+        "256",
+        "--iters",
+        "20",
+        "--device",
+        "cpu",
+        "--cull-retention",
+        "0",
+        "--tile-amplitude-floor",
+        "1e-5",
+    ]
+    pruned_counts = []
+    for scale in (1.0, 1000.0):
+        np.save(source, image * scale)
+        outputs = []
+        for jobs in ("1", "2"):
+            output = tmp_path / f"fit_{scale}_{jobs}.gsplats.zarr"
+            argv = common.copy()
+            argv[3] = str(output)
+            result = runner.invoke(app, [*argv, "-j", jobs])
+            assert result.exit_code == 0, result.output
+            data = GSplatData.load(output, include_stats=True)
+            span = data.stats["image_max"] - data.stats["image_min"]
+            assert np.all(data.amplitudes >= 1e-5 * span)
+            assert data.stats["tile_amplitude_floor"] == 1e-5
+            assert data.stats["tile_amplitude_pruned"] > 0
+            outputs.append(data)
+        assert outputs[0].n_splats == outputs[1].n_splats
+        assert (
+            outputs[0].stats["tile_amplitude_pruned"]
+            == outputs[1].stats["tile_amplitude_pruned"]
+        )
+        pruned_counts.append(outputs[0].stats["tile_amplitude_pruned"])
+    assert pruned_counts[0] == pruned_counts[1]
+
+
+def test_tile_amplitude_floor_refuses_nonuniform_fit(tmp_path: Path) -> None:
+    source = tmp_path / "image.npy"
+    np.save(source, np.ones((8, 8), dtype=np.float32))
+    result = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(source),
+            str(tmp_path / "out.gsplats.zarr"),
+            "--tiling",
+            "content",
+            "--tile-amplitude-floor",
+            "1e-5",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "requires uniform tiling" in normalized_cli_output(result)
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
 def test_tiled_parallel_cli_end_to_end(tmp_path: Path) -> None:
     from luxar.gsplats.gsplat_data import GSplatData
 

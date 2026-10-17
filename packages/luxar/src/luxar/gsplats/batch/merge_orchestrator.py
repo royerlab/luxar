@@ -910,13 +910,19 @@ def _batch_floor_stats(manifest: BatchManifest) -> Dict[str, Any]:
     because an absent key reads as "unknown" while ``floor: null`` asserts that
     no pedestal was removed.
     """
+    tile_amplitude_floor = manifest.fit_args.get("tile-amplitude-floor")
+    tile_stats = (
+        {"tile_amplitude_floor": float(tile_amplitude_floor)}
+        if tile_amplitude_floor is not None
+        else {}
+    )
     level = manifest.floor_level
     if level is not None:
-        return {"floor": float(level)}
+        return {"floor": float(level), **tile_stats}
     spec = manifest.fit_args.get("floor")
     if isinstance(spec, str) and spec.strip().lower() == "none":
-        return {"floor": None}
-    return {}
+        return {"floor": None, **tile_stats}
+    return tile_stats
 
 
 def _manifest_part_coarsen_dims(

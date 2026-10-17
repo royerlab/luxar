@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import typer
 
 from luxar.cli.gsplat_ops.batch import plan_configs, run_orchestration, submit
 from luxar.cli.gsplat_ops.batch import run as run_mod
@@ -117,6 +118,29 @@ def test_the_commands_were_found_and_are_not_empty() -> None:
     assert len(_param_names(SUBMIT_CMD)) > 40
     assert len(_param_names(MAPPER)) > 40
     assert all(len(_dataclass_fields(cls)) > 3 for cls in PLAN_CONFIGS)
+
+
+def test_tile_amplitude_floor_reaches_shared_batch_worker_flags() -> None:
+    from luxar.cli.gsplat_ops.batch.planning import _assemble_fit_args
+    from luxar.gsplats.batch.fit_command import fit_args_to_tokens
+    from luxar.gsplats.batch.manifest import BatchManifest
+    from luxar.gsplats.batch.merge_orchestrator import _batch_floor_stats
+
+    args, _, _ = _assemble_fit_args(
+        FitConfig(tile_amplitude_floor=1e-5), DenoiseConfig()
+    )
+    tokens = fit_args_to_tokens(args)
+    assert tokens[tokens.index("--tile-amplitude-floor") + 1] == "1e-05"
+    assert _batch_floor_stats(BatchManifest(fit_args=args)) == {
+        "tile_amplitude_floor": 1e-5
+    }
+
+
+def test_tile_amplitude_floor_rejects_content_batch_plan() -> None:
+    from luxar.cli.gsplat_ops.batch.planning import _validate_content_fit_flags
+
+    with pytest.raises(typer.BadParameter, match="tile-amplitude-floor"):
+        _validate_content_fit_flags("content", {"tile-amplitude-floor": "1e-5"})
 
 
 def test_calls_finds_bare_and_qualified_callees() -> None:
