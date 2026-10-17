@@ -173,16 +173,16 @@ describe('countTimingJudgements', () => {
     };
     expect(
       countTimingJudgements(suites, ['hosted', 'playback'], { backends: ['webgl', 'webgpu'] })
-    ).toBe(5);
+    ).toBe(3);
     expect(
       countTimingJudgements(suites, ['hosted'], { backends: ['webgl', 'webgpu'], only: ['load'] })
-    ).toBe(4);
+    ).toBe(2);
     expect(
       countTimingJudgements(suites, ['hosted', 'playback'], {
         backends: ['webgl', 'webgpu'],
         heavy: true,
       })
-    ).toBe(7);
+    ).toBe(4);
   });
 });
 

@@ -18,6 +18,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { selectBackends } from './browser.mjs';
 import { installExtCounters } from './ext-counters.mjs';
 import * as ops from './page-ops.mjs';
 import {
@@ -386,10 +387,7 @@ function applyExpectations(row, c, expected) {
 
 /** Backends selected for one manifest case. */
 function caseBackends(c, defaults, requested) {
-  if (c.backends) return requested ? c.backends.filter((b) => requested.includes(b)) : c.backends;
-  const fallback = defaults.backends ?? ['webgl', 'webgpu'];
-  if (!requested) return fallback;
-  return requested.filter((b) => ['webgl', 'webgpu'].includes(b) || fallback.includes(b));
+  return selectBackends(requested, c.backends ?? defaults.backends ?? ['webgl', 'webgpu']);
 }
 
 /** Count gating timing judgments over every selected manifest suite. */
