@@ -234,7 +234,14 @@ the `add_*` call or it is lost. Five things about that round-trip surprise peopl
   ray**, so the right value depends on how deep the object is, not on how bright it
   is. It is not portable between datasets: a value tuned on a 170 µm brain will
   over- or under-attenuate on a different one. Retune it, and remember the pair —
-  raising absorption usually wants the window's max lowered with it.
+  raising absorption usually wants the window's max lowered with it. τ on a ray
+  = κ × opacity × the colour-free sum of gained amplitudes along it; auto
+  exposure never runs for `volumetric`, so that sum is set by the fit (thickness,
+  splat size in SCENE units — µm vs voxel changes it). `gsplat convert
+  --blending-mode volumetric` prints the predicted p99.9 of that sum and the κ for
+  τ≈1 there (a 10-tp zebrafish nuclei fit: 3.95 → κ≈0.25); start from it. Pair
+  it with a black-footed colormap (`inferno`, `magma`, `gray`):
+  `plasma`/`viridis` turn residual haze into blue/purple fog.
 - **A stored window only means anything for that exact store.** Any refit, rescale
   or re-encode moves it. Say so in a comment next to the constant.
 

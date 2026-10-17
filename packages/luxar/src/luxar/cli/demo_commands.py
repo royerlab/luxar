@@ -15,10 +15,11 @@ import sys
 import time
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 from arbol import aprint
+from typer.core import TyperCommand
 
 from .._process import can_kill_process_groups, run_child_process
 from ..demos import LOCAL_FIT_DIRNAME, registry
@@ -214,6 +215,8 @@ _HELP_FLAGS = frozenset({"-h", "--help"})
 _COMMON_DEMO_FLAGS: tuple[tuple[str, str], ...] = (
     ("--no-serve", "Build the scene into the demos output directory, then exit."),
     ("--host HOST", "Bind the servers to HOST (default 127.0.0.1; 0.0.0.0 = LAN)."),
+    ("--port N", "Serve the data on port N (default: a stable per-demo port)."),
+    ("--viewer-port N", "Serve the viewer on port N (default: per-demo port)."),
     ("--no-open", "Do not open a browser (skipped anyway without a display)."),
     ("--recompute", "Rebuild cached intermediate results (GSplat demos)."),
     ("--serve-only", "Serve the existing output without rebuilding (GSplat demos)."),
@@ -280,7 +283,7 @@ def _print_demo_help(info: DemoInfo) -> None:
     console.print()
     console.print("Common demo flags (pass them after `--`):")
     for flag, text in _COMMON_DEMO_FLAGS:
-        console.print(f"  {flag:<14} {text}", markup=False, highlight=False)
+        console.print(f"  {flag:<16} {text}", markup=False, highlight=False)
     console.print(
         "Not every demo honours every flag; demo-specific ones are described above.",
         markup=False,
@@ -288,8 +291,56 @@ def _print_demo_help(info: DemoInfo) -> None:
     )
 
 
+#: ``demo run``'s own options that take a value — skipped when looking for the
+#: demo key, so ``--host 0.0.0.0`` is not mistaken for it.
+_RUN_VALUED_OPTIONS = frozenset({"--host", "--port", "--viewer-port"})
+
+
+def _route_help_to_demo(args: list[str]) -> list[str]:
+    """Move a ``--help`` that follows a demo key behind ``--``.
+
+    ``luxar demo run cloud --help`` is the natural way to ask about one demo,
+    but Click's eager ``--help`` fires before the key is even parsed and prints
+    the generic ``demo run`` usage. Once a key is present the question is about
+    that demo, so the flag is handed to it — exactly what ``-- --help`` does.
+    Without a key (``luxar demo run --help``) nothing changes.
+    """
+    head, sep, tail = list(args), [], []
+    if "--" in args:
+        cut = args.index("--")
+        head, sep, tail = list(args[:cut]), ["--"], list(args[cut + 1 :])
+    if "--help" not in head:
+        return list(args)
+    key_seen = False
+    i = 0
+    while i < len(head):
+        token = head[i]
+        if token in _RUN_VALUED_OPTIONS:
+            i += 2
+            continue
+        if not token.startswith("-"):
+            key_seen = True
+            break
+        i += 1
+    if not key_seen:
+        return list(args)
+    head = [t for t in head if t != "--help"]
+    return [*head, *(sep or ["--"]), "--help", *tail]
+
+
+class _DemoRunCommand(TyperCommand):
+    """``demo run`` command that sends a post-key ``--help`` to the demo."""
+
+    # `Any`: the base class takes typer's VENDORED click Context, which has no
+    # public import path.
+    def parse_args(self, ctx: Any, args: list[str]) -> list[str]:
+        """Rewrite ``<key> --help`` to ``<key> -- --help`` before parsing."""
+        return super().parse_args(ctx, _route_help_to_demo(args))
+
+
 @app_demo.command(
     "run",
+    cls=_DemoRunCommand,
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
 def demo_run(
@@ -302,6 +353,23 @@ def demo_run(
             "Bind the demo's data and viewer servers to HOST (default 127.0.0.1; "
             "0.0.0.0 to view it from another machine). Forwarded to the demo."
         ),
+    ),
+    port: Optional[int] = typer.Option(
+        None,
+        "--port",
+        min=1,
+        max=65535,
+        help=(
+            "Serve the demo's data on this port instead of its stable derived "
+            "one (for a port forward or firewall rule). Forwarded to the demo."
+        ),
+    ),
+    viewer_port: Optional[int] = typer.Option(
+        None,
+        "--viewer-port",
+        min=1,
+        max=65535,
+        help="Serve the viewer on this port. Forwarded to the demo.",
     ),
     no_open: bool = typer.Option(
         False,
@@ -324,10 +392,11 @@ def demo_run(
     ~/.cache/luxar/datasets/demos from an install. LUXAR_DATASETS_DIR overrides
     the datasets directory.
 
-    --host and --no-open reach every serving demo; the browser is also skipped
-    automatically over SSH, without a display, or without a terminal. A
-    forwarded --no-serve only builds the scene. `luxar demo run <key> -- --help`
-    describes a demo without running it.
+    --host, --port, --viewer-port and --no-open reach every serving demo; the
+    browser is also skipped automatically over SSH, without a display, or
+    without a terminal. A forwarded --no-serve only builds the scene.
+    `luxar demo run <key> --help` (or `-- --help`) describes a demo without
+    running it.
 
     Example: luxar demo run gsplats_3d_tribolium_embryo -- --recompute --no-serve
     """
@@ -340,12 +409,18 @@ def demo_run(
     # hands them to `luxar serve` through `launch_viewer`.
     if host:
         extra.extend(["--host", host])
+    if port is not None:
+        extra.extend(["--port", str(port)])
+    if viewer_port is not None:
+        extra.extend(["--viewer-port", str(viewer_port)])
     if no_open:
         extra.append("--no-open")
     _refuse_if_running(info.key)
     env = None if canonical else _variant_env(info, extra)
     aprint(f"🎬 {info.title}  [{info.key}]")
     aprint(f"   {info.description}")
+    if env is None and "--no-serve" not in extra:
+        _hint_serve_existing(info, extra)
     if extra:
         aprint(f"➡️  Forwarding args to the demo: {' '.join(extra)}")
     cmd = [sys.executable, "-m", info.module, *extra]
@@ -357,6 +432,33 @@ def demo_run(
     code = _run_registered_demo(info.key, cmd, label=f"demo '{info.key}'", env=env)
     if code != 0:
         raise typer.Exit(code)
+
+
+def _hint_serve_existing(info: DemoInfo, extra: Sequence[str]) -> None:
+    """Say how to serve an existing default build WITHOUT rebuilding it.
+
+    A re-run always rebuilds (so a code change always shows), which is a long
+    wait for a heavy demo when all that changed is where it should be served
+    (`-- --host 0.0.0.0`). Only for a single-scene demo whose build is present.
+    """
+    from ..demos._support.runtime.flags import parse_int_arg, parse_str_arg
+    from ..demos._support.runtime.viewer import demo_ports
+
+    outputs = registry.demo_output_paths(info)
+    if len(outputs) != 1 or not outputs[0].exists():
+        return
+    argv = list(extra)
+    data_port, viewer_port = demo_ports(outputs[0])
+    command = ["luxar", "serve", str(outputs[0]), "--viewer"]
+    host = parse_str_arg("host", argv)
+    if host:
+        command += ["--host", host]
+    command += ["--port", str(parse_int_arg("port", data_port, argv))]
+    command += ["--viewer-port", str(parse_int_arg("viewer-port", viewer_port, argv))]
+    aprint(
+        "ℹ️  Rebuilding (every run does). To serve the existing build instead: "
+        + shlex.join(command)
+    )
 
 
 def _refuse_if_running(key: str) -> None:
@@ -392,7 +494,9 @@ _NEUTRAL_FLAGS = frozenset(
         "--control",
     }
 )
-_NEUTRAL_VALUED_FLAGS = frozenset({"--host", "--control-token", "--cache-dir"})
+_NEUTRAL_VALUED_FLAGS = frozenset(
+    {"--host", "--port", "--viewer-port", "--control-token", "--cache-dir"}
+)
 
 
 def _custom_build_args(extra: Sequence[str]) -> list[str]:

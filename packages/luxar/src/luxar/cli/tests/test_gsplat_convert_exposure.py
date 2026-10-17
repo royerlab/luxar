@@ -302,6 +302,50 @@ def test_non_summing_blending_keeps_per_splat_normalization(tmp_path: Path) -> N
     assert attrs["display_gain"] == pytest.approx(_per_splat(src), rel=1e-6)
 
 
+def test_volumetric_convert_reports_the_optical_depth_its_absorption_gives(
+    tmp_path: Path,
+) -> None:
+    """No auto exposure runs for volumetric, so kappa needs the ray density.
+
+    The narrated density is the predictor's opening-view p99.9 with every
+    colour gain at 1 (tau = kappa * opacity * gained ray mass, colour-free), and
+    the suggested kappa is its reciprocal.
+    """
+    import re
+
+    src = _dense(tmp_path / "dense.gsplats.zarr")
+    out = tmp_path / "scene.luxar.zarr"
+    output = " ".join(
+        _convert(
+            CliRunner(),
+            src,
+            out,
+            "--blending-mode",
+            "volumetric",
+            "--absorption",
+            "0.5",
+        ).split()
+    )
+    match = re.search(
+        r"carry density ([0-9.e+]+), so --absorption 0.5 gives optical depth "
+        r"~([0-9.e+]+) there .*--absorption ([0-9.e+-]+) would give ~1",
+        output,
+    )
+    assert match, output
+    density, tau, suggested = (float(g) for g in match.groups())
+    assert tau == pytest.approx(0.5 * density, rel=0.01)
+    assert suggested == pytest.approx(1.0 / density, rel=0.05)
+    # A thick column far exceeds the additive target of 2: the old README
+    # anchor ("brightest rays ~2") would have been off by this factor.
+    assert density > 2.0
+
+
+def test_additive_convert_prints_no_volumetric_line(tmp_path: Path) -> None:
+    src = _dense(tmp_path / "dense.gsplats.zarr")
+    output = _convert(CliRunner(), src, tmp_path / "scene.luxar.zarr")
+    assert "Volumetric:" not in output
+
+
 def test_side_cap_is_named_when_it_binds(tmp_path: Path) -> None:
     """A slab seen face-on is dim but blazes edge-on: the side views decide."""
     rng = np.random.default_rng(3)
@@ -667,3 +711,26 @@ def test_two_tile_batch_merge_keeps_the_intensity_basis(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     leaf = read_node_attrs(scene / "gsplats" / "part_0")
     assert leaf["amplitude_unit"].startswith("counts")
+
+
+def test_a_lod_convert_emits_the_aces_lut_notice_once(tmp_path: Path) -> None:
+    """Each LOD level's leaf writer and the Node's group write both warned.
+
+    The notice also names the CLI flag, since `gsplat convert` users have no
+    `viewer_config` to edit.
+    """
+    import warnings
+
+    src = _dense(tmp_path / "dense.gsplats.zarr")
+    lod = tmp_path / "lod.gsplats.zarr"
+    runner = CliRunner()
+    result = runner.invoke(
+        app, ["gsplat", "lod", str(src), str(lod), "--recipe", "levels"]
+    )
+    assert result.exit_code == 0, normalized_cli_output(result)
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        _convert(runner, lod, tmp_path / "scene.luxar.zarr", "--colormap", "plasma")
+    notices = [w for w in record if "sets no tone_mapping" in str(w.message)]
+    assert len(notices) == 1
+    assert "--tone-mapping None" in str(notices[0].message)

@@ -87,8 +87,11 @@ make install-demo-deps  # Install the demo extras (demos + gsplats + io)
 
 # Quality & Testing
 make test-fast    # INNER LOOP: Python (-m 'not slow', xdist) + TS units, no coverage.
-                  # ~6-7 min whole-suite; SCOPE it for a real loop:
+                  # Python half alone ~22.5 min (~20k tests) on a fresh 20-core box
+                  # (tester-measured), then ~18k vitest tests; SCOPE it:
                   #   make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'
+                  #   make test-fast TS_ARGS='src/rendering'   # vitest only
+                  # Scoping one half skips the other; pass both to run both.
                   # Not a gate — no slow tests, no coverage thresholds, no E2E.
                   # LUXAR_PYTEST_JOBS=12 to tune (I/O-bound, so it buys little).
 make test-all     # All tests (Python incl. CUDA + WASM/Rust + TypeScript + Go launcher)
@@ -1634,9 +1637,10 @@ While iterating, use the fast loop — it deselects `slow`, runs pytest under
 xdist and skips coverage:
 
 ```bash
-make test-fast                                                  # whole suite, ~6-7 min
-make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'  # scoped, ~35 s
+make test-fast                                                  # Python half alone ~22.5 min
+make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'  # scoped, Python only
 make test-fast PYTEST_ARGS='-k colormap'
+make test-fast TS_ARGS='src/rendering'                          # scoped, vitest only
 ```
 
 Scope it if you want a real edit-run-edit loop: with `slow` deselected the

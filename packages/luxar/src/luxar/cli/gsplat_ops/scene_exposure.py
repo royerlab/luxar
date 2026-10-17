@@ -45,7 +45,12 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ...gsplats.tree import GSplatNode
     from .scene_orientation import ConvertOrientation
 
-__all__ = ["ConvertExposure", "resolve_convert_exposure"]
+__all__ = [
+    "ConvertExposure",
+    "predict_volumetric_ray_mass",
+    "resolve_convert_exposure",
+    "volumetric_depth_line",
+]
 
 
 @dataclass(frozen=True)
@@ -295,4 +300,58 @@ def resolve_convert_exposure(
         units,
         _exposure_line(plan, per_splat),
         **extra,
+    )
+
+
+def predict_volumetric_ray_mass(
+    node: "GSplatNode",
+    orientation: "ConvertOrientation",
+    *,
+    gain: float,
+    opacity: float,
+) -> Optional[float]:
+    """Opening-view p99.9 of the per-ray density sum ``volumetric`` absorbs by.
+
+    The shader's optical depth is ``tau = absorption * opacity * intensity``,
+    where ``intensity`` is the sum-projected ray mass of the GAINED amplitudes —
+    the additive render's sum before any colour or colormap gain. That is the
+    projected-sum predictor with every splat's colour gain set to 1, so the
+    returned value ``S`` gives ``tau ~= absorption * S`` on the brightest rays.
+    ``None`` when nothing can be predicted (empty node, unsupported dims).
+    """
+    import numpy as np
+
+    from ...gsplats.exposure import collect_default_splats, plan_projected_exposure
+
+    centers, chol, amps, _colors = collect_default_splats(node)
+    if np.asarray(amps).size == 0:
+        return None
+    columns, axis_col, _axis_name = opening_view_columns(orientation)
+    try:
+        plan = plan_projected_exposure(
+            centers,
+            chol,
+            np.asarray(amps, dtype=np.float64) * gain,
+            np.ones((np.asarray(amps).size, 3)),
+            view_axis=axis_col,
+            display_dims=columns,
+            hidden=opening_hidden_axes(orientation, centers),
+            opacity=opacity,
+            trunc=_leaf_truncation(node),
+        )
+    except ValueError:
+        return None
+    return float(plan.predicted_before) if plan.predicted_before > 0 else None
+
+
+def volumetric_depth_line(ray_mass: float, absorption: float) -> str:
+    """Narrate the brightest rays' optical depth and the κ for ~one depth there."""
+    import math
+
+    tau = absorption * ray_mass
+    return (
+        f"Volumetric: brightest rays (opening-view p99.9) carry density "
+        f"{ray_mass:.3g}, so --absorption {absorption:g} gives optical depth "
+        f"~{tau:.3g} there ({100 * math.exp(-tau):.0f}% transmitted); "
+        f"--absorption {1.0 / ray_mass:.2g} would give ~1 (37%)"
     )

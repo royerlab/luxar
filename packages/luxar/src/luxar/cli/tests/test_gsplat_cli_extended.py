@@ -3028,16 +3028,31 @@ class TestViewCommand:
             os.kill(os.getpid(), signal.SIGHUP)
             time.sleep(1)
 
-        with (
-            patch("luxar.cli.utils.check_viewer_built", return_value=True),
-            patch(
-                "luxar.cli.gsplat_ops.scene_build.build_gsplat_scene",
-                side_effect=_hangup,
-            ),
-            patch("luxar.cli.serving._serve_data"),
-            patch("luxar.cli.serving._serve_viewer"),
-        ):
-            result = runner.invoke(app, ["gsplat", "view", str(src), "--no-open"])
+        # `view` deliberately leaves an INHERITED ignore alone (`nohup`, and
+        # agent shells / CI runners that start children with SIGHUP ignored),
+        # so the kill above would be a no-op there and the build would "finish"
+        # — then fall through to real port picking on 8000/5173. Pin the
+        # default disposition the scenario is about, and never touch a real
+        # port: the build is all this test is about.
+        previous = signal.signal(signal.SIGHUP, signal.SIG_DFL)
+        try:
+            with (
+                patch("luxar.cli.utils.check_viewer_built", return_value=True),
+                patch(
+                    "luxar.cli.utils.find_available_port",
+                    side_effect=lambda p, **_kw: p,
+                ),
+                patch("luxar.cli.utils.wait_for_server", return_value=True),
+                patch(
+                    "luxar.cli.gsplat_ops.scene_build.build_gsplat_scene",
+                    side_effect=_hangup,
+                ),
+                patch("luxar.cli.serving._serve_data"),
+                patch("luxar.cli.serving._serve_viewer"),
+            ):
+                result = runner.invoke(app, ["gsplat", "view", str(src), "--no-open"])
+        finally:
+            signal.signal(signal.SIGHUP, previous)
         assert result.exit_code == 128 + signal.SIGHUP, _plain(result.stdout)
         assert list(tmp_path.glob("luxar_gsplat_view_*")) == []
 

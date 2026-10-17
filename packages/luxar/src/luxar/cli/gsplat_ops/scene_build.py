@@ -148,7 +148,28 @@ def _exposure(
     )
     if exposure.line:
         aprint(exposure.line)
+    if opts.blending_mode == "volumetric":
+        _narrate_volumetric_depth(node, orientation, opts, exposure.gain)
     return exposure
+
+
+def _narrate_volumetric_depth(
+    node: Any, orientation: "ConvertOrientation", opts: SceneBuildOptions, gain: float
+) -> None:
+    """Print the brightest rays' optical depth under ``--absorption``.
+
+    Auto exposure does not run for ``volumetric`` (it only tames SUMMING modes),
+    so the per-ray density the absorption multiplies is whatever the fit's
+    overlap makes it — often tens of times the additive target. One predicted
+    number turns choosing kappa from guesswork into a division.
+    """
+    from .scene_exposure import predict_volumetric_ray_mass, volumetric_depth_line
+
+    ray_mass = predict_volumetric_ray_mass(
+        node, orientation, gain=gain, opacity=opts.opacity
+    )
+    if ray_mass is not None:
+        aprint(volumetric_depth_line(ray_mass, opts.absorption))
 
 
 def _windows_amplitude(node: Any, colormap: Optional[str]) -> bool:

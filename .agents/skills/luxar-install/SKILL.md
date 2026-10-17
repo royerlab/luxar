@@ -35,8 +35,9 @@ extension, and for the few things that need `make` (native app launchers).
 ### Prerequisites per OS: Python 3.12+ with `venv`
 
 - **Ubuntu / Debian**: the stock image has Python but no `venv`/`pip` (and often no
-  `curl`): `sudo apt install python3-venv python3-pip`. Ubuntu 24.04's `python3`
-  is 3.12; older releases need a newer Python (`uv`, below, or deadsnakes).
+  `curl`): `sudo apt update && sudo apt install python3-venv python3-pip`.
+  Ubuntu 24.04's `python3` is 3.12; older releases need a newer Python (`uv`,
+  below, or deadsnakes).
 - **macOS**: the system `python3` is 3.9, and `pip3 install luxar` then fails with
   "No matching distribution found for luxar" (the wheel requires 3.12). Install
   3.12+ with the [python.org installer](https://www.python.org/downloads/macos/)
@@ -117,7 +118,7 @@ The viewer servers bind `127.0.0.1`; on a remote box tunnel the printed ports
 Prerequisites: **Python 3.12+** (with headers and `venv`), git, curl, `make`, a
 C compiler and `jq`; on Linux also the GL/EGL runtime libraries. The one list,
 identical in the README, CONTRIBUTING.md and BUILD_SYSTEM_SPEC.md:
-`sudo apt-get install -y make build-essential git curl jq python3-dev python3-venv pipx libegl1 libgl1-mesa-dri libegl-mesa0 libgbm1 libgles2`
+`sudo apt-get update && sudo apt-get install -y make build-essential git curl jq python3-dev python3-venv pipx libegl1 libgl1-mesa-dri libegl-mesa0 libgbm1 libgles2`
 on Ubuntu/Debian; `xcode-select --install` plus `brew install python@3.12 pipx jq`
 on macOS. Then:
 
@@ -159,14 +160,6 @@ Dev-only knobs worth knowing:
 
 ## Profile: desktop with NVIDIA GPU
 
-On this profile Hatch owns the environment, so do NOT build into a separate
-`.venv` — skip creating one, or `deactivate` it now before proceeding.
-The CUDA make targets all run through Hatch's managed env (`hatch run ...`),
-so drive the whole GPU path through Hatch — verify and build against the *same*
-environment. The default Hatch env already includes `[gsplats]` (torch/scipy)
-via `features=["dev"]`, so the first `hatch run` provisions it — no manual
-install needed.
-
 **User install (no checkout): nothing to build.** On Linux, `pip install
 "luxar[gsplats]"` with the default CUDA build of torch is enough: the custom CUDA
 kernels are compiled for the card on first use by NVRTC (the runtime compiler that
@@ -181,7 +174,12 @@ reaches older cards, untested here -- or no libnvrtc;
 `LUXAR_CUDA_BACKEND=aot|nvrtc|torch` forces a path.
 
 **Dev checkout:** the ahead-of-time extension is still supported and preferred
-when it is built:
+when it is built. Here Hatch owns the environment, so do NOT build into a
+separate `.venv` — skip creating one, or `deactivate` it now. The CUDA make
+targets all run through Hatch's managed env (`hatch run ...`), so verify and
+build against the *same* environment. The default Hatch env already includes
+`[gsplats]` (torch/scipy) via `features=["dev"]`, so the first `hatch run`
+provisions it — no manual install needed.
 
 ```bash
 make setup-dev          # installs Hatch (the CUDA targets build inside it)
