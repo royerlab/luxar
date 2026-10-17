@@ -12,8 +12,8 @@
  * Sequence:
  *
  *   - **Loss**: the current device's `lost` promise resolves. A `'destroyed'`
- *     reason is our own `renderer.dispose()` (three ignores it too) and is not a
- *     loss. Otherwise flip `isLost`, tell the host (`onLost`: event, toast,
+ *     reason means the device was explicitly destroyed and is not a
+ *     recoverable loss. Otherwise flip `isLost`, tell the host (`onLost`: event, toast,
  *     smaller GPU budget), and start recovery.
  *   - **Recovery**: `recreateRenderer()` builds a renderer on a fresh device and
  *     rewires the host. Success re-arms the observer on the new device and calls
@@ -48,7 +48,7 @@ export interface WebGPUDeviceRecoveryDeps {
    * Resolves false (or rejects) when no native device could be obtained.
    */
   recreateRenderer(): Promise<boolean>;
-  /** The device was lost (not destroyed by us); recovery starts right after. */
+  /** The device was lost without an explicit destroy; recovery starts right after. */
   onLost(info: DeviceLostInfo): void;
   /** A new renderer is live and the scene has been rewired to it. */
   onRestored(): void;
@@ -107,7 +107,7 @@ export class WebGPUDeviceRecovery {
   }
 
   private async handleLost(info: DeviceLostInfo, generation: number): Promise<void> {
-    if (this.disposed || generation !== this.generation) return;
+    if (this.disposed || this.lost || generation !== this.generation) return;
     if (info.reason === 'destroyed') return;
     this.generation++; // this device is done: ignore anything else it reports
     this.lost = true;

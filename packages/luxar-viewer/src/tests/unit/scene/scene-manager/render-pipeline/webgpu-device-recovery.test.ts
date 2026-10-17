@@ -56,7 +56,7 @@ describe('WebGPUDeviceRecovery', () => {
     expect(h.deps.onRestored).toHaveBeenCalledTimes(2);
   });
 
-  it("ignores 'destroyed', which is our own renderer.dispose()", async () => {
+  it('ignores an explicitly destroyed device', async () => {
     const h = harness(async () => true);
     h.devices[0].lose({ reason: 'destroyed' });
     await settle();
@@ -104,6 +104,32 @@ describe('WebGPUDeviceRecovery', () => {
     expect(h.recovery.isLost()).toBe(false);
   });
 
+  it('does not start a second rebuild for an overlapping simulated loss', async () => {
+    let finish!: (ok: boolean) => void;
+    const h = harness(() => new Promise<boolean>((resolve) => (finish = resolve)));
+    const first = h.recovery.simulateLoss();
+    const second = h.recovery.simulateLoss();
+    await settle();
+    expect(h.deps.recreateRenderer).toHaveBeenCalledTimes(1);
+    expect(h.deps.onLost).toHaveBeenCalledTimes(1);
+    finish(true);
+    await Promise.all([first, second]);
+    expect(h.deps.onRestored).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not simulate a second rebuild while recovering from a real loss', async () => {
+    let finish!: (ok: boolean) => void;
+    const h = harness(() => new Promise<boolean>((resolve) => (finish = resolve)));
+    h.devices[0].lose({ reason: 'unknown' });
+    await settle();
+    await h.recovery.simulateLoss();
+    expect(h.deps.recreateRenderer).toHaveBeenCalledTimes(1);
+    expect(h.deps.onLost).toHaveBeenCalledTimes(1);
+    finish(true);
+    await settle();
+    expect(h.deps.onRestored).toHaveBeenCalledTimes(1);
+  });
+
   it('does nothing after dispose', async () => {
     const h = harness(async () => true);
     h.recovery.dispose();
@@ -117,7 +143,7 @@ describe('WebGPUDeviceRecovery', () => {
     await h.recovery.simulateLoss();
     expect(h.deps.onLost).toHaveBeenCalledTimes(1);
     expect(h.deps.onRestored).toHaveBeenCalledTimes(1);
-    // The old device's later 'destroyed' (its renderer disposed) is ignored.
+    // A late loss from the old device is ignored after the new one is attached.
     h.devices[0].lose({ reason: 'unknown' });
     await settle();
     expect(h.deps.recreateRenderer).toHaveBeenCalledTimes(1);

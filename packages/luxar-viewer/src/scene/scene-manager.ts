@@ -674,7 +674,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * **WebGPU path.** Three's `WebGPURenderer` does NOT recreate a lost
    * device: it only latches `_isDeviceLost`, after which every render
    * returns early. `WebGPUDeviceRecovery` observes `device.lost`, ignores
-   * our own `'destroyed'` disposal, and rebuilds the renderer on a fresh
+   * explicit `'destroyed'` device losses, and rebuilds the renderer on a fresh
    * device (`recreateWebGPURenderer`), dispatching `webgpu-device-lost`,
    * then `webgpu-device-restored` or `webgpu-device-unrecoverable`.
    */
@@ -734,8 +734,8 @@ export class SceneManager extends THREE.EventDispatcher<{
    * on the same canvas, and rewire what renders through it. Resolves false when
    * no native device can be obtained (the caller retries, then gives up).
    *
-   * The old renderer is disposed FIRST: both would configure the same
-   * `GPUCanvasContext`, and a later dispose would unconfigure the new one.
+   * Dispose the old renderer first to release its GPU resources before
+   * replacing it on the same canvas.
    */
   private async recreateWebGPURenderer(): Promise<boolean> {
     try {
@@ -748,9 +748,14 @@ export class SceneManager extends THREE.EventDispatcher<{
       perfTimestamp: this.perfTimestamp,
       hdr: this.hdr,
       hdrHeadroom: this.hdrHeadroom,
+      rendererOverride: this.rendererOverride,
       requireNativeAdapter: true,
     });
     if (result.fallback) return false;
+    if (!this.deviceRecovery) {
+      result.renderer.dispose();
+      return false;
+    }
     this.renderer = result.renderer;
     this.capabilities = result.capabilities;
     materialManager.setCaps(this.capabilities);
@@ -775,13 +780,14 @@ export class SceneManager extends THREE.EventDispatcher<{
   /**
    * Run the WebGPU device-loss recovery as if the device had just been lost
    * (debug and E2E use; a real `device.destroy()` reports `'destroyed'`, which
-   * is ignored as our own disposal). Resolves when recovery has finished;
+   * is ignored as an explicit device destroy). Resolves when recovery has finished;
    * false when this session has no WebGPU device to recover.
    */
   public async simulateWebGPUDeviceLoss(): Promise<boolean> {
-    if (!this.deviceRecovery) return false;
-    await this.deviceRecovery.simulateLoss();
-    return !this.deviceRecovery.isLost();
+    const recovery = this.deviceRecovery;
+    if (!recovery) return false;
+    await recovery.simulateLoss();
+    return this.deviceRecovery === recovery && !recovery.isLost();
   }
 
   /**
@@ -1656,7 +1662,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       this.contextRecovery.dispose();
       this.contextRecovery = null;
     }
-    // Disarm the device observer BEFORE renderer.dispose() destroys the device.
+    // Disarm the device observer before releasing renderer resources.
     this.deviceRecovery?.dispose();
     this.deviceRecovery = null;
 
