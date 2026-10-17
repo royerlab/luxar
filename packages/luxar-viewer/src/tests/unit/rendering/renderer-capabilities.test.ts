@@ -81,6 +81,7 @@ describe('createRendererCapabilities', () => {
   it('captures api discriminator as webgl2', () => {
     const caps = createRendererCapabilities(fakeRenderer());
     expect(caps.apiSurface).toBe('webgl2');
+    expect(caps.nativeWebGPUBackend).toBe(false);
   });
 
   it('reports framebufferYDown=false under WebGL2 (FBO row 0 = bottom)', () => {
@@ -236,6 +237,7 @@ describe('createRendererCapabilities (WebGPU limits)', () => {
 
     expect(caps.framebufferYDown).toBe(true);
     expect(caps.readbackYDown).toBe(isNative);
+    expect(caps.nativeWebGPUBackend).toBe(isNative);
   });
 
   it('uses the WebGPU texture dimension for render attachments', () => {

@@ -1432,6 +1432,11 @@ topology. Descriptive counters are never dropped by any rule — `iterations`,
 `best_iteration`, `converged`, `time_seconds`, `fitter_name` and `filtered` /
 `filter_criteria` describe the run or the edit, both of which happened.
 
+`pipeline/tile_amplitude_floor` records the opt-in fraction of each tile's
+normalization span used to prune negligible fitted splats before merging;
+`pipeline/tile_amplitude_pruned` records how many splats it removed. Both are
+fit provenance only and survive later content edits.
+
 **What survives a rewrite: the authored appearance.** The rules above govern
 what a rewriting tool must *drop*; the mirror-image obligation is what it must
 *keep*. A rewriting command owns the **structure**, not the **look**: the
