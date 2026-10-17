@@ -419,7 +419,7 @@ def demo_run(
     env = None if canonical else _variant_env(info, extra)
     aprint(f"🎬 {info.title}  [{info.key}]")
     aprint(f"   {info.description}")
-    if env is None and "--no-serve" not in extra:
+    if env is None and "--no-serve" not in extra and "--serve-only" not in extra:
         _hint_serve_existing(info, extra)
     if extra:
         aprint(f"➡️  Forwarding args to the demo: {' '.join(extra)}")

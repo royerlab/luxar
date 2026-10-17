@@ -397,6 +397,23 @@ class TestRun:
             result = runner.invoke(app, ["demo", "run", "lorenz"])
         assert "existing build" not in result.stdout
 
+    def test_serve_only_does_not_suggest_serving_an_existing_build(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        from luxar.cli import demo_commands
+
+        built = tmp_path / "lorenz.luxar.zarr"
+        built.mkdir()
+        monkeypatch.setattr(
+            demo_commands.registry, "demo_output_paths", lambda info: [built]
+        )
+        with patch("luxar.cli.demo_commands.run_child_process", return_value=0) as run:
+            result = runner.invoke(app, ["demo", "run", "lorenz", "--", "--serve-only"])
+        assert result.exit_code == 0
+        assert run.call_args.args[0][-1] == "--serve-only"
+        assert "Rebuilding" not in result.stdout
+        assert "To serve the existing build instead" not in result.stdout
+
     @pytest.mark.parametrize("flag", ["--port", "--viewer-port"])
     @pytest.mark.parametrize("value", ["0", "65536"])
     def test_out_of_range_ports_are_a_usage_error(self, runner, flag, value) -> None:
