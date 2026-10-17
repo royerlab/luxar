@@ -2,7 +2,13 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { perfCounterSpec } from '../../src/profiling/perf-counters';
-import { judgeMetric, METRIC_DIRECTIONS, validateMetricDirections } from './suites.mjs';
+import {
+  judgeMetric,
+  METRIC_DIRECTIONS,
+  rowRegressed,
+  suiteMarkdown,
+  validateMetricDirections,
+} from './suites.mjs';
 
 const manifest = JSON.parse(readFileSync(new URL('./gate-scenes.json', import.meta.url), 'utf8'));
 const generator = readFileSync(new URL('./generate_gate_scenes.py', import.meta.url), 'utf8');
@@ -116,9 +122,38 @@ describe('render-gate scene manifest', () => {
       'decode.duplicates',
     ]);
 
-    const swaps = metrics.get('lod.levelSwaps');
-    const arm = (lod) => Array.from({ length: 5 }, () => ({ 'lod.levelSwaps': lod }));
-    expect(judgeMetric(swaps, { base: arm(0), base2: arm(0), cand: arm(2) }).verdict).toBe('fail');
+    const arm = (swaps, bytes, renders, duplicates) =>
+      Array.from({ length: 5 }, () => ({
+        'lod.levelSwaps': swaps,
+        'gpu.uploadBytes': bytes,
+        'gpu.uploadBytes.texture': bytes,
+        'render.count': renders,
+        ticks: 50,
+        achievedFps: 25,
+        lastTimepointShown: 1,
+        'decode.duplicates': duplicates,
+      }));
+    const samples = {
+      base: arm(0, 47_700_000, 100, 0),
+      base2: arm(0, 47_700_000, 100, 0),
+      cand: arm(2, 75_500_000, 150, 0),
+    };
+    const judge = () => Object.fromEntries(c.metrics.map((m) => [m.name, judgeMetric(m, samples)]));
+    const judged = judge();
+    for (const name of loadDependent) expect(judged[name].verdict).toBe('fail');
+    expect(rowRegressed(c.metrics, judged)).toBe(false);
+    const report = suiteMarkdown('playback', [
+      { case: c.id, backend: 'webgl', status: 'pass', metrics: judged, failures: [] },
+    ]).join('\n');
+    for (const name of loadDependent) {
+      const line = report.split('\n').find((x) => x.includes(`| ${c.id} | webgl | ${name} |`));
+      expect(line).toMatch(/\| fail \(report\) \|$/);
+    }
+    expect(report.split('\n').find((x) => x.includes('| achievedFps |'))).toMatch(/\| pass \|$/);
+    expect(report).not.toContain('| (row) |');
+
+    samples.cand = arm(2, 75_500_000, 150, 1);
+    expect(rowRegressed(c.metrics, judge())).toBe(true);
   });
 
   it('declares every suite metric in its known direction', () => {

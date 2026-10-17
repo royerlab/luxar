@@ -339,6 +339,8 @@ Notes on method:
   tick, renders per tick, and `lod.levelSwaps` therefore remain in the report
   but do not fail the case: identical builds can differ under host load.
   `achievedFps`, `lastTimepointShown`, and `decode.duplicates` still gate it.
+  See [#3187](https://github.com/royerlab/luxar/issues/3187) for restoring
+  the upload-work gate once playback timing is deterministic.
 - `scrub` in drag mode counts the frames in which committed geometry changed,
   from a build-independent signature of every geometry node (effective
   visibility, geometry id, attribute and index `version`s, drawn count, draw
@@ -418,7 +420,8 @@ give it a `tol`.
 
 Each suite adds a table (case, backend, metric, base median, candidate median,
 ratio, verdict, and any expectation) to `report.md`; `report.json` carries the
-rows under `suites.<name>`.
+rows under `suites.<name>`. A `(report)` verdict marker identifies a diagnostic
+metric excluded from the case's regression verdict.
 
 ## When a run is not a pass
 
