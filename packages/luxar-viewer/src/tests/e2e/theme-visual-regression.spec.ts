@@ -52,7 +52,7 @@ for (const theme of THEMES) {
     await page.goto(`/?theme=${theme}&debug&dpr=1`);
 
     // The debug hook exists before initialization finishes. Wait for the
-    // viewer first so startup errors cannot replace this synthetic dialog.
+    // viewer first: opening the dataset browser clears any earlier dialog.
     await waitForTheme(page, theme);
     await waitForLuxarReady(page);
 
