@@ -174,9 +174,7 @@ export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: stri
         // the mesh signal and it is set by the SAME commit whose generation
         // just matched, so the two can never describe different face sets.
         const triangleSource = current.triangleSource;
-        const applicable =
-          triangleSource !== undefined || !!geometry?.getAttribute?.('aSortedIndex');
-        if (applicable) {
+        if (triangleSource !== undefined || geometry?.getAttribute?.('aSortedIndex')) {
           // Ordering upload: 4 bytes/splat through the attribute
           // update-range machinery (the architecture's headline number) on
           // the instanced path. The indexed path uploads THREE index
@@ -265,7 +263,10 @@ export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: stri
                 geometry,
                 result.ordering,
                 result.ordering.length,
-                applyCallbacks
+                applyCallbacks,
+                // Comlink transferred this fresh result to us, and nothing
+                // uses it after apply; WebGPU can adopt its backing array.
+                { adoptOrdering: true }
               );
           if (staged > 0) {
             // Handed off BEFORE the throwing `requestRender()` below, so a
