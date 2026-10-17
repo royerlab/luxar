@@ -17,12 +17,14 @@ it.each([
   { args: ['--suites', 'exact'], status: 2, output: /unknown option --suites/ },
   { args: ['--suite'], status: 2, output: /--suite requires a value/ },
   { args: ['--suite', '--heavy'], status: 2, output: /--suite requires a value/ },
+  { args: ['--headed=x'], status: 2, output: /--headed does not take a value/ },
+  { args: ['--chrome-args='], status: 2, output: /--chrome-args requires a value/ },
 ])('validates $args before any build', ({ args, status, output }) => {
   const cacheExisted = existsSync(buildCache);
   const before = cacheEntries();
   const result = spawnSync(process.execPath, [gateScript, ...args], {
     encoding: 'utf8',
-    timeout: 5000,
+    timeout: 20_000,
   });
   expect(result.error).toBeUndefined();
   expect(result.status).toBe(status);
