@@ -68,6 +68,7 @@ describe('mega-shader HDR WGSL', () => {
       expect(wgsl).toContain(`max( ${fn}( vec3<f32>( nodeVar3 ), 1.0 ).x, 0.000001 )`);
       expect(wgsl).toMatch(/nodeVar2 \* vec3<f32>\( .*exp\(/);
       expect(wgsl).toContain(`vec3<f32>( object.nodeUniform${peak?.[1]} )`);
+      expect(wgsl).toContain('nodeVar4 = nodeVar2;');
       material.dispose();
     }
   );
