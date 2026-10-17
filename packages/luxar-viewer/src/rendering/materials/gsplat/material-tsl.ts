@@ -542,7 +542,7 @@ export class GSplatTSLMaterial
     const state: CompleteBlendingState = isNormalMode(mode)
       ? getGSplatNormalBlendingState()
       : getCompleteBlendingState(mode, opacity);
-    const stateChanged = applyBlendingStateToMaterial(this, state);
+    applyBlendingStateToMaterial(this, state);
 
     if (this.uniforms.uProjectionMode) {
       // Decorative (graph JS-branches on the mode); kept for clone/telemetry
@@ -589,8 +589,6 @@ export class GSplatTSLMaterial
       isVolumetricMode(previousMode) !== isVolumetricMode(mode);
     if (projectionChanged || outputBranchChanged) {
       this.rebuildGraph();
-    } else if (previousMode !== mode && stateChanged) {
-      this.needsUpdate = true;
     }
   }
 

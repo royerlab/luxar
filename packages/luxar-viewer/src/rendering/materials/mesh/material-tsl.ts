@@ -467,8 +467,7 @@ export class MeshTSLMaterial
 
     if (!this.defines) this.defines = {};
 
-    const previousMode = this.userData.blendingMode as BlendingMode | undefined;
-    const stateChanged = applyBlendingStateToMaterial(this, state);
+    applyBlendingStateToMaterial(this, state);
     // One shared helper maintains the at-most-one-emission-define invariant for both
     // backends — see `syncMeshEmissionDefines`.
     const definesChanged = syncMeshEmissionDefines(this.defines, state.shaderOutputMode);
@@ -478,8 +477,6 @@ export class MeshTSLMaterial
     // The emission branch is baked into the graph, so any change to it rebuilds.
     if (definesChanged) {
       this.rebuildGraph();
-    } else if (previousMode !== resolved && stateChanged) {
-      this.needsUpdate = true;
     }
   }
 
