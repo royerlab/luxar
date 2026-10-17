@@ -31,8 +31,14 @@ interface BuilderSurface {
   build(): void;
 }
 
+/** Generated shader source for a material built by the WGSL test helper. */
+export interface BuiltWGSL {
+  vertexShader: string;
+  fragmentShader: string;
+}
+
 /** Build a real material graph and return its generated WGSL. */
-export function buildWGSL(material: THREE.Material, camera: THREE.Camera): BuilderSurface {
+export function buildWGSL(material: THREE.Material, camera: THREE.Camera): BuiltWGSL {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('aSortedIndex', new THREE.Uint32BufferAttribute([0], 1));
   geometry.setAttribute('aSortedIndexB', new THREE.Uint32BufferAttribute([0], 1));
@@ -45,5 +51,5 @@ export function buildWGSL(material: THREE.Material, camera: THREE.Camera): Build
   builder.scene = new THREE.Scene();
   builder.material = material as NodeMaterial;
   builder.build();
-  return builder;
+  return { vertexShader: builder.vertexShader, fragmentShader: builder.fragmentShader };
 }
