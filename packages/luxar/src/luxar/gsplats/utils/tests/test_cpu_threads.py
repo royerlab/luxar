@@ -67,6 +67,27 @@ def test_physical_cpu_count_is_positive() -> None:
     assert physical_cpu_count() >= 1
 
 
+def test_torch_and_kernel_defaults_use_the_same_physical_cores(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    from luxar.gsplats.utils.device import cpu_worker_threads_env, physical_core_count
+
+    monkeypatch.setitem(sys.modules, "psutil", None)
+    assert physical_cpu_count() == physical_core_count()
+    monkeypatch.setenv("LUXAR_CPU_THREADS", "0")
+    worker_env = cpu_worker_threads_env(4)
+    share = max(1, physical_core_count() // 4)
+    assert worker_env == {"LUXAR_CPU_THREADS": str(share)}
+    assert (
+        resolve_cpu_threads(
+            worker_env, current=1, physical_cores=physical_cpu_count(), worker=True
+        )
+        == share
+    )
+
+
 def test_context_manager_widens_and_restores(monkeypatch: pytest.MonkeyPatch) -> None:
     previous = torch.get_num_threads()
     target = 2 if previous != 2 else 3

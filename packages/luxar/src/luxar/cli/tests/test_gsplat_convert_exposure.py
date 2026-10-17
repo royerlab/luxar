@@ -9,6 +9,7 @@ stay in the fit's data units (WP16), labelled by ``amplitude_unit``.
 
 from __future__ import annotations
 
+import builtins
 from pathlib import Path
 from typing import Any, Dict
 
@@ -367,6 +368,27 @@ def test_non_positive_scale_intensity_is_a_usage_error(
     assert result.exit_code == 2
     assert "positive" in normalized_cli_output(result)
     assert not (tmp_path / "s.luxar.zarr").exists()
+
+
+def test_unknown_colormap_reports_missing_install(tmp_path: Path, monkeypatch) -> None:
+    src = _fit_like(tmp_path / "fit.gsplats.zarr", {})
+    out = tmp_path / "scene.luxar.zarr"
+    real_import = builtins.__import__
+
+    def without_optional_colormaps(name, *args, **kwargs):
+        if name.split(".", 1)[0] in {"matplotlib", "colorcet"}:
+            raise ModuleNotFoundError(f"No module named '{name}'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_optional_colormaps)
+    result = CliRunner().invoke(
+        app, ["gsplat", "convert", str(src), str(out), "--colormap", "notacolormap"]
+    )
+    output = normalized_cli_output(result)
+    assert result.exit_code == 2, output
+    assert "Unknown colormap 'notacolormap'" in output
+    assert "pip install matplotlib colorcet" in output
+    assert not out.exists()
 
 
 def _fit_like(path: Path, stats: Dict[str, Any], *, colors: bool = False) -> Path:

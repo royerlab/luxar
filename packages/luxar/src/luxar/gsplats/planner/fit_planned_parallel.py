@@ -58,8 +58,8 @@ def _worker_env(keep_boxes: bool, jobs: int = 1) -> "dict[str, str]":
 
     Disposable boxes skip stamps that the merge scrubs anyway; ``keep_boxes``
     opts retained box artifacts back into scoring. ``jobs`` concurrent workers
-    split the physical cores for the native CPU kernels (``LUXAR_CPU_THREADS``,
-    unless the user set it).
+    split the physical cores for native kernels and CLI torch setup
+    (``LUXAR_CPU_THREADS``, unless the user set a nonzero value).
     """
     from luxar.gsplats.utils.device import cpu_worker_threads_env
 
