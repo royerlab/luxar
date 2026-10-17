@@ -28,10 +28,15 @@
  * id would arrive FRACTIONAL and the readback's `Math.round` would resolve to
  * arbitrary unrelated vertices.
  *
- * Core WebGPU explicitly samples the FIRST corner, preserving the convention
- * aligned by `WEBGL_provoking_vertex` where available (see `./material.ts`).
- * Compatibility-mode WebGPU disallows `first`, so it samples `either` corner.
- * Both satisfy §6.5's "a corner of the front-most triangle" contract.
+ * WGSL's `@interpolate(flat)` samples the FIRST vertex of the primitive where
+ * OpenGL ES fixes it to the LAST, so the exact corner would differ by backend
+ * unless aligned: `WEBGL_provoking_vertex` aligns them where available (see
+ * `./material.ts`), and where it is absent PickingSystem instead rotates GL's
+ * indexed triples so the last vertex is the original first corner — WebGL and
+ * core WebGPU therefore always agree exactly. Compatibility-mode WebGPU
+ * disallows `first` sampling altogether, so it samples `either` corner
+ * instead; the id reported there satisfies only §6.5's weaker "a corner of
+ * the front-most triangle" contract, not an exact match.
  *
  * @module rendering/picking/mesh/pick.tsl
  */

@@ -17,11 +17,12 @@
  * uses `flat, either`, which still reports a corner of the same triangle.
  *
  * `WEBGL_provoking_vertex` lets the WebGL side adopt core WebGPU's first-vertex rule, so
- * the two agree wherever the extension exists. Where it does not, the divergence
- * stands as a documented §6.4 exception and the pick contract is unchanged: at
- * vertex granularity the answer is "*a* corner vertex of the front-most triangle
- * under the cursor" — the cursor is over the face, not a vertex, so every corner is
- * equally valid and no consumer may assume a specific one.
+ * the two agree wherever the extension exists. Where it does not, PickingSystem
+ * cyclically rotates each mesh index triple, so GL's last vertex becomes the original
+ * first vertex without changing winding or geometry — WebGL and core WebGPU therefore
+ * always agree exactly. Compatibility-mode WebGPU's `either` sampling (above) is the one
+ * case that still only satisfies the weaker "a corner of the front-most triangle"
+ * contract, not an exact match, and stands as a documented §6.4 exception.
  *
  * ## Why context-wide state is acceptable here
  *
@@ -51,7 +52,7 @@ interface ProvokingVertexExtension {
  * context that may be WebGPU (no-op), may lack the extension (no-op), or may be a
  * unit-test double (no-op). A missing extension is normal, not an error — hence
  * `log.info` rather than a warning. Both arms log exactly once per session, which
- * is what makes a pick-id divergence diagnosable from a console dump alone.
+ * is what makes the selected fallback diagnosable from a console dump alone.
  *
  * Takes the RENDERER rather than its context so that every duck-type lives here:
  * `getContext` itself is absent on the partial renderer doubles the picking-system
@@ -76,15 +77,14 @@ export function alignProvokingVertexWithWebGPU(renderer: unknown): boolean {
     ext = ctx.getExtension('WEBGL_provoking_vertex') as ProvokingVertexExtension | null;
   } catch {
     // A context that throws (lost context, or a stub) is not a reason to fail
-    // picking — the documented last-vertex fallback still holds.
+    // picking — the index rotation fallback handles this context.
     return false;
   }
   if (!ext || typeof ext.provokingVertexWEBGL !== 'function') {
     log.info(
       Modules.RENDERER,
-      'WEBGL_provoking_vertex unavailable; mesh pick flat varyings keep the ' +
-        'GL last-vertex convention (core WebGPU reports the first corner instead — ' +
-        'both are valid corners of the picked triangle)'
+      'WEBGL_provoking_vertex unavailable; mesh index triples rotate so GL picks ' +
+        'the same original first corner as core WebGPU'
     );
     return false;
   }
