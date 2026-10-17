@@ -1,5 +1,13 @@
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -9,6 +17,33 @@ import { pacingBound } from './pacing.mjs';
 const dir = mkdtempSync(join(tmpdir(), 'luxar-gate-report-'));
 beforeEach(() => mkdirSync(dir, { recursive: true }));
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+const gateScript = 'scripts/render-gate/run-gate.mjs';
+const buildCache = '../../delme/gate-builds';
+const cacheEntries = () => (existsSync(buildCache) ? readdirSync(buildCache).sort() : []);
+
+it.each([
+  { args: ['--help'], status: 0, output: /--backends <value>/ },
+  { args: ['--bogus'], status: 2, output: /unknown option --bogus/ },
+  { args: ['--suites', 'exact'], status: 2, output: /unknown option --suites/ },
+  { args: ['--suite'], status: 2, output: /--suite requires a value/ },
+  { args: ['--suite', '--heavy'], status: 2, output: /--suite requires a value/ },
+  { args: ['--headed=x'], status: 2, output: /--headed does not take a value/ },
+  { args: ['--chrome-args='], status: 2, output: /--chrome-args requires a value/ },
+])('validates $args before any build', ({ args, status, output }) => {
+  const cacheExisted = existsSync(buildCache);
+  const before = cacheEntries();
+  const result = spawnSync(process.execPath, [gateScript, ...args], {
+    encoding: 'utf8',
+    timeout: 20_000,
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(status);
+  expect(result.stdout + result.stderr).toMatch(output);
+  expect(result.stdout + result.stderr).not.toMatch(/ensureBuild|building|vite build/i);
+  expect(existsSync(buildCache)).toBe(cacheExisted);
+  expect(cacheEntries()).toEqual(before);
+});
 
 it('reports the A/A buffers and scene state for an excluded view', () => {
   const score = (differing) => ({ differing, maxDriftUlp: 1, p9999Ulp: 1, flips: 0 });

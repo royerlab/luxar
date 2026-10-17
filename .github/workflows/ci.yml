@@ -473,7 +473,7 @@ jobs:
         with:
           package_json_file: packages/luxar-viewer/package.json
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: needs.changes.outputs.docs_relevant != 'false'
         with:
           node-version: '22'
@@ -881,7 +881,7 @@ jobs:
         with:
           package_json_file: packages/luxar-viewer/package.json
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
           node-version: 22
@@ -1035,7 +1035,7 @@ jobs:
         with:
           package_json_file: packages/luxar-viewer/package.json
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
           node-version: 22
@@ -1103,7 +1103,7 @@ jobs:
 
       - name: Set up minimum supported Node
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 20.19.0
 
@@ -1140,7 +1140,7 @@ jobs:
           # Read the exact packageManager pin used by local/Corepack installs.
           package_json_file: packages/luxar-viewer/package.json
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
           node-version: 22
@@ -1294,7 +1294,7 @@ jobs:
         with:
           ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
-      - name: Rerun cancelled required push jobs
+      - name: Rerun interrupted or cancelled required push jobs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1394,8 +1394,59 @@ jobs:
               | [.id, .name]
               | @tsv
             ' <<<"$push_jobs")
-            if [ -z "$cancelled_jobs" ]; then
-              echo "No cancelled required push jobs found for $candidate_sha"
+
+            # #2038: the recurring red is NOT a cancellation. A host-level SIGTERM
+            # kills the pytest tree mid-run, which GitHub records as `failure`, so
+            # the cancelled selection above never catches it and the leg stays red
+            # on dev forever. Recover it, but CONSERVATIVELY: a failed leg is only
+            # rerunnable when its log tail carries the interrupt signature
+            # (KeyboardInterrupt / Terminated / xdist controller "cannot send")
+            # AND shows NO pytest failure/error marker. Inspect every failed
+            # required leg before rerunning: a genuine failure makes interrupt
+            # recovery pointless for this run. An unreadable log fails closed.
+            failed_jobs=$(jq -r --argjson required "$required_json" '
+              [.[] | .jobs[]]
+              | group_by(.name)[]
+              | max_by(.id)
+              | select(
+                  .conclusion == "failure"
+                  and (.name | IN($required[]))
+                )
+              | [.id, .name]
+              | @tsv
+            ' <<<"$push_jobs")
+            interrupt_jobs=""
+            genuine_failure=0
+            if [ -n "$failed_jobs" ]; then
+              while IFS=$'\t' read -r fjob_id fjob_name; do
+                [ -n "$fjob_id" ] || continue
+                if ! flog=$(gh api "repos/${GITHUB_REPOSITORY}/actions/jobs/${fjob_id}/logs" 2>/dev/null); then
+                  echo "note: no log for $fjob_name ($fjob_id); treating as a real failure, not rerunning"
+                  genuine_failure=1
+                  continue
+                fi
+                ftail=$(printf '%s\n' "$flog" | tail -n 500)
+                if grep -qE 'KeyboardInterrupt|Terminated|Terminate batch job|cannot send \(already closed' <<<"$ftail" \
+                   && ! grep -qE '[0-9]+ (failed|error)|(^|Z )(FAILED|ERROR) ' <<<"$ftail"; then
+                  interrupt_jobs+="${fjob_id}"$'\t'"${fjob_name}"$'\n'
+                else
+                  echo "note: $fjob_name ($fjob_id) failed without the interrupt signature; not rerunning (real failure)"
+                  genuine_failure=1
+                fi
+              done <<<"$failed_jobs"
+            fi
+
+            # A run with a real failure remains red after interrupt recovery.
+            # Preserve the existing cancelled-job repair in that case.
+            if [ "$genuine_failure" -eq 1 ]; then
+              interrupt_jobs=""
+            fi
+            rerun_jobs="${cancelled_jobs}"
+            if [ -n "$interrupt_jobs" ]; then
+              rerun_jobs="${rerun_jobs:+${rerun_jobs}$'\n'}${interrupt_jobs%$'\n'}"
+            fi
+            if [ -z "$rerun_jobs" ]; then
+              echo "No rerunnable required push jobs found for $candidate_sha"
               continue
             fi
 
@@ -1403,20 +1454,24 @@ jobs:
             # does not. CI is Linux so the padding never showed there, but it made
             # the harness test red on every macOS checkout and would have landed a
             # padded count in the warning text if this ever ran on a Mac runner.
-            cancelled_count=$(wc -l <<<"$cancelled_jobs" | tr -d ' ')
-            if [ "$cancelled_count" -gt 1 ]; then
-              echo "Rerunning unsuccessful push jobs for $candidate_sha after finding $cancelled_count cancelled required jobs"
+            rerun_count=$(wc -l <<<"$rerun_jobs" | tr -d ' ')
+            if [ "$rerun_count" -gt 1 ]; then
+              rerun_reason="rerunnable"
+              if [ -z "$interrupt_jobs" ]; then
+                rerun_reason="cancelled"
+              fi
+              echo "Rerunning unsuccessful push jobs for $candidate_sha after finding $rerun_count $rerun_reason required jobs"
               if gh api --method POST \
                 "repos/${GITHUB_REPOSITORY}/actions/runs/${push_run}/rerun-failed-jobs" >/dev/null; then
                 repair_count=$((repair_count + 1))
               else
-                echo "::warning::rerun rejected for push run $push_run ($candidate_sha; $cancelled_count cancelled required jobs)"
+                echo "::warning::rerun rejected for push run $push_run ($candidate_sha; $rerun_count $rerun_reason required jobs)"
               fi
               continue
             fi
 
-            IFS=$'\t' read -r job_id job_name <<<"$cancelled_jobs"
-            echo "Rerunning cancelled push job for $candidate_sha: $job_name ($job_id)"
+            IFS=$'\t' read -r job_id job_name <<<"$rerun_jobs"
+            echo "Rerunning push job for $candidate_sha: $job_name ($job_id)"
             if gh api --method POST \
               "repos/${GITHUB_REPOSITORY}/actions/jobs/$job_id/rerun" >/dev/null; then
               repair_count=$((repair_count + 1))
@@ -1532,7 +1587,7 @@ jobs:
         with:
           package_json_file: packages/luxar-viewer/package.json
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
           node-version: 22
@@ -1560,7 +1615,7 @@ jobs:
 
       - name: Upload the Playwright report on failure
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tsl-parity-report
           path: packages/luxar-viewer/test-results/
@@ -1613,7 +1668,7 @@ jobs:
         with:
           package_json_file: packages/luxar-viewer/package.json
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: pnpm
@@ -1656,7 +1711,7 @@ jobs:
 
       - name: Upload test results
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mobile-playwright-results
           path: packages/luxar-viewer/test-results-mobile/

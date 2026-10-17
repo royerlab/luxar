@@ -15,12 +15,45 @@ import * as THREE from 'three';
 import { log } from '../../../utils/log';
 import {
   applyMeshIndices,
+  enableFirstVertexMeshPickFallback,
   createMeshColorAttribute,
   createMeshDefaultColorAttribute,
   createMeshIndexAttribute,
   createMeshGeometry,
   updateMeshGeometry,
 } from '../../../rendering/mesh-geometry';
+
+describe('mesh pick fallback index rotation', () => {
+  it('rotates an existing draw once, and keeps first-vertex ids across slice writes', () => {
+    const geometry = new THREE.BufferGeometry();
+    const canonical = new Uint32Array([0, 1, 2, 3, 4, 5]);
+    applyMeshIndices(geometry, canonical, 6, 2);
+    const attribute = geometry.index;
+    enableFirstVertexMeshPickFallback(geometry);
+    expect(Array.from(geometry.index!.array.slice(0, 6))).toEqual([1, 2, 0, 4, 5, 3]);
+    enableFirstVertexMeshPickFallback(geometry);
+    expect(Array.from(geometry.index!.array.slice(0, 6))).toEqual([1, 2, 0, 4, 5, 3]);
+
+    applyMeshIndices(geometry, new Uint32Array([3, 4, 5]), 6, 2);
+    expect(geometry.index).toBe(attribute);
+    expect(geometry.drawRange.count).toBe(3);
+    expect(Array.from(geometry.index!.array.slice(0, 3))).toEqual([4, 5, 3]);
+    expect(Array.from(canonical)).toEqual([0, 1, 2, 3, 4, 5]);
+
+    applyMeshIndices(geometry, new Uint32Array(0), 6, 2);
+    expect(geometry.drawRange.count).toBe(0);
+  });
+
+  it('rotates the first write after a culled placeholder without narrowing 32-bit ids', () => {
+    const geometry = new THREE.BufferGeometry();
+    applyMeshIndices(geometry, new Uint32Array(0), 70000, 1);
+    enableFirstVertexMeshPickFallback(geometry);
+    const attribute = geometry.index;
+    applyMeshIndices(geometry, new Uint32Array([65535, 65536, 69999]), 70000, 1);
+    expect(geometry.index).toBe(attribute);
+    expect(Array.from(geometry.index!.array.slice(0, 3))).toEqual([65536, 69999, 65535]);
+  });
+});
 
 describe('createMeshColorAttribute — the WebGPU dtype rules', () => {
   it('pads uint8 RGB to a 4-component normalized attribute', () => {
