@@ -113,12 +113,17 @@ export class WebGPUDeviceRecovery {
     if (info.reason === 'destroyed') return Promise.resolve();
     this.generation++; // this device is done: ignore anything else it reports
     this.lost = true;
-    const inFlight = Promise.resolve()
-      .then(() => this.runRecovery(info))
-      .finally(() => {
-        if (this.inFlight === inFlight) this.inFlight = null;
-      });
+    let resolve!: () => void;
+    let reject!: (reason: unknown) => void;
+    const recovery = new Promise<void>((onResolve, onReject) => {
+      resolve = onResolve;
+      reject = onReject;
+    });
+    const inFlight = recovery.finally(() => {
+      if (this.inFlight === inFlight) this.inFlight = null;
+    });
     this.inFlight = inFlight;
+    void this.runRecovery(info).then(resolve, reject);
     return inFlight;
   }
 
