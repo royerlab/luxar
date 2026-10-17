@@ -15,7 +15,7 @@ description: >-
 runs without a Luxar install. Two output kinds:
 
 1. **Standalone offline folder** (default) — viewer bundle + data + a Python-stdlib
-   `serve.py`. Recipient runs `python serve.py`.
+   `serve.py`. Recipient runs `python3 serve.py`.
 2. **Native app bundle** (`--native`) — a macOS `.app` (embedded WebView) or a Linux
    portable folder, each with the launcher binary, viewer, and data inside.
 
@@ -36,8 +36,21 @@ my_export/
 ├── serve.py       # zero-dependency Python 3 HTTP server (CORS, auto-port from 8000)
 └── README.txt
 ```
-Recipient just needs Python 3: `python serve.py` (`--port`, `--no-open` available). No
-Luxar, no Node, no pip.
+Recipient just needs Python 3: `cd my_export && python3 serve.py`. Say `python3`, not
+`python`: stock Ubuntu (and macOS) have no `python` command; on Windows it is
+`python serve.py`. No Luxar, no Node, no pip. Options:
+
+```bash
+python3 serve.py --port 9000        # default 8000; the next free port is used if busy
+python3 serve.py --no-open          # don't launch a browser (headless / ssh box)
+python3 serve.py --host 0.0.0.0     # reachable from other machines (default 127.0.0.1)
+```
+
+`--host` defaults to `127.0.0.1` (local only). A scene that declares a touch control
+panel defaults to `0.0.0.0` and starts its relay (`--control`; `--no-control`,
+`--control-token SECRET`); `--host 127.0.0.1` keeps it local. Viewing from another
+machine over ssh without exposing a port: `ssh -L 8000:127.0.0.1:8000 host` and open
+`http://127.0.0.1:8000` locally.
 
 ## Native app bundles (`--native`)
 
@@ -57,7 +70,12 @@ Output per platform:
   `Info.plist`; bundle id `org.czbiohub.luxar.<slug>`) + sibling `<name>.app.zip`.
 - Linux → `<name>-linux-<arch>/` folder with `luxar-launcher`, `viewer/`, `data/`, `README.txt`.
 
-### Prerequisite: build the launcher binaries FIRST
+### Prerequisite: build the launcher binaries FIRST (source checkout only)
+
+A plain `pip install luxar` normally carries no launcher binary, so `--native` from a
+pip install stops at the "run make build-launchers" error — and `make` targets exist only
+in a clone. If the user installed from PyPI, ship the standalone folder instead (it needs
+only Python 3 on the recipient's side), or clone the repo to build launchers.
 
 `--native` needs the host-platform Go launcher binary. If it's missing the bundler
 raises a clear "run make build-launchers" error. Build it once:

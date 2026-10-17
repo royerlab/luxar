@@ -137,7 +137,8 @@ default). It is subject to the same CORS rules as the scenes it lists.
 
 If you would rather not host anything, `luxar export scene.luxar.zarr -o out/`
 writes a self-contained folder with the viewer and a stdlib-only `serve.py`; the
-recipient runs `python serve.py` (`file://` cannot open the viewer directly).
+recipient runs `python3 serve.py` (`file://` cannot open the viewer directly;
+stock Ubuntu has no `python` command, only `python3`).
 
 See [Distributing scenes](../../tutorials/distributing_scenes.rst) for the wider
 picture on sharing scenes, and
@@ -454,6 +455,21 @@ scene.
 
 Displays a list of all data nodes in the scene with toggles for visibility
 and opacity control.
+
+For a Gaussian-splat layer converted with `luxar gsplat convert`, the window is
+labelled **Splat amplitude** and is in the data's own units. Hover the label for
+the unit (e.g. "counts above background"), the data's own range with its floor
+(e.g. "Data range: 0 – 1,597 (floor 405)"; RGB / multichannel layers show it in
+the Colour range tooltip) and why the window sits below it: each value is one
+Gaussian's PEAK amplitude, overlapping splats sum to the data value, and the view
+additionally sums along each ray. How bright the layer renders is the
+separate **Brightness** control (the node's `display_gain`, on a logarithmic
+track). It reads RELATIVE to the brightness the scene opened with — ×1 is the
+opening exposure, double-click returns to it, and the tooltip gives the absolute
+gain — and it changes neither the window nor the colormap. With several layers
+selected, a window or Brightness change applies to each as the same fraction of
+its own range or authored gain. See `docs/guides/user/LUXAR_ZARR_FORMAT.md`
+§ "Amplitude units and display gain".
 
 ### Overlays (U)
 

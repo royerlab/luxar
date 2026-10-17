@@ -380,11 +380,10 @@ _STRUCTURE_SCOPED_STATS_KEYS = (
 #:   have been legitimate. One layout per ladder, chosen by the producer, instead
 #:   of a heuristic answering each level on its own.
 #: * The :data:`~luxar.gsplats.io.save_gsplats.NORMALIZATION_STATS_KEYS` block
-#:   (``floor`` / ``image_min`` / ``image_max`` / ``intensity_range``) describes
-#:   the INPUT VOLUME's intensity scale. Regrouping splats cannot change what
-#:   pedestal was subtracted before fitting. Named here for the record; they are
-#:   exempt by simply not appearing above, and the completeness test asserts the
-#:   two sets stay disjoint.
+#:   records the source volume's normalization basis and any subsequent intensity
+#:   scaling. Regrouping splats cannot change that basis. Named here for the
+#:   record; they are exempt by simply not appearing above, and the completeness
+#:   test asserts the two sets stay disjoint.
 #:
 #: Nothing in production READS this tuple — the writer never consults it. It is
 #: the classification anchor for the completeness test, which requires every key

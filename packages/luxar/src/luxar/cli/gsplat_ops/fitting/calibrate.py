@@ -215,7 +215,16 @@ def run_calibrate_command(
             calibrate,
             select_calibration_region,
         )
+        from luxar.gsplats.utils.cpu_threads import cpu_threads_for
 
+        # Resolve the device flags once for both CPU thread setup and the sweep.
+        fit_kwargs = load_fit_config(
+            preset=preset,
+            config_path=config,
+            cli_overrides={"device": device, "floor": floor},
+        )
+        # Calibration runs many fits; keep them quiet.
+        fit_kwargs["verbose"] = False
         # 1. Resolve K grid
         explicit: Optional[list[int]] = None
         if k_grid is not None:
@@ -230,7 +239,14 @@ def run_calibrate_command(
         )
 
         # 2. Load volume (reuse the loader used by `compare` and `fit`)
-        with asection(f"Calibration: {input_path.name}"):
+        with (
+            asection(f"Calibration: {input_path.name}"),
+            cpu_threads_for(
+                fit_kwargs["device"],
+                use_cuda=fit_kwargs["use_cuda"],
+                use_metal=fit_kwargs["use_metal"],
+            ),
+        ):
             with asection("Loading volume"):
                 source_info: dict = {}
                 with region_rank_guard():
@@ -288,16 +304,10 @@ def run_calibrate_command(
                 f"feature metric: {feature_metric}"
             )
 
-            # 3. Build fit kwargs from preset + YAML config + CLI overrides
-            fit_kwargs = load_fit_config(
-                preset=preset,
-                config_path=config,
-                cli_overrides={"device": device, "floor": floor},
-            )
-            # Calibration runs many fits — keep them quiet
-            fit_kwargs["verbose"] = False
+            # The resolved spacing shapes every K's fit (see _apply_cal_spacing).
             _apply_cal_spacing(fit_kwargs, input_frame)
 
+            # 3. Prepare the optional per-K outputs.
             if keep_fits is not None:
                 keep_fits = Path(keep_fits)
                 keep_fits.mkdir(parents=True, exist_ok=True)

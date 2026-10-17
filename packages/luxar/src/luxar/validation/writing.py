@@ -782,9 +782,12 @@ _ALLOWED_NODE_ATTRS: FrozenSet[str] = frozenset(
         # values actually stored. Not a render attr — the viewer does not read
         # it — hence here rather than in ``KNOWN_RENDER_ATTRS``.
         "amplitude_normalization_factor",
-        # ``gsplat convert``'s auto-exposure provenance beside that factor (see
-        # ``gsplats/exposure.py``): which rule produced it and the predicted
-        # opening-view brightness. Also not read by the viewer.
+        # ``gsplat convert``'s auto-exposure provenance (see
+        # ``gsplats/exposure.py``): which rule produced the exposure and the
+        # predicted opening-view brightness. Also not read by the viewer. The
+        # exposure itself is now the render attr ``display_gain`` (and the
+        # data-unit labels ``amplitude_unit`` / ``amplitude_offset`` /
+        # ``source_data_range``), which ARE read and are validated below.
         "amplitude_normalization_mode",
         "projected_sum_p999",
         "projected_sum_target",
@@ -841,6 +844,25 @@ _SUGGESTION_ATTRS: tuple[str, ...] = tuple(
         }
     )
 )
+
+
+def _validate_amplitude_display_attrs(attrs: Dict[str, Any]) -> None:
+    """Validate the gsplats data-unit display attrs (``display_gain`` & co)."""
+    from .types import (
+        validate_amplitude_offset,
+        validate_amplitude_unit,
+        validate_display_gain,
+        validate_source_data_range,
+    )
+
+    if "display_gain" in attrs:
+        validate_display_gain(attrs["display_gain"])
+    if "amplitude_unit" in attrs:
+        validate_amplitude_unit(attrs["amplitude_unit"])
+    if "amplitude_offset" in attrs:
+        validate_amplitude_offset(attrs["amplitude_offset"])
+    if "source_data_range" in attrs:
+        validate_source_data_range(attrs["source_data_range"])
 
 
 def _validate_compositing_attrs(attrs: Dict[str, Any]) -> None:
@@ -1246,6 +1268,8 @@ def validate_render_attrs(
         from .types import validate_offset
 
         validate_offset(attrs["offset"])
+
+    _validate_amplitude_display_attrs(attrs)
 
     if "layer" in attrs:
         from .types import validate_layer
