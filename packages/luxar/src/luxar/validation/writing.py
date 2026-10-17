@@ -782,6 +782,13 @@ _ALLOWED_NODE_ATTRS: FrozenSet[str] = frozenset(
         # values actually stored. Not a render attr — the viewer does not read
         # it — hence here rather than in ``KNOWN_RENDER_ATTRS``.
         "amplitude_normalization_factor",
+        # ``gsplat convert``'s auto-exposure provenance beside that factor (see
+        # ``gsplats/exposure.py``): which rule produced it and the predicted
+        # opening-view brightness. Also not read by the viewer.
+        "amplitude_normalization_mode",
+        "projected_sum_p999",
+        "projected_sum_target",
+        "projected_sum_axis",
         # Structural keys injected by node construction / specialized-group
         # builders (add_lod_group / add_partition_group) / LOD wrappers.
         "type",

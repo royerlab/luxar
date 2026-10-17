@@ -190,6 +190,9 @@ the `add_*` call or it is lost. Five things about that round-trip surprise peopl
   pass `normalize_amplitudes=True` to override that rule or `False` to preserve
   raw units elsewhere. Note this is the *opposite* of what this bullet used to
   claim — the viewer does **not** normalise by the stored maximum.
+  `luxar gsplat convert` and `luxar gsplat view` (which serves a temporary
+  convert scene; `--raw` serves the store as is) go further and auto-expose:
+  amplitudes dimmed so the opening view's additive p99.9 is `--target-brightness`.
 - **`opacity` is the exposure lever, and with normalised amplitudes it lives in
   its natural range.** That is the point of normalising: against raw counts
   `opacity` has to carry a ~1/500 factor on a `[0,1]` control, which is

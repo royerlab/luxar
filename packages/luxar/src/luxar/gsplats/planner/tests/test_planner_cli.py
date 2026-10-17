@@ -388,7 +388,13 @@ def test_content_fit_threads_iters_into_fit_config(tmp_path, monkeypatch):
     class _Stop(Exception):
         pass
 
+    real_load = cfg.load_fit_config
+
     def _spy(**kwargs):
+        # The voxel-frame resolver reads the plain preset/config first (no CLI
+        # overrides); only the content fit's own call carries them.
+        if "cli_overrides" not in kwargs:
+            return real_load(**kwargs)
         captured.update(kwargs)
         raise _Stop()
 
