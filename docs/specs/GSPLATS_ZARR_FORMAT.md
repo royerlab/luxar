@@ -1136,11 +1136,6 @@ and fatal to a strict reader for the whole store rather than for that one key.
 into three categories, invalidated along three independent axes, and a tool that
 rewrites a store must apply all three rules:
 
-`pipeline/tile_amplitude_floor` records the opt-in fraction of each tile's
-normalization span used to prune negligible fitted splats before merging;
-`pipeline/tile_amplitude_pruned` records how many splats it removed. Both are
-fit provenance only and survive later content edits.
-
 * **Content-scoped** — every number MEASURED against the source volume: the
   scores above, `final_loss` / `final_rel_l2` / `final_max_abs_error`, the
   error-budget cull's own `error_budget` / `max_joint_error` (and its
@@ -1389,6 +1384,11 @@ scores and the grid but keeps the topology, and `flatten` loses only the
 topology. Descriptive counters are never dropped by any rule — `iterations`,
 `best_iteration`, `converged`, `time_seconds`, `fitter_name` and `filtered` /
 `filter_criteria` describe the run or the edit, both of which happened.
+
+`pipeline/tile_amplitude_floor` records the opt-in fraction of each tile's
+normalization span used to prune negligible fitted splats before merging;
+`pipeline/tile_amplitude_pruned` records how many splats it removed. Both are
+fit provenance only and survive later content edits.
 
 **What survives a rewrite: the authored appearance.** The rules above govern
 what a rewriting tool must *drop*; the mirror-image obligation is what it must
