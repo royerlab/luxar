@@ -639,9 +639,11 @@ export async function idle({ ms = 1000 }) {
  * (`inputHandler.getAnimationManager().play(dim, { targetFPS, loopMode })`)
  * and measure what it delivered.
  *
- * The dimension is first moved to its range minimum and allowed to load; the
- * counters are zeroed after that, so they cover playback only. Runs for
- * `durationMs`, or with `loops` until the value has wrapped that many times.
+ * The dimension is first moved to its range minimum and allowed to load.
+ * With `settleLodTimepoints`, every discrete timepoint is settled first;
+ * all LOD settle waits share one `timeoutMs` deadline. The counters are then
+ * zeroed, so they cover playback only. Runs for `durationMs`, or with `loops`
+ * until the value has wrapped that many times.
  *
  * Returns:
  * - `lodLevelMean` / `lodCoarsestFrac`: over every frame and every lod group
@@ -658,7 +660,8 @@ export async function idle({ ms = 1000 }) {
  * - `wraps`, `durationMs`.
  *
  * @param {{ dim?: number, fps?: number, durationMs?: number, loops?: number,
- *   timeoutMs?: number, settleLodTimepoints?: boolean }} opts `dim` defaults to the first non-displayed dimension.
+ *   timeoutMs?: number, settleLodTimepoints?: boolean }} opts
+ *   `dim` defaults to the first non-displayed dimension.
  */
 export async function playback({
   dim,
@@ -682,8 +685,11 @@ export async function playback({
 
   if (settleLodTimepoints) {
     const step = dims.metadata[d]?.step;
+    if (!(step > 0)) {
+      throw new Error(`playback: cannot settle non-discrete dimension ${d}`);
+    }
     const count = Math.round((hi - lo) / step) + 1;
-    if (!(step > 0) || !Number.isFinite(count) || count < 2) {
+    if (!Number.isFinite(count) || count < 2) {
       throw new Error(`playback: cannot settle non-discrete dimension ${d}`);
     }
     const registry = dbg.getSceneLoader?.()?.getDefaultLoader?.()?.lodGroupRegistry;

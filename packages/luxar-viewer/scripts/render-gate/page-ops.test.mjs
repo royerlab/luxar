@@ -80,6 +80,52 @@ describe('LOD playback warm-up', () => {
     expect(events.indexOf('play')).toBeGreaterThan(events.indexOf('reset'));
     expect(events.at(-1)).toBe('pause');
   });
+
+  it.each([
+    ['missing discrete step', undefined, true, true, 'cannot settle non-discrete dimension 0'],
+    ['missing LOD group', 1, false, true, 'LOD settle requires a LOD registry'],
+    ['unsettled LOD', 1, true, false, 'LOD did not settle at timepoint 0'],
+  ])('rejects %s before playback starts', async (_case, step, hasGroup, settles, message) => {
+    let clock = 0;
+    const play = vi.fn();
+    const reset = vi.fn();
+    const app = {
+      getDimensions: () => ({
+        ndim: 1,
+        displayed: [],
+        ranges: [[0, 2]],
+        metadata: [{ step }],
+        currentStep: [0],
+      }),
+      setDimensionValue: vi.fn(),
+      awaitDimensionUpdate: async () => {},
+    };
+    vi.stubGlobal('window', {
+      __luxarDebug: {
+        app,
+        inputHandler: { getAnimationManager: () => ({ play }) },
+        getSceneLoader: () => ({
+          getDefaultLoader: () => ({
+            lodGroupRegistry: {
+              list: () => (hasGroup ? [{}] : []),
+              isCaptureQuiescent: () => settles,
+            },
+          }),
+        }),
+        getPerf: () => ({ isSettled: true }),
+        resetPerfCounters: reset,
+      },
+    });
+    vi.stubGlobal('requestAnimationFrame', (cb) => {
+      clock++;
+      cb();
+    });
+    vi.spyOn(performance, 'now').mockImplementation(() => clock);
+
+    await expect(playback({ settleLodTimepoints: true, timeoutMs: 3 })).rejects.toThrow(message);
+    expect(play).not.toHaveBeenCalled();
+    expect(reset).not.toHaveBeenCalled();
+  });
 });
 
 describe('rendererInfo', () => {
