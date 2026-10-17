@@ -42,6 +42,7 @@ vi.mock('three/webgpu', () => {
 vi.mock('../../../../../rendering/renderer-capabilities', () => ({
   createRendererCapabilities: vi.fn(() => ({
     apiSurface: 'webgpu',
+    backendKind: 'webgpu-native',
     hdr: {},
     pointSizeRange: [1, 64],
   })),
@@ -55,6 +56,7 @@ vi.mock('../../../../../utils/hdr/hdr-detection', () => ({
 }));
 
 import * as THREE from 'three';
+import { log, Modules } from '../../../../../utils/log';
 // Imports MUST come after vi.mock to honour the mocks.
 import {
   createWebGPURenderer,
@@ -275,6 +277,7 @@ describe('createWebGPURenderer', () => {
   });
 
   it('requestDevice failure recovers silently: renderer constructed without device option', async () => {
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
     const adapter = makeAdapter({
       maxVertexBuffers: 16,
       requestDevice: vi.fn().mockRejectedValue(new Error('device exhausted')),
@@ -290,6 +293,11 @@ describe('createWebGPURenderer', () => {
     expect(webgpuConstructorArgs).toHaveLength(1);
     expect((webgpuConstructorArgs[0] as { device?: unknown }).device).toBeUndefined();
     expect((webgpuConstructorArgs[0] as { forceWebGL?: boolean }).forceWebGL).toBeUndefined();
+    expect(warning).toHaveBeenCalledWith(
+      Modules.RENDERER,
+      'WebGPU requestDevice failed (Error: device exhausted).'
+    );
+    warning.mockRestore();
   });
 
   describe('requireNativeAdapter', () => {
@@ -308,6 +316,8 @@ describe('createWebGPURenderer', () => {
     });
 
     it('falls back to WebGL when requestDevice fails', async () => {
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      const info = vi.spyOn(log, 'info').mockImplementation(() => {});
       const adapter = makeAdapter({
         maxVertexBuffers: 16,
         requestDevice: vi.fn().mockRejectedValue(new Error('device exhausted')),
@@ -316,6 +326,16 @@ describe('createWebGPURenderer', () => {
       const result = await createWebGPURenderer(makeCanvas(), { requireNativeAdapter: true });
       expect(result).toEqual({ fallback: true });
       expect(webgpuConstructorArgs).toHaveLength(0);
+      expect(warning).toHaveBeenCalledWith(
+        Modules.RENDERER,
+        'WebGPU requestDevice failed (Error: device exhausted).'
+      );
+      expect(info).toHaveBeenCalledWith(
+        Modules.RENDERER,
+        'No native WebGPU device (requestDevice failed); using WebGLRenderer.'
+      );
+      warning.mockRestore();
+      info.mockRestore();
     });
 
     it('builds the renderer on the native device when one is available', async () => {

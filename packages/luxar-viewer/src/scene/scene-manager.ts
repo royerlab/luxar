@@ -181,9 +181,10 @@ export class SceneManager extends THREE.EventDispatcher<{
   /**
    * The graphics-API renderer. Holds the `Renderer` union honestly:
    * a `THREE.WebGLRenderer` on the default path, or a `WebGPURenderer`
-   * when opted in via `?renderer=webgpu` / `VITE_LUXAR_USE_WEBGPU=1`
-   * (which itself may dispatch to a real WebGPU adapter or transparently
-   * fall back to its internal WebGL2 backend depending on browser support).
+   * when selected via `?renderer=webgpu` / `VITE_LUXAR_USE_WEBGPU=1`.
+   * Without a native device, the explicit URL selection may use three's
+   * internal WebGL2 backend; the environment selection falls back to
+   * `THREE.WebGLRenderer`.
    *
    * Every method called on this field across the codebase
    * (`PostProcessingManager`, `picking-system`, `BloomChain`,
