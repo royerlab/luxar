@@ -351,6 +351,52 @@ describe('WebGLBlendWarmupManager', () => {
     expect(ready).toBe(true);
   });
 
+  it('submits each linked keeper for a draw before reporting the warm-up complete', async () => {
+    const drawnModes: string[] = [];
+    let target: THREE.RenderTarget | null = null;
+    const renderer = {
+      compile: (scene: THREE.Scene) =>
+        new Set([(scene.children[0] as THREE.Mesh).material as THREE.Material]),
+      getContext: () => ({ isContextLost: () => false }),
+      properties: { get: () => ({ currentProgram: { isReady: () => true } }) },
+      getRenderTarget: () => target,
+      setRenderTarget: (next: THREE.RenderTarget | null) => {
+        target = next;
+      },
+      getViewport: () => new THREE.Vector4(2, 3, 4, 5),
+      getScissor: () => new THREE.Vector4(1, 2, 3, 4),
+      getScissorTest: () => true,
+      setViewport: () => undefined,
+      setScissor: () => undefined,
+      setScissorTest: () => undefined,
+      render: (scene: THREE.Scene) => {
+        const object = scene.children[0] as THREE.Mesh;
+        const material = object.material as THREE.Material;
+        expect(target?.width).toBe(1);
+        expect(target?.texture.type).toBe(THREE.HalfFloatType);
+        expect(object.geometry.drawRange.count).toBe(3);
+        drawnModes.push(String(material.userData.blendingMode));
+      },
+    } as unknown as THREE.WebGLRenderer;
+    const manager = new WebGLBlendWarmupManager(
+      async () => undefined,
+      undefined,
+      activateImmediately
+    );
+    manager.configure({
+      enabled: true,
+      renderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+
+    await manager.warmScene(makeRenderableMesh('points'));
+
+    expect(drawnModes).toEqual(['additive', 'volumetric', 'max']);
+    expect(manager.getStats().compiled).toBe(3);
+    expect(target).toBeNull();
+  });
+
   it('waits for Three.js program readiness without polling after context loss', async () => {
     let ready = false;
     let lost = false;
@@ -363,6 +409,15 @@ describe('WebGLBlendWarmupManager', () => {
       compile,
       getContext: () => ({ isContextLost: () => lost }),
       properties: { get: () => ({ currentProgram: { isReady } }) },
+      getRenderTarget: () => null,
+      setRenderTarget: () => undefined,
+      getViewport: () => new THREE.Vector4(),
+      getScissor: () => new THREE.Vector4(),
+      getScissorTest: () => false,
+      setViewport: () => undefined,
+      setScissor: () => undefined,
+      setScissorTest: () => undefined,
+      render: () => undefined,
     } as unknown as THREE.WebGLRenderer;
     const manager = new WebGLBlendWarmupManager(
       async () => undefined,

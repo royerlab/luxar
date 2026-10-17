@@ -179,6 +179,12 @@ function defaultDeferActivation(activate: () => void): void {
   setTimeout(activate, 0);
 }
 
+function assertWarmupContext(renderer: THREE.WebGLRenderer, signal: AbortSignal): void {
+  if (signal.aborted || renderer.getContext().isContextLost()) {
+    throw new Error('Blend warm-up context unavailable');
+  }
+}
+
 async function defaultCompileOne(
   renderer: THREE.WebGLRenderer,
   camera: THREE.Camera,
@@ -189,14 +195,10 @@ async function defaultCompileOne(
   const compileScene = new THREE.Scene();
   compileScene.add(compileObject);
   try {
-    if (signal.aborted || renderer.getContext().isContextLost()) {
-      throw new Error('Blend warm-up context unavailable');
-    }
+    assertWarmupContext(renderer, signal);
     const materials = renderer.compile(compileScene, camera, targetScene);
     while (materials.size > 0) {
-      if (signal.aborted || renderer.getContext().isContextLost()) {
-        throw new Error('Blend warm-up context unavailable');
-      }
+      assertWarmupContext(renderer, signal);
       for (const material of materials) {
         const properties = renderer.properties.get(material) as {
           currentProgram?: { isReady(): boolean };
@@ -205,8 +207,61 @@ async function defaultCompileOne(
       }
       if (materials.size > 0) await new Promise((resolve) => setTimeout(resolve, 10));
     }
+    assertWarmupContext(renderer, signal);
+    drawKeeperOnce(renderer, camera, compileScene, compileObject);
   } finally {
     compileScene.remove(compileObject);
+  }
+}
+
+function limitKeeperInstances(object: THREE.Object3D, geometry: THREE.BufferGeometry): () => void {
+  const instancedGeometry = geometry instanceof THREE.InstancedBufferGeometry ? geometry : null;
+  const instancedMesh = object instanceof THREE.InstancedMesh ? object : null;
+  const instanceCount = instancedGeometry?.instanceCount;
+  const meshCount = instancedMesh?.count;
+  if (instancedGeometry)
+    instancedGeometry.instanceCount = Math.min(instancedGeometry.instanceCount, 1);
+  if (instancedMesh) instancedMesh.count = Math.min(instancedMesh.count, 1);
+  return () => {
+    if (instancedGeometry && instanceCount !== undefined)
+      instancedGeometry.instanceCount = instanceCount;
+    if (instancedMesh && meshCount !== undefined) instancedMesh.count = meshCount;
+  };
+}
+
+/** Submit one tiny draw so the driver's first-use blend/pipeline state is warm too. */
+function drawKeeperOnce(
+  renderer: THREE.WebGLRenderer,
+  camera: THREE.Camera,
+  scene: THREE.Scene,
+  object: THREE.Object3D
+): void {
+  const geometry = (object as THREE.Mesh).geometry as THREE.BufferGeometry;
+  const drawRange = { ...geometry.drawRange };
+  const previousTarget = renderer.getRenderTarget();
+  const viewport = renderer.getViewport(new THREE.Vector4());
+  const scissor = renderer.getScissor(new THREE.Vector4());
+  const scissorTest = renderer.getScissorTest();
+  const target = new THREE.WebGLRenderTarget(1, 1, {
+    type: THREE.HalfFloatType,
+    format: THREE.RGBAFormat,
+    depthBuffer: true,
+    stencilBuffer: false,
+  });
+
+  const restoreInstances = limitKeeperInstances(object, geometry);
+  try {
+    geometry.setDrawRange(drawRange.start, Math.min(drawRange.count, 3));
+    renderer.setRenderTarget(target);
+    renderer.render(scene, camera);
+  } finally {
+    renderer.setRenderTarget(previousTarget);
+    renderer.setViewport(viewport);
+    renderer.setScissor(scissor);
+    renderer.setScissorTest(scissorTest);
+    geometry.setDrawRange(drawRange.start, drawRange.count);
+    restoreInstances();
+    target.dispose();
   }
 }
 
