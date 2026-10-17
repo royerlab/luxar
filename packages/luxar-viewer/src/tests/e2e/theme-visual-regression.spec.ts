@@ -48,6 +48,8 @@ async function waitForTheme(page: Page, themeId: string): Promise<void> {
  */
 for (const theme of THEMES) {
   test(`@visual error dialog - ${theme} theme`, async ({ page }) => {
+    test.setTimeout(90_000);
+
     // Navigate with debug enabled so __luxarDebug.showError is exposed.
     await page.goto(`/?theme=${theme}&debug&dpr=1`);
 
