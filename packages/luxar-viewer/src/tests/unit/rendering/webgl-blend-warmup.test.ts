@@ -39,7 +39,7 @@ class FakeWarmupMaterial extends THREE.ShaderMaterial {
   }
 }
 
-class GlassWarmupMaterial extends THREE.MeshPhysicalMaterial {
+class PhysicalWarmupMaterial extends THREE.MeshPhysicalMaterial {
   applyBlendingMode(_mode: BlendingMode): void {}
 }
 
@@ -457,9 +457,9 @@ describe('WebGLBlendWarmupManager', () => {
       targetScene,
     });
 
-    await manager.warmScene(makeRenderableMesh('mesh'));
+    await manager.warmScene(makeRenderableMesh('mesh', new PhysicalWarmupMaterial()));
 
-    expect(renderedScenes).toHaveLength(3);
+    expect(renderedScenes).toHaveLength(1);
     for (const scene of renderedScenes) {
       expect(scene.environment).toBe(environment);
       expect(scene.environmentRotation.equals(targetScene.environmentRotation)).toBe(true);
@@ -502,7 +502,7 @@ describe('WebGLBlendWarmupManager', () => {
     });
 
     await manager.warmScene(
-      makeRenderableMesh('mesh', new GlassWarmupMaterial({ transmission: 0.5 }))
+      makeRenderableMesh('mesh', new PhysicalWarmupMaterial({ transmission: 0.5 }))
     );
 
     expect(manager.getStats().compiled).toBe(1);

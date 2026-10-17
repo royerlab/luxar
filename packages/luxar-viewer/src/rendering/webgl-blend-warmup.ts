@@ -9,11 +9,12 @@
  * variant pays that synchronous link cost on the interaction path.
  *
  * This manager pre-compiles every DISTINCT blend-variant program a live visual
- * material can reach, then draws one tiny primitive so first-use draw state is
- * primed too. One variant runs per post-frame idle opportunity so visible
- * rendering and input get a turn before every link. Browsers without idle
- * callbacks use a conservative 50 ms delay. The warmed programs stay pinned
- * by keeper materials until the source material is replaced or disposed.
+ * material can reach, then draws one tiny primitive for non-transmissive
+ * variants so first-use draw state is primed too. One variant runs per
+ * post-frame idle opportunity so visible rendering and input get a turn before
+ * every link. Browsers without idle callbacks use a conservative 50 ms delay.
+ * The warmed programs stay pinned by keeper materials until the source
+ * material is replaced or disposed.
  *
  * The manager is configured only for classic `THREE.WebGLRenderer`; WebGPU/TSL
  * sessions do not use it.
