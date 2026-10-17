@@ -809,8 +809,9 @@ monitor.element; // the widget element (mounted by the control rail)
 ### Browser Compatibility
 
 Requires **WebGL 2.0**, which is the default backend. WebGPU is opt-in via
-`?renderer=webgpu` and falls back to an internal WebGL2 backend when no adapter
-is available. The build targets `esnext` with no `browserslist`, so there is no
+`?renderer=webgpu`; with no WebGPU adapter that explicit choice runs on three's
+internal WebGL2 backend, while `VITE_LUXAR_USE_WEBGPU=1` falls back to the
+WebGL renderer. The build targets `esnext` with no `browserslist`, so there is no
 toolchain-derived version floor.
 
 Verified 2026-09-04 on macOS arm64 by running the E2E smoke subset (13 tests)
