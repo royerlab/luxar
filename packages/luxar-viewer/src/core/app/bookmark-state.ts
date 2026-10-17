@@ -12,6 +12,14 @@ export interface ViewBookmark {
   snapshot: ViewerSnapshot;
   rendering: Partial<RenderingSettings>;
   layers: Array<{ path: string; appearance: LayerPatch }>;
+  /**
+   * The scene `content_hash` the view was captured on. Restoring onto another
+   * build (a re-converted scene, whose splat amplitudes may be in other units)
+   * keeps every saved field EXCEPT the data-unit ones — each layer's
+   * `displayRange` and `brightness` — which would otherwise saturate or blank
+   * the colormap.
+   */
+  contentHash?: string;
 }
 
 const MAX_BOOKMARK_LENGTH = 100_000;
@@ -113,6 +121,7 @@ function validAppearance(value: unknown): boolean {
     typeof value.blendingMode === 'string',
     value.layerOrder === null || Number.isSafeInteger(value.layerOrder),
     value.gain === undefined || finite(value.gain),
+    value.brightness === undefined || positive(value.brightness),
   ].every(Boolean);
 }
 
@@ -125,6 +134,7 @@ function validBookmark(value: unknown): value is ViewBookmark {
   if (typeof value.src !== 'string') return false;
   if (normalizeDataSourceUrl(value.src) !== value.src) return false;
   return [
+    value.contentHash === undefined || typeof value.contentHash === 'string',
     validSnapshot(value.snapshot),
     record(value.rendering),
     Array.isArray(value.layers) && value.layers.every(validLayer),
@@ -139,7 +149,8 @@ function validSnapshot(value: unknown): boolean {
 
 /** Snapshot only editable layer fields; diagnostics and authored bounds are not state. */
 export function captureBookmark(app: LuxarApp): ViewBookmark {
-  const src = normalizeDataSourceUrl(app.getViewerState().src);
+  const state = app.getViewerState();
+  const src = normalizeDataSourceUrl(state.src);
   if (!src) throw new Error('Load a dataset before adding a bookmark');
   const snapshot = app.captureSnapshot();
   if (!snapshot.dims) throw new Error('Load a dataset before adding a bookmark');
@@ -154,6 +165,7 @@ export function captureBookmark(app: LuxarApp): ViewBookmark {
   return {
     version: 1,
     src,
+    ...(typeof state.contentHash === 'string' ? { contentHash: state.contentHash } : {}),
     snapshot,
     rendering,
     layers: app.getLayers().map((layer) => ({
@@ -166,6 +178,11 @@ export function captureBookmark(app: LuxarApp): ViewBookmark {
         colormap: layer.colormap,
         blendingMode: layer.blendingMode,
         absorption: layer.absorption,
+        // Omitted while it still equals the AUTHORED gain (the opening exposure),
+        // so an untouched layer — any scene, converted or not — adds nothing.
+        ...(layer.brightness !== (layer.authoredBrightness ?? 1)
+          ? { brightness: layer.brightness }
+          : {}),
         layerOrder: layer.layerOrder,
         ...(layer.gain !== undefined ? { gain: layer.gain } : {}),
       },
@@ -200,6 +217,22 @@ export function buildBookmarkUrl(base: string, bookmark: ViewBookmark): string {
   return buildViewBookmarkUrl(base, bookmark.src, encoded);
 }
 
+/**
+ * Whether a layer's saved data-unit fields (window, gain) belong to another
+ * build of the scene: the stamped `content_hash` differs from the loaded one —
+ * or, for a bookmark predating the stamp, the layer is now in labelled data
+ * units (a re-converted scene), which an unstamped bookmark cannot have been
+ * captured on. An old bookmark on an old scene restores exactly as before.
+ */
+function savedOnAnotherBuild(
+  bookmark: ViewBookmark,
+  sceneHash: string | undefined,
+  layer: { amplitudeUnit?: string }
+): boolean {
+  if (bookmark.contentHash === undefined) return layer.amplitudeUnit !== undefined;
+  return sceneHash !== undefined && bookmark.contentHash !== sceneHash;
+}
+
 /** Dataset switches finish before the saved appearance and camera are applied. */
 export async function restoreBookmark(app: LuxarApp, bookmark: ViewBookmark): Promise<void> {
   if (normalizeDataSourceUrl(app.getViewerState().src) !== bookmark.src) {
@@ -209,10 +242,28 @@ export async function restoreBookmark(app: LuxarApp, bookmark: ViewBookmark): Pr
   // flight and rendering overrides. Apply the saved view after that callback.
   app.restoreSnapshot(bookmark.snapshot);
   app.setRenderingSettings(bookmark.rendering);
+  const sceneHash = app.getViewerState().contentHash;
   for (const layer of bookmark.layers) {
-    if (app.getLayers().some((current) => current.path === layer.path)) {
-      app.setLayer(layer.path, layer.appearance);
+    const current = app.getLayers().find((entry) => entry.path === layer.path);
+    if (!current) continue;
+    if (savedOnAnotherBuild(bookmark, sceneHash, current)) {
+      // Another build: its window/gain numbers may be in other units. Keep
+      // the rest; the layer opens on this build's own window and exposure.
+      const rest = { ...layer.appearance };
+      delete rest.displayRange;
+      delete rest.brightness;
+      app.setLayer(layer.path, {
+        ...rest,
+        ...(current.type === 'gsplats' ? { brightness: current.authoredBrightness ?? 1 } : {}),
+      });
+      continue;
     }
+    app.setLayer(layer.path, {
+      ...layer.appearance,
+      ...(current.type === 'gsplats' && layer.appearance.brightness === undefined
+        ? { brightness: current.authoredBrightness ?? 1 }
+        : {}),
+    });
   }
   await app.flyTo(bookmark.snapshot.camera, { durationMs: 0 });
 }

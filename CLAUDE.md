@@ -33,10 +33,12 @@ make type-check-python            # Type check for the host, Darwin, and Python 
 The hatch env pins `OMP/OPENBLAS/MKL/NUMEXPR_NUM_THREADS=1` (see the note in
 `pyproject.toml`) — the test suite is thousands of tiny tensor ops and loses
 several-fold to fork-join overhead otherwise. That pin also applies to real work
-run through hatch, so for a CPU fit, a demo, or a benchmark, export the width
-you want — an explicit value wins. Set `MKL_NUM_THREADS` too, not just
-`OMP_NUM_THREADS`: torch takes its intra-op count from MKL here, so overriding
-OMP alone still leaves `torch.get_num_threads() == 1`.
+run through hatch. CPU `gsplat fit` and `gsplat cal` widen a one-thread torch
+count automatically; `LUXAR_CPU_THREADS=N` sets the width explicitly, and `0`
+disables the adjustment. For a demo or benchmark, export the width you want.
+Set `MKL_NUM_THREADS` too, not just `OMP_NUM_THREADS`: torch takes its intra-op
+count from MKL here, so overriding OMP alone still leaves
+`torch.get_num_threads() == 1` before the CLI adjustment.
 ```bash
 OMP_NUM_THREADS=16 MKL_NUM_THREADS=16 \
   hatch run luxar gsplat fit vol.tiff out.gsplats.zarr --device cpu
@@ -670,6 +672,11 @@ luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --center
 # Appearance is baked at convert time: --colormap (builtin/matplotlib/colorcet,
 # default gray), --tone-mapping (None/Linear/Reinhard/Cineon/ACES/AgX/Neutral;
 # default = viewer default ACES), --gamma, --intensity, --absorption (volumetric kappa), --layer/--no-layer.
+# Amplitudes stay in the SOURCE'S DATA UNITS (`amplitude_unit`, e.g. "counts above
+# background"); brightness is a separate per-node `display_gain` that auto exposure
+# sets (`--target-brightness`, `--no-auto-exposure`, or an explicit `--display-gain`).
+# On a colormapped node `--intensity I` is a colormap WINDOW ([0, 1/I] of the
+# gained amplitudes), stored restated in data units; the gain is what scales emission.
 # ACES is the right choice for almost every scene (its filmic rolloff keeps
 # bright structure from clipping flat) — prefer it, and set it EXPLICITLY so the
 # compiler's LUT notice (which only fires when nothing was chosen) stays quiet:
@@ -688,7 +695,7 @@ luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --to
 # already 0 ((100, 0, 0) -> (1, 0, 0); (2, 0.5, 0.5) -> (1, 0.5, 0.5) drops
 # saturation 0.75 -> 0.5), SHIFTS hue when channels clip unequally ((2, 1, 0)
 # goes hue 30deg -> 60deg) and flattens everything above 1.0. Bring the scene
-# back into [0, 1] with --intensity/exposure and use `None`, or accept ACES's
+# back into [0, 1] with --display-gain / --target-brightness and use `None`, or accept ACES's
 # filmic rolloff. Decide with an actual render, not from first principles.
 
 # Render gsplats back to a background-relative volume. Partition and nested

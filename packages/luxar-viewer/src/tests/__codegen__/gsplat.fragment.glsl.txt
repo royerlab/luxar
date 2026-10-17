@@ -75,6 +75,7 @@ layout( std140 ) uniform object {
 	float nodeUniform37;
 	float nodeUniform38;
 	float nodeUniform39;
+	float nodeUniform40;
 };
 uniform sampler2D nodeUniform1;
 
