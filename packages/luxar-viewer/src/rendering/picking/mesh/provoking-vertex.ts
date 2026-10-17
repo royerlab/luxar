@@ -7,15 +7,16 @@
  * | Backend | Convention |
  * |---|---|
  * | OpenGL ES 3.0 (`glslVersion: GLSL3`) | **last** vertex of the primitive, fixed by spec |
- * | WGSL `@interpolate(flat)` as three emits it | **first**-vertex sampling |
+ * | Core WGSL mesh pick `@interpolate(flat, first)` | **first**-vertex sampling |
  *
  * That only becomes observable when a `flat` varying differs BETWEEN a triangle's
  * corners — which, in the shipped materials, is exactly one case: the mesh pick
  * shader's `vElementId`, whose source is `gl_VertexID` / `vertexIndex`
  * (spec §6.5). Left alone, the same click on the same triangle `(i0, i1, i2)`
- * reports `i2` on WebGL and `i0` on WebGPU.
+ * reports `i2` on WebGL and `i0` on core WebGPU. Compatibility-mode WebGPU
+ * uses `flat, either`, which still reports a corner of the same triangle.
  *
- * `WEBGL_provoking_vertex` lets the WebGL side adopt WebGPU's first-vertex rule, so
+ * `WEBGL_provoking_vertex` lets the WebGL side adopt core WebGPU's first-vertex rule, so
  * the two agree wherever the extension exists. Where it does not, the divergence
  * stands as a documented §6.4 exception and the pick contract is unchanged: at
  * vertex granularity the answer is "*a* corner vertex of the front-most triangle
@@ -82,7 +83,7 @@ export function alignProvokingVertexWithWebGPU(renderer: unknown): boolean {
     log.info(
       Modules.RENDERER,
       'WEBGL_provoking_vertex unavailable; mesh pick flat varyings keep the ' +
-        'GL last-vertex convention (WebGPU reports the first corner instead — ' +
+        'GL last-vertex convention (core WebGPU reports the first corner instead — ' +
         'both are valid corners of the picked triangle)'
     );
     return false;
@@ -92,7 +93,7 @@ export function alignProvokingVertexWithWebGPU(renderer: unknown): boolean {
   log.info(
     Modules.RENDERER,
     'Provoking vertex set to FIRST_VERTEX_CONVENTION_WEBGL — mesh pick ids now ' +
-      'match the WebGPU backend'
+      'match core WebGPU'
   );
   return true;
 }
