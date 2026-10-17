@@ -365,6 +365,36 @@ export function createMeshIndexAttribute(
   return new THREE.BufferAttribute(array, 1, false);
 }
 
+/** Rotate each triangle without changing its winding, so WebGL's last flat
+ * vertex is the original first vertex when WEBGL_provoking_vertex is missing. */
+export function rotateMeshIndexTriples(indices: Uint16Array | Uint32Array, count: number): void {
+  for (let i = 0; i < count; i += 3) {
+    const first = indices[i];
+    indices[i] = indices[i + 1];
+    indices[i + 1] = indices[i + 2];
+    indices[i + 2] = first;
+  }
+}
+
+/** Enable the fallback on an already committed mesh and on subsequent index writes. */
+export function enableFirstVertexMeshPickFallback(geometry: THREE.BufferGeometry): void {
+  if (geometry.userData.meshPickRotateIndices) return;
+  geometry.userData.meshPickRotateIndices = true;
+  const index = geometry.index;
+  const count = geometry.drawRange.count;
+  if (!index || count === 0) return;
+  rotateMeshIndexTriples(index.array as Uint16Array | Uint32Array, count);
+  index.clearUpdateRanges();
+  index.addUpdateRange(0, count);
+  index.needsUpdate = true;
+}
+
+function rotateMeshIndicesIfNeeded(geometry: THREE.BufferGeometry, count: number): void {
+  if (geometry.userData.meshPickRotateIndices) {
+    rotateMeshIndexTriples(geometry.index!.array as Uint16Array | Uint32Array, count);
+  }
+}
+
 /**
  * Point `geometry`'s index at `indices`, reusing the existing buffer when it can.
  *
@@ -457,12 +487,14 @@ export function applyMeshIndices(
     // exist to prevent. Only `drawRange` (below) has to change to draw nothing.
     if (indices.length > 0) {
       (existing.array as Uint16Array | Uint32Array).set(indices);
+      rotateMeshIndicesIfNeeded(geometry, indices.length);
       existing.clearUpdateRanges();
       existing.addUpdateRange(0, indices.length);
       existing.needsUpdate = true;
     }
   } else {
     geometry.setIndex(createMeshIndexAttribute(indices, vertexCount, faceCount));
+    rotateMeshIndicesIfNeeded(geometry, indices.length);
   }
 
   // The tail past this range keeps stale indices, which is safe precisely because the

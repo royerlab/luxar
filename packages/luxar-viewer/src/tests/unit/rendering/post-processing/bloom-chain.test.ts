@@ -14,6 +14,7 @@ import type { RendererCapabilities } from '../../../../rendering/renderer-capabi
 function mockCaps(apiSurface: 'webgl2' | 'webgpu' = 'webgl2'): RendererCapabilities {
   return {
     apiSurface,
+    nativeWebGPUBackend: false,
     framebufferYDown: apiSurface === 'webgpu',
     readbackYDown: false,
     hdr: {
