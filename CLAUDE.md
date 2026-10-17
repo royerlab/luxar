@@ -34,10 +34,12 @@ The hatch env pins `OMP/OPENBLAS/MKL/NUMEXPR_NUM_THREADS=1` (see the note in
 `pyproject.toml`) — the test suite is thousands of tiny tensor ops and loses
 several-fold to fork-join overhead otherwise. That pin also applies to real work
 run through hatch. CPU `gsplat fit` and `gsplat cal` widen a one-thread torch
-count automatically (not in `--tile`/`--plan-box` workers; the numba kernels of a 3D CPU fit use the physical
-cores whatever the pin); `LUXAR_CPU_THREADS=N` sets the width explicitly, and `0`
-disables the torch adjustment. For a demo, a benchmark or a library call, export
-the width you want. Set `MKL_NUM_THREADS` too, not just `OMP_NUM_THREADS`: torch
+count automatically (except in `--tile`/`--plan-box` workers). A parent-provided
+`LUXAR_CPU_THREADS` share sets torch's count in those workers too; the numba
+kernels of a 3D CPU fit use the physical cores by default. `LUXAR_CPU_THREADS=N`
+sets the width explicitly, and `0` disables the torch adjustment. For a demo,
+a benchmark or a library call, export the width you want. Set `MKL_NUM_THREADS`
+too, not just `OMP_NUM_THREADS`: torch
 takes its intra-op count from MKL here, so overriding OMP alone still leaves
 `torch.get_num_threads() == 1` before the CLI adjustment. Outside the CLI the
 numba kernel width comes from `LUXAR_CPU_THREADS` only.
