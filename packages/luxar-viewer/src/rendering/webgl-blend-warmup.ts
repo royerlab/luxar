@@ -9,7 +9,8 @@
  * variant pays that synchronous link cost on the interaction path.
  *
  * This manager pre-compiles every DISTINCT blend-variant program a live visual
- * material can reach, one compile per post-frame idle opportunity so visible
+ * material can reach, then draws one tiny primitive so first-use draw state is
+ * primed too. One variant runs per post-frame idle opportunity so visible
  * rendering and input get a turn before every link. Browsers without idle
  * callbacks use a conservative 50 ms delay. The warmed programs stay pinned
  * by keeper materials until the source material is replaced or disposed.
@@ -242,6 +243,15 @@ function drawKeeperOnce(
   const viewport = renderer.getViewport(new THREE.Vector4());
   const scissor = renderer.getScissor(new THREE.Vector4());
   const scissorTest = renderer.getScissorTest();
+  // The debug sampler owns per-frame counts with autoReset=false. A hidden
+  // warm-up draw must not appear in the next visible frame's statistics.
+  const renderInfo = renderer.info.render;
+  const counts = {
+    calls: renderInfo.calls,
+    triangles: renderInfo.triangles,
+    points: renderInfo.points,
+    lines: renderInfo.lines,
+  };
   const target = new THREE.WebGLRenderTarget(1, 1, {
     type: THREE.HalfFloatType,
     format: THREE.RGBAFormat,
@@ -255,13 +265,17 @@ function drawKeeperOnce(
     renderer.setRenderTarget(target);
     renderer.render(scene, camera);
   } finally {
-    renderer.setRenderTarget(previousTarget);
-    renderer.setViewport(viewport);
-    renderer.setScissor(scissor);
-    renderer.setScissorTest(scissorTest);
     geometry.setDrawRange(drawRange.start, drawRange.count);
     restoreInstances();
-    target.dispose();
+    Object.assign(renderInfo, counts);
+    try {
+      renderer.setRenderTarget(previousTarget);
+      renderer.setViewport(viewport);
+      renderer.setScissor(scissor);
+      renderer.setScissorTest(scissorTest);
+    } finally {
+      target.dispose();
+    }
   }
 }
 

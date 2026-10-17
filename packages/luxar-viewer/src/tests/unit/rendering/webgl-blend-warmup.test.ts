@@ -354,6 +354,10 @@ describe('WebGLBlendWarmupManager', () => {
   it('submits each linked keeper for a draw before reporting the warm-up complete', async () => {
     const drawnModes: string[] = [];
     let target: THREE.RenderTarget | null = null;
+    const renderInfo = { frame: 0, calls: 7, triangles: 8, points: 9, lines: 10 };
+    const setViewport = vi.fn();
+    const setScissor = vi.fn();
+    const setScissorTest = vi.fn();
     const renderer = {
       compile: (scene: THREE.Scene) =>
         new Set([(scene.children[0] as THREE.Mesh).material as THREE.Material]),
@@ -366,9 +370,10 @@ describe('WebGLBlendWarmupManager', () => {
       getViewport: () => new THREE.Vector4(2, 3, 4, 5),
       getScissor: () => new THREE.Vector4(1, 2, 3, 4),
       getScissorTest: () => true,
-      setViewport: () => undefined,
-      setScissor: () => undefined,
-      setScissorTest: () => undefined,
+      setViewport,
+      setScissor,
+      setScissorTest,
+      info: { render: renderInfo },
       render: (scene: THREE.Scene) => {
         const object = scene.children[0] as THREE.Mesh;
         const material = object.material as THREE.Material;
@@ -376,6 +381,9 @@ describe('WebGLBlendWarmupManager', () => {
         expect(target?.texture.type).toBe(THREE.HalfFloatType);
         expect(object.geometry.drawRange.count).toBe(3);
         drawnModes.push(String(material.userData.blendingMode));
+        renderInfo.frame++;
+        renderInfo.calls++;
+        renderInfo.triangles++;
       },
     } as unknown as THREE.WebGLRenderer;
     const manager = new WebGLBlendWarmupManager(
@@ -390,11 +398,65 @@ describe('WebGLBlendWarmupManager', () => {
       targetScene: new THREE.Scene(),
     });
 
-    await manager.warmScene(makeRenderableMesh('points'));
+    const mesh = makeRenderableMesh('points');
+    await manager.warmScene(mesh);
 
     expect(drawnModes).toEqual(['additive', 'volumetric', 'max']);
     expect(manager.getStats().compiled).toBe(3);
     expect(target).toBeNull();
+    expect(mesh.geometry.drawRange.count).toBe(Infinity);
+    expect(renderInfo).toEqual({ frame: 3, calls: 7, triangles: 8, points: 9, lines: 10 });
+    expect(setViewport).toHaveBeenLastCalledWith(new THREE.Vector4(2, 3, 4, 5));
+    expect(setScissor).toHaveBeenLastCalledWith(new THREE.Vector4(1, 2, 3, 4));
+    expect(setScissorTest).toHaveBeenLastCalledWith(true);
+  });
+
+  it('restores shared geometry and renderer state if a keeper draw fails', async () => {
+    let target: THREE.RenderTarget | null = null;
+    let draws = 0;
+    const renderInfo = { calls: 4, triangles: 5, points: 6, lines: 7 };
+    const renderer = {
+      compile: (scene: THREE.Scene) =>
+        new Set([(scene.children[0] as THREE.Mesh).material as THREE.Material]),
+      getContext: () => ({ isContextLost: () => false }),
+      properties: { get: () => ({ currentProgram: { isReady: () => true } }) },
+      getRenderTarget: () => target,
+      setRenderTarget: (next: THREE.RenderTarget | null) => {
+        target = next;
+      },
+      getViewport: () => new THREE.Vector4(),
+      getScissor: () => new THREE.Vector4(),
+      getScissorTest: () => false,
+      setViewport: () => undefined,
+      setScissor: () => undefined,
+      setScissorTest: () => undefined,
+      info: { render: renderInfo },
+      render: () => {
+        draws++;
+        renderInfo.calls++;
+        if (draws === 1) throw new Error('draw failed');
+      },
+    } as unknown as THREE.WebGLRenderer;
+    const manager = new WebGLBlendWarmupManager(
+      async () => undefined,
+      undefined,
+      activateImmediately
+    );
+    manager.configure({
+      enabled: true,
+      renderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+    const mesh = makeRenderableMesh('points');
+
+    await manager.warmScene(mesh);
+
+    expect(draws).toBe(3);
+    expect(manager.getStats().compiled).toBe(2);
+    expect(target).toBeNull();
+    expect(mesh.geometry.drawRange.count).toBe(Infinity);
+    expect(renderInfo).toEqual({ calls: 4, triangles: 5, points: 6, lines: 7 });
   });
 
   it('waits for Three.js program readiness without polling after context loss', async () => {
@@ -417,6 +479,7 @@ describe('WebGLBlendWarmupManager', () => {
       setViewport: () => undefined,
       setScissor: () => undefined,
       setScissorTest: () => undefined,
+      info: { render: { calls: 0, triangles: 0, points: 0, lines: 0 } },
       render: () => undefined,
     } as unknown as THREE.WebGLRenderer;
     const manager = new WebGLBlendWarmupManager(
