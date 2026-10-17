@@ -139,7 +139,9 @@ export const COVERAGE_THRESHOLDS = {
   // the five TSL pick graphs with a real WGSLNodeBuilder (no GPU), which runs
   // their factory bodies: measured lines 85.93, functions 86.27. The visual
   // shader bodies are still reached only by the browser parity spec.
-  'src/rendering/**': { lines: 84, functions: 85, branches: 78 },
+  // The line floor reached the three-point slack limit in CI; the current
+  // local coverage run measured 86.50, so keep it close to that value.
+  'src/rendering/**': { lines: 86, functions: 85, branches: 78 },
 
   // The last two measured top-level source directories without a sub-gate;
   // until 2026-10 their coverage could erode freely inside the global pool.
@@ -165,7 +167,7 @@ export const COVERAGE_RECORDED = {
   'src/ui/**': { lines: 92.0, functions: 86.95, branches: 80.06 },
   'src/core/**': { lines: 93.02, functions: 81.03, branches: 88.02 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
-  'src/rendering/**': { lines: 85.93, functions: 86.27, branches: 79.46 },
+  'src/rendering/**': { lines: 86.5, functions: 86.27, branches: 79.46 },
   'src/audio/**': { lines: 96.38, functions: 95.48, branches: 84.11 },
   'src/profiling/**': { lines: 96.94, functions: 96.34, branches: 89.61 },
 };
