@@ -1,95 +1,64 @@
 import * as THREE from 'three';
-import { context } from 'three/tsl';
-import { WGSLNodeBuilder, type NodeMaterial } from 'three/webgpu';
 import { describe, expect, it } from 'vitest';
 
 import { MegaShaderTSLMaterial } from '../../../../rendering/post-processing/mega/material-tsl';
+import { HDR_SLOPE_STEP } from '../../../../rendering/post-processing/mega/shader.tsl';
+import { wgslFragmentFor } from '../../helpers/wgsl-build';
 
 function fragmentFor(material: MegaShaderTSLMaterial): string {
-  const renderer = {
-    getRenderTarget: () => null,
-    getMRT: () => null,
-    depth: true,
-    reversedDepthBuffer: false,
-    logarithmicDepthBuffer: false,
-    contextNode: context(),
-    library: { fromMaterial: (m: unknown) => m },
-    hasFeature: () => false,
-    hasCompatibility: () => false,
-    backend: {
-      compatibilityMode: false,
-      capabilities: { getUniformBufferLimit: () => 65536 },
-      utils: { getTextureSampleData: () => ({ samples: 1, primarySamples: 1, isMSAA: false }) },
-    },
-  };
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
-  const builder = new WGSLNodeBuilder(
-    mesh,
-    renderer as unknown as ConstructorParameters<typeof WGSLNodeBuilder>[1]
-  ) as unknown as {
-    camera: THREE.Camera;
-    scene: THREE.Scene;
-    material: NodeMaterial;
-    fragmentShader: string;
-    build(): void;
-  };
-  builder.camera = new THREE.PerspectiveCamera();
-  builder.scene = new THREE.Scene();
-  builder.material = material;
-  builder.build();
-  return builder.fragmentShader;
+  return wgslFragmentFor(material, new THREE.PerspectiveCamera(), new THREE.PlaneGeometry(2, 2));
 }
 
 describe('mega-shader HDR WGSL', () => {
-  it('pins the generated shoulder expression used by the numeric reference', () => {
-    const material = new MegaShaderTSLMaterial({
-      toneMapping: THREE.ReinhardToneMapping,
-      hdrOutputPeak: 3,
-    });
-    const wgsl = fragmentFor(material);
-    const start = wgsl.indexOf('\tif ( ( ( nodeVar3 > 0.5 )');
-    const end = wgsl.indexOf('\t} else {', start);
-    expect(start).toBeGreaterThan(-1);
-    expect(end).toBeGreaterThan(start);
-    expect(wgsl.slice(start, end).replaceAll('\t', '  ')).toMatchInlineSnapshot(`
-      "  if ( ( ( nodeVar3 > 0.5 ) && ( object.nodeUniform5 > 1.0 ) ) ) {
-
-          nodeVar5 = max( ( object.nodeUniform5 - reinhardToneMapping( vec3<f32>( 0.5 ), 1.0 ).x ), 0.0001 );
-          nodeVar4 = min( ( nodeVar2 * vec3<f32>( ( ( object.nodeUniform5 - ( nodeVar5 * exp( ( ( ( - ( ( reinhardToneMapping( vec3<f32>( 0.501 ), 1.0 ).x - reinhardToneMapping( vec3<f32>( 0.499 ), 1.0 ).x ) / 0.002 ) ) * ( nodeVar3 - 0.5 ) ) / nodeVar5 ) ) ) ) / max( reinhardToneMapping( vec3<f32>( nodeVar3 ), 1.0 ).x, 0.000001 ) ) ) ), vec3<f32>( object.nodeUniform5 ) );
-
-      "
-    `);
-    material.dispose();
-  });
-
   it.each([
-    [
-      'Reinhard',
-      THREE.ReinhardToneMapping,
-      'reinhardToneMapping',
-      0.5,
-      'nodeVar0 + vec3<f32>( 1.0 )',
-    ],
+    ['Reinhard', THREE.ReinhardToneMapping, 'reinhardToneMapping', 0.5, 'reinhardToneMapping'],
     ['Cineon', THREE.CineonToneMapping, 'cineonToneMapping', 0.5, '6.2'],
     ['ACES', THREE.ACESFilmicToneMapping, 'acesFilmicToneMapping', 0.5, '0.59719'],
     ['AgX', THREE.AgXToneMapping, 'agxToneMapping', 0.5, '12.47393'],
     ['Neutral', THREE.NeutralToneMapping, 'neutralToneMapping', 0.8, '0.76'],
+    [
+      'Reinhard with bloom',
+      THREE.ReinhardToneMapping,
+      'reinhardToneMapping',
+      0.5,
+      'reinhardToneMapping',
+    ],
   ])(
     'emits the peak uniform and exponential shoulder for %s',
     (_name, toneMapping, fn, knee, operatorMarker) => {
-      const material = new MegaShaderTSLMaterial({ toneMapping, hdrOutputPeak: 3 });
+      const material = new MegaShaderTSLMaterial({
+        toneMapping,
+        hdrOutputPeak: 3,
+        ...(_name === 'Reinhard with bloom' ? { bloom: { enabled: true } } : {}),
+      });
       const wgsl = fragmentFor(material);
-      const peak = wgsl.match(/object\.nodeUniform(\d+) > 1\.0/);
-      expect(peak).not.toBeNull();
-      expect(wgsl).toContain(`nodeUniform${peak?.[1]} : f32`);
+      const kneePattern = String(knee).replace('.', '\\.');
+      const branch = wgsl.match(
+        new RegExp(
+          `if \\( \\( \\( (nodeVar\\d+) > ${kneePattern} \\) && \\( object\\.(nodeUniform\\d+) > 1\\.0 \\) \\) \\) \\{`
+        )
+      );
+      expect(branch).not.toBeNull();
+      const [, level, peak] = branch!;
+      expect(wgsl).toContain(`${peak} : f32`);
       expect(wgsl).toContain(operatorMarker);
-      expect(wgsl).toContain(`nodeVar3 > ${knee}`);
-      expect(wgsl).toContain(`${fn}( vec3<f32>( ${knee + 0.001} ), 1.0 ).x`);
-      expect(wgsl).toContain(`${fn}( vec3<f32>( ${knee - 0.001} ), 1.0 ).x`);
-      expect(wgsl).toContain(`max( ${fn}( vec3<f32>( nodeVar3 ), 1.0 ).x, 0.000001 )`);
-      expect(wgsl).toMatch(/nodeVar2 \* vec3<f32>\( .*exp\(/);
-      expect(wgsl).toContain(`vec3<f32>( object.nodeUniform${peak?.[1]} )`);
-      expect(wgsl).toContain('nodeVar4 = nodeVar2;');
+      const body = wgsl.slice(branch!.index, wgsl.indexOf('\t} else {', branch!.index));
+      const room = body.match(
+        new RegExp(
+          `(nodeVar\\d+) = max\\( \\( object\\.${peak} - ${fn}\\( vec3<f32>\\( ${kneePattern} \\), 1\\.0 \\)\\.x \\), 0\\.0001 \\);`
+        )
+      );
+      expect(room).not.toBeNull();
+      const slope = `( ( ( - ( ( ${fn}( vec3<f32>( ${knee + HDR_SLOPE_STEP} ), 1.0 ).x - ${fn}( vec3<f32>( ${knee - HDR_SLOPE_STEP} ), 1.0 ).x ) / ${2 * HDR_SLOPE_STEP} ) ) * ( ${level} - ${knee} ) ) / ${room![1]} )`;
+      const shoulder = `( object.${peak} - ( ${room![1]} * exp( ${slope} ) ) )`;
+      const extended = body.match(/(nodeVar\d+) = min\( \( (nodeVar\d+) \* vec3<f32>\(/);
+      expect(extended).not.toBeNull();
+      expect(body).toContain(
+        `${extended![1]} = min( ( ${extended![2]} * vec3<f32>( ( ${shoulder} / max( ${fn}( vec3<f32>( ${level} ), 1.0 ).x, 0.000001 ) ) ) ), vec3<f32>( object.${peak} ) );`
+      );
+      expect(wgsl.slice(wgsl.indexOf('\t} else {', branch!.index))).toContain(
+        `${extended![1]} = ${extended![2]};`
+      );
       material.dispose();
     }
   );

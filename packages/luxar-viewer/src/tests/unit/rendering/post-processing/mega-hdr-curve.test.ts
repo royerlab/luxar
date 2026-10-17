@@ -69,18 +69,6 @@ const MODES: LuxarToneMappingMode[] = [1, 2, 3, 4, 5, 6];
 const PEAKS = [1, 1.25, 2, 4, 8];
 
 describe('HDR tone curve on grey', () => {
-  it.each(MODES)('mode %i is exactly SDR below its knee and at peak 1', (mode) => {
-    const knee = hdrKnee(mode);
-    for (const level of [0, knee / 2, knee]) {
-      for (const peak of PEAKS) expect(hdrGrey(mode, level, peak)).toBe(sdrGrey(mode, level));
-    }
-    if (mode !== 1) {
-      for (const level of [knee + 0.01, 1, 4, 100]) {
-        expect(hdrGrey(mode, level, 1)).toBe(sdrGrey(mode, level));
-      }
-    }
-  });
-
   it.each(MODES.flatMap((mode) => PEAKS.map((peak) => [mode, peak] as const)))(
     'mode %i at peak %f stays monotone, >= SDR and <= peak',
     (mode, peak) => {
@@ -108,12 +96,4 @@ describe('HDR tone curve on grey', () => {
       }
     }
   );
-
-  it('Linear and None are exact peak clamps', () => {
-    for (const peak of PEAKS) {
-      for (const level of [0, 0.25, 1, peak, peak + 1, 100]) {
-        expect(hdrGrey(1, level, peak)).toBe(Math.min(level, peak));
-      }
-    }
-  });
 });

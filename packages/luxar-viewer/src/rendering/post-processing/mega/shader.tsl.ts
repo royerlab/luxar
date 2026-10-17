@@ -143,6 +143,7 @@ export function hdrKnee(mode: LuxarToneMappingMode): number {
   return mode === 6 ? 0.8 : 0.5;
 }
 
+/** Half-width of the knee-slope central difference, shared with the CPU curve test. */
 export const HDR_SLOPE_STEP = 1e-3;
 
 /**
