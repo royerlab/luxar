@@ -221,8 +221,10 @@ bootstrap 95% CI of the two baseline arms' ratio, never below 1%. The judged
 `floor` widens that band for all selected perf and gating workload timing
 judgements in the run (cases × eligible backends × metrics), including a
 `--suite all` run. Report-only metrics do not add to that count; counters keep
-their own comparison. Both floors and the raw per-arm samples are in
-`report.json`. The candidate's own CI is reported but does not decide,
+their own comparison. The family is sized for the planned run, so cases that
+later error still count. `report.json` records this count as `meta.timingTests`,
+along with both floors and the raw per-arm samples. The candidate's own CI is
+reported but does not decide,
 because testing one CI edge against another CI's half-width counts the sampling
 noise twice and fails unchanged builds at small round counts.
 

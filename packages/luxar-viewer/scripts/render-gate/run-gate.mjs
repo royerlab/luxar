@@ -669,6 +669,7 @@ async function main() {
     host: `${process.platform}/${process.arch}`,
     gpu: [...seenGpus].join(' | '),
     browserRelaunches,
+    timingTests,
     verdict,
     options: opts,
   };
