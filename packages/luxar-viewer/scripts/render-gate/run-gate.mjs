@@ -523,7 +523,7 @@ function markdown(meta, exact, perf, suites) {
   }
   if (perf) {
     lines.push(
-      '## Performance (ratio cand/base, 95% CI, A/A floor)',
+      '## Performance (ratio cand/base, 95% CI, run-wide A/A floor)',
       '',
       '`frameMs` / `frameP95Ms` INCLUDE GPU completion: each orbit frame ends with a GPU sync, so a ' +
         'frame costs its CPU plus GPU work, serialized. `gpuMs` is GPU cost alone (settled pose); ' +

@@ -170,6 +170,7 @@ export function meetsExpectation(want, judged, kind) {
  * @param {{ name: string, of?: string, per?: string, better?: 'lower'|'higher', kind?: 'counter'|'timing', tol?: number, relTol?: number }} m
  *   With `of` and `per`, the judged value is `sample[of] / sample[per]`.
  * @param {{ base: object[], base2: object[], cand: object[] }} samples
+ * @param {number} [tests=1] Gating timing judgments across the run.
  */
 export function judgeMetric(m, samples, tests = 1) {
   const better = m.better ?? 'lower';

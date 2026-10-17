@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
-import { anyMissing, judgeCounter, judgePerf, median, noiseFloor, ratioCI } from './perf-stats.mjs';
+import {
+  anyMissing,
+  familyFloor,
+  judgeCounter,
+  judgePerf,
+  median,
+  noiseFloor,
+  ratioCI,
+} from './perf-stats.mjs';
+
+describe('familyFloor', () => {
+  it('keeps a single comparison unchanged and widens a larger family', () => {
+    expect(familyFloor(0.01, 0)).toBe(0.01);
+    expect(familyFloor(0.01, 1)).toBe(0.01);
+    expect(familyFloor(0.01, 4)).toBeGreaterThan(0.01);
+    expect(familyFloor(0.01, 100)).toBeGreaterThan(familyFloor(0.01, 4));
+  });
+});
 
 describe('median', () => {
   it('handles odd, even and empty inputs', () => {
