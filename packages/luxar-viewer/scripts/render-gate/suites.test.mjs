@@ -6,6 +6,7 @@ import {
   judgeMetric,
   meetsExpectation,
   METRIC_DIRECTIONS,
+  runSuite,
   serverMetrics,
   validateExpectations,
   validateMetricDirections,
@@ -15,13 +16,18 @@ describe('dragWorkload', () => {
   it('reports only uploads after mouse release as tail work', async () => {
     const calls = [];
     let uploads = { gpuUploadBytesBuffer: 0, gpuUploadBytesTexture: 0 };
+    let idleWindows = 0;
     const page = {
       evaluate: async (fn) => {
         if (fn === ops.beginRenderCount) return true;
         if (fn === ops.readExtCounters) return { ...uploads };
         if (fn === ops.idle) {
-          uploads = { gpuUploadBytesBuffer: 116, gpuUploadBytesTexture: 221 };
-          return { renders: 2, frames: 180 };
+          idleWindows++;
+          uploads =
+            idleWindows === 1
+              ? { gpuUploadBytesBuffer: 116, gpuUploadBytesTexture: 221 }
+              : { gpuUploadBytesBuffer: 119, gpuUploadBytesTexture: 223 };
+          return { renders: idleWindows === 1 ? 2 : 1, frames: idleWindows === 1 ? 180 : 60 };
         }
         if (fn === ops.endRenderCount) return 9;
         return { x: 10, y: 20 };
@@ -41,8 +47,67 @@ describe('dragWorkload', () => {
       tailFrames: 180,
       tailUploadBytesBuffer: 16,
       tailUploadBytesTexture: 21,
+      idleRenders: 1,
+      idleUploadBytesBuffer: 3,
+      idleUploadBytesTexture: 2,
     });
+    expect(idleWindows).toBe(2);
     expect(calls).toEqual(['move', 'down', 'move', 'up']);
+  });
+});
+
+describe('manifest expectations', () => {
+  const run = async (renders, expectations) => {
+    const page = {
+      evaluate: async (fn) => {
+        if (fn === ops.settle) return { settled: true };
+        if (fn === ops.idle) return { renders, frames: 60 };
+        return {};
+      },
+    };
+    const server = {
+      origin: 'http://localhost',
+      reset() {},
+      now: () => 0,
+      log: [],
+      stats: () => ({ maxInflight: 0 }),
+    };
+    return runSuite({
+      name: 'counters',
+      suite: {
+        cases: [
+          {
+            id: 'idle',
+            workload: { kind: 'idle' },
+            backends: ['webgl', 'webgpu'],
+            metrics: [{ name: 'renders', kind: 'counter' }],
+            expectations: { renders: 'zero' },
+          },
+        ],
+      },
+      profile: { name: 'local' },
+      session: { run: async (fn) => fn({}) },
+      openCase: async () => ({ page, context: { close: async () => {} } }),
+      servers: { base: server, cand: server },
+      dataRoot: '.',
+      opts: { rounds: 1 },
+      expectations,
+      log() {},
+    });
+  };
+
+  it('enforces the shipped zero expectation on each backend even when both builds agree', async () => {
+    const busy = await run(1, { idle: { renders: 'pass' } });
+    expect(busy.map((row) => row.backend)).toEqual(['webgl', 'webgpu']);
+    for (const row of busy) {
+      expect(row.status).toBe('fail');
+      expect(row.metrics.renders).toMatchObject({ verdict: 'pass', expected: 'zero', met: false });
+    }
+    const quiet = await run(0);
+    for (const row of quiet) {
+      expect(row.status).toBe('pass');
+      expect(row.metrics.renders).toMatchObject({ expected: 'zero', met: true });
+    }
   });
 });
 
@@ -200,6 +265,17 @@ describe('validateMetricDirections', () => {
     expect(() =>
       validateMetricDirections(suites([{ name: 'newCounter', better: 'higher' }]))
     ).not.toThrow();
+  });
+
+  it('rejects misspelled or invalid manifest expectations', () => {
+    const c = { id: 'idle', metrics: [{ name: 'renders' }], expectations: { misspelled: 'zero' } };
+    expect(() => validateMetricDirections({ counters: { cases: [c] } })).toThrow(
+      /expectation names undeclared metric 'misspelled'/
+    );
+    c.expectations = { renders: 'quiet' };
+    expect(() => validateMetricDirections({ counters: { cases: [c] } })).toThrow(
+      /unknown expectation 'quiet'/
+    );
   });
 });
 
