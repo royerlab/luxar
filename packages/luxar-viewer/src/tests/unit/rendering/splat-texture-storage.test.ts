@@ -2007,6 +2007,7 @@ describe('double-buffered ordering apply (atomic swap)', () => {
       const backing = new Uint32Array(capacity);
       backing.set(reversed(1000));
       const ordering = backing.subarray(0, 1000);
+      const expectedOrdering = Array.from(ordering);
 
       expect(
         writeSortedIndexOrdering(geometry, ordering, 1000, undefined, { adoptOrdering: true })
@@ -2014,12 +2015,12 @@ describe('double-buffered ordering apply (atomic swap)', () => {
       expect(pumpSortedIndexOrderingApply(geometry).flipped).toBe(true);
       expect(activeArr(geometry).buffer).toBe(backing.buffer);
       expect(activeArr(geometry).length).toBe(capacity);
-      expect(Array.from(activeArr(geometry).subarray(0, 1000))).toEqual(Array.from(ordering));
+      expect(Array.from(activeArr(geometry).subarray(0, 1000))).toEqual(expectedOrdering);
 
       geometry.instanceCount = 1000;
       expect(holdSortedIndexDrawForAppend(geometry, 1000, 1001)).toBe(1000);
       expect(releaseSortedIndexDrawHold(geometry)).toBe(true);
-      expect(Array.from(activeArr(geometry).subarray(0, 1000))).toEqual(Array.from(ordering));
+      expect(Array.from(activeArr(geometry).subarray(0, 1000))).toEqual(expectedOrdering);
       expect(activeArr(geometry)[1000]).toBe(1000);
     } finally {
       pool.dispose();

@@ -34,7 +34,7 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 **`sort-worker/state.ts`** — Shared mutable context:
 
 - `wasm: WasmModule | null` — WASM module instance (compiled or TypeScript fallback)
-- `nodes: Map<string, RegisteredNode>` — per-node center registry (nodeId → { generation, centers3, count })
+- `nodes: Map<string, RegisteredNode>` — per-node center registry (nodeId → { generation, centers3, count, orderingCapacity })
 - `requireWasm(ctx)` — throws when `ctx.wasm` is null (used before `initialize()`)
 - `NOT_INITIALIZED_MSG` — single source of truth for the error message
 
@@ -55,7 +55,7 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 ```typescript
 {
   wasm: WasmModule | null; // WASM module (compiled or TS fallback)
-  nodes: Map<string, RegisteredNode>; // nodeId → { generation, centers3, count }
+  nodes: Map<string, RegisteredNode>; // nodeId → { generation, centers3, count, orderingCapacity }
 }
 ```
 
@@ -135,7 +135,7 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 1. `requireWasm(ctx)` — throws if not initialized
 2. Lookup `node = ctx.nodes.get(nodeId)`
 3. **Stale-drop**: return `null` when `!node || node.generation !== params.generation`
-4. Allocate output: `ordering = new Uint32Array(node.count)`
+4. Allocate output to `orderingCapacity` when supplied, and sort into a `node.count`-length view of that buffer
 5. Time the backend call: `wasm.sort_splats_by_depth(node.centers3, params.modelView, ordering, node.count)`
 6. Return TRANSFERRED result: `transfer({ generation: node.generation, ordering, kernelMs, workerMs }, [ordering.buffer])`
 

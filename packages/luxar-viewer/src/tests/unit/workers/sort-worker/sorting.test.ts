@@ -53,6 +53,9 @@ describe('sort-worker sorting tasks', () => {
     const result = sortNode(ctx, { nodeId: 'n1', generation: 1, modelView: IDENTITY_MV })!;
     expect(Array.from(result.ordering)).toEqual([0, 2, 1]);
     expect(result.ordering.buffer.byteLength).toBe(5 * Uint32Array.BYTES_PER_ELEMENT);
+    const received = structuredClone(result, { transfer: [result.ordering.buffer] });
+    expect(Array.from(received.ordering)).toEqual([0, 2, 1]);
+    expect(received.ordering.buffer.byteLength).toBe(5 * Uint32Array.BYTES_PER_ELEMENT);
   });
 
   it('sortNode reports the kernelMs/workerMs timing split', () => {
