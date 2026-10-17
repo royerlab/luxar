@@ -18,8 +18,8 @@ Per-geometry picking sources for meshes. Self-contained — no cross-geometry im
 Three differences from the point/line/gsplat pick materials, all from
 `docs/specs/MESH_NODE_SPEC.md` §6.5:
 
-- **The element id is a built-in, not an attribute.** Mesh has no per-triangle depth sort, so
-  there is no `aSortedIndex` indirection and no `luxarElementIdParts()` call — the id is
+- **The element id is a built-in, not an attribute.** Mesh depth sorting permutes whole index
+  triples, so there is no `aSortedIndex` indirection or `luxarElementIdParts()` call — the id is
   `gl_VertexID` (a stable per-**vertex** ordinal under an indexed draw), split by the shared
   `luxarElementIdSplit()`. A face ordinal would be renumbered on every slice change, since only
   the index buffer is rewritten; a vertex ordinal is invariant, and it indexes the per-vertex

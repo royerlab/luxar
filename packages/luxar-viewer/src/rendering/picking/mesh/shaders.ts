@@ -5,9 +5,9 @@
  * **built-in** rather than an attribute. Three structural differences from its
  * siblings, all from spec §6.5:
  *
- * 1. **No `aSortedIndex` indirection.** Mesh has no per-triangle depth sort (§9),
- *    so there is no draw-slot → storage-slot mapping and no `luxarElementIdParts()`
- *    call. The element id is `gl_VertexID`, split by the same shared
+ * 1. **No `aSortedIndex` indirection.** Mesh depth sorting permutes whole index
+ *    triples, so there is no draw-slot → storage-slot mapping and no
+ *    `luxarElementIdParts()` call. The element id is `gl_VertexID`, split by the same shared
  *    `luxarElementIdSplit()` the sorted-index helper uses, so both paths agree
  *    with `voteWinner`'s recombination by construction.
  * 2. **Vertex granularity, not element granularity.** The draw is indexed
