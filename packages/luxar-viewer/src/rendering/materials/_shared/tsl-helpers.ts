@@ -60,7 +60,8 @@ export type TSLNode = any;
 
 /** Fetch an element texel without applying the texture's UV matrix to its integer coordinate. */
 export function loadTexel(textureNode: TSLNode, coord: TSLNode): TSLNode {
-  // TextureNode.load() clones the base node, so disable the matrix on the clone.
+  // three r185: TextureNode.load -> sample -> clone rebuilds from a null UV node,
+  // resetting updateMatrix to true. Disable it on the returned clone.
   return textureNode.load(coord).setUpdateMatrix(false);
 }
 
