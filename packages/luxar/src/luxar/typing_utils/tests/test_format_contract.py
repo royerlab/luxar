@@ -439,7 +439,7 @@ CURRENT_VERSION_CLAIMS: tuple[tuple[str, str], ...] = (
     ),
     (
         "packages/luxar/src/luxar/cli/README.md",
-        r"standalone `\.gsplats\.zarr` is a v(\d+\.\d+) node subtree",
+        r"standalone `\.gsplats\.zarr`[^\n]*?v(\d+\.\d+) node subtree",
     ),
     (
         "packages/luxar/src/luxar/cli/README.md",

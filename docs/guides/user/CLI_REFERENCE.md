@@ -398,7 +398,7 @@ in [Formats & migration](./FORMAT_AND_MIGRATION.md).
 luxar gsplat info              # Dataset statistics (splat count, dimensions, bounds, LOD structure)
 luxar gsplat doctor           # Diagnose standalone gsplats or scene partitions (--fix repairs in place)
 luxar gsplat napari           # Open a dataset in napari for visual inspection
-luxar gsplat view             # Open a .gsplats.zarr directly in the web viewer
+luxar gsplat view             # Open a .gsplats.zarr in the web viewer (temp convert scene; --raw = as stored)
 luxar gsplat compare          # Compare reconstruction quality vs a reference volume (PSNR/SSIM/MSE)
 luxar gsplat annotate-quality # Retrofit Q·e quality stamps onto an existing dataset, in place
 ```

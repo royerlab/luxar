@@ -123,6 +123,11 @@ class FitPipelineCtx:
     voxel_size: "Optional[tuple[float, ...]]" = None
     denoise_effective_h: Optional[float] = None
     denoise_norm_range: "Optional[tuple[float, float]]" = None
+    #: Output frame (spacing stamps + ``--region`` offset) applied at save time;
+    #: a :class:`~luxar.cli.gsplat_ops.voxel_frame.FitFrame`.
+    fit_frame: "Any" = None
+    #: The ``--region`` spec verbatim, forwarded to ``-j N`` tile workers.
+    region: Optional[str] = None
     dimension_metadata: "Optional[list[dict[str, str]]]" = None
     min_extent: Optional[float] = None
     reseed_sigma: Optional[float] = None
@@ -937,6 +942,11 @@ def dispatch_parallel_tiled(
                 denoise_search_distance=ctx.denoise_search_distance,
                 denoise_backend=ctx.denoise_backend,
                 denoise_2d=ctx.denoise_2d,
+                # Workers re-read the input: they need the same crop and the same
+                # spacing (a CLI --voxel-size or --physical lives on this
+                # command line, not in a --config they could re-read).
+                voxel_size=ctx.voxel_size,
+                region=ctx.region,
                 min_extent=ctx.min_extent,
                 reseed_sigma=ctx.reseed_sigma,
                 # Empty (windowed-to-zero) tiles must not crash the
@@ -1005,6 +1015,7 @@ def dispatch_parallel_tiled(
                 ctx.output_path,
                 compress=ctx.compress,
                 verbose=ctx.verbose,
+                frame=ctx.fit_frame,
                 dimension_metadata=ctx.dimension_metadata,
             )
 
@@ -1770,6 +1781,7 @@ def rescale_and_save(
                 ctx.output_path,
                 compress=ctx.compress,
                 verbose=ctx.verbose,
+                frame=ctx.fit_frame,
                 dimension_metadata=ctx.dimension_metadata,
             )
     return result, n_splats, is_leaf
@@ -1815,14 +1827,21 @@ def save_fit_output(
     *,
     compress: "Optional[Literal['zip', 'tar.gz']]",
     verbose: bool,
+    frame: "Any" = None,
     dimension_metadata: "Optional[list[dict[str, str]]]" = None,
 ) -> int:
     """Save a flat ``GSplatData`` leaf or a ``kind=partition`` tree node.
 
+    ``frame`` (a :class:`~luxar.cli.gsplat_ops.voxel_frame.FitFrame`) moves a
+    ``--region`` crop's splats into full-volume coordinates and stamps the
+    spacing/region provenance into ``fitting/`` first.
+
     Returns the splat count for the summary line.
     """
+    from luxar.cli.gsplat_ops.voxel_frame import apply_fit_frame
     from luxar.gsplats.gsplat_data import GSplatData
 
+    result = apply_fit_frame(result, frame)
     root_attrs = (
         {"dimension_metadata": dimension_metadata}
         if dimension_metadata is not None

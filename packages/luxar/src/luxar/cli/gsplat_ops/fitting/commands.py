@@ -224,6 +224,27 @@ def calibrate_command(
         "is a flat row-major index across all channel-like axes, and more than "
         "one time axis is rejected. Spatial axes stay in the given order.",
     ),
+    voxel_size: Optional[str] = typer.Option(
+        None,
+        "--voxel-size",
+        help="Physical voxel spacing Z,Y,X in micrometres (array axis order), "
+        "as for `fit`. Each K is fitted with it (so K* matches a physical fit) "
+        "and scored on the voxel grid; K* is a count either way. Takes "
+        "precedence over --physical.",
+    ),
+    physical: bool = typer.Option(
+        False,
+        "--physical",
+        help="Use the voxel size the file records (OME-Zarr NGFF, OME-TIFF, "
+        "ImageJ), as `fit --physical` does. Warns when there is none.",
+    ),
+    region: Optional[str] = typer.Option(
+        None,
+        "--region",
+        help="Calibrate on a crop: z0:z1,y0:y1,x0:x1 (numpy-style voxel spans; "
+        "empty = whole axis). K* is then the budget for THAT crop: pass it to "
+        "`fit --region` with the same spans. Excludes --auto-region.",
+    ),
     # Regime-robust extensions (all opt-in; defaults preserve manuscript behaviour)
     k_star_metric: str = typer.Option(
         "psnr_minmax",
@@ -375,6 +396,9 @@ def calibrate_command(
         pdf_report=pdf_report,
         keep_fits=keep_fits,
         quiet=quiet,
+        voxel_size=voxel_size,
+        physical=physical,
+        region_spec=region,
     )
 
 

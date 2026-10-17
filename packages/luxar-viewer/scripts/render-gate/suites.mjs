@@ -206,7 +206,7 @@ export function judgeMetric(m, samples) {
   const base = pick('base');
   const base2 = pick('base2');
   const cand = pick('cand');
-  const common = { kind, better };
+  const common = { kind, better, report: !!m.report };
   if (kind === 'counter')
     return {
       ...common,
@@ -425,6 +425,11 @@ function applyExpectations(row, c, expected) {
   }
 }
 
+/** Whether any metric that contributes to the case verdict regressed. */
+export function rowRegressed(caseMetrics, judged) {
+  return caseMetrics.some((m) => !m.report && judged[m.name].verdict === 'fail');
+}
+
 /**
  * Run one manifest suite.
  *
@@ -511,10 +516,8 @@ export async function runSuite({
         continue;
       }
       for (const m of c.metrics ?? []) row.metrics[m.name] = judgeMetric(m, samples);
-      // A `report` metric is judged and shown but cannot fail the row (a timed
-      // total whose per-tick twin is the one that gates).
-      const gating = (c.metrics ?? []).filter((m) => !m.report);
-      if (gating.some((m) => row.metrics[m.name].verdict === 'fail')) {
+      // A `report` metric is judged and shown but does not enter the row verdict.
+      if (rowRegressed(c.metrics ?? [], row.metrics)) {
         row.status = 'fail';
         row.reasons.push('regression');
         row.failures.push('a metric regressed beyond its floor');
@@ -566,8 +569,9 @@ export function suiteMarkdown(name, rows) {
     }
     for (const [m, v] of entries) {
       const exp = v.expected ? ` [expect ${v.expected}: ${v.met ? 'met' : 'UNMET'}]` : '';
+      const report = v.report ? ' (report)' : '';
       lines.push(
-        `| ${r.case} | ${r.backend} | ${m} | ${fmt(v.baseMedian)} | ${fmt(v.candMedian)} | ${fmt(v.ratio)} | ${v.verdict}${exp} |`
+        `| ${r.case} | ${r.backend} | ${m} | ${fmt(v.baseMedian)} | ${fmt(v.candMedian)} | ${fmt(v.ratio)} | ${v.verdict}${report}${exp} |`
       );
     }
     if (r.status !== 'pass')
