@@ -689,6 +689,16 @@ it across each gsplat structure**.
 > The factor must be shared across every substitutive level and additive rung —
 > a per-level factor scales the levels against each other and the brightness pops
 > at every LOD switch. See `core/group/gsplats_pipeline/amplitude_norm.py`.
+>
+> **`luxar gsplat convert` goes one step further: auto exposure.** Per-splat
+> normalisation ignores overlap, and additive blending SUMS every splat along the
+> view ray, so a dense fit still opens as a saturated blob. By default convert
+> predicts the opening view's per-pixel sum (`luxar.gsplats.exposure`) and dims
+> the amplitudes — never brightens — so its p99.9 equals `--target-brightness`
+> (2.0; 0.9 under a clipping tone mapping), or lower when a side view or another
+> timepoint would exceed 4x that, recording the total factor plus `amplitude_normalization_mode="projected"`
+> and the prediction (`docs/guides/user/LUXAR_ZARR_FORMAT.md` § "GSplats amplitude
+> provenance"). `--no-auto-exposure` restores the per-splat normalisation alone.
 
 **Window harmonization (#1691)**. A per-node window is right for one flat leaf
 and wrong for a multi-node structure: on a `kind=lod` ladder a coarse level's

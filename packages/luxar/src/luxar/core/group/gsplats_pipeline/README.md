@@ -41,7 +41,9 @@ gsplats_pipeline/
 The public data, file, and volume doors normalize fitted raw-unit amplitudes
 before writing a scene. ``True`` / ``"auto"`` maps a robust p99.9 reference to
 1.0 only when it exceeds 1.0, ``False`` opts out, and a positive number sets an
-explicit target. A child inserted directly into a ``kind=lod`` or
+explicit target; ``AmplitudeScale(f)`` multiplies by exactly ``f`` (what
+``gsplat convert``'s auto exposure and ``--scale-intensity`` pass, so the stamped
+factor divides back bit-for-bit). A child inserted directly into a ``kind=lod`` or
 ``kind=partition`` group defaults to no normalization because its exposure must
 stay shared with its siblings; whole structures still use one pooled factor.
 Partition parts share one pooled reference; substitutive LOD groups contribute
