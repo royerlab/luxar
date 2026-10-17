@@ -1053,6 +1053,15 @@ def compare_quality(
         "is decimated the same way (anti-aliased, strided) and the splats mapped "
         "onto that grid. Default: score at the source resolution.",
     ),
+    whole_volume: bool = typer.Option(
+        False,
+        "--whole-volume",
+        help="Score a --region crop fit over the WHOLE reference. By default a "
+        "crop fit compared against its full source volume is scored on the "
+        "region it fitted (fitting/source_region), so the foreground mask "
+        "matches the one the fit stamped; outside the region every structure "
+        "counts as error.",
+    ),
     mask: Optional[Path] = typer.Option(
         None,
         "--mask",
@@ -1108,7 +1117,10 @@ def compare_quality(
     with its stored voxel_size. Partition and nested stores are scored over
     their default-rendered selection: all parts and each LOD group's finest
     level. The compression ratio covers the whole store, including coarse
-    levels that are not scored.
+    levels that are not scored. A --region crop fit is scored on the region it
+    fitted (--whole-volume for all of the reference). Beside the foreground
+    PSNR it prints the PSNR a noise-free model would score against this noisy
+    reference (from the noise sigma measured in the foreground) and a verdict.
 
     Examples:
         luxar gsplat compare fitted.gsplats.zarr original.tiff
@@ -1135,6 +1147,7 @@ def compare_quality(
             fg_threshold=fg_threshold,
             voxel_size=voxel_size,
             at_fit_resolution=at_fit_resolution,
+            whole_volume=whole_volume,
             output_json=output_json,
             quiet=quiet,
         )

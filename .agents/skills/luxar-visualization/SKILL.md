@@ -98,6 +98,27 @@ Two things trip up nearly everyone who views their own fitted volume:
   amplitudes in source data units and auto-exposes a separate `display_gain`
   (dimmed, never brightened, so the opening view is not saturated;
   `--display-gain`, `--target-brightness`, `--no-auto-exposure`).
+  **The Python adders do NOT auto-expose** (they normalise each splat, not the
+  sum along a ray), so a multichannel scene built with `add_gsplats_from_file`
+  per channel opens white. Get convert's exposure per node with
+  `luxar.gsplats.exposure.auto_exposure_attrs`, passing the same `dim_order` /
+  `colormap` (and your `camera` / `tone_mapping` when not the defaults):
+
+  ```python
+  from luxar.gsplats.exposure import auto_exposure_attrs
+  camera = CameraConfig(up=(0, -1, 0), view_axis="xy")  # the scene's ViewerConfig camera
+  zyx = ["z", "y", "x"]
+  for name, path, cmap in [("membrane", "mem.gsplats.zarr", "bop_orange"),
+                           ("nuclei", "nuc.gsplats.zarr", "bop_blue")]:
+      scene.add_gsplats_from_file(
+          name, path, dim_order=zyx, colormap=cmap, layer=True,
+          blending_mode="additive",
+          **auto_exposure_attrs(path, dim_order=zyx, colormap=cmap, camera=camera),
+      )
+  ```
+
+  Pass the store PATH (it reads the unit labels' stats and takes tiled fits).
+  Each channel is exposed on its own; where channels overlap their colours add.
 
 ## Dimensions = the coordinate system
 

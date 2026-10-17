@@ -748,3 +748,141 @@ def test_dense_view_hint_fires_only_above_the_dense_threshold() -> None:
     assert hint is not None
     assert "--blending-mode volumetric" in hint
     assert f"~{DENSE_PROJECTED_SUM * 1.5:.0f}" in hint
+
+
+def test_python_recipe_gets_the_gain_convert_stamps(tmp_path: Path) -> None:
+    """``auto_exposure_attrs`` is convert's exposure for the Python adders.
+
+    The adders' own default (per-splat normalisation) opens this dense column as
+    a white blob; the helper hands them convert's dimmed ``display_gain``, so a
+    scene built from Python opens the way ``gsplat convert`` does.
+    """
+    from luxar import CameraConfig, Dimensions, ViewerConfig
+    from luxar.gsplats.exposure import auto_exposure_attrs
+
+    src = _dense(tmp_path / "dense.gsplats.zarr")
+    converted = tmp_path / "convert.luxar.zarr"
+    _convert(CliRunner(), src, converted)
+    camera = CameraConfig(up=(0, -1, 0), view_axis="xy")
+    order = ["z", "y", "x"]
+
+    attrs = auto_exposure_attrs(src, dim_order=order, camera=camera)
+    assert attrs["normalize_amplitudes"] is False
+    assert attrs["amplitude_normalization_mode"] == "projected"
+    assert attrs["projected_sum_axis"] == "z"
+    assert attrs["display_gain"] == pytest.approx(_gain(converted), rel=1e-6)
+    assert attrs["display_gain"] < _per_splat(src)
+
+    out = tmp_path / "python.luxar.zarr"
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions.default_3d(),
+            viewer_config=ViewerConfig(camera=camera),
+        )
+        scene.add_gsplats_from_file(
+            "gsplats", src, dim_order=order, blending_mode="additive", **attrs
+        )
+    stored = read_node_attrs(out / "gsplats")
+    assert stored["display_gain"] == pytest.approx(attrs["display_gain"])
+    # Data units kept: the stored amplitudes are the fit's, not rescaled.
+    np.testing.assert_allclose(
+        np.sort(_stored_amplitudes(out)),
+        np.sort(GSplatData.load(src).amplitudes),
+        rtol=1e-2,
+    )
+
+
+def test_python_recipe_keeps_per_splat_gain_off_summing_modes(tmp_path: Path) -> None:
+    from luxar.gsplats.exposure import auto_exposure_attrs
+
+    src = _dense(tmp_path / "dense.gsplats.zarr")
+    attrs = auto_exposure_attrs(src, dim_order=["z", "y", "x"], blending_mode="max")
+    assert attrs["amplitude_normalization_mode"] == "per_splat"
+    assert attrs["display_gain"] == pytest.approx(_per_splat(src), rel=1e-3)
+
+
+def test_python_recipe_needs_dimensions_beyond_plain_3d(tmp_path: Path) -> None:
+    from luxar.gsplats.exposure import auto_exposure_attrs
+
+    src = _dense(tmp_path / "dense.gsplats.zarr")
+    with pytest.raises(ValueError, match="dimensions="):
+        auto_exposure_attrs(src, dim_order=["a", "b", "c"])
+
+
+def _labelled(path: Path) -> Path:
+    """A uint16-sourced store with a fit basis: labelled ``counts above background``."""
+    rng = np.random.default_rng(5)
+    n = 400
+    GSplatData(
+        centers=np.column_stack(
+            [rng.uniform(0, 40, n), rng.normal(10, 2, n), rng.normal(10, 2, n)]
+        ).astype(np.float32),
+        amplitudes=rng.uniform(200, 900, n).astype(np.float32),
+        cholesky_factors=np.tile(
+            np.array([1.5, 0, 1.5, 0, 0, 1.5], dtype=np.float32), (n, 1)
+        ),
+        stats={
+            "source_dtype": "uint16",
+            "intensity_range": 1000.0,
+            "image_min": 100.0,
+            "floor": 100.0,
+            "source_shape": [40, 20, 20],
+        },
+    ).save(path, include_fitting_info=True)
+    return path
+
+
+def test_python_recipe_is_source_consistent(tmp_path: Path) -> None:
+    """Path, node + stats and GSplatData + stats give the same gain AND labels;
+    without stats an in-memory source keeps the gain, the labels degrade."""
+    from luxar.gsplats.exposure import auto_exposure_attrs
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+    src = _labelled(tmp_path / "labelled.gsplats.zarr")
+    order = ["z", "y", "x"]
+    node, stats = load_gsplat_node(src, include_stats=True)
+    by_path = auto_exposure_attrs(src, dim_order=order)
+    assert by_path["amplitude_unit"] == "counts above background"
+    assert by_path["amplitude_offset"] == pytest.approx(100.0)
+    for source in (node, GSplatData.load(src)):
+        with_stats = auto_exposure_attrs(source, dim_order=order, stats=stats)
+        assert with_stats == pytest.approx(by_path)
+        bare = auto_exposure_attrs(source, dim_order=order)
+        assert bare["display_gain"] == pytest.approx(by_path["display_gain"])
+    assert auto_exposure_attrs(node, dim_order=order)["amplitude_unit"] == "a.u."
+    assert (
+        auto_exposure_attrs(GSplatData.load(src), dim_order=order)["amplitude_unit"]
+        == "data units above background"
+    )
+
+
+def test_python_recipe_takes_a_partition_by_path(tmp_path: Path) -> None:
+    from luxar.gsplats.exposure import auto_exposure_attrs
+
+    src = _labelled(tmp_path / "flat.gsplats.zarr")
+    part = _partition(CliRunner(), src, tmp_path / "part.gsplats.zarr")
+    attrs = auto_exposure_attrs(part, dim_order=["z", "y", "x"])
+    flat = auto_exposure_attrs(src, dim_order=["z", "y", "x"])
+    assert attrs["amplitude_normalization_mode"] == "projected"
+    assert attrs["display_gain"] == pytest.approx(flat["display_gain"], rel=0.05)
+
+
+def test_python_recipe_falls_back_when_a_hidden_dim_has_no_column(
+    tmp_path: Path,
+) -> None:
+    from luxar import Dimension, Dimensions
+    from luxar.gsplats.exposure import auto_exposure_attrs
+
+    src = _dense(tmp_path / "dense.gsplats.zarr")
+    dims = Dimensions(
+        [
+            Dimension("x", display=True),
+            Dimension("y", display=True),
+            Dimension("z", display=True),
+            Dimension("t", display=False, discrete=True, range=(0, 3), step=1),
+        ]
+    )
+    with pytest.warns(UserWarning, match="no center column"):
+        attrs = auto_exposure_attrs(src, dim_order=["z", "y", "x"], dimensions=dims)
+    assert attrs["amplitude_normalization_mode"] == "per_splat"
+    assert attrs["display_gain"] == pytest.approx(_per_splat(src), rel=1e-3)

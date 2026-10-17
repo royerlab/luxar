@@ -245,6 +245,20 @@ slices the reference, not the splat archive. `transform --scale-intensity` and
 offset, clamp or per-splat reweight drops the basis (`compare` warns); score
 before it.
 
+`compare` also prints a **noise ceiling**: the foreground PSNR a noise-free model
+would score against this noisy reference (`20 log10(peak / sigma)`, sigma measured
+in the foreground), with a verdict. On noise-limited data ~20 dB foreground can
+be the best possible: within 1 dB below the ceiling is "at the noise floor".
+Above it is never proof of fitted noise: 1-3 dB above is "ambiguous", >3 dB
+"undetermined", because sub-voxel structure (sparse puncta, hot pixels) inflates
+the noise estimate unseen. A scale check marks the ceiling UNRELIABLE when the
+finest band is not white (voxel-scale structure, or correlated noise from a
+deconvolved/upsampled/downscaled reference); by design that withholds the
+verdict on many clean, high-SNR volumes. JSON: `foreground_psnr_noise_ceiling_db`,
+`noise_ceiling_reliable`, `noise_sigma`, `noise_verdict`. A `--region` crop fit
+compared against its full source volume is scored on the region it fitted (the
+fit stamp's mask); `--whole-volume` scores all of it.
+
 ### Physical-unit fits: `render`/`compare` map them back to voxels
 
 If the fit was run with a physical `voxel_size`, the centres are in **microns**, not

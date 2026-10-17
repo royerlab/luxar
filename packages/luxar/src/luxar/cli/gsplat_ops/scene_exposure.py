@@ -72,81 +72,22 @@ class ConvertExposure:
     normalize: NormalizeSpec = False
 
 
-def _column_of(name: str, orientation: "ConvertOrientation") -> int:
-    """Center column holding the scene dimension ``name``."""
-    if orientation.dim_order is not None:
-        return list(orientation.dim_order).index(name)
-    return orientation.dimensions.names.index(name)
-
-
-def _world_index(letter: str, displayed: List[str]) -> int:
-    """Displayed position of the dimension named ``letter`` (as the camera does)."""
-    lowered = [name.lower() for name in displayed]
-    return lowered.index(letter) if letter in lowered else "xyz".index(letter)
-
-
 def opening_view_columns(
     orientation: "ConvertOrientation",
 ) -> Tuple[List[int], Optional[int], Optional[str]]:
-    """Displayed center columns, the view-axis column and its scene name.
+    """:func:`luxar.gsplats.exposure.opening_view_columns` for convert's layout."""
+    from ...gsplats.exposure import opening_view_columns as _columns
 
-    The camera's ``view_axis`` (``xy`` faces the XY plane, looking along the
-    third displayed axis); without one, the viewer's default looks along the
-    third displayed dimension. A planar scene has no view axis.
-    """
-    dims = orientation.dimensions
-    displayed = [dims.dimensions[i].name for i in dims.displayed]
-    columns = [_column_of(name, orientation) for name in displayed]
-    if len(displayed) != 3:
-        return columns, None, None
-    camera = orientation.camera
-    depth = 2
-    if camera is not None and camera.view_axis is not None:
-        plane = {_world_index(c, displayed) for c in camera.view_axis}
-        depth = ({0, 1, 2} - plane).pop()
-    return columns, columns[depth], displayed[depth]
+    return _columns(orientation.dimensions, orientation.dim_order, orientation.camera)
 
 
 def opening_hidden_axes(
     orientation: "ConvertOrientation", centers: Any
 ) -> List["HiddenAxis"]:
-    """Each hidden scene dimension as a :class:`HiddenAxis` at its opening position.
+    """:func:`luxar.gsplats.exposure.opening_hidden_axes` for convert's layout."""
+    from ...gsplats.exposure import opening_hidden_axes as _hidden
 
-    The viewer's ``SceneDimsManager.defaultPosition``: a discrete (or
-    categorical) axis opens at its range minimum, a continuous one at its centre.
-    """
-    import numpy as np
-
-    from ...gsplats.exposure import HiddenAxis
-
-    axes: List[HiddenAxis] = []
-    for dim in orientation.dimensions.dimensions:
-        if dim.display:
-            continue
-        column = _column_of(dim.name, orientation)
-        values = np.asarray(centers[:, column], dtype=np.float64)
-        if dim.range is not None:
-            lo, hi = float(dim.range[0]), float(dim.range[1])
-        else:
-            lo, hi = float(values.min()), float(values.max())
-        discrete = bool(dim.discrete or dim.categories)
-        step = float(dim.step or 1.0)
-        position = lo if discrete else 0.5 * (lo + hi)
-        axes.append(HiddenAxis(column, position, discrete, step, (lo, hi)))
-    return axes
-
-
-def _leaf_truncation(node: "GSplatNode") -> float:
-    """The truncation radius the opening leaves render with."""
-    from ...gsplats.tree import iter_default_leaves
-    from ...typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
-
-    for leaf in iter_default_leaves(node):
-        for sub in leaf.additive_sublods:
-            radius = getattr(sub, "truncation_radius", None)
-            if radius:
-                return float(radius)
-    return DEFAULT_TRUNCATION_RADIUS
+    return _hidden(orientation.dimensions, centers, orientation.dim_order)
 
 
 def _gain_attrs(
@@ -262,6 +203,7 @@ def resolve_convert_exposure(
         SUMMING_BLENDING_MODES,
         collect_default_splats,
         default_target_brightness,
+        opening_truncation_radius,
         plan_projected_exposure,
         stamped_amplitude_window,
     )
@@ -299,7 +241,7 @@ def resolve_convert_exposure(
             opacity=opacity,
             data_range=stamped_amplitude_window(node, per_splat),
             target=target,
-            trunc=_leaf_truncation(node),
+            trunc=opening_truncation_radius(node),
         )
     except ValueError as exc:
         return _exposure(
@@ -346,7 +288,11 @@ def predict_volumetric_ray_mass(
     """
     import numpy as np
 
-    from ...gsplats.exposure import collect_default_splats, plan_projected_exposure
+    from ...gsplats.exposure import (
+        collect_default_splats,
+        opening_truncation_radius,
+        plan_projected_exposure,
+    )
 
     centers, chol, amps, _colors = collect_default_splats(node)
     if np.asarray(amps).size == 0:
@@ -362,7 +308,7 @@ def predict_volumetric_ray_mass(
             display_dims=columns,
             hidden=opening_hidden_axes(orientation, centers),
             opacity=opacity,
-            trunc=_leaf_truncation(node),
+            trunc=opening_truncation_radius(node),
         )
     except ValueError:
         return None

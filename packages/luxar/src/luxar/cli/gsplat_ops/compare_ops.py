@@ -18,6 +18,12 @@ reconciliations, each of which used to be the user's problem:
   reported beside it, labelled.
 * **Foreground.** Foreground PSNR/SSIM are taken over a smoothed-Otsu mask by
   default, or over ``--mask`` / ``--fg-threshold``.
+* **Region.** A ``--region`` crop fit is scored on the region it fitted when the
+  reference is the full volume (``--whole-volume`` scores all of it), so the
+  foreground mask is the one the fit stamped.
+* **Noise.** The foreground PSNR is put next to the score a noise-free model
+  would get against this noisy reference (``20 log10(peak / sigma)``, sigma
+  measured in the foreground), with a one-line verdict.
 """
 
 from __future__ import annotations
@@ -72,6 +78,7 @@ class CompareOptions:
     fg_threshold: Optional[float] = None
     voxel_size: Optional[str] = None
     at_fit_resolution: bool = False
+    whole_volume: bool = False
     output_json: Optional[Path] = None
     quiet: bool = False
 
@@ -123,6 +130,13 @@ class _Context:
     #: back float32 whatever the file holds): the same ``source_bytes`` basis
     #: ``gsplat info`` and ``fit`` quote. Taken before any decimation.
     ref_decoded_bytes: int = 0
+    #: The ``--region`` crop of the reference that is scored (source voxels), or
+    #: ``None`` when the whole reference is.
+    scored_region: Optional[tuple[tuple[int, int], ...]] = None
+    #: The reference's shape as loaded, before any crop or decimation.
+    loaded_shape: tuple[int, ...] = ()
+    #: Region of a crop fit scored with ``--whole-volume`` (source voxels).
+    fitted_region: Optional[tuple[tuple[int, int], ...]] = None
 
 
 def silenced_when(quiet: bool) -> contextlib.AbstractContextManager[None]:
@@ -223,13 +237,47 @@ def _decoded_bytes(ref: "np.ndarray", info: dict[str, Any]) -> int:
     return int(ref.size) * int(itemsize)
 
 
+def _fitted_region_crop(
+    ref_shape: tuple[int, ...], stats: Any, dimension_metadata: Any
+) -> Optional[tuple[tuple[int, int], ...]]:
+    """The ``--region`` a crop fit was fitted on, when ``ref_shape`` contains it.
+
+    ``None`` unless the store records a ``fitting/source_region`` (and is not a
+    stacked store, whose grids do not describe its centers), the reference is
+    NOT already the crop, and the region lies inside the reference.
+    """
+    from luxar.gsplats.scoring_grid import is_stacked_store, source_region_bounds
+
+    if is_stacked_store(stats, len(ref_shape), dimension_metadata):
+        return None
+    bounds = source_region_bounds(stats, len(ref_shape))
+    if bounds is None:
+        return None
+    crop_shape = tuple(stop - start for start, stop in bounds)
+    if crop_shape == tuple(ref_shape):
+        return None
+    if any(stop > n for (_, stop), n in zip(bounds, ref_shape, strict=True)):
+        return None
+    return bounds
+
+
+def _format_region(bounds: tuple[tuple[int, int], ...]) -> str:
+    return ",".join(f"{a}:{b}" for a, b in bounds)
+
+
 def _load_reference(
-    opts: CompareOptions, grid: _ScoringGrid
+    opts: CompareOptions, grid: _ScoringGrid, stats: Any, ctx: _Context
 ) -> tuple["np.ndarray", int]:
     """The reference volume, decimated like the fit under ``--at-fit-resolution``.
 
-    Also returns its decoded size in the stored element type (before any
-    decimation), the source side of the compression ratio.
+    A ``--region`` crop fit scored against its FULL source volume is cropped to
+    the region it fitted first (unless ``--whole-volume``): outside the region
+    the fit saw nothing, so scoring there counts every structure it was never
+    asked to model as error, and the default foreground mask (an Otsu threshold
+    of the whole reference) would differ from the one the fit stamped.
+
+    Also returns its decoded size in the stored element type (before any crop
+    or decimation), the source side of the compression ratio.
 
     The domain loader, not the CLI wrapper: its ImportError (missing tifffile)
     must reach ``exit_with_error`` so ``-q`` still reports it on stderr.
@@ -246,6 +294,17 @@ def _load_reference(
         info=info,
     )
     decoded_bytes = _decoded_bytes(ref, info)
+    ctx.loaded_shape = tuple(ref.shape)
+    region = _fitted_region_crop(ctx.loaded_shape, stats, ctx.dimension_metadata)
+    if region is not None and not opts.whole_volume:
+        ref = ref[tuple(slice(a, b) for a, b in region)]
+        ctx.scored_region = region
+        aprint(
+            f"Region: scoring the fitted region {_format_region(region)} of the "
+            f"{ctx.loaded_shape} reference (--whole-volume scores all of it)"
+        )
+    elif region is not None:
+        ctx.fitted_region = region
     if grid.downscale_factors is not None and len(grid.downscale_factors) == ref.ndim:
         from luxar.gsplats.fitting.downscale import downscale_volume
 
@@ -259,6 +318,7 @@ def _check_source_grid(
     ref_shape: tuple[int, ...],
     grid: _ScoringGrid,
     dimension_metadata: Any = None,
+    cropped: bool = False,
 ) -> Optional[tuple[float, ...]]:
     """Check the reference against the fitted grid; return a crop's grid origin.
 
@@ -279,7 +339,7 @@ def _check_source_grid(
         return None
     if tuple(int(n) for n in expected) == tuple(ref_shape):
         origin = grid.origin(start)
-        if start is not None:
+        if start is not None and not cropped:
             aprint(f"Grid: crop fit, reference is the crop (start {list(start)})")
         return origin
     if start is None:
@@ -291,7 +351,8 @@ def _check_source_grid(
     else:
         aprint(
             f"Grid: crop fit (start {list(start)}) scored against a reference "
-            "that is not the crop; using full-volume coordinates"
+            "that is not the crop; using full-volume coordinates. Everything "
+            "outside the fitted region counts as error"
         )
     return None
 
@@ -322,13 +383,18 @@ def reference_on_dataset_basis(
 
 
 def _load_mask(
-    opts: CompareOptions, grid: _ScoringGrid, shape: tuple[int, ...]
+    opts: CompareOptions, grid: _ScoringGrid, shape: tuple[int, ...], ctx: _Context
 ) -> "np.ndarray":
-    """The ``--mask`` volume (foreground = voxels > 0), on the scored grid."""
+    """The ``--mask`` volume (foreground = voxels > 0), on the scored grid.
+
+    A mask of the full reference's shape is cropped with it to the fitted region.
+    """
     from luxar.io.volume import load_volume
 
     assert opts.mask is not None
     mask = load_volume(opts.mask)
+    if ctx.scored_region is not None and tuple(mask.shape) == ctx.loaded_shape:
+        mask = mask[tuple(slice(a, b) for a, b in ctx.scored_region)]
     if grid.downscale_factors is not None and len(grid.downscale_factors) == mask.ndim:
         mask = mask[tuple(slice(None, None, f) for f in grid.downscale_factors)]
     if tuple(mask.shape) != tuple(shape):
@@ -353,7 +419,7 @@ def _foreground_field(
     if opts.mask is not None:
         ctx.foreground_method = "mask"
         aprint(f"Foreground: --mask {opts.mask.name} (voxels > 0)")
-        return _load_mask(opts, grid, tuple(ref.shape)), 0.0
+        return _load_mask(opts, grid, tuple(ref.shape), ctx), 0.0
     if opts.fg_threshold is not None:
         ctx.foreground_method = "threshold"
         ctx.foreground_threshold_raw = float(opts.fg_threshold)
@@ -391,13 +457,20 @@ def _render_shape(
 _EXTENT_WARN_FRACTION = 0.5
 
 
-def warn_if_outside_grid(centers: "np.ndarray", shape: tuple[int, ...]) -> None:
+def warn_if_outside_grid(
+    centers: "np.ndarray",
+    shape: tuple[int, ...],
+    *,
+    extent_shape: Optional[tuple[float, ...]] = None,
+) -> None:
     """Warn when the splat centers do not sit in the voxel grid they render on.
 
     Two symptoms of a frame mismatch: most centers fall OUTSIDE the grid
     (physical units with spacing > 1, a stale stamp), or all of them fall inside
     a corner, spanning well under half the grid on every spatial axis (physical
-    units with sub-unit spacing).
+    units with sub-unit spacing). ``extent_shape`` is the extent the splats are
+    EXPECTED to span when it is smaller than the grid — a ``--region`` crop fit
+    scored on its full source volume fills only its region, which is no corner.
     """
     from luxar.gsplats.scoring_grid import (
         fraction_inside_grid,
@@ -417,12 +490,165 @@ def warn_if_outside_grid(centers: "np.ndarray", shape: tuple[int, ...]) -> None:
             f"grid {shape}. {advice}"
         )
         return
-    extent = spatial_extent_fraction(centers, shape)
+    extent = spatial_extent_fraction(
+        centers, shape if extent_shape is None else extent_shape
+    )
     if extent < _EXTENT_WARN_FRACTION:
         aprint(
             f"WARNING: the splat centers span at most {extent:.0%} of the voxel "
             f"grid {shape} on any spatial axis (crammed into a corner?). {advice}"
         )
+
+
+def _resolve_scored_foreground(
+    ref_t: Any, field_t: Any, threshold: Optional[float]
+) -> tuple[Any, float]:
+    """``(field, threshold)`` with foreground = ``field > threshold``, resolved once.
+
+    The caller's field (``--mask``), the reference itself (``--fg-threshold``),
+    else the shared default (:func:`luxar.gsplats.metrics.default_foreground`).
+    Resolved here rather than inside the metrics so the noise reference reuses
+    the very mask that was scored.
+    """
+    from luxar.gsplats.metrics import default_foreground, otsu_threshold
+
+    if field_t is None and threshold is None:
+        return default_foreground(ref_t)
+    if field_t is None:
+        return ref_t, float(threshold)  # type: ignore[arg-type]
+    if threshold is None:
+        threshold = otsu_threshold(field_t)
+    return field_t, float(threshold)
+
+
+def noise_reference(
+    ref: "np.ndarray", mask: "np.ndarray", metrics: dict[str, Any]
+) -> dict[str, Any]:
+    """The foreground PSNR a NOISE-FREE model would score against ``ref``.
+
+    A perfect, noise-free reconstruction still differs from a noisy reference
+    by the noise, so its foreground MSE is about ``sigma**2`` and its PSNR
+    ``20 log10(peak / sigma)`` — the ceiling against which a foreground PSNR is
+    judged. ``sigma`` is measured in the foreground
+    (:func:`~luxar.gsplats.calibration.noise_floor.estimate_masked_noise`: shot
+    noise is larger there than in the background); ``peak`` is the robust peak
+    the headline uses. Returns the ``noise_*`` keys of the JSON record (empty
+    when there is no foreground or no measurable sigma).
+
+    An estimate, good to about a dB on oversampled microscopy (A549, CTC t000:
+    20.9 dB, against 21.0 dB for raw-vs-lightly-blurred data). It assumes noise
+    independent between neighbouring voxels, so correlated noise (a deconvolved
+    or upsampled reference) reads low. Structure near the voxel scale reads as
+    noise and inflates sigma. The estimator's scale check flags structure at
+    roughly the voxel scale and coarser (the ceiling is then reported as
+    unreliable, with no verdict), but it is BLIND to structure finer than ~0.7
+    voxel in-plane (sparse undersampled puncta, hot pixels): its flat spectrum
+    keeps the scale ratio near 1. A score above the ceiling is therefore never
+    called definitively (see :func:`noise_verdict`).
+    """
+    from luxar.gsplats.calibration.noise_floor import estimate_masked_noise
+
+    fg_psnr = float(metrics.get("foreground_psnr_robust_db", float("nan")))
+    peak = float(metrics.get("robust_data_range", float("nan")))
+    if not mask.any() or not math.isfinite(fg_psnr) or not peak > 0.0:
+        return {}
+    noise = estimate_masked_noise(ref, mask)
+    sigma = noise.sigma
+    if not math.isfinite(sigma):
+        return {}
+    out: dict[str, Any] = {
+        "noise_sigma": sigma,
+        "noise_sigma_method": "foreground Haar HH MAD (in-plane, intensity-binned)",
+        "noise_scale_ratio": noise.scale_ratio,
+        "noise_ceiling_reliable": noise.reliable,
+    }
+    if sigma <= 0.0:
+        out["noise_verdict"] = "noise-free reference"
+        return out
+    ceiling = 20.0 * math.log10(peak / sigma)
+    gap = fg_psnr - ceiling
+    out["foreground_psnr_noise_ceiling_db"] = ceiling
+    out["foreground_psnr_vs_noise_ceiling_db"] = gap
+    out["model_error_over_noise_sigma"] = model_error_over_noise(gap)
+    out["noise_verdict"] = (
+        noise_verdict(gap, ceiling) if noise.reliable else _UNRELIABLE_VERDICT
+    )
+    return out
+
+
+_UNRELIABLE_VERDICT = (
+    "undetermined: the finest band is not white (voxel-scale structure or "
+    "spatially correlated noise, e.g. a deconvolved, upsampled or "
+    "--at-fit-resolution downscaled reference), so the ceiling is unreliable"
+)
+
+#: Above the ceiling by more than this the score is ambiguous: the model may be
+#: reproducing noise, or the reference may have sub-voxel structure the scale
+#: check cannot see and the estimate counts as noise. Never a definite call.
+_ABOVE_CEILING_DB = 1.0
+#: Above the ceiling by more than this, the ceiling itself is the likelier error
+#: (sub-voxel structure put sigma 9-20x high in probes), so no verdict at all.
+_UNDETERMINED_ABOVE_DB = 3.0
+#: Within this many dB below the ceiling, a fit is "at the noise floor": the
+#: model error is at most ~half the noise sigma (MSE = sigma^2 * 10^0.1).
+_AT_FLOOR_DB = 1.0
+#: Down to this many dB below, it is "near" it: the model error is at most the
+#: noise sigma.
+_NEAR_FLOOR_DB = 3.0
+#: Above this ceiling the reference is clean enough that noise does not limit
+#: the score (a 1000:1 peak-to-sigma ratio).
+_NOISE_FREE_CEILING_DB = 60.0
+
+
+def model_error_over_noise(gap_db: float) -> Optional[float]:
+    """The model's own RMS error in units of the noise sigma, from the gap.
+
+    Against a noisy reference the residual is noise plus model error, so
+    ``MSE = sigma^2 + e^2`` and ``e / sigma = sqrt(10^(-gap/10) - 1)``: 0.5 at
+    -1 dB, 1.0 at -3 dB (the error as large as the noise). ``None`` at or above
+    the ceiling, where the residual is smaller than the noise.
+    """
+    if gap_db >= 0.0:
+        return None
+    return math.sqrt(10.0 ** (-gap_db / 10.0) - 1.0)
+
+
+def noise_verdict(gap_db: float, ceiling_db: float) -> str:
+    """One line on where a foreground PSNR sits against the noise ceiling."""
+    if ceiling_db >= _NOISE_FREE_CEILING_DB:
+        return (
+            "the reference is nearly noise-free here: noise does not limit this score"
+        )
+    if gap_db > _UNDETERMINED_ABOVE_DB:
+        return (
+            f"undetermined: {gap_db:.1f} dB above the estimated ceiling, more than "
+            "the estimate's error allows, so the reference likely has sub-voxel "
+            "or voxel-scale structure the estimate counts as noise"
+        )
+    if gap_db > _ABOVE_CEILING_DB:
+        return (
+            f"above the estimated ceiling ({gap_db:.1f} dB): ambiguous — the "
+            "reference may have sub-voxel or voxel-scale structure the estimate "
+            "counts as noise, or the model may be reproducing noise"
+        )
+    ratio = model_error_over_noise(gap_db)
+    if gap_db >= -_AT_FLOOR_DB:
+        size = "below the noise" if ratio is None else f"~{ratio:.2f} x the noise sigma"
+        return (
+            f"at the noise floor: the model error is {size}; a better model "
+            f"can gain at most ~{max(0.0, -gap_db):.1f} dB against this noisy "
+            "reference"
+        )
+    if gap_db >= -_NEAR_FLOOR_DB:
+        return (
+            f"near the noise floor: {-gap_db:.1f} dB below the ceiling, the model "
+            f"error is ~{ratio:.2f} x the noise sigma"
+        )
+    return (
+        f"{-gap_db:.1f} dB below the noise ceiling: the model error is "
+        f"~{ratio:.1f} x the noise sigma, so there is signal left to fit (more "
+        "splats or iterations, or check the fit)"
+    )
 
 
 def _score(
@@ -451,15 +677,21 @@ def _score(
                 f"[{rendered_t.min().item():.4f}, {rendered_t.max().item():.4f}]"
             )
         ref_t = torch.from_numpy(ref).to(rendered_t.device)
-        field_np, threshold = fg
+        field_np, user_threshold = fg
         field_t = None if field_np is None else torch.from_numpy(field_np).to(ref_t)
+        field_t, threshold = _resolve_scored_foreground(ref_t, field_t, user_threshold)
         with asection("Computing metrics"):
-            return compute_quality_metrics(
+            metrics = compute_quality_metrics(
                 rendered_t,
                 ref_t,
                 foreground_field=field_t,
                 foreground_threshold=threshold,
             )
+        del rendered_t
+        mask = (field_t > threshold).cpu().numpy()
+        del field_t
+    metrics.update(noise_reference(ref, mask, metrics))
+    return metrics
 
 
 def _undo_intensity_scale(data: "GSplatData", stats: Any) -> tuple["GSplatData", float]:
@@ -488,6 +720,28 @@ def _undo_intensity_scale(data: "GSplatData", stats: Any) -> tuple["GSplatData",
     return amplitudes_in_source_units(data, scale), scale
 
 
+def _fit_region(ctx: _Context) -> Optional[tuple[tuple[int, int], ...]]:
+    """The crop fit's region inside the loaded reference, scored or not."""
+    return ctx.scored_region or ctx.fitted_region
+
+
+def _source_bytes(ctx: _Context) -> int:
+    """Decoded bytes of what the store encodes: the fitted region, else all."""
+    region = _fit_region(ctx)
+    if region is None or not ctx.loaded_shape:
+        return ctx.ref_decoded_bytes
+    share = math.prod(b - a for a, b in region) / max(1, math.prod(ctx.loaded_shape))
+    return int(round(ctx.ref_decoded_bytes * share))
+
+
+def _region_extent(ctx: _Context) -> Optional[tuple[float, ...]]:
+    """The fitted region's extent on the scored grid, for ``--whole-volume``."""
+    if ctx.fitted_region is None:
+        return None
+    fs = ctx.grid.downscale_factors or (1,) * len(ctx.fitted_region)
+    return tuple((b - a) / f for (a, b), f in zip(ctx.fitted_region, fs, strict=True))
+
+
 def _compare(opts: CompareOptions) -> tuple[dict[str, Any], _Context]:
     """Load, map, render and score; returns the metrics and what was compared."""
     from luxar.gsplats.scoring_grid import map_to_grid
@@ -509,10 +763,16 @@ def _compare(opts: CompareOptions) -> tuple[dict[str, Any], _Context]:
     truncate = opts.truncate if opts.truncate is not None else data.truncation_radius
 
     with asection("Loading reference volume"):
-        ref, ctx.ref_decoded_bytes = _load_reference(opts, ctx.grid)
+        ref, ctx.ref_decoded_bytes = _load_reference(
+            opts, ctx.grid, data.stats or {}, ctx
+        )
         ctx.ref_shape = tuple(ref.shape)
         origin = _check_source_grid(
-            data.stats or {}, ctx.ref_shape, ctx.grid, ctx.dimension_metadata
+            data.stats or {},
+            ctx.ref_shape,
+            ctx.grid,
+            ctx.dimension_metadata,
+            cropped=ctx.scored_region is not None,
         )
         ref, ctx.image_min = reference_on_dataset_basis(ref, data.stats, opts.image_min)
         fg = _foreground_field(opts, ref, ctx.grid, ctx)
@@ -521,15 +781,19 @@ def _compare(opts: CompareOptions) -> tuple[dict[str, Any], _Context]:
     aprint(f"Comparison shape: {ctx.render_shape}")
     scored = map_to_grid(data, scale=ctx.grid.scale, origin=origin)
     scored, ctx.intensity_scale = _undo_intensity_scale(scored, data.stats)
-    warn_if_outside_grid(scored.centers, ctx.render_shape)
+    warn_if_outside_grid(
+        scored.centers, ctx.render_shape, extent_shape=_region_extent(ctx)
+    )
     metrics = _score(
         scored, ref, fg, render_shape=ctx.render_shape, opts=opts, truncate=truncate
     )
     # Compression ratio: the one definition `gsplat info` and `fit` quote —
-    # decoded reference bytes over the store's bytes on disk.
+    # decoded reference bytes over the store's bytes on disk. A crop fit only
+    # encodes its region, so (as the fit's own stamp does) it is measured
+    # against the region's share of the reference, under --whole-volume too.
     from luxar.gsplats.fitting.visualization import compression_ratio
 
-    ratio = compression_ratio(ctx.ref_decoded_bytes, store_size(opts.gsplats_path))
+    ratio = compression_ratio(_source_bytes(ctx), store_size(opts.gsplats_path))
     if ratio is not None:
         metrics["compression_ratio"] = ratio
     return metrics, ctx
@@ -557,6 +821,11 @@ def print_quality_comparison(
     aprint("QUALITY COMPARISON")
     aprint("=" * 60)
     aprint(f"\nReference:  {opts.reference_path.name} {ctx.ref_shape}")
+    if ctx.scored_region is not None:
+        aprint(
+            f"Region:     fitted region {_format_region(ctx.scored_region)} of "
+            f"{ctx.loaded_shape} (--whole-volume to score all of it)"
+        )
     aprint(f"GSplats:    {opts.gsplats_path.name} ({ctx.n_splats:,} splats)")
     if ctx.grid.scale is not None:
         aprint(f"Grid:       splat centers divided by {list(ctx.grid.scale)}")
@@ -586,6 +855,7 @@ def print_quality_comparison(
         f"(full range {_fmt_db(metrics['foreground_psnr_db'])}; over "
         f"{metrics['foreground_fraction'] * 100:.2f}% of voxels, {label})"
     )
+    _print_noise_reference(metrics)
     aprint(f"  MSE:               {metrics['mse']:.6g}")
     aprint(f"  SSIM:              {metrics['ssim']:.4f}")
     aprint(f"  SSIM foreground:   {metrics['foreground_ssim']:.4f}")
@@ -594,11 +864,28 @@ def print_quality_comparison(
     if "compression_ratio" in metrics:
         from luxar.gsplats.fitting.visualization import format_compression_ratio
 
+        of = " of the fitted region" if _fit_region(ctx) is not None else ""
         aprint(
             "  Compression:       "
-            f"{format_compression_ratio(metrics['compression_ratio'])} vs raw voxels"
+            f"{format_compression_ratio(metrics['compression_ratio'])} vs raw "
+            f"voxels{of}"
         )
     aprint("=" * 60)
+
+
+def _print_noise_reference(metrics: dict[str, Any]) -> None:
+    """The noise-ceiling lines under the foreground PSNR (when measurable)."""
+    if "noise_verdict" not in metrics:
+        return
+    ceiling = metrics.get("foreground_psnr_noise_ceiling_db")
+    if ceiling is not None:
+        flag = "" if metrics.get("noise_ceiling_reliable") else "UNRELIABLE, "
+        aprint(
+            f"  Noise ceiling:     {_fmt_db(ceiling)}  ({flag}foreground PSNR of a "
+            f"noise-free model vs this reference; noise sigma = "
+            f"{metrics['noise_sigma']:.4g} in the foreground)"
+        )
+    aprint(f"  Verdict:           {metrics['noise_verdict']}")
 
 
 def _json_record(
@@ -625,6 +912,13 @@ def _json_record(
         ),
         "foreground_method": ctx.foreground_method,
         "foreground_threshold_raw": ctx.foreground_threshold_raw,
+        "scored_region": (
+            [list(span) for span in ctx.scored_region] if ctx.scored_region else None
+        ),
+        "fitted_region": (
+            [list(span) for span in region] if (region := _fit_region(ctx)) else None
+        ),
+        "whole_volume": opts.whole_volume,
     }
     if ctx.intensity_scale != 1.0:
         record["intensity_scale"] = ctx.intensity_scale

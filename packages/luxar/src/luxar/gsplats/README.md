@@ -1036,6 +1036,17 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     print(f"Loaded {gsplats.n_splats} splats")
 ```
 
+> **Exposure.** The adders normalise each splat (p99.9 amplitude → 1.0) but do
+> not dim for how many splats sum along a ray, so a dense fit under `additive`
+> blending opens white — `luxar gsplat convert` auto-exposes, the adders do
+> not. `luxar.gsplats.exposure.auto_exposure_attrs(path, dim_order=...,
+> colormap=...)` returns convert's exposure as adder kwargs
+> (`normalize_amplitudes=False`, `display_gain`, unit labels):
+> `scene.add_gsplats_from_file("nuclei", path, dim_order=zyx, colormap="bop_blue",
+> **auto_exposure_attrs(path, dim_order=zyx, colormap="bop_blue"))`. Call it per
+> node in a multichannel scene, with the store PATH: an in-memory `GSplatData` /
+> node gives the same gain but not the store's unit labels (pass `stats=`).
+
 **Benefits:**
 - Seamless integration with Luxar's scene graph system
 - Preserves all splat data (centers, amplitudes, covariance, colors)
@@ -1317,7 +1328,8 @@ gsplats/
 │                                  #   (the dimming factor `gsplat convert` folds into display_gain)
 │                                  #   + data_unit_display_attrs / amplitude_unit_attrs (the attrs
 │                                  #   an add_gsplats_* call passes with normalize_amplitudes=False
-│                                  #   to keep data units, as convert does)
+│                                  #   to keep data units, as convert does) + auto_exposure_attrs
+│                                  #   (convert's whole auto exposure, as add_gsplats_* kwargs)
 │
 ├── lod/                            # Level-of-Detail post-processing (additive + substitutive)
 │   ├── additive.py                 # compute_additive_order, make_additive_lod
