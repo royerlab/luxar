@@ -1,6 +1,132 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { motion, rendererInfo } from './page-ops.mjs';
+import { motion, playback, rendererInfo } from './page-ops.mjs';
+
+describe('LOD playback warm-up', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('settles every timepoint before resetting counters and starting measured playback', async () => {
+    const events = [];
+    let clock = 0;
+    let value = 0;
+    let updated = false;
+    let readyAt = 0;
+    const registry = {
+      list: () => [{ children: [{}, {}], displayedChildIndex: 1 }],
+      isCaptureQuiescent: () => {
+        if (clock < readyAt) return false;
+        events.push(`settled:${value}`);
+        return updated;
+      },
+    };
+    const manager = {
+      play: () => events.push('play'),
+      pause: () => events.push('pause'),
+    };
+    const app = {
+      getDimensions: () => ({
+        ndim: 1,
+        displayed: [],
+        ranges: [[0, 2]],
+        metadata: [{ step: 1 }],
+        currentStep: [value],
+      }),
+      setDimensionValue: (_d, v) => {
+        value = v;
+        updated = false;
+        readyAt = clock + 2;
+        events.push(`set:${v}`);
+      },
+      awaitDimensionUpdate: async () => {
+        updated = true;
+        events.push('updated');
+      },
+      sceneManager: { postProcessing: { render: () => {} } },
+    };
+    vi.stubGlobal('window', {
+      __luxarDebug: {
+        app,
+        inputHandler: { getAnimationManager: () => manager },
+        getSceneLoader: () => ({ getDefaultLoader: () => ({ lodGroupRegistry: registry }) }),
+        getPerf: () => ({ isSettled: updated }),
+        resetPerfCounters: () => events.push('reset'),
+      },
+      __gateExtReset: () => events.push('ext-reset'),
+    });
+    vi.stubGlobal('requestAnimationFrame', (cb) => {
+      clock++;
+      cb();
+    });
+    vi.spyOn(performance, 'now').mockImplementation(() => clock);
+
+    const result = await playback({ settleLodTimepoints: true, durationMs: 3 });
+    expect(result.durationMs).toBeGreaterThanOrEqual(3);
+    expect(events.filter((e) => e.startsWith('set:'))).toEqual([
+      'set:0',
+      'set:1',
+      'set:2',
+      'set:0',
+    ]);
+    expect(events.filter((e) => e.startsWith('settled:'))).toEqual([
+      'settled:0',
+      'settled:1',
+      'settled:2',
+      'settled:0',
+    ]);
+    expect(events.indexOf('reset')).toBeGreaterThan(events.lastIndexOf('updated'));
+    expect(events.indexOf('play')).toBeGreaterThan(events.indexOf('reset'));
+    expect(events.at(-1)).toBe('pause');
+  });
+
+  it.each([
+    ['missing discrete step', undefined, true, true, 'cannot settle non-discrete dimension 0'],
+    ['missing LOD group', 1, false, true, 'LOD settle requires a LOD registry'],
+    ['unsettled LOD', 1, true, false, 'LOD did not settle at timepoint 0'],
+  ])('rejects %s before playback starts', async (_case, step, hasGroup, settles, message) => {
+    let clock = 0;
+    const play = vi.fn();
+    const reset = vi.fn();
+    const app = {
+      getDimensions: () => ({
+        ndim: 1,
+        displayed: [],
+        ranges: [[0, 2]],
+        metadata: [{ step }],
+        currentStep: [0],
+      }),
+      setDimensionValue: vi.fn(),
+      awaitDimensionUpdate: async () => {},
+    };
+    vi.stubGlobal('window', {
+      __luxarDebug: {
+        app,
+        inputHandler: { getAnimationManager: () => ({ play }) },
+        getSceneLoader: () => ({
+          getDefaultLoader: () => ({
+            lodGroupRegistry: {
+              list: () => (hasGroup ? [{}] : []),
+              isCaptureQuiescent: () => settles,
+            },
+          }),
+        }),
+        getPerf: () => ({ isSettled: true }),
+        resetPerfCounters: reset,
+      },
+    });
+    vi.stubGlobal('requestAnimationFrame', (cb) => {
+      clock++;
+      cb();
+    });
+    vi.spyOn(performance, 'now').mockImplementation(() => clock);
+
+    await expect(playback({ settleLodTimepoints: true, timeoutMs: 3 })).rejects.toThrow(message);
+    expect(play).not.toHaveBeenCalled();
+    expect(reset).not.toHaveBeenCalled();
+  });
+});
 
 describe('rendererInfo', () => {
   afterEach(() => vi.unstubAllGlobals());

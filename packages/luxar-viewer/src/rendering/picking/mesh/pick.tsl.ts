@@ -31,8 +31,8 @@
  * WGSL's `@interpolate(flat)` samples the FIRST vertex of the primitive where
  * OpenGL ES fixes it to the LAST, so the exact corner reported differs by backend
  * unless `WEBGL_provoking_vertex` is available to align them (see `./material.ts`).
- * That is a documented §6.5 exception: at vertex granularity the contract is
- * "a corner of the front-most triangle", since the cursor is over the face.
+ * Where it is absent, PickingSystem rotates GL's indexed triples so the last
+ * vertex is the original first corner on both backends.
  *
  * @module rendering/picking/mesh/pick.tsl
  */

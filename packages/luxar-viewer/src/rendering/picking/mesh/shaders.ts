@@ -5,9 +5,9 @@
  * **built-in** rather than an attribute. Three structural differences from its
  * siblings, all from spec §6.5:
  *
- * 1. **No `aSortedIndex` indirection.** Mesh has no per-triangle depth sort (§9),
- *    so there is no draw-slot → storage-slot mapping and no `luxarElementIdParts()`
- *    call. The element id is `gl_VertexID`, split by the same shared
+ * 1. **No `aSortedIndex` indirection.** Mesh depth sorting permutes whole index
+ *    triples, so there is no draw-slot → storage-slot mapping and no
+ *    `luxarElementIdParts()` call. The element id is `gl_VertexID`, split by the same shared
  *    `luxarElementIdSplit()` the sorted-index helper uses, so both paths agree
  *    with `voteWinner`'s recombination by construction.
  * 2. **Vertex granularity, not element granularity.** The draw is indexed
@@ -147,13 +147,10 @@ export const MESH_PICK_VERTEX_SHADER = /* glsl */ `
  * backends do not default to the same one: OpenGL ES 3.0 fixes the provoking
  * vertex to the **last** vertex of the primitive, while the WGSL
  * `@interpolate(flat)` three emits defaults to **first**-vertex sampling. The
- * pick contract at vertex granularity is therefore "*a* corner vertex of the
- * front-most triangle under the cursor" — the cursor is over the face, not a
- * vertex, so every corner is an equally valid answer and no consumer may assume a
- * specific one. The GLSL path still aligns with WebGPU where the platform allows
- * (`WEBGL_provoking_vertex`, see `./material.ts`); where it does not, the
- * divergence stands as a documented §6.4 exception and the parity tests assert
- * *membership* in the expected face rather than one exact corner.
+ * pick contract at vertex granularity is the original first corner of the
+ * front-most triangle. The GLSL path aligns through `WEBGL_provoking_vertex`
+ * where available; otherwise PickingSystem cyclically rotates each indexed
+ * triangle, placing the original first corner last.
  *
  * Non-`flat` would be far worse than a corner ambiguity: `gl_VertexID` differs at
  * every corner of a shared-vertex indexed draw, so a linearly interpolated

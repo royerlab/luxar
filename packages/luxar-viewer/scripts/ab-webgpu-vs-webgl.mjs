@@ -40,29 +40,41 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve, relative, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
+import { optionHelp, parseOptions } from './cli-options.mjs';
 import { captureCanvasImage, ncc, ssim } from './visual-ab-core.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const viewerRoot = resolve(here, '..');
 const repoRoot = resolve(viewerRoot, '../..');
 
-function arg(name, fallback) {
-  const i = process.argv.indexOf(`--${name}`);
-  if (i < 0) return fallback;
-  const next = process.argv[i + 1];
-  return next === undefined || next.startsWith('--') ? true : next;
+const value = (name, defaultValue) => ({ name, takesValue: true, defaultValue });
+const flag = (name) => ({ name, takesValue: false, defaultValue: false });
+const cliOptions = [
+  value('dataset', '../../datasets/examples/mesh_physical_materials_example.luxar.zarr'),
+  value('out', '../../delme/ab-webgpu-vs-webgl'),
+  flag('bloom'),
+  value('min-ssim', 0.9),
+  value('channel', 'chrome'),
+  value('viewer-port', 5199),
+  value('data-port', 9007),
+  flag('help'),
+];
+function configError(message) {
+  console.error(`[ab-webgpu-vs-webgl] ${message}`);
+  process.exit(2);
 }
-
-const datasetArg = arg(
-  'dataset',
-  '../../datasets/examples/mesh_physical_materials_example.luxar.zarr'
-);
-const outDir = resolve(viewerRoot, arg('out', '../../delme/ab-webgpu-vs-webgl'));
-const withBloom = arg('bloom', false) === true;
-const minSsim = Number(arg('min-ssim', 0.9));
-const channel = arg('channel', 'chrome');
-const viewerPort = Number(arg('viewer-port', 5199));
-const dataPort = Number(arg('data-port', 9007));
+const cli = parseOptions(cliOptions, process.argv.slice(2), configError);
+if (cli.help) {
+  console.log(optionHelp('scripts/ab-webgpu-vs-webgl.mjs', cliOptions));
+  process.exit(0);
+}
+const datasetArg = cli.dataset;
+const outDir = resolve(viewerRoot, cli.out);
+const withBloom = cli.bloom;
+const minSsim = Number(cli['min-ssim']);
+const channel = cli.channel;
+const viewerPort = Number(cli['viewer-port']);
+const dataPort = Number(cli['data-port']);
 const viewport = { width: 1280, height: 720 };
 
 const datasetAbs = resolve(viewerRoot, datasetArg);
