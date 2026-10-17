@@ -1996,6 +1996,36 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     expect(activeArr(geometry)).toBe(held);
   });
 
+  it('adopts a worker ordering with the headroom of a pooled geometry', () => {
+    configureSortedIndexChunkedApply(false);
+    const pool = new GPUBufferPool(20, 300, 5, () => Infinity);
+    try {
+      const geometry = pool.acquireGSplatsGeometry('node', 1000);
+      const capacity = activeArr(geometry).length;
+      expect(capacity).toBeGreaterThan(1000);
+      writeSortedIndexIdentity(geometry, 1000);
+      const backing = new Uint32Array(capacity);
+      backing.set(reversed(1000));
+      const ordering = backing.subarray(0, 1000);
+
+      expect(
+        writeSortedIndexOrdering(geometry, ordering, 1000, undefined, { adoptOrdering: true })
+      ).toBe(1000);
+      expect(pumpSortedIndexOrderingApply(geometry).flipped).toBe(true);
+      expect(activeArr(geometry).buffer).toBe(backing.buffer);
+      expect(activeArr(geometry).length).toBe(capacity);
+      expect(Array.from(activeArr(geometry).subarray(0, 1000))).toEqual(Array.from(ordering));
+
+      geometry.instanceCount = 1000;
+      expect(holdSortedIndexDrawForAppend(geometry, 1000, 1001)).toBe(1000);
+      expect(releaseSortedIndexDrawHold(geometry)).toBe(true);
+      expect(Array.from(activeArr(geometry).subarray(0, 1000))).toEqual(Array.from(ordering));
+      expect(activeArr(geometry)[1000]).toBe(1000);
+    } finally {
+      pool.dispose();
+    }
+  });
+
   it('keeps borrowed orderings and WebGL slices independent of their source array', () => {
     const { geometry } = makeGeometry(16);
     const borrowed = reversed(16);

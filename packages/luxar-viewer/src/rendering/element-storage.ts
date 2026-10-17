@@ -629,20 +629,23 @@ function applyNextSortedIndexChunk(
   const sliceEnd = chunkedApplyEnabled ? start + sortedIndexChunkElements : state.count;
   const end = Math.min(state.count, sliceEnd, arr.length);
   clearIdentityPrefix(attr);
-  // The WebGPU path uploads the whole ordering in one writeBuffer. When the
-  // worker's transferred array fills the existing capacity, use it directly
-  // as the attribute's backing array: avoid a second 40 MB main-thread copy
-  // at 10M elements. Keep the attribute object and array length unchanged,
-  // since three caches both the vertex layout and GPUBuffer for that object.
+  // Both WebGPURenderer backends upload from attribute.array at update time.
+  // The worker's live ordering is a view of its capacity-sized buffer; adopt
+  // that buffer when it exactly matches the attribute's cached GPU buffer.
   // Partial-capacity and borrowed orderings keep the copy path.
   if (
     !chunkedApplyEnabled &&
     state.adoptOrdering &&
     start === 0 &&
-    end === arr.length &&
-    state.ordering.length === arr.length
+    end === state.count &&
+    state.ordering.length === state.count &&
+    state.ordering.byteOffset === 0 &&
+    state.ordering.buffer.byteLength === arr.byteLength
   ) {
-    attr.array = state.ordering;
+    attr.array =
+      state.ordering.length === arr.length
+        ? state.ordering
+        : new Uint32Array(state.ordering.buffer);
   } else {
     arr.set(state.ordering.subarray(start, end), start);
   }
@@ -1394,8 +1397,8 @@ function repairPermutationInPlace(arr: Uint32Array, readEnd: number, n: number):
  * (returns 0) fires
  * neither, leaving lifecycle ownership with the caller.
  * `adoptOrdering` is only for a freshly transferred, caller-discarded array.
- * On WebGPU, an exact-capacity array becomes the inactive attribute's backing
- * store, avoiding one full CPU copy before the GPU upload.
+ * On WebGPU, an array backed by the attribute's full capacity becomes its
+ * inactive backing store, avoiding one full CPU copy before the GPU upload.
  */
 export function writeSortedIndexOrdering(
   geometry: THREE.InstancedBufferGeometry,
