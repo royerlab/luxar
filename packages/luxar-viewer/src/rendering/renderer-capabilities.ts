@@ -330,6 +330,8 @@ export function createRendererCapabilities(
     }
   }
 
+  const bridgeSamples = backend?.gl?.getParameter(backend.gl.MAX_SAMPLES) as number | null;
+
   return {
     apiSurface: 'webgpu',
     framebufferYDown,
@@ -339,7 +341,9 @@ export function createRendererCapabilities(
       ? backend.compatibilityMode
         ? 0
         : 4
-      : ((backend?.gl?.getParameter(backend.gl.MAX_SAMPLES) as number | null) ?? 0),
+      : typeof bridgeSamples === 'number'
+        ? bridgeSamples
+        : 0,
     maxTextureSize,
     maxRenderbufferSize,
     pointSizeRange: [1, 1024],

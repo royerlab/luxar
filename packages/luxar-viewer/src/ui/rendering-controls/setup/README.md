@@ -86,7 +86,7 @@ Creates the **Anti-Aliasing** folder (collapsed by default) covering all three A
 
 - **SSAA Enabled** + **SSAA Settings** sub-folder (multiplier 1.5×/2×/3×/4×).
 - **FXAA Enabled** (single toggle, no sub-folder).
-- **MSAA Enabled** + **MSAA Settings** sub-folder (sample count 2/4/8).
+- **MSAA Enabled** + **MSAA Settings** sub-folder (sample counts supported by the active backend; native WebGPU offers 4x).
 
 The SSAA and MSAA settings sub-folders are shown/hidden in lock-step with their enable toggle so unused settings stay out of the way.
 

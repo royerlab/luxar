@@ -227,9 +227,10 @@ describe('createRendererCapabilities (GL probes)', () => {
 
 describe('createRendererCapabilities (WebGPU MSAA)', () => {
   it('reports 4 for native core and 0 for native compatibility mode', () => {
-    const renderer = { backend: { isWebGPUBackend: true, compatibilityMode: false } } as Renderer;
+    const backend = { isWebGPUBackend: true, compatibilityMode: false };
+    const renderer = { backend } as unknown as Renderer;
     expect(createRendererCapabilities(renderer).maxMSAASamples).toBe(4);
-    renderer.backend.compatibilityMode = true;
+    backend.compatibilityMode = true;
     expect(createRendererCapabilities(renderer).maxMSAASamples).toBe(0);
   });
 

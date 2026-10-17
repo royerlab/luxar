@@ -669,6 +669,7 @@ export class PostProcessingManager {
         log.error(Modules.POST_PROCESSING, `MSAA not supported (MAX_SAMPLES: ${maxSamples})`);
         return this.msaaEnabled;
       }
+      if (this.msaaSamples === 0) return false;
       this.msaaSamples = this.resolveMSAASamples(this.msaaSamples);
     }
     this.msaaEnabled = enabled;
@@ -683,6 +684,7 @@ export class PostProcessingManager {
   setMSAASamples(samples: number): number {
     const validated = this.resolveMSAASamples(samples);
     if (this.msaaSamples === validated) return validated;
+    if (validated === 0 && this.msaaEnabled) this.setMSAAEnabled(false);
     this.msaaSamples = validated;
     if (this.msaaEnabled) {
       this.reallocateForSize();

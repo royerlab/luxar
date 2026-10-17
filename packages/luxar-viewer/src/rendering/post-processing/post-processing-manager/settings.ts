@@ -97,7 +97,7 @@ export function clampBloomLevels(
 // MSAA + SSAA
 // =====================================================================
 
-/** Validate + clamp an MSAA sample count against device capabilities. */
+/** Snap an MSAA request to a count the active backend can render. */
 export function validateMSAASamples(
   samples: number,
   maxSamples: number,
