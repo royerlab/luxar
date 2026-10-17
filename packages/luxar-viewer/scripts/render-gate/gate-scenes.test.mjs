@@ -100,7 +100,7 @@ describe('render-gate scene manifest', () => {
     expect(judged.verdict).toBe('win');
   });
 
-  it('gates LOD playback uploads and swaps after settling every timepoint', () => {
+  it('gates LOD playback uploads, swaps, and cache misses after warm-up', () => {
     const c = manifest.suites.playback.cases.find((x) => x.id === 'playback_lod_timelapse');
     expect(c.workload.settleLodTimepoints).toBe(true);
     for (const name of [

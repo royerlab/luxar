@@ -335,8 +335,11 @@ Notes on method:
   them, else from the axis value observed each animation frame.
   `lastTimepointShown` is 1 when the range maximum was ever applied. The LOD
   timelapse case first visits every discrete timepoint and waits for final LOD
-  quality, then returns to the first timepoint and resets counters. Its measured
-  window still uses the viewer's playback clock and includes per-tick uploads.
+  quality, then returns to the first timepoint and resets counters. Every fine
+  level is resident before the clock starts: the measured window uses the
+  viewer's playback clock and covers warm-cache GPU uploads and level selection.
+  Cold lazy fetches during playback are not gated by this case. Gated fetch and
+  decode counters catch a loss of residency during the measured window.
 - `scrub` in drag mode counts the frames in which committed geometry changed,
   from a build-independent signature of every geometry node (effective
   visibility, geometry id, attribute and index `version`s, drawn count, draw

@@ -723,8 +723,9 @@ def write_lod_timelapse(path: Path, *, small: bool = False) -> PoseEntry:
     Drifting blobs, time as scene dimension 0 (hidden, discrete). The
     ``kind=lod`` group (compression 4, 2 coarse levels) coarsens only the
     displayed dims, grouped per frame, so the fine levels are LAZY: fetched only
-    once the selector upgrades. Gate cases: playback over a substitutive LOD
-    timelapse (lazy fine levels per frame; last-frame / cadence checks).
+    once the selector upgrades. The playback gate settles all frames before
+    measuring warm-cache uploads and cadence; it does not gate lazy fine-level
+    fetches during playback.
     """
     t_count, per_t = (4, 2_000) if small else (40, 20_000)
     rng = np.random.default_rng(40)
