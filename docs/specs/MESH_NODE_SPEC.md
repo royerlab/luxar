@@ -1344,7 +1344,7 @@ vertex granularity is therefore "a corner vertex of the front-most triangle unde
 cursor is over the face, not a vertex, so every corner is an equally valid answer, and no consumer may
 assume a specific one. To keep the backends bit-identical where the platform allows, the GLSL pick path
 enables the `WEBGL_provoking_vertex` extension when present and sets
-`provokingVertexWEBGL(FIRST_VERTEX_CONVENTION_WEBGL)`, aligning WebGL with WebGPU's first-vertex rule —
+`provokingVertexWEBGL(FIRST_VERTEX_CONVENTION_WEBGL)`, aligning WebGL with core WebGPU's first-vertex rule —
 context-wide state, but safe: every other `flat` varying in the shipped materials is a per-**instance**
 constant (point/gsplat quads, line segments), identical at all corners, so the convention flip is
 observable only by mesh. Compatibility-mode WebGPU forbids `first`, so its mesh pick shader uses
@@ -1753,7 +1753,8 @@ been widened deliberately, each behind its capability flag.
       mislights the rotated node / skews normals off-perpendicular under the anisotropic scale
 - [x] TS unit / E2E (pick corner contract, §6.5): a pick on a mesh triangle resolves to **a corner
       vertex of that face** — assert membership in `(i0, i1, i2)`, never one exact corner (the provoking
-      vertex is backend-dependent: last on WebGL, first on WebGPU; `WEBGL_provoking_vertex` aligns them
+      vertex is backend-dependent: last on WebGL, first on core WebGPU, either on compatibility-mode
+      WebGPU; `WEBGL_provoking_vertex` aligns WebGL with core WebGPU
       only where available)
 - [x] Codegen snapshots: 6 new variants = 12 files (§6.4) — incl. the per-blend-mode
       `mesh-additive`/`mesh-max` variants
