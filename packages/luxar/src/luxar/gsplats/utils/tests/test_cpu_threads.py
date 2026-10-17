@@ -77,9 +77,7 @@ def test_worker_share_sets_torch_count(
     share = max(1, physical_core_count() // 4)
     assert worker_env == {"LUXAR_CPU_THREADS": str(share)}
     assert (
-        resolve_cpu_threads(
-            worker_env, current=1, physical_cores=1, worker=True
-        )
+        resolve_cpu_threads(worker_env, current=1, physical_cores=1, worker=True)
         == share
     )
 
