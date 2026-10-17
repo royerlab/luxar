@@ -462,6 +462,44 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     mgr.dispose();
   });
 
+  it('releases every resized target on a DPR-size round trip', () => {
+    const mgr = makeManager({ width: 64, height: 64 });
+    mgr.setBloomEnabled(true);
+    const targets = () => {
+      const resources = mgr as unknown as {
+        hdrTarget: THREE.WebGLRenderTarget;
+        ldrTarget: THREE.WebGLRenderTarget;
+        bloomChain: { mips: { target: THREE.WebGLRenderTarget }[] };
+        refractionSplit: {
+          copyTarget: THREE.WebGLRenderTarget;
+          glassDepthTarget: THREE.WebGLRenderTarget;
+        };
+      };
+      return [
+        resources.hdrTarget,
+        resources.ldrTarget,
+        ...resources.bloomChain.mips.map((mip) => mip.target),
+        resources.refractionSplit.copyTarget,
+        resources.refractionSplit.glassDepthTarget,
+      ];
+    };
+
+    for (const [width, height] of [
+      [128, 96],
+      [64, 64],
+    ]) {
+      const disposed = targets().map((target) => {
+        const onDispose = vi.fn();
+        target.addEventListener('dispose', onDispose);
+        return onDispose;
+      });
+      mgr.resize(width, height);
+      for (const onDispose of disposed) expect(onDispose).toHaveBeenCalledTimes(1);
+    }
+
+    mgr.dispose();
+  });
+
   it('reuses the same ldrTarget via setSize (single handle for the session)', () => {
     // ldrTarget reuses the target with setSize() rather than allocating
     // anew — this matches WebGLRenderTarget's contract (setSize disposes
