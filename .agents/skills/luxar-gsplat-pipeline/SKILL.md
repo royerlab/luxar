@@ -217,8 +217,8 @@ Each of these has burned a whole fit cycle. Check them before you launch a long 
   because `seeds` silently fell back to `auto`. A `cal --auto-region` K* is
   *region-scoped* anyway: transfer it with `--cal` + `--tiling content`, never by
   passing it to `--seeds`.
-- **`fit` has no `--overwrite`** (`lod`, `additive`, `transform` etc. do). `rm -rf`
-  the output first, or a chained script dies mid-run on a stale store.
+- **`fit` refuses an existing output** unless you pass `--overwrite` (like `lod`,
+  `additive`, `transform`), so a re-run of a chained script stops at the first fit.
 - **A/B two fits only at equal splat count.** Splat count dominates every quality
   metric, so comparing a 1.4 M-splat variant against a 2.7 M-splat one measures the
   count, not the variable you changed. Fix the seed budget on both arms.

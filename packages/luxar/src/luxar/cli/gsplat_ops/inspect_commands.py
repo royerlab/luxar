@@ -15,7 +15,12 @@ from arbol import aprint, asection
 
 from .._traceback import exit_with_error, report_error
 from ..common_options import CorsOriginOption, HostOption, make_port_option
-from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size, store_size
+from ..utils import (
+    _DEFAULT_CORS_ORIGIN,
+    format_memory_size,
+    local_input_path,
+    store_size,
+)
 
 if TYPE_CHECKING:
     import numpy as np
@@ -595,7 +600,9 @@ def _info_report(
 
 def info_dataset(
     path: Path = typer.Argument(
-        ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
+        ...,
+        callback=local_input_path,
+        help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)",
     ),
     show_histograms: bool = typer.Option(
         True, "--histograms/--no-histograms", help="Show ASCII histograms"
@@ -998,10 +1005,14 @@ def quick_view(
 
 def compare_quality(
     gsplats_path: Path = typer.Argument(
-        ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
+        ...,
+        callback=local_input_path,
+        help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)",
     ),
     reference_path: Path = typer.Argument(
-        ..., exists=True, help="Reference volume (.npy, .tiff, .zarr, etc.)"
+        ...,
+        callback=local_input_path,
+        help="Reference volume (.npy, .tiff, .zarr, etc.)",
     ),
     shape: Optional[str] = typer.Option(
         None,

@@ -46,6 +46,10 @@ half-open voxel spans, an empty span keeps the axis; zarr crops are read lazily)
 The splats keep full-volume coordinates and the store records
 `fitting/source_region`.
 
+**Inputs are local paths.** A URL (`https://`, `s3://`, `gs://`, ...) is refused
+with a usage error by `fit`, `cal`, `compare` and `info`: download the store (or
+just the crop you need) first and pass the local path.
+
 ### Microscopy vendor containers
 
 The dispatch is by **file suffix**, and anything not `.npy` / `.npz` / zarr /

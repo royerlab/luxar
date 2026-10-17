@@ -11,6 +11,7 @@ from typing import Optional
 
 import typer
 
+from ...utils import local_input_path
 from .calibrate import run_calibrate_command
 from .denoise_render import (
     run_denoise_volume_cmd,
@@ -146,7 +147,9 @@ def render_to_file(
 
 def calibrate_command(
     input_path: Path = typer.Argument(
-        ..., exists=True, help="Input volume (.zarr, .zarr.zip, .tiff, .npy, .npz)"
+        ...,
+        callback=local_input_path,
+        help="Input volume (.zarr, .zarr.zip, .tiff, .npy, .npz)",
     ),
     output_json: Path = typer.Argument(
         ..., help="Output JSON with full sweep curves and recommended K*"

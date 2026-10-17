@@ -21,8 +21,9 @@ of `fit` / `batch-fit`). For fitting a volume, calibration, and LOD recipes, use
 
 The read-only inspection commands (`info` / `render` / `compare` / `view` /
 `napari`) accept flat, partition, or nested LOD stores. `partition`, `cull`,
-`filter`, `slice`, `decimate`, and `merge` require a flat (matrix-shaped) store;
-run `luxar gsplat flatten` first for partition or nested inputs. Most *editing*
+`filter`, `slice`, and `decimate` require a flat (matrix-shaped) store; run
+`luxar gsplat flatten` first for partition or nested inputs. `merge` flattens such
+an input itself (same code as `flatten`, staged in a temporary store) and says so. Most *editing*
 commands accept `--encoding`/`-e` and usually `--compress`, and write a new
 dataset (non-destructive). Exception: `annotate-quality` stamps the input IN
 PLACE (no `-e`).
@@ -210,7 +211,8 @@ luxar gsplat annotate-quality in.gsplats.zarr                # e(k) + w only (fa
 luxar gsplat annotate-quality in.gsplats.zarr --with-quality # + measured per-level Q
 luxar gsplat annotate-quality in.gsplats.zarr --dry-run      # print stamps, write nothing
 
-# Merge: stack two channels with colors, or stack timepoints as a new dimension
+# Merge: stack two channels with colors, or stack timepoints as a new dimension.
+# Tiled fit outputs (kind=partition) are flattened automatically first.
 luxar gsplat merge ch0.gsplats.zarr ch1.gsplats.zarr -o multi.gsplats.zarr \
     --channel-colors "#ff0080,#00ff00"
 # --as-dimension quantises the stacked coordinate under the default `auto`

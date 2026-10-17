@@ -996,7 +996,7 @@ luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --parts 4          
 luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --max-elements 100000   # per-part cap
 luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --parts 4 --rule sah    # median|midpoint|sah
 
-# Merge multiple datasets. A partition must be `flatten`ed first.
+# Merge multiple datasets. A partition input is flattened automatically first.
 luxar gsplat merge a.gsplats.zarr b.gsplats.zarr -o merged.gsplats.zarr
 luxar gsplat merge t0.zarr t1.zarr -o 4d.zarr --as-dimension --values 0,1
 luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00ff00"

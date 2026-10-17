@@ -164,6 +164,27 @@ def _apply_cal_spacing(fit_kwargs: dict, input_frame: dict) -> None:
         fit_kwargs["output_space"] = "voxel"
 
 
+#: How to get matplotlib, which only the ``--pdf`` report (and the per-K slice
+#: montages it draws from ``--keep-fits``) needs.
+PDF_REPORT_INSTALL_HINT = (
+    "pip install matplotlib (or install the luxar[demos] extra, which provides it)"
+)
+
+
+def _require_pdf_report_dependencies(pdf_report: Optional[Path]) -> None:
+    """Exit before any work when ``--pdf`` is set but matplotlib is missing."""
+    if pdf_report is None:
+        return
+    try:
+        import matplotlib  # noqa: F401
+    except ImportError as exc:
+        aprint(
+            f"Error: --pdf needs matplotlib, which is not installed ({exc}). "
+            f"Install it with: {PDF_REPORT_INSTALL_HINT}; or drop --pdf."
+        )
+        raise typer.Exit(1) from exc
+
+
 def run_calibrate_command(
     *,
     input_path: Path,
@@ -205,6 +226,9 @@ def run_calibrate_command(
     # A usage error, raised before the generic handler below so Typer reports
     # it as one (exit 2), as `fit` does.
     region_spans = _resolve_cal_region(region_spec, auto_region)
+    # Before the sweep, not after it: the report is the last step of a run
+    # that can take hours.
+    _require_pdf_report_dependencies(pdf_report)
     try:
         import math
 
@@ -473,7 +497,7 @@ def run_calibrate_command(
                             f"Skipping PDF report: optional dependency missing ({exc})"
                         )
                         aprint(
-                            "Install matplotlib to enable --pdf: pip install matplotlib"
+                            f"Install matplotlib to enable --pdf: {PDF_REPORT_INSTALL_HINT}"
                         )
 
         # 7. Print formatted table

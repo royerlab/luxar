@@ -332,7 +332,22 @@ luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config te
 luxar gsplat fit stack.ome.tif splats.gsplats.zarr --physical            # µm from the file's metadata
 luxar gsplat fit stack.tif splats.gsplats.zarr --voxel-size 0.29,0.108,0.108  # Z,Y,X in µm
 luxar gsplat fit big.zarr crop.gsplats.zarr --region 40:120,:,1024:2048  # fit a crop
+luxar gsplat fit volume.npy splats.gsplats.zarr --overwrite   # replace an existing output
 ```
+
+`fit` refuses an OUTPUT that already exists unless `--overwrite` is passed, as
+`gsplat lod` and `luxar export` do. Internal worker invocations (`--tile k/M`,
+`--plan-box`, which `-j N` and `batch-fit` spawn) write the path their parent
+chose and are exempt. So is `--plan-only`, which writes only a plan JSON —
+OUTPUT itself when OUTPUT is not store-like, else `<stem>.plan.json` beside it —
+and says so when it replaces an existing plan. `--plan-only` needs a fit that
+resolves to `--tiling content` and is refused otherwise (any other tiling would
+run a full fit). A remote input (`http(s)://`, `s3://`, `gs://`, ...) is refused with a
+usage error: `fit`, `cal`, `compare` and `info` read local paths only, so
+download the data (or the crop you need) first. The closing `Done:` line reports
+the optimization time of a flat fit and wall-clock time for a uniform tiled one
+(sequential, or `-j N` from the start of the parallel dispatch); a content fit
+ends on its own `Fit N boxes → … in Xs` line.
 
 **Anisotropic stack to a physically scaled scene (one command each):**
 ```bash
@@ -372,8 +387,7 @@ their centers are in **full-volume coordinates** and a crop overlays the whole
 is the crop's shape, so a reader rendering onto the crop's own grid subtracts
 the region start first. Every tiling mode and `-j N` accept it (the workers read
 the same crop; the offset is applied once, at the merged save), except a
-hand-run `--tile k/M`, which refuses `--region`. Remote (http)
-stores are not supported: download the crop first. The internal
+hand-run `--tile k/M`, which refuses `--region`. The internal
 `--tile-region` worker handoff is a different thing — one apodized tile of a
 grid over the full volume — and cannot be combined with `--region`.
 
@@ -493,8 +507,14 @@ luxar gsplat render fitted.gsplats.zarr rendered.tiff --device cuda
 ```
 
 #### `luxar gsplat merge`
-Combine multiple flat gsplat datasets (concatenation, new dimension, or channel
-colors). Partition/nested inputs must be flattened first with `luxar gsplat flatten`.
+Combine multiple gsplat datasets (concatenation, new dimension, or channel
+colors). A partition/nested input — the default output of a tiled `fit` — is
+flattened to one leaf first by the same streaming code `luxar gsplat flatten`
+runs, staged in a temporary store beside the output (in the system temp
+directory when the output's directory does not exist yet) — one uncompressed
+flat copy of that input on disk while it is read — and the merge prints a line
+naming it. Whether an input is flat is read from its group attrs, so a flat
+input is loaded once.
 ```bash
 luxar gsplat merge a.zarr b.zarr -o merged.zarr
 luxar gsplat merge t0.zarr t1.zarr t2.zarr -o 4d.zarr --as-dimension --values 0,1,2
@@ -605,6 +625,11 @@ calibrates on a crop, so its K\* is the budget for that crop: pass it to
 `fit --region` with the same spans (or transfer the density with `fit --tiling
 content --cal`). It excludes `--auto-region`. `cal.json` records the spacing and
 crop under `input_frame`.
+
+`--pdf` needs matplotlib (`pip install matplotlib`, or the `luxar[demos]`
+extra); `cal` checks for it before the sweep and exits at once when it is
+missing. The per-K slice montages of `--keep-fits` are pages of that report, so
+`--keep-fits` alone needs nothing extra.
 
 **Options**: `--k-grid` (explicit comma-separated K values), `--n-grid` (default 10), `--k-min` (default 1000), `--k-max` (default 512000), `--progression` (exp/power), `--power`, `--mask-seed`, `--mask-fraction` (default 0.05), `--preset` (default n2s), `--config`, `--floor` (background floor / DC-offset suppression, default `auto` — K* is measured on floor-suppressed data, matching `fit`; pass `none` for the legacy hard-min behavior), `--device/-d`, `--k-star-metric` (psnr_minmax/psnr_foreground/psnr_fg_weighted/gain), `--fg-bg-ratio` (default 1, equal total foreground/background weight for `psnr_fg_weighted`), `--auto-region/--no-auto-region` + `--region-size`/`--region-strategy` (calibrate on a content-rich sub-region), `--feature-metric`, `--saturation-exponent`, `--rd-model/--no-rd-model`, `--fit-exponent`/`--exponent-scales` (measure the saturation exponent alpha instead of assuming the default), `--pdf` (multi-page PDF report), `--keep-fits` (persist per-K fits), `--quiet/-q`, plus volume-loader pass-through (`--channel/-c`, `--timepoint`, `--array-key`, `--axes`). For sparse or deconvolved volumes, prefer `psnr_fg_weighted`: it balances signal fidelity against background haze. `gain` remains a useful reported diagnostic, but its K* is identical to `psnr_minmax` because the predict-zero baseline is constant across K.
 

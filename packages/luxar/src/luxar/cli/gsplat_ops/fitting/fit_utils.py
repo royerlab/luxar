@@ -808,6 +808,8 @@ def dispatch_parallel_tiled(
     if not (tiled and ctx.tile is None and ctx.jobs != "1"):
         return False
 
+    import time
+
     import numpy as np
 
     from luxar.gsplats.fit_tiled_parallel import (
@@ -820,6 +822,7 @@ def dispatch_parallel_tiled(
     from luxar.gsplats.fitting.downscale import downscale_volume, normalize_downscale
     from luxar.gsplats.tiling import compute_tile_specs, resolve_grid_scale
 
+    started = time.perf_counter()
     # Compute the tile grid on the POST-downscale shape without materializing
     # the decimated reference yet, so a one-job fallback does not downscale the
     # volume twice. Decimation is volume[::f], so shape math is exact here.
@@ -1019,7 +1022,7 @@ def dispatch_parallel_tiled(
                 dimension_metadata=ctx.dimension_metadata,
             )
 
-        aprint(f"\nDone: {n_splats:,} splats")
+        aprint(f"\nDone: {n_splats:,} splats in {time.perf_counter() - started:.1f}s")
         return True
 
     aprint("--jobs resolved to 1 worker; using sequential tiled fitting")

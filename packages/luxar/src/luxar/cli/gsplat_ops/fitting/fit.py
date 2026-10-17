@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -10,6 +11,7 @@ from arbol import aprint, asection
 
 from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES_HELP
 
+from ...utils import reject_remote_input
 from ..voxel_frame import (
     FitFrame,
     parse_region,
@@ -44,6 +46,49 @@ FIT_CLI_DOCS_URL = (
     "https://github.com/royerlab/luxar/blob/main/packages/luxar/src/luxar/"
     "cli/README.md#luxar-gsplat-fit"
 )
+
+
+def _refuse_existing_output(
+    output_path: Path, *, overwrite: bool, worker: bool, plan_only: bool
+) -> None:
+    """Refuse to replace an existing OUTPUT unless ``--overwrite`` was passed.
+
+    Matches ``gsplat lod`` / ``luxar export``. Two modes are exempt. A worker
+    (``--tile k/M``, ``--plan-box``) writes the per-tile path its parent or a
+    batch-fit task chose, and the batch tooling owns that path's lifecycle
+    (resume, ``validate --fix``). ``--plan-only`` writes only a plan JSON —
+    OUTPUT itself when OUTPUT is not store-like, else ``<stem>.plan.json``
+    beside it — and announces when it replaces an existing plan; it never
+    writes a store, which :func:`_require_content_for_plan_only` guarantees by
+    refusing it outside ``--tiling content``.
+    """
+    if overwrite or worker or plan_only or not output_path.exists():
+        return
+    raise typer.BadParameter(
+        f"Output {output_path} exists; pass --overwrite to replace it.",
+        param_hint="'output_path'",
+    )
+
+
+def _require_content_for_plan_only(plan_only: bool, resolved_tiling: str) -> None:
+    """``--plan-only`` plans a content fit; any other tiling would run a full fit."""
+    if plan_only and resolved_tiling != "content":
+        raise typer.BadParameter(
+            f"--plan-only needs --tiling content (this fit resolved to "
+            f"'{resolved_tiling}'); pass --tiling content with --cal or "
+            "--k-star-ref, or drop --plan-only."
+        )
+
+
+def _done_seconds(result: Any, is_leaf: bool, started: float) -> float:
+    """Seconds to report on the final ``Done:`` line.
+
+    A flat leaf carries its optimization time; a tiled (partition) result has no
+    single fit time, so the command's wall clock is reported instead.
+    """
+    if is_leaf and "time_seconds" in result.stats:
+        return float(result.stats["time_seconds"])
+    return time.perf_counter() - started
 
 
 def _scene_axis_unit(frame: FitFrame) -> Optional[str]:
@@ -232,6 +277,12 @@ def run_fit_volume(
     ),
     output_path: Optional[Path] = typer.Argument(
         None, help="Output .gsplats.zarr path"
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Replace OUTPUT if it already exists (otherwise an existing "
+        "output is refused).",
     ),
     # Common flags
     seeds: Optional[str] = typer.Option(
@@ -807,9 +858,16 @@ def run_fit_volume(
     if output_path is None:
         aprint("Error: Missing argument 'OUTPUT_PATH'")
         raise typer.Exit(1)
+    reject_remote_input(input_path)  # before exists(): a URL is not "missing"
     if not input_path.exists():
         aprint(f"Error: Input file not found: {input_path}")
         raise typer.Exit(1)
+    _refuse_existing_output(
+        output_path,
+        overwrite=overwrite,
+        worker=(tile, plan_box) != (None, None),
+        plan_only=plan_only,
+    )
     validate_hygiene_flags(min_extent, reseed_sigma)
     parsed_norm_range = _parse_norm_range(norm_range)
     parsed_voxel_size = parse_voxel_size(voxel_size)
@@ -825,6 +883,7 @@ def run_fit_volume(
         parsed_tile_region, region, worker_region, tile=tile, plan_box=plan_box
     )
 
+    started = time.perf_counter()
     try:
         from luxar.gsplats import fit_gaussian_splats
         from luxar.gsplats.utils.cpu_threads import cpu_threads_for
@@ -879,6 +938,7 @@ def run_fit_volume(
                 tile_size,
                 _has_density,
             )
+            _require_content_for_plan_only(plan_only, resolved_tiling)
 
             # A calibration records the floor it subtracted, and measured its
             # density's feature_threshold on that scale — so consume it when the
@@ -1183,8 +1243,9 @@ def run_fit_volume(
                 ctx, result, tiled_downscale_factors
             )
 
-        time_s = result.stats.get("time_seconds", 0) if is_leaf else 0
-        aprint(f"\nDone: {n_splats:,} splats in {time_s:.1f}s")
+        aprint(
+            f"\nDone: {n_splats:,} splats in {_done_seconds(result, is_leaf, started):.1f}s"
+        )
 
     except (typer.Exit, typer.BadParameter):
         # BadParameter is a usage error (e.g. an invalid --floor spec, rejected
