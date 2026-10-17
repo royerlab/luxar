@@ -9,6 +9,7 @@ leaving every coordinate as fitted. ``--dim-order`` and ``--view`` override.
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -254,6 +255,39 @@ class TestFitStampsAxisNames:
 
 
 class TestConvertImageConvention:
+    @pytest.mark.parametrize("extra", [(), ("--dim-order", "x,y,z")])
+    def test_centered_ranges_enclose_written_float32_centers(
+        self, runner: CliRunner, tmp_path: Path, extra: tuple[str, ...]
+    ) -> None:
+        rng = np.random.default_rng(0)
+        centers = rng.uniform(-25, 25, (12, 3)).astype(np.float32)
+        data = GSplatData(
+            centers=centers,
+            amplitudes=(rng.random(12) + 0.1).astype(np.float32),
+            cholesky_factors=np.tile(_CHOL_ZYX, (12, 1)),
+            stats={"source_shape": [8, 8, 8]},
+        )
+        src = tmp_path / "fit.gsplats.zarr"
+        data.save(src)
+        out = tmp_path / "scene.luxar.zarr"
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = runner.invoke(
+                app, ["gsplat", "convert", str(src), str(out), *extra]
+            )
+
+        assert result.exit_code == 0, normalized_cli_output(result)
+        assert not [
+            warning
+            for warning in caught
+            if "outside declared range" in str(warning.message)
+        ]
+        written = np.asarray(_leaf(out).centers)
+        for i, dim in enumerate(_scene(out).attrs["scene_dimensions"]["dimensions"]):
+            assert dim["range"][0] <= written[:, i].min()
+            assert written[:, i].max() <= dim["range"][1]
+
     def test_default_maps_zyx_columns_onto_xyz_and_faces_xy_y_down(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:

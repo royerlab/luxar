@@ -1356,6 +1356,26 @@ and `luxar optimize` carries the file into a re-chunked store for the same reaso
 `master_gain`, `panning_model` `"equalpower"` | `"HRTF"`, per-bus gains, and
 `duck_db` — the ambient attenuation while anything on the voice bus plays).
 
+### GSplats amplitude provenance
+
+A gsplats node in a scene stores amplitudes that have usually been rescaled at
+insertion (see `docs/specs/GSPLATS_ZARR_FORMAT.md`). The rescale is recorded so
+the stored values can be reconciled with the fit they came from. None of these
+attrs is read by the viewer; on a `kind=lod` / `kind=partition` subtree they sit
+on every leaf, with one shared value.
+
+| Attr | Meaning |
+|------|---------|
+| `amplitude_normalization_factor` | The TOTAL raw→stored factor: `stored = raw × factor`, so `raw = stored / factor` (to the store's amplitude quantization). Always stamped by `gsplat convert` auto exposure and `--scale-intensity` (1.0 when nothing was scaled); on the per-splat path it is absent when nothing was scaled. |
+| `amplitude_normalization_mode` | `"projected"` — `gsplat convert` auto exposure; `"manual"` — `gsplat convert --scale-intensity`. Absent on the per-splat p99.9 normalization of the Python adders and `--no-auto-exposure`. |
+| `projected_sum_p999` | Auto exposure only: the predicted p99.9 of the per-pixel additive sum of the opening view, after scaling (HDR, before tone mapping). |
+| `projected_sum_target` | Auto exposure only: the `--target-brightness` it was scaled to (never brightened past the per-splat normalization). `projected_sum_p999` falls below it when the side-view cap (side views ≤ 4× target) set the factor. |
+| `projected_sum_axis` | Auto exposure only: the scene dimension the opening view looks along. |
+
+The source `.gsplats.zarr` is never rewritten, so `luxar gsplat render` /
+`compare` / `export` — which read the gsplats store, and refuse a scene — see the
+fit's own amplitudes.
+
 ## Scalar Colormap Attributes
 
 For Points, Lines and Mesh, an optional per-element `scalars` zarr array

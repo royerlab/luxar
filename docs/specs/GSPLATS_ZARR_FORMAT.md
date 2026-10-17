@@ -235,10 +235,13 @@ Every writer also fills the gap an unlabeled fit leaves: when the root carries n
 `dimension_metadata` but its `fitting/source_shape` has the same rank as the
 centers (a fit of a 2-D or 3-D image), the root is stamped with the column NAMES
 in array order — `[{"name": "z"}, {"name": "y"}, {"name": "x"}]` for a stack,
-`[{"name": "y"}, {"name": "x"}]` for a plane. Names only: a later `gsplat
-transform` moves data inside the same frame, so the axis names stay honest where
-a voxel `scale` would not (the fit's spacing is already recorded verbatim under
-`fitting/config`, `voxel_size` + `output_space`). An explicit
+`[{"name": "y"}, {"name": "x"}]` for a plane. A fit stored in physical
+coordinates (`fitting/physical_coordinates: true` with a known
+`fitting/voxel_unit`) also gets that `unit` on each entry
+(`{"name": "z", "unit": "um"}`), because its centers ARE in that unit. Never a
+`scale`: a later `gsplat transform` moves data inside the same frame, so names
+and the unit stay honest where a voxel `scale` would not (the spacing itself is
+recorded in `fitting/voxel_size`, see "Coordinate frame" below). An explicit
 `dimension_metadata` always wins, and a stacked timelapse (centers outranking the
 source grid) is left unstamped. `luxar gsplat convert` reads the names to map the
 columns onto x, y, z-ordered scene dimensions and open the scene in the image
@@ -686,6 +689,16 @@ it across each gsplat structure**.
 > The factor must be shared across every substitutive level and additive rung —
 > a per-level factor scales the levels against each other and the brightness pops
 > at every LOD switch. See `core/group/gsplats_pipeline/amplitude_norm.py`.
+>
+> **`luxar gsplat convert` goes one step further: auto exposure.** Per-splat
+> normalisation ignores overlap, and additive blending SUMS every splat along the
+> view ray, so a dense fit still opens as a saturated blob. By default convert
+> predicts the opening view's per-pixel sum (`luxar.gsplats.exposure`) and dims
+> the amplitudes — never brightens — so its p99.9 equals `--target-brightness`
+> (2.0; 0.9 under a clipping tone mapping), or lower when a side view or another
+> timepoint would exceed 4x that, recording the total factor plus `amplitude_normalization_mode="projected"`
+> and the prediction (`docs/guides/user/LUXAR_ZARR_FORMAT.md` § "GSplats amplitude
+> provenance"). `--no-auto-exposure` restores the per-splat normalisation alone.
 
 **Window harmonization (#1691)**. A per-node window is right for one flat leaf
 and wrong for a multi-node structure: on a `kind=lod` ladder a coarse level's
@@ -895,6 +908,20 @@ The `fitting/` group is **optional** and designed to be **fitter-agnostic**. Dif
   "enable_dynamic_ops": true
 }
 ```
+
+**Coordinate frame** (fitting/.zattrs, optional; written by `luxar gsplat fit`):
+
+| Key | Meaning |
+| --- | --- |
+| `physical_coordinates` | `true`: centers and Cholesky factors are `voxel_size × voxel index` (physical units); `false` or absent: voxel indices. Every CLI fit writes it. |
+| `voxel_size` | Per-axis spacing the fit used, array axis order. Present whenever a spacing shaped the fit, even with `physical_coordinates: false` (`cal`'s fits, an `output_space: voxel` config). |
+| `voxel_unit` | Unit of `voxel_size` (`"um"` for TIFF metadata and `--voxel-size`; a recognized NGFF unit normalized to its Luxar spelling, otherwise the original unit). Absent when unknown (a config `voxel_size`). |
+| `voxel_size_source` | Where the spacing came from: `--voxel-size`, `fit config`, `OME-TIFF metadata`, `ImageJ metadata`, `OME-Zarr NGFF scale`. |
+| `source_region` | A `fit --region` crop, `[[start, stop], ...]` in the source volume's voxel indices. The start is ALREADY added to the centers (× `voxel_size` when physical), so the splats sit in full-volume coordinates; `source_shape` / `fitted_shape` describe the crop. To render onto the crop's own grid, subtract the start first. |
+
+A Python `fit_gaussian_splats(..., voxel_size=...)` records `voxel_size` and
+`physical_coordinates`; the CLI adds the rest. A reader that renders the splats onto a
+voxel grid has to undo this frame itself.
 
 **Design principle**: Other programs that produce gsplats can write their own
 `fitter_name` and custom config. Readers should:
