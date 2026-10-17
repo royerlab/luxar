@@ -27,7 +27,7 @@ exactly ``S``. The ``.gsplats.zarr`` itself is never touched: ``gsplat render`` 
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 
 from ...core.group.gsplats_pipeline.amplitude_norm import (
@@ -186,6 +186,27 @@ def _manual(
     )
 
 
+#: Opening-view projected p99.9, in per-splat-normalised units (the brightest
+#: splat peaks at ~1), above which the brightest rays stack so many splats that
+#: additive blending shows an integrated haze rather than interior structure.
+#: Measured on real fits: sparse cells/nuclei (A549, Allen DNA at 128k splats,
+#: h2afva) sit at 0.6-10; dense nuclear stains (cells3d nuclei, a full Allen
+#: FOV) at 28-31, the volumes testers described as a featureless glow.
+DENSE_PROJECTED_SUM = 20.0
+
+
+def dense_view_hint(predicted_before: float) -> Optional[str]:
+    """One line pointing a dense volume at volumetric blending, else ``None``."""
+    if predicted_before < DENSE_PROJECTED_SUM:
+        return None
+    return (
+        f"Dense along the view: the brightest rays stack ~{predicted_before:.0f} "
+        "splat peaks, so additive blending shows an integrated glow rather than "
+        "interior detail. For interior structure try --blending-mode volumetric "
+        "(convert then prints a starting --absorption)."
+    )
+
+
 def _exposure_line(plan: "ExposurePlan", per_splat: float = 1.0) -> str:
     """The one narration line, naming the STAMPED display gain (``per_splat ×
     plan.factor``) and the side-view cap only when it binds."""
@@ -294,13 +315,17 @@ def resolve_convert_exposure(
     }
     if axis_name is not None:
         extra[PROJECTED_SUM_AXIS_ATTR] = axis_name
-    return _exposure(
+    exposure = _exposure(
         per_splat * plan.factor,
         "projected",
         units,
         _exposure_line(plan, per_splat),
         **extra,
     )
+    hint = dense_view_hint(plan.predicted_before)
+    if hint is not None and exposure.line:
+        exposure = replace(exposure, line=f"{exposure.line}\n{hint}")
+    return exposure
 
 
 def predict_volumetric_ray_mass(

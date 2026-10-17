@@ -734,3 +734,17 @@ def test_a_lod_convert_emits_the_aces_lut_notice_once(tmp_path: Path) -> None:
     notices = [w for w in record if "sets no tone_mapping" in str(w.message)]
     assert len(notices) == 1
     assert "--tone-mapping None" in str(notices[0].message)
+
+
+def test_dense_view_hint_fires_only_above_the_dense_threshold() -> None:
+    """A dense opening view points at volumetric; a sparse one says nothing."""
+    from luxar.cli.gsplat_ops.scene_exposure import (
+        DENSE_PROJECTED_SUM,
+        dense_view_hint,
+    )
+
+    assert dense_view_hint(DENSE_PROJECTED_SUM / 4) is None
+    hint = dense_view_hint(DENSE_PROJECTED_SUM * 1.5)
+    assert hint is not None
+    assert "--blending-mode volumetric" in hint
+    assert f"~{DENSE_PROJECTED_SUM * 1.5:.0f}" in hint

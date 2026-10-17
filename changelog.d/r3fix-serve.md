@@ -50,3 +50,7 @@ Install docs: the README's capability table says a native app export needs a
 source checkout (`make build-launchers`), the Ubuntu `apt` lines run `apt update`
 first, and the install skill's "Hatch owns the environment" advice moved under
 the NVIDIA profile's dev-checkout heading, where it applies.
+
+#### `gsplat convert` points dense volumes at volumetric blending
+
+When the predicted opening view stacks more than about 20 splat peaks along its brightest rays (dense nuclear stains: a cells3d nuclei fit predicts 31, a full Allen FOV 28; sparse cells sit at 0.6–10), the exposure line is followed by one hint: additive blending shows an integrated glow there, and `--blending-mode volumetric` (which then prints a starting `--absorption`) shows interior structure. The lod substitutive reducer also stops warning about the MPS float64 fallback when the device was chosen automatically.
