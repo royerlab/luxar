@@ -7,18 +7,22 @@
  * | Backend | Convention |
  * |---|---|
  * | OpenGL ES 3.0 (`glslVersion: GLSL3`) | **last** vertex of the primitive, fixed by spec |
- * | WGSL `@interpolate(flat)` as three emits it | **first**-vertex sampling |
+ * | Core WGSL mesh pick `@interpolate(flat, first)` | **first**-vertex sampling |
  *
  * That only becomes observable when a `flat` varying differs BETWEEN a triangle's
  * corners — which, in the shipped materials, is exactly one case: the mesh pick
  * shader's `vElementId`, whose source is `gl_VertexID` / `vertexIndex`
  * (spec §6.5). Left alone, the same click on the same triangle `(i0, i1, i2)`
- * reports `i2` on WebGL and `i0` on WebGPU.
+ * reports `i2` on WebGL and `i0` on core WebGPU. Compatibility-mode WebGPU
+ * uses `flat, either`, which still reports a corner of the same triangle.
  *
- * `WEBGL_provoking_vertex` lets the WebGL side adopt WebGPU's first-vertex rule, so
+ * `WEBGL_provoking_vertex` lets the WebGL side adopt core WebGPU's first-vertex rule, so
  * the two agree wherever the extension exists. Where it does not, PickingSystem
- * cyclically rotates each mesh index triple, so GL's last vertex is the original
- * first vertex without changing winding or geometry.
+ * cyclically rotates each mesh index triple, so GL's last vertex becomes the original
+ * first vertex without changing winding or geometry — WebGL and core WebGPU therefore
+ * always agree exactly. Compatibility-mode WebGPU's `either` sampling (above) is the one
+ * case that still only satisfies the weaker "a corner of the front-most triangle"
+ * contract, not an exact match, and stands as a documented §6.4 exception.
  *
  * ## Why context-wide state is acceptable here
  *
@@ -80,7 +84,7 @@ export function alignProvokingVertexWithWebGPU(renderer: unknown): boolean {
     log.info(
       Modules.RENDERER,
       'WEBGL_provoking_vertex unavailable; mesh index triples rotate so GL picks ' +
-        'the same original first corner as WebGPU'
+        'the same original first corner as core WebGPU'
     );
     return false;
   }
@@ -89,7 +93,7 @@ export function alignProvokingVertexWithWebGPU(renderer: unknown): boolean {
   log.info(
     Modules.RENDERER,
     'Provoking vertex set to FIRST_VERTEX_CONVENTION_WEBGL — mesh pick ids now ' +
-      'match the WebGPU backend'
+      'match core WebGPU'
   );
   return true;
 }

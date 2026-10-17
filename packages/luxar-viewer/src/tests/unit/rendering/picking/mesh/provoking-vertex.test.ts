@@ -34,7 +34,7 @@ describe('alignProvokingVertexWithWebGPU', () => {
     const { renderer, provokingVertexWEBGL } = rendererWithExtension();
     expect(alignProvokingVertexWithWebGPU(renderer)).toBe(true);
     // The exact enum matters: any other mode would leave WebGL and WebGPU reporting
-    // different corners, which is the whole thing this exists to prevent.
+    // different corners on core WebGPU, which this function prevents.
     expect(provokingVertexWEBGL).toHaveBeenCalledWith(FIRST);
     expect(provokingVertexWEBGL).toHaveBeenCalledTimes(1);
   });
@@ -87,7 +87,7 @@ describe('alignProvokingVertexWithWebGPU', () => {
 
   it('treats a WebGPU-shaped context as a no-op rather than an error', () => {
     // The WebGPU backend's getContext returns a device-ish object with no
-    // getExtension. Nothing to align there — WGSL already samples the first vertex.
+    // getExtension. Nothing to align there — WGSL selects its corner per backend.
     expect(alignProvokingVertexWithWebGPU({ getContext: () => ({ queue: {}, limits: {} }) })).toBe(
       false
     );

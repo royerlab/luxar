@@ -51,7 +51,9 @@ recompile — and it is why `mesh-pick` is ONE codegen snapshot variant covering
 
 ## Pick corner and depth
 
-- **Which triangle corner a pick reports.** Both backends report the original _first_ vertex.
+- **Which triangle corner a pick reports.** WebGL and core WebGPU report the original _first_
+  vertex. Compatibility-mode WebGPU samples `flat, either`, so its id is only guaranteed to be a
+  corner of the hit triangle (§6.5).
   `provoking-vertex.ts` aligns GL when `WEBGL_provoking_vertex` exists. Otherwise the shared
   mesh index triples rotate cyclically, preserving winding while putting that corner last for GL.
 - **The surface-depth VALUE.** GLSL writes `gl_FragCoord.z`; the TSL twin writes
