@@ -4,7 +4,10 @@
 > per-family chord factors described in the Phase 3 / Phase 4 blocks below.
 >
 > **τ = κ × the same ray mass that geometry's ADDITIVE branch emits**, for all
-> three types. Gsplats already did this (`tau = κ·uOpacity·intensity`); points
+> three types. Gsplats already did this (`tau = κ·uOpacity·intensity`, where a
+> gsplat's `intensity` is computed from the gained amplitude
+> `aAmplitude·uDisplayGain`, so a per-node `display_gain` scales the density
+> exactly as it scales the emission); points
 > and lines additionally multiplied by a world thickness
 > (`vRadius·POINT_CHORD_SCALE` / `vWidthAtT·LINE_CHORD_SCALE`). Both chord
 > constants and their `materials/{point,line}/math.ts` modules are DELETED.
