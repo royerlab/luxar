@@ -2015,7 +2015,7 @@ def _validate_content_fit_flags(tiling: str, fit_args: dict) -> None:
         return
     unsupported = [
         flag
-        for flag in CONTENT_UNSUPPORTED_FIT_FLAGS
+        for flag in (*CONTENT_UNSUPPORTED_FIT_FLAGS, "--tile-amplitude-floor")
         if flag.removeprefix("--") in fit_args
     ]
     if not unsupported:

@@ -105,6 +105,26 @@ def test_tile_amplitude_floor_matches_sequential_parallel_and_worker(
     assert pruned_counts[0] == pruned_counts[1]
 
 
+def test_tile_amplitude_floor_refuses_nonuniform_fit(tmp_path: Path) -> None:
+    source = tmp_path / "image.npy"
+    np.save(source, np.ones((8, 8), dtype=np.float32))
+    result = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(source),
+            str(tmp_path / "out.gsplats.zarr"),
+            "--tiling",
+            "content",
+            "--tile-amplitude-floor",
+            "1e-5",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "requires uniform tiling" in normalized_cli_output(result)
+
+
 @pytest.mark.slow
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
 def test_tiled_parallel_cli_end_to_end(tmp_path: Path) -> None:

@@ -22,12 +22,7 @@ if TYPE_CHECKING:
     pass
 
 
-CONTENT_UNSUPPORTED_FIT_FLAGS = (
-    "--denoise",
-    "--downscale",
-    "--progressive",
-    "--tile-amplitude-floor",
-)
+CONTENT_UNSUPPORTED_FIT_FLAGS = ("--denoise", "--downscale", "--progressive")
 
 
 def _invocation_token() -> str:
@@ -83,7 +78,6 @@ class FitPipelineCtx:
     axes: Optional[str]
     lr: Optional[float]
     floor: Optional[str]
-    tile_amplitude_floor: Optional[float]
     norm_range: "Optional[tuple[float, float]]"
     seed_method: Optional[str]
     verbose: bool
@@ -132,6 +126,7 @@ class FitPipelineCtx:
     dimension_metadata: "Optional[list[dict[str, str]]]" = None
     min_extent: Optional[float] = None
     reseed_sigma: Optional[float] = None
+    tile_amplitude_floor: Optional[float] = None
 
 
 def validate_hygiene_flags(
