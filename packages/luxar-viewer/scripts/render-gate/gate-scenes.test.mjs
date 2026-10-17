@@ -2,13 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { perfCounterSpec } from '../../src/profiling/perf-counters';
-import {
-  judgeMetric,
-  METRIC_DIRECTIONS,
-  rowRegressed,
-  suiteMarkdown,
-  validateMetricDirections,
-} from './suites.mjs';
+import { judgeMetric, METRIC_DIRECTIONS, validateMetricDirections } from './suites.mjs';
 
 const manifest = JSON.parse(readFileSync(new URL('./gate-scenes.json', import.meta.url), 'utf8'));
 const generator = readFileSync(new URL('./generate_gate_scenes.py', import.meta.url), 'utf8');
@@ -113,54 +107,32 @@ describe('render-gate scene manifest', () => {
     expect(judged.verdict).toBe('win');
   });
 
-  it('reports load-dependent LOD playback work without failing an A/A run', () => {
+  it('gates LOD playback uploads, swaps, and cache misses after warm-up', () => {
     const c = manifest.suites.playback.cases.find((x) => x.id === 'playback_lod_timelapse');
-    const metrics = new Map(c.metrics.map((m) => [m.name, m]));
-    const loadDependent = [
+    expect(c.workload.settleLodTimepoints).toBe(true);
+    for (const name of [
       'gpu.uploadBytes/tick',
       'gpu.uploadBytes.texture/tick',
       'render.count/tick',
       'lod.levelSwaps',
-    ];
-    for (const name of loadDependent) expect(metrics.get(name)?.report).toBe(true);
-    expect(c.metrics.filter((m) => !m.report).map((m) => m.name)).toEqual([
-      'achievedFps',
-      'lastTimepointShown',
-      'decode.duplicates',
-    ]);
-
-    const arm = (swaps, bytes, renders, duplicates) =>
-      Array.from({ length: 5 }, () => ({
-        'lod.levelSwaps': swaps,
-        'gpu.uploadBytes': bytes,
-        'gpu.uploadBytes.texture': bytes,
-        'render.count': renders,
-        ticks: 50,
-        achievedFps: 25,
-        lastTimepointShown: 1,
-        'decode.duplicates': duplicates,
-      }));
-    const samples = {
-      base: arm(0, 47_700_000, 100, 0),
-      base2: arm(0, 47_700_000, 100, 0),
-      cand: arm(2, 75_500_000, 150, 0),
-    };
-    const judge = () => Object.fromEntries(c.metrics.map((m) => [m.name, judgeMetric(m, samples)]));
-    const judged = judge();
-    for (const name of loadDependent) expect(judged[name].verdict).toBe('fail');
-    expect(rowRegressed(c.metrics, judged)).toBe(false);
-    const report = suiteMarkdown('playback', [
-      { case: c.id, backend: 'webgl', status: 'pass', metrics: judged, failures: [] },
-    ]).join('\n');
-    for (const name of loadDependent) {
-      const line = report.split('\n').find((x) => x.includes(`| ${c.id} | webgl | ${name} |`));
-      expect(line).toMatch(/\| fail \(report\) \|$/);
+    ]) {
+      const metric = c.metrics.find((m) => m.name === name);
+      expect(metric.report).toBeFalsy();
     }
-    expect(report.split('\n').find((x) => x.includes('| achievedFps |'))).toMatch(/\| pass \|$/);
-    expect(report).not.toContain('| (row) |');
-
-    samples.cand = arm(2, 75_500_000, 150, 1);
-    expect(rowRegressed(c.metrics, judge())).toBe(true);
+    for (const name of ['fetch.data.requests', 'decode.count']) {
+      const metric = c.metrics.find((m) => m.name === name);
+      expect(metric).toMatchObject({ better: 'lower', kind: 'counter' });
+      expect(metric.report).toBeFalsy();
+      const arm = (count) => [{ [name]: count }];
+      expect(judgeMetric(metric, { base: arm(0), base2: arm(0), cand: arm(1) }).verdict).toBe(
+        'fail'
+      );
+    }
+    const upload = c.metrics.find((m) => m.name === 'gpu.uploadBytes/tick');
+    const arm = (bytes) => [{ 'gpu.uploadBytes': bytes, ticks: 10 }];
+    expect(judgeMetric(upload, { base: arm(100), base2: arm(100), cand: arm(200) }).verdict).toBe(
+      'fail'
+    );
   });
 
   it('declares every suite metric in its known direction', () => {

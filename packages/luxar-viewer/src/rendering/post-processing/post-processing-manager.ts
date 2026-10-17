@@ -645,20 +645,19 @@ export class PostProcessingManager {
   // MSAA + SSAA (canvas-level; reallocate HDR target on change)
   // ================================================================
 
-  private get nativeWebGPU(): boolean {
-    return (
-      this.capabilities.apiSurface === 'webgpu' &&
-      (this.renderer as { backend?: { isWebGPUBackend?: boolean } }).backend?.isWebGPUBackend ===
-        true
+  getSupportedMSAASamples(): number[] {
+    return supportedMSAASamples(
+      this.capabilities.maxMSAASamples,
+      this.capabilities.nativeWebGPUBackend
     );
   }
 
-  getSupportedMSAASamples(): number[] {
-    return supportedMSAASamples(this.capabilities.maxMSAASamples, this.nativeWebGPU);
-  }
-
   private resolveMSAASamples(samples: number): number {
-    return validateMSAASamples(samples, this.capabilities.maxMSAASamples, this.nativeWebGPU);
+    return validateMSAASamples(
+      samples,
+      this.capabilities.maxMSAASamples,
+      this.capabilities.nativeWebGPUBackend
+    );
   }
 
   setMSAAEnabled(enabled: boolean): boolean {

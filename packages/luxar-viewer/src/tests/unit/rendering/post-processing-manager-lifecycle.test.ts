@@ -48,6 +48,7 @@ function mockCaps(
 ): RendererCapabilities {
   return {
     apiSurface,
+    nativeWebGPUBackend: false,
     framebufferYDown: apiSurface === 'webgpu',
     readbackYDown: false,
     hdr: {
@@ -726,14 +727,10 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
 
   it('allocates 4 samples for a native WebGPU 2x request and reports that count', async () => {
     await loadTslMaterials();
-    const capabilities = mockCaps('webgpu');
+    const capabilities = mockCaps('webgpu', { nativeWebGPUBackend: true });
     materialManager.setCaps(capabilities);
-    const renderer = makeMockRenderer() as Renderer & {
-      backend: { isWebGPUBackend: boolean };
-    };
-    renderer.backend = { isWebGPUBackend: true };
     const mgr = new PostProcessingManager(
-      renderer,
+      makeMockRenderer(),
       capabilities,
       new THREE.Scene(),
       new THREE.PerspectiveCamera(),

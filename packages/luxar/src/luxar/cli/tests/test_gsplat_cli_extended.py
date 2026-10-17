@@ -1318,11 +1318,12 @@ class TestConvertCommand:
             f"convert --scale-intensity failed: {result.stdout}"
         )
         attrs = read_node_attrs(out / "gsplats")
-        expected_hi = float(np.percentile(raw_data.amplitudes * 0.5, 99.9))
+        # The amplitudes stay in the fit's data units; the manual factor is
+        # the display gain, replacing normalization and auto exposure.
+        expected_hi = float(np.percentile(raw_data.amplitudes, 99.9))
         assert attrs["amplitude_data_range"][1] == pytest.approx(expected_hi, rel=1e-3)
-        # The manual factor replaces normalization and auto exposure, and is
-        # recorded exactly so the stored amplitudes divide back to the fit's.
-        assert attrs["amplitude_normalization_factor"] == 0.5
+        assert attrs["display_gain"] == 0.5
+        assert "amplitude_normalization_factor" not in attrs
         assert attrs["amplitude_normalization_mode"] == "manual"
         assert "projected_sum_p999" not in attrs
 
@@ -2779,7 +2780,7 @@ class TestViewCommand:
         out = _plain(result.stdout)
         assert result.exit_code == 0, out
         assert "Built a temporary scene" in out
-        assert "Exposure: scaled splat brightness" in out
+        assert "Exposure: display gain" in out
         assert captured["root_format_type"] == "luxar_zarr"
         assert captured["viewer_config"]["camera"]["view_axis"] == "xy"
         attrs = captured["gsplats_attrs"]
@@ -2802,7 +2803,9 @@ class TestViewCommand:
         assert "Exposure:" not in _plain(result.stdout)
         assert captured["viewer_config"]["camera"]["view_axis"] == "xz"
         attrs = captured["gsplats_attrs"]
-        assert "amplitude_normalization_mode" not in attrs
+        # --no-auto-exposure: data units, the per-splat factor as the gain.
+        assert attrs["amplitude_normalization_mode"] == "per_splat"
+        assert attrs["display_gain"] > 0
         assert attrs["colormap"] == "plasma"
 
     @pytest.mark.skipif(not hasattr(signal, "SIGTERM"), reason="no SIGTERM")
@@ -6943,6 +6946,9 @@ class TestLODCarriesAuthoredAppearance:
         # value proves the carry — but a non-zero one also fails loudly if a
         # future change ever starts defaulting it to 0.
         "layer_order": 20,
+        # The data-unit brightness: multiplicative like intensity, and never
+        # stamped by default, so any non-identity value proves the carry.
+        "display_gain": 3.5e-4,
     }
     DIMENSION_METADATA: ClassVar[list[dict[str, Any]]] = [
         {"name": "z", "scale": 2.0},

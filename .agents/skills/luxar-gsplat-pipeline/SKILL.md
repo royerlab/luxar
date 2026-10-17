@@ -760,13 +760,21 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
 ```
 
 The CLI shortcut `luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --center`
-does (a) for you and writes a ready-to-serve scene. It also auto-exposes: amplitudes
-are dimmed (never brightened) so the opening view's predicted additive p99.9 is
-`--target-brightness` (2.0; 0.9 under `--tone-mapping None|Linear`) instead of a saturated blob (side views and other timepoints capped at 4x); `--no-auto-exposure` opts
-out. The Python adders keep per-splat normalisation — for the same result call
-`luxar.gsplats.exposure.plan_projected_exposure` and pass
-`normalize_amplitudes=AmplitudeScale(factor)` (from
-`luxar.core.group.gsplats_pipeline.amplitude_norm`).
+does (a) for you and writes a ready-to-serve scene. It keeps the amplitudes in
+source data units (labelled `amplitude_unit`, floor in `amplitude_offset`) and
+auto-exposes a separate `display_gain`: dimmed (never brightened) so the opening
+view's predicted additive p99.9 is `--target-brightness` (2.0; 0.9 under
+`--tone-mapping None|Linear`) instead of a saturated blob (side views and other
+timepoints capped at 4x); `--no-auto-exposure` = per-splat gain only. The Python
+adders keep per-splat normalisation by default. For the same result in Python,
+use the public helper — the gain is per-splat normalisation × `plan.factor`:
+
+```python
+from luxar.gsplats.exposure import data_unit_display_attrs, plan_projected_exposure
+# plan = plan_projected_exposure(..., amps * per_splat, ...)  (as convert does), optional
+attrs = data_unit_display_attrs(stats, amplitudes=amps, plan=plan)  # or gain=...
+scene.add_gsplats_from_file("g", path, normalize_amplitudes=False, **attrs)
+```
 
 ## Notes
 

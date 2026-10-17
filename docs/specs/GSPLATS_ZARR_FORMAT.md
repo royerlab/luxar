@@ -670,18 +670,19 @@ it across each gsplat structure**.
 > `t = clamp((A - min) * scale, 0, 1)` — a LUT index, clamped to `[0, 1]`. It
 > selects a *colour*. It cannot scale brightness, and nothing downstream divides
 > the amplitude by it. Emitted radiance and, under `volumetric`, optical depth
-> (`tau = absorption * opacity * intensity`, `intensity ∝ A`) are both **linear
-> in the raw stored amplitude** and are not windowed by anything.
+> (`tau = absorption * opacity * display_gain * intensity`, `intensity ∝ A`) are
+> both **linear in the stored amplitude** and the window does not reach them.
 >
-> **Consequence — amplitudes must be normalised at scene insertion.** Fitted
-> archives store amplitudes in raw source units: the fitter multiplies its
-> `[0,1]` working copy back out by the volume's intensity range, so a fit from a
-> uint16 detector stack carries detector counts. An amplitude of 800 emits 1000x
-> the radiance of 0.8 and saturates `1 - exp(-tau)` into an opaque shell, and no
-> viewer control can compensate — the only remaining lever is `opacity`, which
-> would have to carry a ~1/500 factor on a `[0,1]` control. `add_gsplats_from_data`,
-> `add_gsplats_from_file`, `add_gsplats_from_volume` and the graft path therefore
-> normalise by default (robust p99.9 -> 1.0, **one factor for the whole
+> **Consequence — raw amplitudes need a brightness factor, which the window
+> cannot be.** Fitted archives store amplitudes in source units: the fitter
+> multiplies its `[0,1]` working copy back out by the volume's intensity range,
+> so a fit from a uint16 detector stack carries detector counts. An amplitude of
+> 800 emits 1000x the radiance of 0.8 and saturates `1 - exp(-tau)` into an
+> opaque shell unless something scales it. `opacity` cannot (it is a `[0, 1]`
+> control that would have to carry ~1/500); the node's `display_gain` can
+> (unbounded, see below). The Python adders `add_gsplats_from_data`,
+> `add_gsplats_from_file`, `add_gsplats_from_volume` and the graft path
+> instead normalise by default (robust p99.9 -> 1.0, **one factor for the whole
 > structure**), recording it as `amplitude_normalization_factor`; pass
 > `normalize_amplitudes=False` to opt out. A child inserted directly into a
 > `kind=lod` or `kind=partition` group defaults to no normalisation because its
@@ -690,15 +691,34 @@ it across each gsplat structure**.
 > a per-level factor scales the levels against each other and the brightness pops
 > at every LOD switch. See `core/group/gsplats_pipeline/amplitude_norm.py`.
 >
-> **`luxar gsplat convert` goes one step further: auto exposure.** Per-splat
-> normalisation ignores overlap, and additive blending SUMS every splat along the
-> view ray, so a dense fit still opens as a saturated blob. By default convert
-> predicts the opening view's per-pixel sum (`luxar.gsplats.exposure`) and dims
-> the amplitudes — never brightens — so its p99.9 equals `--target-brightness`
-> (2.0; 0.9 under a clipping tone mapping), or lower when a side view or another
-> timepoint would exceed 4x that, recording the total factor plus `amplitude_normalization_mode="projected"`
-> and the prediction (`docs/guides/user/LUXAR_ZARR_FORMAT.md` § "GSplats amplitude
-> provenance"). `--no-auto-exposure` restores the per-splat normalisation alone.
+> **`luxar gsplat convert` does not normalise: it keeps data units and stamps a
+> `display_gain`.** Rescaling the data would make the viewer's Layers panel show
+> arbitrary numbers, so convert writes the fit's amplitudes unchanged (source data
+> units, labelled by `amplitude_unit`, with the subtracted floor as
+> `amplitude_offset` and the source's own span above it as `source_data_range` —
+> a splat amplitude is one Gaussian's PEAK, so its window sits below the data's
+> range wherever Gaussians overlap) and puts the brightness into the per-node `display_gain`
+> render attr, which the viewer multiplies into exactly the amplitude-linear terms
+> above (radiance and optical depth) and not into the colormap lookup — the same
+> render, without rewriting the data (`docs/guides/user/LUXAR_ZARR_FORMAT.md`
+> § "Amplitude units and display gain"). The gain is chosen by **auto exposure**:
+> per-splat normalisation ignores overlap, and additive blending SUMS every splat
+> along the view ray, so a dense fit would still open as a saturated blob. Convert
+> predicts the opening view's per-pixel sum (`luxar.gsplats.exposure`) and dims —
+> never brightens — so its p99.9 equals `--target-brightness` (2.0; 0.9 under a
+> clipping tone mapping), or lower when a side view or another timepoint would
+> exceed 4x that, recording `amplitude_normalization_mode="projected"` and the
+> prediction (§ "GSplats amplitude provenance" there). `--no-auto-exposure` makes
+> the gain the per-splat normalisation alone; `--scale-intensity S` makes it `S`.
+>
+> **Every amplitude encoding holds data units losslessly relative to normalised
+> ones.** The scene encodings are anchored on each array's own range
+> (geometric-log or bounded-linear quantisation; `float32` under `precision`), so
+> storing `k·a` picks the same encoder, has the same relative error and decodes to
+> `k·decode(a)` — measured for 0–65535 counts and for float data spanning
+> 1e-6–1e6 (`io/tests/test_data_unit_amplitudes.py`). No amplitude path emits
+> `float16`; the viewer applies the gain in the vertex stage, so the `mediump`
+> amplitude varying never carries raw counts.
 
 **Window harmonization (#1691)**. A per-node window is right for one flat leaf
 and wrong for a multi-node structure: on a `kind=lod` ladder a coarse level's
@@ -1412,6 +1432,11 @@ topology. Descriptive counters are never dropped by any rule — `iterations`,
 `best_iteration`, `converged`, `time_seconds`, `fitter_name` and `filtered` /
 `filter_criteria` describe the run or the edit, both of which happened.
 
+`pipeline/tile_amplitude_floor` records the opt-in fraction of each tile's
+normalization span used to prune negligible fitted splats before merging;
+`pipeline/tile_amplitude_pruned` records how many splats it removed. Both are
+fit provenance only and survive later content edits.
+
 **What survives a rewrite: the authored appearance.** The rules above govern
 what a rewriting tool must *drop*; the mirror-image obligation is what it must
 *keep*. A rewriting command owns the **structure**, not the **look**: the
@@ -1512,20 +1537,22 @@ table below for exactly which keys, and where the record comes from):
 `image_min` / `image_max` / `intensity_range` record how the source volume
 was normalized, `floor` is the background level subtracted before fitting
 (`null` when floor suppression was disabled or refused), and `floor_strategy`
-records the specimen estimator branch. **Semantic
+records the specimen estimator branch. An intensity transform leaves the raw
+`image_min` / `image_max` intact, scales `intensity_range` with the amplitudes,
+and records their cumulative `intensity_scale`. **Semantic
 contract:** the floor is NOT added back — stored amplitudes are
 background-relative (intensity above the subtracted pedestal), so renders
 reconstruct the floor-suppressed volume, not the raw one.
 
 Wherever it is recorded it is under one key name (`floor`) in one location
 (`pipeline/`). The full key set is `NORMALIZATION_STATS_KEYS` in
-`gsplats/io/save_gsplats.py`; which of those five a given writer can honestly
+`gsplats/io/save_gsplats.py`; which of those keys a given writer can honestly
 fill differs, and the last column says so.
 
 | Writer | How it reaches `pipeline/` | Keys |
 |---|---|---|
-| flat fit (`--tiling none`) | `stats` → `split_fitting_info` (`gsplats/fitting/results.py`) | all five |
-| progressive fit | `stats`, stamped by `lift_normalization_stats` — the pedestal is removed once up front, so no individual pass records it | all five |
+| flat fit (`--tiling none`) | `stats` → `split_fitting_info` (`gsplats/fitting/results.py`) | all six |
+| progressive fit | `stats`, stamped by `lift_normalization_stats` — the pedestal is removed once up front, so no individual pass records it | all six |
 | sequential tiled merge (`fit_tiled`), flat leaf or `kind=partition` | `_stamp_merge_normalization` on the merged `stats` / the ROOT node's `meta`, from the level and strategy the parent resolved plus the bounds its tiles agree on; otherwise from tile agreement | numeric keys; parent-resolved strategy when available, otherwise tile agreement |
 | parallel tiled merge (`fit -j N`) | same stamp: the parent supplies the strategy when it resolved the shared floor, otherwise the tiles are reloaded WITH stats and the block is recovered from what they unanimously recorded | numeric keys; parent-resolved strategy when available, otherwise tile agreement |
 | `--tiling content` | the one level and strategy `resolve_shared_floor` gave every box, stamped on the merged leaf's `stats` or the root node's `meta` — unless the boxes themselves recorded a level, which wins (content boxes now share one `norm_range`, so their recorded bounds agree across boxes; a recorded floor can still exceed the planned level when the shared low endpoint does) | `floor`, `floor_strategy`, plus any bound the in-process boxes of a `--flat` fit agreed on |

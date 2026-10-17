@@ -9,8 +9,8 @@ intensity range (``gsplats/fitting/results.py``), so an archive fitted from a
 uint16 detector stack carries amplitudes in detector counts — hundreds or
 thousands.
 
-**Those units cannot reach the screen unchanged, and no viewer control can
-rescue them.** The stored amplitude drives two things in the shader, and the
+**Those units cannot reach the screen unscaled, and the colormap window cannot
+scale them.** The stored amplitude drives two things in the shader, and the
 display window only reaches one:
 
 1. the **colormap LUT index** —
@@ -26,14 +26,30 @@ display window only reaches one:
 So an amplitude of 800 emits 1000x the radiance of 0.8 and produces 1000x the
 optical depth. Under ``volumetric`` that saturates ``1 - exp(-tau)`` to 1.0 and
 the specimen becomes an opaque shell; under the additive modes it blows out to
-white. The only remaining lever is ``opacity``, which then has to carry a
-~1/500 factor on a ``[0, 1]`` control — unauthorable in the Layers panel, and
-the reason so much shipped appearance is a magic tiny constant.
+white. ``opacity`` would have to carry a ~1/500 factor on a ``[0, 1]`` control;
+the per-node ``display_gain`` render attr can carry it (unbounded — see "The
+data-unit alternative" below, what ``gsplat convert`` uses). Leaving the
+factor on ``opacity`` is unauthorable in the Layers panel, and the reason so
+much shipped appearance is a magic tiny constant.
 
-Hence: **normalise at insertion, not at display.** By the time a node is in a
-scene its amplitudes should sit in ``[0, ~1]``, which puts ``opacity`` and
+Hence, for the Python adders: **normalise at insertion** (or pass
+``display_gain`` with ``normalize_amplitudes=False``). By the time a node is in
+a scene its rendered amplitudes should sit in ``[0, ~1]``, which puts ``opacity`` and
 ``absorption`` back in their natural ranges and makes appearance portable
 between datasets.
+
+The data-unit alternative: ``display_gain``
+-------------------------------------------
+
+Normalising REWRITES the data, so the Layers panel then shows rescaled numbers
+rather than the data's own units. ``luxar gsplat convert`` therefore no longer
+normalises: it keeps the amplitudes in source data units and stamps the same
+factor as a per-node ``display_gain`` attr instead, which the viewer multiplies
+into exactly the two amplitude-linear terms above (emission and optical depth)
+and NOT into the colormap lookup — so the render is the one normalising would
+have produced (``LUXAR_ZARR_FORMAT.md``, "Amplitude units and display gain").
+The Python ``add_gsplats_*`` default is unchanged (``normalize_amplitudes=True``);
+pass ``normalize_amplitudes=False, display_gain=...`` to opt in.
 
 Design decisions, and why
 -------------------------
@@ -79,23 +95,22 @@ from typing import TYPE_CHECKING, Optional, Tuple, Union
 
 import numpy as np
 
+from luxar.gsplats.amplitude_reference import (
+    AMPLITUDE_REFERENCE_PERCENTILE as AMPLITUDE_REFERENCE_PERCENTILE,
+)
+from luxar.gsplats.amplitude_reference import (
+    IN_RANGE_TOLERANCE as IN_RANGE_TOLERANCE,
+)
+from luxar.gsplats.amplitude_reference import (
+    automatic_factor,
+)
+from luxar.gsplats.amplitude_reference import (
+    sample_reference as _sample_reference,
+)
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.tree import GSplatNode
-
-#: Upper reference percentile mapped to the normalisation target.
-#: Kept equal to the percentile ``amplitude_data_range`` uses for its upper
-#: bound so the LUT window and the normalisation cannot drift apart.
-AMPLITUDE_REFERENCE_PERCENTILE = 99.9
-
-#: How far above 1.0 the reference may sit and still count as "already in
-#: range". Not cosmetic: amplitudes are stored float32 and the reference is an
-#: interpolated percentile, so a set normalised to exactly 1.0 comes back a few
-#: ULPs ABOVE it (measured: 1.0000000465). Without this, ``auto`` fires a second
-#: time with a factor of ~1.0 — harmless numerically, but it stamps a
-#: meaningless factor and makes the operation non-idempotent, so re-inserting an
-#: already-normalised node would no longer be a no-op.
-IN_RANGE_TOLERANCE = 1e-6
 
 #: Node attr recording the factor applied, so an authored window, an
 #: ``amplitude_mass`` stamp or a later refit can be reconciled with the values
@@ -103,13 +118,27 @@ IN_RANGE_TOLERANCE = 1e-6
 NORMALIZATION_FACTOR_ATTR = "amplitude_normalization_factor"
 
 #: Provenance attrs stamped by ``gsplat convert``'s auto exposure (see
-#: :mod:`luxar.gsplats.exposure`): how the stored amplitudes were derived and
-#: what the opening view was predicted to look like. Like the factor, the viewer
-#: does not read them.
+#: :mod:`luxar.gsplats.exposure`): which rule produced the ``display_gain``
+#: (``projected`` / ``per_splat`` / ``manual``) and what the opening view was
+#: predicted to look like. Like the factor, the viewer does not read them.
 NORMALIZATION_MODE_ATTR = "amplitude_normalization_mode"
 PROJECTED_SUM_P999_ATTR = "projected_sum_p999"
 PROJECTED_SUM_TARGET_ATTR = "projected_sum_target"
 PROJECTED_SUM_AXIS_ATTR = "projected_sum_axis"
+
+#: Render attrs of the data-unit path (``LUXAR_ZARR_FORMAT.md``): the per-node
+#: brightness factor the viewer applies to the stored amplitudes, the label of
+#: the stored amplitudes' unit, and the level subtracted before fitting (in the
+#: same unit; display-only). Unlike the provenance attrs above, the viewer READS
+#: all three.
+DISPLAY_GAIN_ATTR = "display_gain"
+AMPLITUDE_UNIT_ATTR = "amplitude_unit"
+AMPLITUDE_OFFSET_ATTR = "amplitude_offset"
+#: ``[0, image_max - image_min]``: the SOURCE's intensity span above the offset,
+#: in the amplitude unit. A reference the Layers panel shows beside the splat
+#: window — a splat amplitude is one Gaussian's PEAK, and overlapping Gaussians
+#: sum to the voxel value, so the peak window sits well below the data's range.
+SOURCE_DATA_RANGE_ATTR = "source_data_range"
 
 
 @dataclass(frozen=True)
@@ -138,13 +167,6 @@ class AmplitudeScale:
 #: ``float`` -> scale the reference to exactly that value, unconditionally;
 #: :class:`AmplitudeScale` -> multiply by exactly that factor.
 NormalizeSpec = Union[bool, str, float, AmplitudeScale, None]
-
-
-def _sample_reference(values: np.ndarray) -> float:
-    """Pooled robust upper reference for a 1-D amplitude sample."""
-    if values.size == 0:
-        return 0.0
-    return float(np.percentile(values, AMPLITUDE_REFERENCE_PERCENTILE))
 
 
 def pooled_amplitudes_from_node(node: "GSplatNode") -> np.ndarray:
@@ -200,12 +222,12 @@ def resolve_factor(spec: NormalizeSpec, reference: float) -> Optional[float]:
             )
         automatic = False
 
+    if automatic:
+        return automatic_factor(reference)
     if not (reference > 0.0) or not np.isfinite(reference):
         # All-zero or degenerate amplitudes: any factor is meaningless, and
         # scaling by one would only invalidate the fit's measured stamps.
         return None
-    if automatic and reference <= 1.0 + IN_RANGE_TOLERANCE:
-        return None  # already in range — see module docstring
     return target / reference
 
 
