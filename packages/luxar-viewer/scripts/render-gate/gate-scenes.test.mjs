@@ -110,7 +110,16 @@ describe('render-gate scene manifest', () => {
       'lod.levelSwaps',
     ]) {
       const metric = c.metrics.find((m) => m.name === name);
-      expect(metric.report).toBe(false);
+      expect(metric.report).toBeFalsy();
+    }
+    for (const name of ['fetch.data.requests', 'decode.count']) {
+      const metric = c.metrics.find((m) => m.name === name);
+      expect(metric).toMatchObject({ better: 'lower', kind: 'counter' });
+      expect(metric.report).toBeFalsy();
+      const arm = (count) => [{ [name]: count }];
+      expect(judgeMetric(metric, { base: arm(0), base2: arm(0), cand: arm(1) }).verdict).toBe(
+        'fail'
+      );
     }
     const upload = c.metrics.find((m) => m.name === 'gpu.uploadBytes/tick');
     const arm = (bytes) => [{ 'gpu.uploadBytes': bytes, ticks: 10 }];
