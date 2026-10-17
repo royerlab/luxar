@@ -22,7 +22,9 @@ Management permission API, `localStorage`, display-change listeners).
 `detectDisplayCapabilities()` are placeholder defaults
 (`false`, `{red: 8, green: 8, blue: 8}`); `createRendererCapabilities`
 in `rendering/renderer-capabilities.ts` overwrites them with the real
-GL-probed values before any consumer reads the snapshot.
+values before any consumer reads the snapshot: the GL `*_BITS` probes under
+WebGL (and the WebGPU renderer's WebGL2 bridge), or the canvas format under
+native WebGPU (16 bits for the `rgba16float` HDR-output canvas, else 8).
 
 The deep-color probe is intentionally belt-and-braces: per CSS Media
 Queries L4 a true 10-bit display should match `(color: 10)`, but some

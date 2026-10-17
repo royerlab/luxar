@@ -42,6 +42,7 @@ vi.mock('three/webgpu', () => {
 vi.mock('../../../../../rendering/renderer-capabilities', () => ({
   createRendererCapabilities: vi.fn(() => ({
     apiSurface: 'webgpu',
+    backendKind: 'webgpu-native',
     hdr: {},
     pointSizeRange: [1, 64],
   })),
@@ -57,10 +58,14 @@ vi.mock('../../../../../utils/hdr/hdr-detection', () => ({
 import * as THREE from 'three';
 // Imports MUST come after vi.mock to honour the mocks.
 import {
+  createUncapturedGpuErrorHandler,
   createWebGPURenderer,
   forwardedAdapterLimits,
+  GPU_ERROR_DISTINCT_LIMIT,
+  GPU_ERROR_REPEAT_LIMIT,
   selectBackend,
 } from '../../../../../scene/scene-manager/render-pipeline/renderer-setup';
+import { log, Modules } from '../../../../../utils/log';
 
 describe('selectBackend', () => {
   const originalEnv = { ...import.meta.env };
@@ -78,45 +83,55 @@ describe('selectBackend', () => {
 
   it('honours an explicit ?renderer=webgl URL override', () => {
     const r = selectBackend('webgl');
-    expect(r).toEqual({ backend: 'webgl', source: 'url-param' });
+    expect(r).toEqual({ backend: 'webgl', source: 'url-param', requireNativeAdapter: true });
   });
 
   it('honours an explicit ?renderer=webgpu URL override', () => {
     const r = selectBackend('webgpu');
-    expect(r).toEqual({ backend: 'webgpu', source: 'url-param' });
+    expect(r).toEqual({ backend: 'webgpu', source: 'url-param', requireNativeAdapter: false });
   });
 
   it('respects VITE_LUXAR_USE_WEBGPU=1 env var', () => {
     vi.stubEnv('VITE_LUXAR_USE_WEBGPU', '1');
     const r = selectBackend(undefined);
-    expect(r).toEqual({ backend: 'webgpu', source: 'env-var' });
+    expect(r).toEqual({ backend: 'webgpu', source: 'env-var', requireNativeAdapter: true });
     vi.unstubAllEnvs();
   });
 
   it('respects VITE_LUXAR_USE_WEBGPU_RENDERER=1 env var alias', () => {
     vi.stubEnv('VITE_LUXAR_USE_WEBGPU_RENDERER', '1');
     const r = selectBackend(undefined);
-    expect(r).toEqual({ backend: 'webgpu', source: 'env-var' });
+    expect(r).toEqual({ backend: 'webgpu', source: 'env-var', requireNativeAdapter: true });
     vi.unstubAllEnvs();
   });
 
   it('respects VITE_LUXAR_USE_LEGACY_WEBGL=1 env var', () => {
     vi.stubEnv('VITE_LUXAR_USE_LEGACY_WEBGL', '1');
     const r = selectBackend(undefined);
-    expect(r).toEqual({ backend: 'webgl', source: 'env-var' });
+    expect(r).toEqual({ backend: 'webgl', source: 'env-var', requireNativeAdapter: true });
     vi.unstubAllEnvs();
   });
 
   it('URL override beats env var', () => {
     vi.stubEnv('VITE_LUXAR_USE_WEBGPU', '1');
     const r = selectBackend('webgl');
-    expect(r).toEqual({ backend: 'webgl', source: 'url-param' });
+    expect(r).toEqual({ backend: 'webgl', source: 'url-param', requireNativeAdapter: true });
     vi.unstubAllEnvs();
   });
 
   it('defaults to webgl when neither URL nor env vars are set', () => {
     const r = selectBackend(undefined);
-    expect(r).toEqual({ backend: 'webgl', source: 'default' });
+    expect(r).toEqual({ backend: 'webgl', source: 'default', requireNativeAdapter: true });
+  });
+
+  it('a WebGPU default requires a native adapter; an explicit ?renderer=webgpu does not', () => {
+    expect(selectBackend(undefined, 'webgpu')).toEqual({
+      backend: 'webgpu',
+      source: 'default',
+      requireNativeAdapter: true,
+    });
+    expect(selectBackend('webgpu', 'webgpu').requireNativeAdapter).toBe(false);
+    expect(selectBackend('webgl', 'webgpu').backend).toBe('webgl');
   });
 });
 
@@ -171,9 +186,13 @@ describe('createWebGPURenderer', () => {
     });
   });
 
-  function stubNavigatorGpu(requestAdapter: () => Promise<unknown>): void {
+  /** `undefined` stubs a browser without `navigator.gpu` at all. */
+  function stubNavigatorGpu(requestAdapter: (() => Promise<unknown>) | undefined): void {
     Object.defineProperty(globalThis, 'navigator', {
-      value: { ...originalNavigator, gpu: { requestAdapter } },
+      value: {
+        ...originalNavigator,
+        gpu: requestAdapter === undefined ? undefined : { requestAdapter },
+      },
       configurable: true,
       writable: true,
     });
@@ -260,7 +279,25 @@ describe('createWebGPURenderer', () => {
     });
   });
 
+  it('routes uncaptured GPU errors through log.error', async () => {
+    const adapter = makeAdapter({ maxVertexBuffers: 16 });
+    stubNavigatorGpu(vi.fn().mockResolvedValue(adapter));
+    const error = vi.spyOn(log, 'error').mockImplementation(() => {});
+
+    const result = await createWebGPURenderer(makeCanvas(), {});
+    if (result.fallback) throw new Error('expected a renderer');
+    const onError = (result.renderer as unknown as { onError: (info: unknown) => void }).onError;
+    expect(typeof onError).toBe('function');
+    onError({ api: 'WebGPU', type: 'GPUValidationError', message: 'bad bind group' });
+    expect(error).toHaveBeenCalledWith(
+      Modules.RENDERER,
+      'Uncaptured WebGPU GPUValidationError: bad bind group'
+    );
+    error.mockRestore();
+  });
+
   it('requestDevice failure recovers silently: renderer constructed without device option', async () => {
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
     const adapter = makeAdapter({
       maxVertexBuffers: 16,
       requestDevice: vi.fn().mockRejectedValue(new Error('device exhausted')),
@@ -276,6 +313,67 @@ describe('createWebGPURenderer', () => {
     expect(webgpuConstructorArgs).toHaveLength(1);
     expect((webgpuConstructorArgs[0] as { device?: unknown }).device).toBeUndefined();
     expect((webgpuConstructorArgs[0] as { forceWebGL?: boolean }).forceWebGL).toBeUndefined();
+    expect(warning).toHaveBeenCalledWith(
+      Modules.RENDERER,
+      'WebGPU requestDevice failed (Error: device exhausted).'
+    );
+    warning.mockRestore();
+  });
+
+  describe('requireNativeAdapter', () => {
+    it('falls back to WebGL without navigator.gpu, before importing three/webgpu', async () => {
+      stubNavigatorGpu(undefined);
+      const result = await createWebGPURenderer(makeCanvas(), { requireNativeAdapter: true });
+      expect(result).toEqual({ fallback: true });
+      expect(webgpuConstructorArgs).toHaveLength(0);
+    });
+
+    it('falls back to WebGL when no adapter is returned', async () => {
+      stubNavigatorGpu(vi.fn().mockResolvedValue(null));
+      const result = await createWebGPURenderer(makeCanvas(), { requireNativeAdapter: true });
+      expect(result).toEqual({ fallback: true });
+      expect(webgpuConstructorArgs).toHaveLength(0);
+    });
+
+    it('falls back to WebGL when requestDevice fails', async () => {
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+      const adapter = makeAdapter({
+        maxVertexBuffers: 16,
+        requestDevice: vi.fn().mockRejectedValue(new Error('device exhausted')),
+      });
+      stubNavigatorGpu(vi.fn().mockResolvedValue(adapter));
+      const result = await createWebGPURenderer(makeCanvas(), { requireNativeAdapter: true });
+      expect(result).toEqual({ fallback: true });
+      expect(webgpuConstructorArgs).toHaveLength(0);
+      expect(warning).toHaveBeenCalledWith(
+        Modules.RENDERER,
+        'WebGPU requestDevice failed (Error: device exhausted).'
+      );
+      expect(info).toHaveBeenCalledWith(
+        Modules.RENDERER,
+        'No native WebGPU device (requestDevice failed); using WebGLRenderer.'
+      );
+      warning.mockRestore();
+      info.mockRestore();
+    });
+
+    it('builds the renderer on the native device when one is available', async () => {
+      stubNavigatorGpu(vi.fn().mockResolvedValue(makeAdapter({ maxVertexBuffers: 16 })));
+      const result = await createWebGPURenderer(makeCanvas(), { requireNativeAdapter: true });
+      expect(result).toMatchObject({ fallback: false });
+      expect((webgpuConstructorArgs[0] as { device?: unknown }).device).toBeDefined();
+    });
+
+    it('is ignored under webgpuForceWebGL, which asks for the WebGL2 backend', async () => {
+      stubNavigatorGpu(undefined);
+      const result = await createWebGPURenderer(makeCanvas(), {
+        requireNativeAdapter: true,
+        webgpuForceWebGL: true,
+      });
+      expect(result).toMatchObject({ fallback: false });
+      expect(webgpuConstructorArgs[0]).toMatchObject({ forceWebGL: true });
+    });
   });
 
   describe('HDR output (?hdr)', () => {
@@ -384,5 +482,53 @@ describe('createWebGPURenderer', () => {
       expect(outputType()).toBeUndefined();
       expect(result).not.toHaveProperty('capabilities.hdrOutput');
     });
+  });
+});
+
+describe('createUncapturedGpuErrorHandler', () => {
+  const info = (message: string) => ({ api: 'WebGPU', type: 'GPUValidationError', message });
+
+  function messages(spy: { mock: { calls: unknown[][] } }): string[] {
+    return spy.mock.calls.map((call) => String(call[1]));
+  }
+
+  it('logs the first repeats of a message, one suppression note, then nothing', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => {});
+    const handle = createUncapturedGpuErrorHandler();
+    for (let frame = 0; frame < 100; frame++) handle(info('per-frame failure'));
+    const text = 'Uncaptured WebGPU GPUValidationError: per-frame failure';
+    expect(messages(error)).toEqual([
+      ...Array<string>(GPU_ERROR_REPEAT_LIMIT).fill(text),
+      `Suppressing further repeats of: ${text}`,
+    ]);
+    expect(error.mock.calls.every((call) => call[0] === Modules.RENDERER)).toBe(true);
+    error.mockRestore();
+  });
+
+  it('counts each distinct message separately', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => {});
+    const handle = createUncapturedGpuErrorHandler();
+    handle(info('a'));
+    handle(info('b'));
+    handle(info('a'));
+    expect(messages(error)).toHaveLength(3);
+    error.mockRestore();
+  });
+
+  it('stops tracking new messages past the distinct limit with one note', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => {});
+    const handle = createUncapturedGpuErrorHandler();
+    for (let i = 0; i < GPU_ERROR_DISTINCT_LIMIT + 10; i++) handle(info(`message ${i}`));
+    const logged = messages(error);
+    expect(logged).toHaveLength(GPU_ERROR_DISTINCT_LIMIT + 1);
+    expect(logged.at(-1)).toContain('suppressing all further GPU errors');
+    error.mockRestore();
+  });
+
+  it('accepts the plain-string shape @types/three declares', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => {});
+    createUncapturedGpuErrorHandler()('raw message');
+    expect(error).toHaveBeenCalledWith(Modules.RENDERER, 'raw message');
+    error.mockRestore();
   });
 });

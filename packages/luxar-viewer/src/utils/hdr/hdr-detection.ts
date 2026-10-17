@@ -48,7 +48,11 @@ export interface HDRCapabilities {
    * filterable in core WebGL2 — unless this is present.
    */
   filterableFloatTextures: boolean;
-  /** WebGL color buffer bit depth */
+  /**
+   * Bits per channel of the presented colour buffer: the WebGL `*_BITS`
+   * probes, or under WebGPU the canvas format (16 for the `rgba16float` HDR
+   * output canvas, else 8).
+   */
   colorDepth: {
     red: number;
     green: number;
