@@ -77,7 +77,11 @@ const vec4: (a?: TSLNode, b?: TSLNode, c?: TSLNode, d?: TSLNode) => TSLNode = _v
 const clamp: (v: TSLNode, lo: TSLNode, hi: TSLNode) => TSLNode = _clamp as TSLNode;
 const max: (a: TSLNode, b: TSLNode) => TSLNode = _max as TSLNode;
 
-/** Keep core WebGPU's first-corner result; compatibility mode cannot use first. */
+/**
+ * Keep core WebGPU's first-corner result; compatibility mode cannot use first.
+ * This is a stopgap until #3164 makes the corner choice deterministic. Before
+ * WebGPUBackend.init, compatibilityMode is null and this selects core's first.
+ */
 class MeshElementIdNode extends Node {
   constructor(private readonly elementId: TSLNode) {
     super('vec2');
