@@ -1,10 +1,13 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it } from 'vitest';
+
+import { pacingBound } from './pacing.mjs';
 
 const dir = mkdtempSync(join(tmpdir(), 'luxar-gate-report-'));
+beforeEach(() => mkdirSync(dir, { recursive: true }));
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 it('reports the A/A buffers and scene state for an excluded view', () => {
@@ -50,6 +53,7 @@ it('reports the A/A buffers and scene state for an excluded view', () => {
     suites: {},
   };
   const jsonPath = join(dir, 'report.json');
+  mkdirSync(dir, { recursive: true });
   writeFileSync(jsonPath, JSON.stringify(report));
   execFileSync(process.execPath, ['scripts/render-gate/run-gate.mjs', '--from-json', jsonPath]);
   const markdown = readFileSync(join(dir, 'report.md'), 'utf8');
@@ -61,4 +65,51 @@ it('reports the A/A buffers and scene state for an excluded view', () => {
   expect(markdown).toContain('within-page HDR/LDR stable true/false, true/true');
   expect(markdown).toContain('[A/A HDR heatmap](heatmaps/glass-control-hdr.png)');
   expect(markdown).toContain('[A/A LDR heatmap](heatmaps/glass-control-ldr.png)');
+});
+
+it('flags only WebGL throughput close to the measured 60 Hz floor', () => {
+  expect(pacingBound('webgl', 17.2)).toBe(true);
+  expect(pacingBound('webgl', 15.6)).toBe(false);
+  expect(pacingBound('webgl', 18)).toBe(false);
+  expect(pacingBound('webgpu', 17.2)).toBe(false);
+  expect(pacingBound('webgl', NaN)).toBe(false);
+});
+
+it('shows pacing-bound arms in a saved throughput report', () => {
+  const report = {
+    meta: {
+      label: 'pacing',
+      base: { ref: 'HEAD', sha: '1234567890' },
+      cand: { ref: 'HEAD', sha: '1234567890' },
+      host: 'test',
+      gpu: 'test',
+      verdict: 'PASS',
+      browserRelaunches: 0,
+    },
+    exact: null,
+    perf: [
+      {
+        case: 'mixed',
+        backend: 'webgl',
+        status: 'pass',
+        metrics: {
+          throughputMs: {
+            baseMedian: 17.2,
+            candMedian: 2.6,
+            ratio: 0.15,
+            lo: 0.14,
+            hi: 0.16,
+            floor: 0.01,
+            verdict: 'win',
+            pacingBound: { base: true, cand: false },
+          },
+        },
+      },
+    ],
+    suites: {},
+  };
+  const jsonPath = join(dir, 'report.json');
+  writeFileSync(jsonPath, JSON.stringify(report));
+  execFileSync(process.execPath, ['scripts/render-gate/run-gate.mjs', '--from-json', jsonPath]);
+  expect(readFileSync(join(dir, 'report.md'), 'utf8')).toContain('pacing-bound: base');
 });

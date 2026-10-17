@@ -205,6 +205,18 @@ between rounds. Each arm records:
     and the WebGPU wait is asynchronous;
   - `rendersPerFrame`: `postProcessing.render` calls per frame. A frame that
     renders twice costs twice.
+- **`throughputMs`**: the same animation-frame orbit with one GPU sync at the
+  end. Headless WebGL on Linux ANGLE/Vulkan can still pace these frames near
+  60 Hz even with the Chrome flags above. The report marks a WebGL base or
+  candidate median within 1 ms of 16.7 ms as `pacing-bound`; that value is
+  not a comparable WebGL throughput measurement.
+- **`unpacedThroughputMs`**: 180 camera steps and full-pipeline renders back
+  to back, followed by one GPU sync. Each step calls `prepareFrame()` so the
+  per-frame view callbacks still update LOD selection, clipping and sorting.
+  This avoids the animation-frame cap on both backends. The synchronous batch
+  cannot let asynchronous streaming or sort results complete between steps;
+  use the animation-frame metrics to study those effects. Compare this metric
+  for GPU/CPU throughput under camera motion.
 - **`wakeRenders`, `wakeBlockMs`**: waking a stopped loop the way an input
   handler does (`startAnimation()` after two idle frames), repeated nine times.
   `wakeRenders` counts renders from the wake up to and including the first
@@ -227,7 +239,7 @@ GPU: without the per-frame sync an orbit frame times only the CPU submitting it
 (0.1-0.3 ms against a 20-110 ms `gpuMs`), a GPU-bound change is invisible, and a
 CPU stall on a resource the GPU still holds (a blocking `bufferSubData`) moves the
 number by two orders of magnitude at unchanged GPU cost. So read the figures as:
-`frameMs`/`frameP95Ms` are the only frame metrics that include the GPU (the
+`frameMs`/`frameP95Ms` and both throughput metrics include GPU completion (the
 report says so under its Performance heading); `gpuMs` is GPU cost alone at a
 settled pose; `cpuMs` is CPU cost alone. The sync is part of the harness, so both
 arms carry it and the comparison stays like for like; a report measured before

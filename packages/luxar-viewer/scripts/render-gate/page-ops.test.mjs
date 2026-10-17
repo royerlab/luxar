@@ -47,8 +47,9 @@ const GPU_MS = 20;
 const RAF_MS = 0.05;
 
 function fakePage(kind) {
-  const page = { clock: 0, gpuQueued: 0, dirty: false };
+  const page = { clock: 0, gpuQueued: 0, dirty: false, prepared: 0, rafCalls: 0, syncs: 0 };
   const drain = () => {
+    page.syncs++;
     page.clock += page.gpuQueued;
     page.gpuQueued = 0;
   };
@@ -89,11 +90,21 @@ function fakePage(kind) {
     renderOnce: () => {
       page.dirty = true;
     },
+    animationController: {
+      stopAnimation: () => {
+        page.dirty = false;
+      },
+      startAnimation: () => {},
+      prepareFrame: () => {
+        page.prepared++;
+      },
+    },
   };
   // The viewer's loop renders in the animation frame, before the harness's
   // own frame callback (registered later) runs.
-  page.raf = (cb) =>
-    setTimeout(() => {
+  page.raf = (cb) => {
+    page.rafCalls++;
+    return setTimeout(() => {
       page.clock += RAF_MS;
       if (page.dirty) {
         page.dirty = false;
@@ -101,6 +112,7 @@ function fakePage(kind) {
       }
       cb(page.clock);
     }, 0);
+  };
   return page;
 }
 
@@ -130,6 +142,25 @@ describe('motion frame timing', () => {
       expect(mo.frameMs).toBeGreaterThan(GPU_MS);
       expect(mo.frameMs).toBeLessThan(GPU_MS + 1);
       expect(mo.p95Ms).toBeGreaterThan(GPU_MS);
+    });
+
+    it(`measures unpaced motion with one sync and per-step view updates on ${kind}`, async () => {
+      install(kind);
+      const mo = await motion({ frames: 12, warm: 3, pose, unpaced: true });
+      expect(mo.throughputMs).toBeGreaterThan(GPU_MS);
+      expect(mo.throughputMs).toBeLessThan(GPU_MS + 1);
+      expect(mo.rendersPerFrame).toBe(1);
+      expect(page.prepared).toBe(12);
+      expect(page.rafCalls).toBe(3);
+      expect(page.syncs).toBe(5); // warm 3, drain before batch, drain after batch
+    });
+
+    it(`pipelined rAF includes the final GPU work on ${kind}`, async () => {
+      install(kind);
+      const mo = await motion({ frames: 12, warm: 3, pose, pipelined: true });
+      expect(mo.frameMs).toBeGreaterThan(GPU_MS);
+      expect(mo.rendersPerFrame).toBe(1);
+      expect(page.syncs).toBe(3); // warm, initial, final
     });
   }
 
