@@ -50,6 +50,7 @@ function wgsl(material: NodeMaterial, compatibilityMode = true): string {
   return builder.vertexShader;
 }
 
+// geometry-subset: Points have no flat TSL pick varyings; this covers every shader with one.
 it.each([
   ['line draw', () => new LineTSLMaterial({ primitive: 'screen-space' }), 3],
   ['line capsule draw', () => new LineTSLMaterial({ primitive: 'capsule' }), 3],
