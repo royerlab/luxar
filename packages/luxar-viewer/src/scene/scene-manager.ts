@@ -801,6 +801,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       renderer: this.renderer as WarmupRenderer,
       camera: this.camera,
       targetScene: this.scene,
+      getRenderTarget: () => this.postProcessing?.sceneRenderTarget ?? null,
       // WebGPU keys its pipelines on the blend state too (see blend-warmup.ts).
       pipelineVariants: !isWebGLRenderer(this.renderer),
     });

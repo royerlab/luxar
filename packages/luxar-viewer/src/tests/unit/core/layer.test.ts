@@ -436,7 +436,10 @@ describe('LuxarLayer', () => {
     });
 
     it('warms pipeline variants (one per blend mode) for a WebGPU renderer', async () => {
+      const target = new THREE.WebGLRenderTarget(1, 1);
+      const getWarmupRenderTarget = vi.fn(() => target);
       const options = makeOptions({
+        getWarmupRenderTarget,
         renderer: {
           getDrawingBufferSize: (v: THREE.Vector2) => v.set(800, 600),
           getPixelRatio: () => 2,
@@ -451,6 +454,7 @@ describe('LuxarLayer', () => {
         camera: expect.any(THREE.Camera),
         targetScene: options.scene,
         pipelineVariants: true,
+        getRenderTarget: getWarmupRenderTarget,
       });
     });
 

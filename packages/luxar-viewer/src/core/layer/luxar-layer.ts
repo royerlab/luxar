@@ -166,6 +166,8 @@ export interface LuxarLayerOptions {
    * disposes it — it only reads capabilities and the drawing-buffer size.
    */
   renderer: Renderer;
+  /** Scene-pass target for WebGPU blend warm-up. Omit to use the host's current target. */
+  getWarmupRenderTarget?: () => THREE.RenderTarget | null;
   /**
    * Live camera accessor. A getter rather than a value because a host may
    * swap camera objects (a perspective/ortho toggle), and a captured
@@ -930,6 +932,9 @@ export class LuxarLayer {
       renderer: renderer as WarmupRenderer,
       camera: this.options.getCamera(),
       targetScene: this.options.scene,
+      ...(this.options.getWarmupRenderTarget
+        ? { getRenderTarget: this.options.getWarmupRenderTarget }
+        : {}),
       // WebGPU keys its pipelines on the blend state too (see blend-warmup.ts).
       pipelineVariants: !isWebGLRenderer(renderer),
     });

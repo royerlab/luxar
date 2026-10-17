@@ -266,6 +266,7 @@ vi.stubGlobal('document', {
 // future test calling them through `sceneManager.*` won't crash.
 vi.mock('../../../rendering/post-processing/post-processing-manager', () => ({
   PostProcessingManager: vi.fn().mockImplementation(() => ({
+    sceneRenderTarget: { name: 'HDR scene target' },
     // Resize / DPR / camera plumbing (resize-orchestrator + camera-mode)
     resize: vi.fn(),
     setDPRScale: vi.fn(),
@@ -567,7 +568,12 @@ describe('SceneManager', () => {
         camera: sceneManager.camera,
         targetScene: sceneManager.scene,
         pipelineVariants: true,
+        getRenderTarget: expect.any(Function),
       });
+      const warmupConfig = blendWarmupMocks.configure.mock.lastCall?.[0] as {
+        getRenderTarget: () => THREE.RenderTarget | null;
+      };
+      expect(warmupConfig.getRenderTarget()).toBe(sceneManager.postProcessing.sceneRenderTarget);
     });
   });
 
@@ -616,11 +622,24 @@ describe('SceneManager', () => {
       const lost = vi.fn();
       sceneManager.addEventListener('webgpu-device-lost', lost);
       sceneManager.addEventListener('webgpu-device-restored', restored);
+      const clearsBeforeLoss = blendWarmupMocks.clear.mock.calls.length;
+      const warmsBeforeLoss = blendWarmupMocks.warmScene.mock.calls.length;
 
       expect(await sceneManager.simulateWebGPUDeviceLoss()).toBe(true);
 
       expect(lost).toHaveBeenCalledTimes(1);
+      expect(blendWarmupMocks.clear).toHaveBeenCalledTimes(clearsBeforeLoss + 1);
       expect(restored).toHaveBeenCalledTimes(1);
+      expect(blendWarmupMocks.configure).toHaveBeenLastCalledWith({
+        enabled: true,
+        renderer: second.renderer,
+        camera: sceneManager.camera,
+        targetScene: sceneManager.scene,
+        pipelineVariants: true,
+        getRenderTarget: expect.any(Function),
+      });
+      expect(blendWarmupMocks.warmScene).toHaveBeenCalledTimes(warmsBeforeLoss + 1);
+      expect(blendWarmupMocks.warmScene).toHaveBeenLastCalledWith(sceneManager.scene);
       expect(sceneManager.renderer).toBe(second.renderer);
       expect(adopt).toHaveBeenCalledWith(second.renderer, second.capabilities);
       // A rebuilt renderer always needs a NATIVE device: TSL materials cannot

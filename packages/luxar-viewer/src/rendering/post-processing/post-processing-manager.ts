@@ -96,6 +96,10 @@ export class PostProcessingManager {
   // Transient GPU resources (recreated on context loss)
   // ----------------------------------------------------------------
   private hdrTarget!: THREE.WebGLRenderTarget;
+  /** Current scene-pass target; replaced when size or MSAA changes. */
+  get sceneRenderTarget(): THREE.WebGLRenderTarget {
+    return this.hdrTarget;
+  }
   private ldrTarget!: THREE.WebGLRenderTarget;
   private bloomChain: BloomChain | null = null;
   private megaShader!: LuxarMegaShaderMaterial;

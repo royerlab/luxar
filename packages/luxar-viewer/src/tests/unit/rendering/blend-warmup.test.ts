@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { BLENDING_MODES, type BlendingMode } from '../../../types/blending';
-import { BlendWarmupManager, buildBlendWarmupFingerprint } from '../../../rendering/blend-warmup';
+import {
+  BlendWarmupManager,
+  buildBlendWarmupFingerprint,
+  type WarmupRenderer,
+} from '../../../rendering/blend-warmup';
 
 class FakeWarmupMaterial extends THREE.ShaderMaterial {
   declare defines: Record<string, unknown>;
@@ -96,6 +100,93 @@ function makeActivationController() {
 const activateImmediately = (activate: () => void): void => activate();
 
 describe('BlendWarmupManager', () => {
+  it('compiles WebGPU keepers against the live HDR target, restores the prior target, and awaits completion', async () => {
+    const previous = new THREE.WebGLRenderTarget(1, 1);
+    const hdr = new THREE.WebGLRenderTarget(1, 1);
+    const resizedHdr = new THREE.WebGLRenderTarget(2, 2);
+    let liveHdr = hdr;
+    const compiledTargets: Array<THREE.RenderTarget | null> = [];
+    let current: THREE.RenderTarget | null = previous;
+    let finish!: () => void;
+    const compileAsync = vi.fn((scene: THREE.Object3D) => {
+      expect(current).toBe(liveHdr);
+      compiledTargets.push(current);
+      expect(scene.children).toHaveLength(1);
+      if (compileAsync.mock.calls.length > 1) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    });
+    const renderer = {
+      getRenderTarget: () => current,
+      setRenderTarget: (target: THREE.RenderTarget | null) => {
+        current = target;
+      },
+      compileAsync,
+    } as WarmupRenderer;
+    const manager = new BlendWarmupManager(() => Promise.resolve(), undefined, activateImmediately);
+    const root = new THREE.Group();
+    root.add(makeRenderableMesh('points'));
+    manager.configure({
+      enabled: true,
+      renderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+      pipelineVariants: true,
+      getRenderTarget: () => liveHdr,
+    });
+
+    const done = manager.warmScene(root);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(compileAsync).toHaveBeenCalledTimes(1);
+    expect(current).toBe(previous);
+    const compileScene = compileAsync.mock.calls[0][0];
+    expect(compileScene.children).toHaveLength(1);
+    liveHdr = resizedHdr;
+    finish();
+    await done;
+    expect(compileScene.children).toHaveLength(0);
+    expect(compileAsync).toHaveBeenCalledTimes(BLENDING_MODES.length);
+    expect(compiledTargets).toEqual([hdr, ...Array(BLENDING_MODES.length - 1).fill(resizedHdr)]);
+    expect(current).toBe(previous);
+  });
+
+  it('uses WebGL compile and detaches a rejected WebGPU compile object', async () => {
+    const compile = vi.fn();
+    const webgl = { isWebGLRenderer: true, compile } as unknown as WarmupRenderer;
+    const manager = new BlendWarmupManager(() => Promise.resolve(), undefined, activateImmediately);
+    const root = new THREE.Group();
+    root.add(makeRenderableMesh('points'));
+    manager.configure({
+      enabled: true,
+      renderer: webgl,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+    await manager.warmScene(root);
+    expect(compile).toHaveBeenCalledTimes(3);
+    expect((compile.mock.calls[0][0] as THREE.Scene).children).toHaveLength(0);
+
+    let compileScene!: THREE.Scene;
+    const rejecting = {
+      compileAsync: vi.fn((scene: THREE.Scene) => {
+        compileScene = scene;
+        return Promise.reject(new Error('compile failed'));
+      }),
+      getRenderTarget: () => null,
+      setRenderTarget: vi.fn(),
+    } as unknown as WarmupRenderer;
+    manager.configure({
+      enabled: true,
+      renderer: rejecting,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+    await manager.warmScene(root);
+    expect(rejecting.compileAsync).toHaveBeenCalled();
+    expect(compileScene.children).toHaveLength(0);
+  });
   it('pipelineVariants (WebGPU) queues every blend mode, not only define-distinct ones', async () => {
     const run = async (pipelineVariants: boolean) => {
       const compileOne = vi.fn();

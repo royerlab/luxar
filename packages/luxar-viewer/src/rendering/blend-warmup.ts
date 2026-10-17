@@ -52,6 +52,8 @@ type WarmupMaterial = THREE.Material & {
 export type WarmupRenderer =
   | THREE.WebGLRenderer
   | {
+      getRenderTarget(): THREE.RenderTarget | null;
+      setRenderTarget(target: THREE.RenderTarget | null): void;
       compileAsync(
         scene: THREE.Object3D,
         camera: THREE.Camera,
@@ -74,6 +76,8 @@ export interface WarmupConfig {
    * (WebGL, where modes differing only in blend state share one program).
    */
   pipelineVariants?: boolean;
+  /** Read at compile time because resize or MSAA changes can replace the target. */
+  getRenderTarget?: () => THREE.RenderTarget | null;
 }
 
 /** One queued link: which keeper to compile, and the throwaway object to compile it on. */
@@ -146,7 +150,8 @@ export type CompileOne = (
   renderer: WarmupRenderer,
   camera: THREE.Camera,
   targetScene: THREE.Scene,
-  compileObject: THREE.Object3D
+  compileObject: THREE.Object3D,
+  getRenderTarget?: () => THREE.RenderTarget | null
 ) => void | Promise<void>;
 
 const WARMUP_IDLE_TIMEOUT_MS = 250;
@@ -206,7 +211,8 @@ async function defaultCompileOne(
   renderer: WarmupRenderer,
   camera: THREE.Camera,
   targetScene: THREE.Scene,
-  compileObject: THREE.Object3D
+  compileObject: THREE.Object3D,
+  getRenderTarget?: () => THREE.RenderTarget | null
 ): Promise<void> {
   const compileScene = new THREE.Scene();
   compileScene.add(compileObject);
@@ -215,7 +221,19 @@ async function defaultCompileOne(
       'compileAsync' in renderer &&
       !(renderer as { isWebGLRenderer?: boolean }).isWebGLRenderer
     ) {
-      await renderer.compileAsync(compileScene, camera, targetScene);
+      const targetRenderer = renderer as {
+        getRenderTarget(): THREE.RenderTarget | null;
+        setRenderTarget(target: THREE.RenderTarget | null): void;
+      };
+      const previous = targetRenderer.getRenderTarget();
+      let compile: Promise<unknown>;
+      try {
+        if (getRenderTarget) targetRenderer.setRenderTarget(getRenderTarget());
+        compile = renderer.compileAsync(compileScene, camera, targetScene);
+      } finally {
+        targetRenderer.setRenderTarget(previous);
+      }
+      await compile;
     } else {
       (renderer as THREE.WebGLRenderer).compile(compileScene, camera, targetScene);
     }
@@ -398,6 +416,7 @@ export class BlendWarmupManager {
   private pipelineVariants = false;
   private camera: THREE.Camera | null = null;
   private targetScene: THREE.Scene | null = null;
+  private getRenderTarget?: () => THREE.RenderTarget | null;
   private generation = 0;
   private activationToken = 0;
   private queue: WarmupTask[] = [];
@@ -439,6 +458,7 @@ export class BlendWarmupManager {
     this.pipelineVariants = config.pipelineVariants === true;
     this.camera = config.camera;
     this.targetScene = config.targetScene;
+    this.getRenderTarget = config.getRenderTarget;
     this.clear();
   }
 
@@ -814,7 +834,13 @@ export class BlendWarmupManager {
       }
 
       try {
-        await this.compileOne(this.renderer, this.camera, this.targetScene, task.compileObject);
+        await this.compileOne(
+          this.renderer,
+          this.camera,
+          this.targetScene,
+          task.compileObject,
+          this.getRenderTarget
+        );
         this.stats.compiled += 1;
       } catch (error) {
         log.warning(
