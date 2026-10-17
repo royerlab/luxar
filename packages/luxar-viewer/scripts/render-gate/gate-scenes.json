@@ -638,11 +638,15 @@
         {
           "id": "playback_lod_timelapse",
           "store": "gate/lod_timelapse.luxar.zarr",
-          "workload": { "kind": "playback", "fps": 10, "durationMs": 6000 },
+          "workload": {
+            "kind": "playback",
+            "fps": 10,
+            "durationMs": 6000,
+            "settleLodTimepoints": true
+          },
           "metrics": [
             {
               "name": "gpu.uploadBytes/tick",
-              "report": true,
               "of": "gpu.uploadBytes",
               "per": "ticks",
               "better": "lower",
@@ -651,7 +655,6 @@
             },
             {
               "name": "gpu.uploadBytes.texture/tick",
-              "report": true,
               "of": "gpu.uploadBytes.texture",
               "per": "ticks",
               "better": "lower",
@@ -660,7 +663,6 @@
             },
             {
               "name": "render.count/tick",
-              "report": true,
               "of": "render.count",
               "per": "ticks",
               "better": "lower",
@@ -692,11 +694,12 @@
             { "name": "lastTimepointShown", "better": "higher", "kind": "counter" },
             {
               "name": "lod.levelSwaps",
-              "report": true,
               "better": "lower",
               "kind": "counter",
               "relTol": 0.05
             },
+            { "name": "fetch.data.requests", "better": "lower", "kind": "counter" },
+            { "name": "decode.count", "better": "lower", "kind": "counter" },
             { "name": "decode.duplicates", "better": "lower", "kind": "counter" }
           ]
         },

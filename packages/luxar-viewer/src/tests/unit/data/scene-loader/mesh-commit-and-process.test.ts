@@ -27,6 +27,7 @@ import {
   createEmptyMeshNode,
 } from '../../../../rendering/node-factory/create-mesh-node';
 import { GPUBufferPool } from '../../../../rendering/gpu-buffer-pool';
+import { enableFirstVertexMeshPickFallback } from '../../../../rendering/mesh-geometry';
 import { SceneLoader } from '../../../../data/scene-loader';
 import type { NodeBuildCtx } from '../../../../data/scene-loader/nodes/build-ctx';
 import { enforceResidentByteBudget } from '../../../../scene/lod-eviction';
@@ -207,6 +208,8 @@ describe('commitMeshGeometry', () => {
       double_sided: false,
     });
     commitMeshGeometry({ rootGroup: root, currentVersion: 1, gpuBufferPool: pool }, staged);
+    enableFirstVertexMeshPickFallback(mesh.geometry);
+    expect(Array.from(mesh.geometry.index!.array.slice(0, 3))).toEqual([1, 2, 0]);
     const oldGeometry = mesh.geometry;
     const committedBytes = pool.getResidentBytes();
 
@@ -231,6 +234,7 @@ describe('commitMeshGeometry', () => {
 
     commitMeshGeometry({ rootGroup: root, currentVersion: 2, gpuBufferPool: pool }, staged);
     expect(mesh.geometry.drawRange.count).toBe(3);
+    expect(Array.from(mesh.geometry.index!.array.slice(0, 3))).toEqual([1, 2, 0]);
     expect(pool.getResidentBytes()).toBe(committedBytes);
   });
 

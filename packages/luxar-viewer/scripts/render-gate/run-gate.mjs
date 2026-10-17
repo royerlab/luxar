@@ -8,7 +8,7 @@
  *     [--suite exact|perf|counters|playback|scrub|hosted|trees|cache|all] \
  *     [--class IDENTICAL|ULP] [--intended id,id] [--only id,id] \
  *     [--backends webgl,webgpu,webgpu-gl] [--rounds 7] [--heavy] [--expect <file.json>] \
- *     [--server-profile local|hosted] [--out <dir>]
+ *     [--server-profile local|hosted] [--chrome-args=--flag,...] [--out <dir>]
  *   node scripts/render-gate/run-gate.mjs --from-json <dir>/report.json
  *     (rewrite <dir>/report.md from a saved report, measuring nothing)
  *
@@ -36,6 +36,7 @@ import { fileURLToPath } from 'node:url';
 
 import { browserKit, selectBackends } from './browser.mjs';
 import { ensureBuild } from './builds.mjs';
+import { optionHelp, parseOptions } from '../cli-options.mjs';
 import { classifyRow, sameCounts, scoreControlPick, strip } from './classify.mjs';
 import { pickWithinDraw, scoreBlocks, scoreFloatBuffers, scorePickBuffers } from './exactness.mjs';
 import { writeUlpHeatmap } from './heatmap.mjs';
@@ -52,46 +53,72 @@ const viewerRoot = resolve(here, '../..');
 // Arguments
 // ---------------------------------------------------------------------------
 
-function arg(name, fallback) {
-  const i = process.argv.indexOf(`--${name}`);
-  if (i < 0) return fallback;
-  const next = process.argv[i + 1];
-  return next === undefined || next.startsWith('--') ? true : next;
-}
-const list = (v) => (typeof v === 'string' && v.length ? v.split(',').map((s) => s.trim()) : null);
-
-const opts = {
-  base: arg('base', 'origin/main'),
-  cand: arg('cand', 'HEAD'),
-  suite: arg('suite', 'exact'),
-  cls: arg('class', 'IDENTICAL'),
-  intended: list(arg('intended', '')) ?? [],
-  only: list(arg('only', '')),
-  backends: list(arg('backends', '')),
-  dsf: list(arg('dsf', ''))?.map(Number) ?? null,
-  rounds: Number(arg('rounds', 0)) || null,
-  basePort: Number(arg('base-port', 4801)),
-  channel: arg('channel', 'chrome'),
-  headless: arg('headed', false) !== true,
-  chromeArgs: list(arg('chrome-args', '')) ?? [],
-  label: arg('label', null),
-  scenes: arg('scenes', join(here, 'gate-scenes.json')),
-  // Prebuilt dist/ for an arm (calibration: a baseline patched by hand).
-  baseDist: arg('base-dist', null),
-  candDist: arg('cand-dist', null),
-  // Re-render report.md from a saved report.json, measuring nothing.
-  fromJson: arg('from-json', null),
-  // Manifest suites: include `heavy: true` cases, check declared expectations,
-  // and override the suites' server profile.
-  heavy: arg('heavy', false) === true,
-  expect: arg('expect', null),
-  serverProfile: arg('server-profile', null),
-};
+const value = (name, defaultValue = null) => ({ name, takesValue: true, defaultValue });
+const flag = (name) => ({ name, takesValue: false, defaultValue: false });
+const cliOptions = [
+  value('base', 'origin/main'),
+  value('cand', 'HEAD'),
+  value('suite', 'exact'),
+  value('class', 'IDENTICAL'),
+  value('intended', ''),
+  value('only', ''),
+  value('backends', ''),
+  value('dsf', ''),
+  value('rounds', 0),
+  value('base-port', 4801),
+  value('channel', 'chrome'),
+  flag('headed'),
+  value('chrome-args', ''),
+  value('label'),
+  value('scenes', join(here, 'gate-scenes.json')),
+  value('base-dist'),
+  value('cand-dist'),
+  value('from-json'),
+  flag('heavy'),
+  value('expect'),
+  value('server-profile'),
+  value('out'),
+  flag('help'),
+];
 /** A bad invocation is a harness error (exit 2), never a FAIL verdict (exit 1). */
 function configError(message) {
   console.error(`[render-gate] ${message}`);
   process.exit(2);
 }
+const cli = parseOptions(cliOptions, process.argv.slice(2), configError);
+if (cli.help) {
+  console.log(optionHelp('scripts/render-gate/run-gate.mjs', cliOptions));
+  process.exit(0);
+}
+const list = (v) => (typeof v === 'string' && v.length ? v.split(',').map((s) => s.trim()) : null);
+
+const opts = {
+  base: cli.base,
+  cand: cli.cand,
+  suite: cli.suite,
+  cls: cli.class,
+  intended: list(cli.intended) ?? [],
+  only: list(cli.only),
+  backends: list(cli.backends),
+  dsf: list(cli.dsf)?.map(Number) ?? null,
+  rounds: Number(cli.rounds) || null,
+  basePort: Number(cli['base-port']),
+  channel: cli.channel,
+  headless: !cli.headed,
+  chromeArgs: list(cli['chrome-args']) ?? [],
+  label: cli.label,
+  scenes: cli.scenes,
+  // Prebuilt dist/ for an arm (calibration: a baseline patched by hand).
+  baseDist: cli['base-dist'],
+  candDist: cli['cand-dist'],
+  // Re-render report.md from a saved report.json, measuring nothing.
+  fromJson: cli['from-json'],
+  // Manifest suites: include `heavy: true` cases, check declared expectations,
+  // and override the suites' server profile.
+  heavy: cli.heavy,
+  expect: cli.expect,
+  serverProfile: cli['server-profile'],
+};
 if (!['IDENTICAL', 'ULP'].includes(opts.cls)) configError(`bad --class ${opts.cls}`);
 
 const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
@@ -568,7 +595,7 @@ async function main() {
     ? prebuilt(opts.candDist, 'cand-dist')
     : ensureBuild({ repoRoot, cacheRoot, ref: opts.cand, log });
   const label = opts.label ?? `${base.sha.slice(0, 8)}-vs-${cand.sha.slice(0, 8)}-${opts.suite}`;
-  const outDir = resolve(arg('out', join(repoRoot, 'delme', 'gate', label)));
+  const outDir = resolve(cli.out ?? join(repoRoot, 'delme', 'gate', label));
   mkdirSync(outDir, { recursive: true });
 
   const dataRoot = join(repoRoot, 'datasets');
