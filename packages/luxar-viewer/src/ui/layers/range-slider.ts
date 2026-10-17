@@ -21,6 +21,7 @@ import {
 import { normalizeWheelDeltaWithAxisFallback } from '../../utils/wheel-delta';
 import { applyModifierTier } from '../../utils/cross-layer/modifier-tiers';
 import { clamp } from '../../utils/clamp';
+import { formatDataValue, formatLegacyRangeValue } from './brightness-range';
 
 export interface RangeSliderOptions {
   container: HTMLElement;
@@ -43,6 +44,17 @@ export interface RangeSliderOptions {
  * power-of-10 increments across the full range.
  * The caller applies the shared Shift/Ctrl modifier ladder.
  */
+/**
+ * The input step for a `[min, max]` track when the caller set none: the
+ * historical 0.001, refined below a unit-wide range so a small data window (a
+ * float source whose values sit in [0, 1e-5]) is not snapped to its ends.
+ */
+function defaultTrackStep(min: number, max: number): number {
+  const range = Math.abs(max - min);
+  if (!(range > 0) || range >= 1) return 0.001;
+  return Math.max(1e-12, Math.min(0.001, Math.pow(10, Math.floor(Math.log10(range)) - 3)));
+}
+
 function computeWheelStep(min: number, max: number): number {
   const range = Math.abs(max - min);
   if (range < 1e-10) return 0.1;
@@ -60,6 +72,8 @@ export class RangeSlider {
   private boundsLowLabel: HTMLElement;
   private boundsHighLabel: HTMLElement;
   private trackFill: HTMLElement;
+  /** Data-unit readouts (thousands separators, scientific extremes) — see setDataUnits. */
+  private dataUnits = false;
   private options: RangeSliderOptions;
 
   // Bound wheel handlers (stored for removeEventListener in dispose)
@@ -305,8 +319,39 @@ export class RangeSlider {
   }
 
   private formatValue(v: number): string {
-    // Show up to 3 decimal places, strip trailing zeros
-    return v.toFixed(3).replace(/\.?0+$/, '');
+    // Historical 3-decimal readouts unless the window is in labelled data units
+    // (thousands separators, scientific notation at the extremes).
+    return this.dataUnits ? formatDataValue(v) : formatLegacyRangeValue(v);
+  }
+
+  /**
+   * Switch the readouts to data-unit formatting (a layer with an
+   * `amplitude_unit`) or back to the historical form, so a scene without units
+   * reads exactly as before. Re-renders the current labels.
+   */
+  setDataUnits(on: boolean): void {
+    if (this.dataUnits === on) return;
+    this.dataUnits = on;
+    this.syncDefaultStep();
+    this.boundsLowLabel.textContent = this.formatValue(parseFloat(this.lowInput.min));
+    this.boundsHighLabel.textContent = this.formatValue(parseFloat(this.lowInput.max));
+    this.updateLabels();
+  }
+
+  /**
+   * The input step when the caller set none: the historical 0.001, refined for
+   * a narrow DATA-UNIT track only (`setDataUnits`) — an old scene keeps its
+   * exact historical snapping.
+   */
+  private syncDefaultStep(): void {
+    if (this.options.step !== undefined) return;
+    const step = String(
+      this.dataUnits
+        ? defaultTrackStep(parseFloat(this.lowInput.min), parseFloat(this.lowInput.max))
+        : 0.001
+    );
+    this.lowInput.step = step;
+    this.highInput.step = step;
   }
 
   /**
@@ -321,7 +366,12 @@ export class RangeSlider {
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'luxar-range-slider__bound-input';
-    input.value = this.formatValue(currentValue);
+    // The value as plain, unrounded digits: the field is parsed back with
+    // parseFloat (which would read "4,200" as 4), and the 4-significant-digit
+    // data-unit readout would move an untouched bound on Enter.
+    input.value = this.dataUnits
+      ? String(Number(currentValue.toPrecision(12)))
+      : this.formatValue(currentValue);
     input.style.width = `${Math.max(label.offsetWidth, 28)}px`;
 
     // Replace label with input
@@ -451,6 +501,7 @@ export class RangeSlider {
     this.lowInput.max = String(max);
     this.highInput.min = String(min);
     this.highInput.max = String(max);
+    this.syncDefaultStep();
     this.boundsLowLabel.textContent = this.formatValue(min);
     this.boundsHighLabel.textContent = this.formatValue(max);
     this.updateTrackFill();

@@ -22,7 +22,13 @@ from typing import Any, Mapping, Optional
 
 import numpy as np
 
-__all__ = ["fit_image_min", "reference_on_fit_basis", "MISSING_BASIS_HINT"]
+__all__ = [
+    "fit_image_min",
+    "reference_on_fit_basis",
+    "rescale_intensity_basis",
+    "source_intensity_span",
+    "MISSING_BASIS_HINT",
+]
 
 #: What to tell a user when the store predates the stat. Shared so `compare`,
 #: `cull` and the LOD re-fit all say the same thing.
@@ -124,3 +130,60 @@ def reference_on_fit_basis(
         return array
     shifted: np.ndarray = np.clip(array - level, 0.0, None)
     return shifted
+
+
+def rescale_intensity_basis(stats: Optional[dict], factor: Optional[float]) -> None:
+    """Keep a store's normalisation basis truthful after an amplitude edit.
+
+    ``factor`` is the exact multiplier applied to every amplitude
+    (``transform --scale-intensity``): ``intensity_range`` scales with it, so
+    ``amplitude / intensity_range`` still recovers the fit's working value.
+    ``image_min`` / ``image_max`` remain raw source levels; ``intensity_scale``
+    records the cumulative multiplier so a scene cannot label edited amplitudes
+    as source counts.
+    ``None`` means the amplitudes were rescaled to an arbitrary target
+    (``--normalize-intensity``): the amplitude-unit keys are DROPPED, so a later
+    ``gsplat convert`` labels the store ``a.u.`` instead of claiming counts.
+    Mutates ``stats`` in place; a ``None``/empty mapping is a no-op.
+    """
+    if not stats:
+        return
+    if factor is None:
+        stats.pop("intensity_range", None)
+        stats.pop("image_max", None)
+        stats.pop("intensity_scale", None)
+        return
+    if "intensity_range" in stats:
+        try:
+            stats["intensity_range"] = float(stats["intensity_range"]) * float(factor)
+        except (TypeError, ValueError):
+            stats.pop("intensity_range")
+    scale = float(stats.get("intensity_scale", 1.0)) * float(factor)
+    if scale == 1.0:
+        stats.pop("intensity_scale", None)
+    else:
+        stats["intensity_scale"] = scale
+
+
+def source_intensity_span(stats: Optional[Mapping[str, Any]]) -> Optional[float]:
+    """The source's intensity span above the subtracted level, or ``None``.
+
+    ``intensity_range`` (what the fit divided by, scaled with any amplitude edit;
+    initially exactly ``image_max - image_min``), else ``image_max - image_min``.
+    This is the extent of the data in amplitude units, unlike the per-splat
+    peak window. A scaled store cannot fall back to raw source bounds.
+    """
+    if not stats:
+        return None
+    candidates = []
+    rng = stats.get("intensity_range")
+    if isinstance(rng, (int, float)) and not isinstance(rng, bool):
+        candidates.append(float(rng))
+    if stats.get("intensity_scale", 1.0) == 1.0:
+        lo, hi = stats.get("image_min"), stats.get("image_max")
+        if isinstance(lo, (int, float)) and isinstance(hi, (int, float)):
+            candidates.append(float(hi) - float(lo))
+    for span in candidates:
+        if np.isfinite(span) and span > 0.0:
+            return span
+    return None
