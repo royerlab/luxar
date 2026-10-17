@@ -74,10 +74,11 @@ test.describe('Post-Processing Pipeline', () => {
       const initialDpr = renderer.getPixelRatio();
       const reducedDpr = initialDpr * 0.75;
 
-      // Exercise the HDR, LDR/FXAA, bloom and refraction target owners.
+      // Exercise the HDR, LDR/FXAA and bloom targets through the resize path.
       postProcessing.setBloomEnabled(true);
       postProcessing.setFXAAEnabled(true);
       const sample = () => ({
+        dpr: renderer.getPixelRatio() as number,
         textures: renderer.info.memory.textures as number,
         targets: (renderer.info.memory.renderTargets as number | undefined) ?? null,
       });
@@ -103,10 +104,13 @@ test.describe('Post-Processing Pipeline', () => {
 
     if (test.info().project.name === 'chromium-webgpu') {
       expect(counts.backend).toBe('WebGPUBackend');
+      expect(counts.initial.targets).toBeGreaterThan(0);
     }
     expect(counts.reducedDpr).toBeLessThan(counts.initialDpr);
+    expect(counts.initial.dpr).toBe(counts.initialDpr);
     expect(counts.initial.textures).toBeGreaterThan(0);
     const reducedCount = counts.afterSteps[0];
+    expect(reducedCount.dpr).toBeCloseTo(counts.reducedDpr, 2);
     expect(reducedCount.textures).toBeGreaterThan(0);
     expect(counts.afterSteps).toEqual([
       reducedCount,
