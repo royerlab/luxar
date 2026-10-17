@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import * as ops from './page-ops.mjs';
 import {
@@ -12,6 +12,67 @@ import {
   validateMetricDirections,
 } from './suites.mjs';
 
+afterEach(() => vi.unstubAllGlobals());
+
+describe('waitForQuiet', () => {
+  it('requires 30 consecutive render-free frames after the minimum tail', async () => {
+    let now = 0;
+    let frame = 0;
+    const pp = { render() {} };
+    const original = pp.render;
+    vi.stubGlobal('window', { __luxarDebug: { app: { sceneManager: { postProcessing: pp } } } });
+    vi.stubGlobal('performance', { now: () => now });
+    vi.stubGlobal('requestAnimationFrame', (callback) => {
+      queueMicrotask(() => {
+        frame++;
+        now += 100;
+        if (frame === 3 || frame === 12) pp.render();
+        callback(now);
+      });
+    });
+    expect(await ops.waitForQuiet({ minMs: 3000, timeoutMs: 5000 })).toEqual({
+      renders: 2,
+      frames: 42,
+      settled: true,
+    });
+    expect(pp.render).toBe(original);
+  });
+
+  it('times out while rendering continues and restores the render method', async () => {
+    let now = 0;
+    const pp = { render() {} };
+    const original = pp.render;
+    vi.stubGlobal('window', { __luxarDebug: { app: { sceneManager: { postProcessing: pp } } } });
+    vi.stubGlobal('performance', { now: () => now });
+    vi.stubGlobal('requestAnimationFrame', (callback) => {
+      queueMicrotask(() => {
+        now += 100;
+        pp.render();
+        callback(now);
+      });
+    });
+    expect(await ops.waitForQuiet({ minMs: 0, timeoutMs: 1000 })).toEqual({
+      renders: 10,
+      frames: 10,
+      settled: false,
+    });
+    expect(pp.render).toBe(original);
+  });
+
+  it('times out when animation frames stop', async () => {
+    const pp = { render() {} };
+    const original = pp.render;
+    vi.stubGlobal('window', { __luxarDebug: { app: { sceneManager: { postProcessing: pp } } } });
+    vi.stubGlobal('requestAnimationFrame', () => {});
+    expect(await ops.waitForQuiet({ minMs: 0, timeoutMs: 10 })).toEqual({
+      renders: 0,
+      frames: 0,
+      settled: false,
+    });
+    expect(pp.render).toBe(original);
+  });
+});
+
 describe('dragWorkload', () => {
   it('reports only uploads after mouse release as tail work', async () => {
     const calls = [];
@@ -21,13 +82,17 @@ describe('dragWorkload', () => {
       evaluate: async (fn) => {
         if (fn === ops.beginRenderCount) return true;
         if (fn === ops.readExtCounters) return { ...uploads };
-        if (fn === ops.idle) {
+        if (fn === ops.waitForQuiet || fn === ops.idle) {
           idleWindows++;
           uploads =
             idleWindows === 1
               ? { gpuUploadBytesBuffer: 116, gpuUploadBytesTexture: 221 }
               : { gpuUploadBytesBuffer: 119, gpuUploadBytesTexture: 223 };
-          return { renders: idleWindows === 1 ? 2 : 1, frames: idleWindows === 1 ? 180 : 60 };
+          return {
+            renders: idleWindows === 1 ? 2 : 1,
+            frames: idleWindows === 1 ? 180 : 60,
+            settled: idleWindows === 1,
+          };
         }
         if (fn === ops.endRenderCount) return 9;
         return { x: 10, y: 20 };
@@ -45,6 +110,7 @@ describe('dragWorkload', () => {
       renders: 9,
       tailRenders: 2,
       tailFrames: 180,
+      tailSettled: 1,
       tailUploadBytesBuffer: 16,
       tailUploadBytesTexture: 21,
       idleRenders: 1,
@@ -53,6 +119,23 @@ describe('dragWorkload', () => {
     });
     expect(idleWindows).toBe(2);
     expect(calls).toEqual(['move', 'down', 'move', 'up']);
+  });
+
+  it('reports an unsettled tail as a harness error before measuring idle', async () => {
+    const uploads = { gpuUploadBytesBuffer: 0, gpuUploadBytesTexture: 0 };
+    let measuredIdle = false;
+    const page = {
+      evaluate: async (fn) => {
+        if (fn === ops.waitForQuiet) return { renders: 4, frames: 60, settled: false };
+        if (fn === ops.idle) measuredIdle = true;
+        if (fn === ops.readExtCounters) return uploads;
+        if (fn === ops.endRenderCount) return 4;
+        return { x: 10, y: 20 };
+      },
+      mouse: { move: async () => {}, down: async () => {}, up: async () => {} },
+    };
+    await expect(dragWorkload(page, {})).rejects.toThrow(/drag tail did not settle/);
+    expect(measuredIdle).toBe(false);
   });
 });
 
@@ -80,7 +163,10 @@ describe('manifest expectations', () => {
             id: 'idle',
             workload: { kind: 'idle' },
             backends: ['webgl', 'webgpu'],
-            metrics: [{ name: 'renders', kind: 'counter' }],
+            metrics: [
+              { name: 'renders', kind: 'counter' },
+              { name: 'frames', kind: 'counter' },
+            ],
             expectations: { renders: 'zero' },
           },
         ],
@@ -97,7 +183,7 @@ describe('manifest expectations', () => {
   };
 
   it('enforces the shipped zero expectation on each backend even when both builds agree', async () => {
-    const busy = await run(1, { idle: { renders: 'pass' } });
+    const busy = await run(1);
     expect(busy.map((row) => row.backend)).toEqual(['webgl', 'webgpu']);
     for (const row of busy) {
       expect(row.status).toBe('fail');
@@ -107,6 +193,68 @@ describe('manifest expectations', () => {
     for (const row of quiet) {
       expect(row.status).toBe('pass');
       expect(row.metrics.renders).toMatchObject({ expected: 'zero', met: true });
+    }
+  });
+
+  it('merges a nonconflicting --expect metric with a shipped expectation', async () => {
+    const rows = await run(0, { idle: { frames: 'pass' } });
+    for (const row of rows) {
+      expect(row.status).toBe('pass');
+      expect(row.metrics.renders).toMatchObject({ expected: 'zero', met: true });
+      expect(row.metrics.frames).toMatchObject({ expected: 'pass', met: true });
+    }
+  });
+});
+
+describe('unsettled drag row', () => {
+  it('reports a harness error on both backends, not an idle-zero failure', async () => {
+    const page = {
+      evaluate: async (fn) => {
+        if (fn === ops.settle) return { settled: true };
+        if (fn === ops.waitForQuiet) return { renders: 1, frames: 10, settled: false };
+        if (fn === ops.readExtCounters) {
+          return { gpuUploadBytesBuffer: 0, gpuUploadBytesTexture: 0 };
+        }
+        if (fn === ops.endRenderCount) return 1;
+        return { x: 10, y: 20 };
+      },
+      mouse: { move: async () => {}, down: async () => {}, up: async () => {} },
+    };
+    const server = {
+      origin: 'http://localhost',
+      reset() {},
+      now: () => 0,
+      log: [],
+      stats: () => ({ maxInflight: 0 }),
+    };
+    const rows = await runSuite({
+      name: 'counters',
+      suite: {
+        cases: [
+          {
+            id: 'drag',
+            workload: { kind: 'drag' },
+            backends: ['webgl', 'webgpu'],
+            metrics: [{ name: 'idleRenders' }],
+            expectations: { idleRenders: 'zero' },
+          },
+        ],
+      },
+      profile: { name: 'local' },
+      session: { run: async (fn) => fn({}) },
+      openCase: async () => ({ page, context: { close: async () => {} } }),
+      servers: { base: server, cand: server },
+      dataRoot: '.',
+      opts: { rounds: 1 },
+      log() {},
+    });
+    expect(rows.map((row) => row.backend)).toEqual(['webgl', 'webgpu']);
+    for (const row of rows) {
+      expect(row).toMatchObject({
+        status: 'error',
+        metrics: {},
+        failures: ['drag tail did not settle (tailSettled=0)'],
+      });
     }
   });
 });
@@ -139,6 +287,20 @@ describe('validateExpectations', () => {
     expect(() => validateExpectations({ a: { fps: 'better' } }, manifestSuites)).toThrow(
       /not one of/
     );
+  });
+
+  it('rejects a conflicting shipped expectation', () => {
+    const suites = {
+      counters: {
+        cases: [{ id: 'idle', metrics: [{ name: 'renders' }], expectations: { renders: 'zero' } }],
+      },
+    };
+    expect(() => validateExpectations({ idle: { renders: 'pass' } }, suites)).toThrow(
+      /idle\.renders.*conflicts with shipped expectation 'zero'/
+    );
+    expect(validateExpectations({ idle: { renders: 'zero' } }, suites)).toEqual({
+      idle: { renders: 'zero' },
+    });
   });
 });
 

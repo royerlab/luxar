@@ -492,6 +492,7 @@
             { "name": "render.count", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "renders", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "tailRenders", "better": "lower", "kind": "counter", "report": true },
+            { "name": "tailSettled", "better": "higher", "kind": "counter", "report": true },
             {
               "name": "tailUploadBytesBuffer",
               "better": "lower",

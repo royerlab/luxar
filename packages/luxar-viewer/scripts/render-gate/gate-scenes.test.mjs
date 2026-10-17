@@ -33,6 +33,7 @@ const HARNESS_METRICS = [
   'settledMs',
   'stepMs',
   'tailRenders',
+  'tailSettled',
   'tailUploadBytesBuffer',
   'tailUploadBytesTexture',
   'ticks',

@@ -54,6 +54,7 @@ export const METRIC_DIRECTIONS = Object.freeze({
   'render.count': 'lower',
   renders: 'lower',
   tailRenders: 'lower',
+  tailSettled: 'higher',
   tailUploadBytesBuffer: 'lower',
   tailUploadBytesTexture: 'lower',
   idleRenders: 'lower',
@@ -149,6 +150,12 @@ export function validateExpectations(raw, manifestSuites) {
       if (!EXPECTATIONS.includes(want)) {
         throw new Error(
           `--expect: ${caseId}.${metric}: '${want}' is not one of ${EXPECTATIONS.join('|')}`
+        );
+      }
+      const shipped = c.expectations?.[metric];
+      if (shipped !== undefined && shipped !== want) {
+        throw new Error(
+          `--expect: ${caseId}.${metric} '${want}' conflicts with shipped expectation '${shipped}'`
         );
       }
     }
@@ -260,8 +267,9 @@ export function serverMetrics(log, { navT, firstFrameMs, latencyMs = 0, maxInfli
  * A drag on the canvas with REAL input events (Playwright's mouse, i.e. CDP
  * `Input.dispatchMouseEvent`): an in-page synthetic `PointerEvent` has no
  * active pointer, so the controls' `setPointerCapture` throws on it. Then a
- * `tailMs` allows interaction damping to settle, then `idleMs` measures a
- * quiet window. `renders` covers both windows; tail counts start at release.
+ * `tailMs` is the minimum damping tail; the idle window starts after 30
+ * consecutive frames without a render. `renders` covers both windows; tail
+ * counts start at release.
  */
 export async function dragWorkload(page, { px = 4, tailMs = 3000, idleMs = 1000, moves = 8 }) {
   const box = await page.evaluate(() => {
@@ -280,8 +288,9 @@ export async function dragWorkload(page, { px = 4, tailMs = 3000, idleMs = 1000,
     await page.mouse.move(box.x + px, box.y, { steps: Math.max(1, moves) });
     await page.mouse.up();
     uploadsAtRelease = await page.evaluate(ops.readExtCounters);
-    tail = await page.evaluate(ops.idle, { ms: tailMs });
+    tail = await page.evaluate(ops.waitForQuiet, { minMs: tailMs, timeoutMs: tailMs + 5000 });
     uploadsAfterTail = await page.evaluate(ops.readExtCounters);
+    if (!tail.settled) throw new Error('drag tail did not settle (tailSettled=0)');
     idle = await page.evaluate(ops.idle, { ms: idleMs });
     uploadsAfterIdle = await page.evaluate(ops.readExtCounters);
   } finally {
@@ -292,6 +301,7 @@ export async function dragWorkload(page, { px = 4, tailMs = 3000, idleMs = 1000,
     renders: tail.total,
     tailRenders: tail.renders,
     tailFrames: tail.frames,
+    tailSettled: 1,
     tailUploadBytesBuffer:
       uploadsAfterTail.gpuUploadBytesBuffer - uploadsAtRelease.gpuUploadBytesBuffer,
     tailUploadBytesTexture:
