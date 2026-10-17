@@ -139,9 +139,11 @@ function applyToneMapping(color: TSLNode, mode: LuxarToneMappingMode): TSLNode {
  * 0.76 — so up to ~0.8 on grey — hence its higher knee: a lower one would roll
  * off a range SDR still shows linearly (verified never darker than SDR).
  */
-function hdrKnee(mode: LuxarToneMappingMode): number {
+export function hdrKnee(mode: LuxarToneMappingMode): number {
   return mode === 6 ? 0.8 : 0.5;
 }
+
+export const HDR_SLOPE_STEP = 1e-3;
 
 /**
  * Tone mapping for an extended-range (HDR) canvas, where 1.0 is SDR white and
@@ -167,7 +169,7 @@ function applyHdrToneMapping(color: TSLNode, mode: LuxarToneMappingMode, peak: T
   // emitted only inside the first arm and reads unset in the other.
   const sdr: TSLNode = vec3(applyToneMapping(color, mode)).toVar();
   const knee = hdrKnee(mode);
-  const h = 1e-3;
+  const h = HDR_SLOPE_STEP;
   const grey = (l: TSLNode): TSLNode => vec3(applyToneMapping(vec3(l), mode)).x;
   const yKnee = grey(float(knee));
   const slope = grey(float(knee + h))

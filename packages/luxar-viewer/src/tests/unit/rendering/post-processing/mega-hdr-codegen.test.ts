@@ -25,7 +25,7 @@ function fragmentFor(material: MegaShaderTSLMaterial): string {
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
   const builder = new WGSLNodeBuilder(
     mesh,
-    renderer as ConstructorParameters<typeof WGSLNodeBuilder>[1]
+    renderer as unknown as ConstructorParameters<typeof WGSLNodeBuilder>[1]
   ) as unknown as {
     camera: THREE.Camera;
     scene: THREE.Scene;
@@ -42,21 +42,35 @@ function fragmentFor(material: MegaShaderTSLMaterial): string {
 
 describe('mega-shader HDR WGSL', () => {
   it.each([
-    ['Reinhard', THREE.ReinhardToneMapping],
-    ['Cineon', THREE.CineonToneMapping],
-    ['ACES', THREE.ACESFilmicToneMapping],
-    ['AgX', THREE.AgXToneMapping],
-    ['Neutral', THREE.NeutralToneMapping],
-  ])('emits the peak uniform and exponential shoulder for %s', (_name, toneMapping) => {
-    const material = new MegaShaderTSLMaterial({ toneMapping, hdrOutputPeak: 3 });
-    const wgsl = fragmentFor(material);
-    const peak = wgsl.match(/object\.nodeUniform(\d+) > 1\.0/);
-    expect(peak).not.toBeNull();
-    expect(wgsl).toContain(`nodeUniform${peak?.[1]} : f32`);
-    expect(wgsl).toContain('exp(');
-    expect(wgsl).toMatch(/> 1\.0/);
-    material.dispose();
-  });
+    [
+      'Reinhard',
+      THREE.ReinhardToneMapping,
+      'reinhardToneMapping',
+      0.5,
+      'nodeVar0 + vec3<f32>( 1.0 )',
+    ],
+    ['Cineon', THREE.CineonToneMapping, 'cineonToneMapping', 0.5, '6.2'],
+    ['ACES', THREE.ACESFilmicToneMapping, 'acesFilmicToneMapping', 0.5, '0.59719'],
+    ['AgX', THREE.AgXToneMapping, 'agxToneMapping', 0.5, '12.47393'],
+    ['Neutral', THREE.NeutralToneMapping, 'neutralToneMapping', 0.8, '0.76'],
+  ])(
+    'emits the peak uniform and exponential shoulder for %s',
+    (_name, toneMapping, fn, knee, operatorMarker) => {
+      const material = new MegaShaderTSLMaterial({ toneMapping, hdrOutputPeak: 3 });
+      const wgsl = fragmentFor(material);
+      const peak = wgsl.match(/object\.nodeUniform(\d+) > 1\.0/);
+      expect(peak).not.toBeNull();
+      expect(wgsl).toContain(`nodeUniform${peak?.[1]} : f32`);
+      expect(wgsl).toContain(operatorMarker);
+      expect(wgsl).toContain(`nodeVar3 > ${knee}`);
+      expect(wgsl).toContain(`${fn}( vec3<f32>( ${knee + 0.001} ), 1.0 ).x`);
+      expect(wgsl).toContain(`${fn}( vec3<f32>( ${knee - 0.001} ), 1.0 ).x`);
+      expect(wgsl).toContain(`max( ${fn}( vec3<f32>( nodeVar3 ), 1.0 ).x, 0.000001 )`);
+      expect(wgsl).toMatch(/nodeVar2 \* vec3<f32>\( .*exp\(/);
+      expect(wgsl).toContain(`vec3<f32>( object.nodeUniform${peak?.[1]} )`);
+      material.dispose();
+    }
+  );
 
   it('keeps the shoulder out of SDR and linear-LDR capture builds', () => {
     const hdr = new MegaShaderTSLMaterial({ hdrOutputPeak: 3 });
@@ -78,7 +92,7 @@ describe('mega-shader HDR WGSL', () => {
       const material = new MegaShaderTSLMaterial({ toneMapping, hdrOutputPeak: 3 });
       const wgsl = fragmentFor(material);
       expect(wgsl).not.toContain('exp(');
-      expect(wgsl).toContain('clamp(');
+      expect(wgsl).toMatch(/clamp\([^\n]+, vec3<f32>\( object\.nodeUniform\d+ \) \)/);
       material.dispose();
     }
   );
