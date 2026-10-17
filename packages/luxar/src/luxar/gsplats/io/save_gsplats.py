@@ -296,6 +296,14 @@ _FITTING_INFO_KEYS = (
     "fitted_voxels",
     "occupancy",
     "voxels_per_splat",
+    # The spacing a physical-output fit multiplied its centers and Cholesky rows
+    # by (absent when the fit stayed on the voxel grid). `compare` and `render`
+    # divide it back out to score/render on the source voxel grid.
+    "voxel_size",
+    # The robust-peak companions of `psnr_db` / `foreground_psnr_db` (see
+    # `luxar.gsplats.metrics.compute_quality_metrics`).
+    "psnr_robust_db",
+    "foreground_psnr_robust_db",
 )
 
 

@@ -1193,7 +1193,10 @@ gsplats/
 │   ├── io_adapter.py              # save / load adapter onto luxar.gsplats.io
 │   └── render.py                  # render_to_volume adapter onto luxar.gsplats.rendering
 ├── culling.py                     # Contribution-based splat culling (CullResult, cull_by_contribution)
-├── metrics.py                     # Quality metrics (PSNR, SSIM, MSE, relative L2)
+├── metrics.py                     # Quality metrics (robust + full-range PSNR, SSIM incl.
+│                                  #   foreground SSIM, MSE, relative L2); streamed reductions
+├── scoring_grid.py                # Map stored splats onto the voxel grid they are scored on
+│                                  #   (undo physical voxel_size / --downscale; voxel_size stamp)
 ├── calibration.py                 # Blind-spot CV calibration (cv_mask, donut_median_fill,
 │                                  #   estimate_noise_floor, build_k_grid, find_k_star, calibrate)
 ├── calibration_report.py          # Optional matplotlib PDF report for `luxar gsplat cal --pdf`

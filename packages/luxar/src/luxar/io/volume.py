@@ -355,6 +355,38 @@ def _squeezed_region_spans(
     return tuple(spans)
 
 
+def _reject_inapplicable_selection(
+    path: Path,
+    channel: Optional[int],
+    timepoint: Optional[int],
+    axes: Optional[str],
+) -> None:
+    """Refuse a channel/timepoint index that a non-zarr input would silently drop.
+
+    Only a zarr store has discoverable axes (OME-NGFF metadata, or the
+    positional TCZYX heuristic over its rank). A TIFF / NumPy / imageio array is
+    loaded whole and squeezed, so without an explicit ``axes`` spec an index has
+    nothing to select: the old behaviour fitted (or scored) EVERY channel stacked
+    as an extra spatial axis, or the wrong timepoint, with no warning. With
+    ``axes`` the index is applied by :func:`_apply_axes_spec`, as for zarr.
+    """
+    if axes is not None or (channel is None and timepoint is None):
+        return
+    if is_zarr_path(path):
+        return
+    given = ", ".join(
+        f"{name}={value}"
+        for name, value in (("channel", channel), ("timepoint", timepoint))
+        if value is not None
+    )
+    raise ValueError(
+        f"Cannot apply {given} to {path.name}: a {path.suffix or 'non-zarr'} file "
+        "has no discoverable channel/time axes, so the index would be ignored. "
+        "Name every dimension with an axes spec (CLI: --axes, e.g. 'c,z,y,x' or "
+        "'t,z,y,x') to select by index, or drop the index to load the whole array."
+    )
+
+
 def load_volume(
     path: Path,
     channel: Optional[int] = None,
@@ -417,6 +449,7 @@ def load_volume(
     """
     suffix = path.suffix.lower()
     tiff_meta = None
+    _reject_inapplicable_selection(path, channel, timepoint, axes)
 
     if suffix == ".npy":
         aprint(f"Loading NumPy array: {path.name}")

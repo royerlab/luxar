@@ -83,7 +83,7 @@ def fit_image_min(stats: Optional[Mapping[str, Any]]) -> Optional[float]:
 
 
 def reference_on_fit_basis(
-    volume: np.ndarray, image_min: Optional[float]
+    volume: np.ndarray, image_min: Optional[float], *, copy: bool = True
 ) -> np.ndarray:
     """Shift ``volume`` onto the basis a fit with this ``image_min`` reconstructs.
 
@@ -103,6 +103,10 @@ def reference_on_fit_basis(
     Today every caller comes through ``load_volume``, which already returns
     float32, so this is a guard on the contract rather than a live bug — but the
     conversion is centralised here precisely so the next caller cannot trip it.
+
+    **copy=False** shifts a writeable floating ``volume`` IN PLACE and returns
+    it — for a caller that owns a freshly loaded reference and cannot afford the
+    two full-size temporaries (difference, then clip) the copying path costs.
     """
     array = np.asarray(volume)
     if array.dtype.kind != "f":
@@ -113,5 +117,10 @@ def reference_on_fit_basis(
     # is weak under NEP 50, but being explicit survives future promotion rules).
     # Annotated because `dtype.type(...)` is untyped, which would otherwise make
     # the whole expression — and this function's return — `Any`.
-    shifted: np.ndarray = np.clip(array - array.dtype.type(image_min), 0.0, None)
+    level = array.dtype.type(image_min)
+    if not copy and array.flags.writeable and array is volume:
+        np.subtract(array, level, out=array)
+        np.maximum(array, array.dtype.type(0.0), out=array)
+        return array
+    shifted: np.ndarray = np.clip(array - level, 0.0, None)
     return shifted
