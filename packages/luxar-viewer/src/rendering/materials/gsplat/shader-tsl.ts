@@ -692,17 +692,26 @@ export function gsplatWebGPUFactory(
   // body (the TSL pattern for Fn-traced vertex stages).
   // Every per-splat value is constant across the quad's four vertices, so it
   // travels `flat` — the GLSL twin's `flat` qualifiers on the same fields.
-  // Without it the rasterizer interpolates 12 constant components per
+  // `either` permits compatibility-mode WebGPU; all four vertices of a splat
+  // carry the same values, so the provoking vertex cannot affect the result.
+  // Without it the rasterizer interpolates 10 constant components per
   // fragment. vClipZW stays interpolated: the glass partition reads the
   // fragment's own depth from it (glass-partition-tsl.ts).
   const vColor: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0))).setInterpolation(
-    'flat'
+    'flat',
+    'either'
   );
-  const vAmplitude2D: TSLNode = varying(float(0.0)).setInterpolation('flat');
+  const vAmplitude2D: TSLNode = varying(float(0.0)).setInterpolation('flat', 'either');
   const vClipZW: TSLNode = clipDepthVarying();
-  const vAlpha: TSLNode = varying(float(1.0)).setInterpolation('flat');
-  const vL2D: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0))).setInterpolation('flat');
-  const vCenterScreen: TSLNode = varying(vec2(float(0.0), float(0.0))).setInterpolation('flat');
+  const vAlpha: TSLNode = varying(float(1.0)).setInterpolation('flat', 'either');
+  const vL2D: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0))).setInterpolation(
+    'flat',
+    'either'
+  );
+  const vCenterScreen: TSLNode = varying(vec2(float(0.0), float(0.0))).setInterpolation(
+    'flat',
+    'either'
+  );
 
   // ---- Vertex stages ----
   // Plain graph builders called inside the vertex Fn below, in the scope of

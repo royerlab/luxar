@@ -3,7 +3,7 @@
  * (#3140). Three properties no pixel test can see, because each one changes
  * only how much work the GPU does:
  *
- *   1. Every per-splat varying is `flat` (the GLSL twin's `flat` qualifiers).
+ *   1. Every per-splat varying is `flat, either` (compat-safe flat sampling).
  *      Only the clip `zw` the glass partition reads stays interpolated.
  *   2. The vertex stage returns early: no texel fetch runs before the density
  *      test, and the covariance projection runs inside the near / coverage
@@ -73,7 +73,7 @@ function build(blendingMode: BlendingMode): { vertex: string; fragment: string }
 function fragmentInputs(fragment: string): string[] {
   const entry = fragment.indexOf('@fragment');
   const signature = fragment.slice(entry, fragment.indexOf('->', entry));
-  return signature.match(/@location\( \d+ \)[^,]*/g) ?? [];
+  return signature.match(/@location\( \d+ \)(?: @interpolate\( [^)]*\))?/g) ?? [];
 }
 
 /** The text of the first `{ ... }` block opened at or after `from`. */
@@ -91,10 +91,10 @@ describe('gsplat TSL WGSL keeps the GLSL cost structure (#3140)', () => {
   it.each(['normal', 'volumetric', 'additive'] as const)('%s', (mode) => {
     const { vertex, fragment } = build(mode);
 
-    // 1. Six varyings: five flat per-splat values plus the interpolated clip zw.
+    // 1. Six varyings: five compat-safe flat values plus the interpolated clip zw.
     const inputs = fragmentInputs(fragment);
     expect(inputs).toHaveLength(6);
-    expect(inputs.filter((v) => v.includes('@interpolate( flat )'))).toHaveLength(5);
+    expect(inputs.filter((v) => v.includes('@interpolate( flat, either )'))).toHaveLength(5);
 
     // 2. No texel fetch before the density test, and the projection Jacobian
     // (the first read of P[0].xy) inside a nested early-out block.
