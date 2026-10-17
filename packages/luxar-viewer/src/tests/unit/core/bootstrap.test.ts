@@ -250,7 +250,7 @@ describe('bootstrapStandalone', () => {
   });
 
   describe('WebGPU startup', () => {
-    it('starts device acquisition before app init and skips it for WebGL or forceWebGL', async () => {
+    it('starts device acquisition before app init', async () => {
       const requestDevice = vi.fn().mockResolvedValue({});
       const requestAdapter = vi.fn().mockResolvedValue({
         features: new Set<string>(),
@@ -270,13 +270,25 @@ describe('bootstrapStandalone', () => {
       expect(mocks.init.mock.calls[0]?.[0]).toHaveProperty('preRequestedWebGPUDevice');
       release();
       await booted;
+    });
 
+    it('skips device acquisition for WebGL', async () => {
+      const requestAdapter = vi.fn();
+      vi.stubGlobal('navigator', { ...navigator, gpu: { requestAdapter } });
       await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+      expect(requestAdapter).not.toHaveBeenCalled();
+      expect(mocks.init.mock.calls[0]?.[0]).not.toHaveProperty('preRequestedWebGPUDevice');
+    });
+
+    it('skips device acquisition for forceWebGL', async () => {
+      const requestAdapter = vi.fn();
+      vi.stubGlobal('navigator', { ...navigator, gpu: { requestAdapter } });
       await bootstrapStandalone({
         canvas: CANVAS,
         urlParams: { ...EMPTY_PARAMS, renderer: 'webgpu', webgpuForceWebGL: true },
       });
-      expect(requestAdapter).toHaveBeenCalledTimes(1);
+      expect(requestAdapter).not.toHaveBeenCalled();
+      expect(mocks.init.mock.calls[0]?.[0]).not.toHaveProperty('preRequestedWebGPUDevice');
     });
   });
 
