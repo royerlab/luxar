@@ -13,10 +13,12 @@ const cacheEntries = () => (existsSync(buildCache) ? readdirSync(buildCache).sor
 
 it.each([
   { args: ['--help'], status: 0, output: /--backends <value>/ },
+  { args: ['--bogus'], status: 2, output: /unknown option --bogus/ },
   { args: ['--suites', 'exact'], status: 2, output: /unknown option --suites/ },
   { args: ['--suite'], status: 2, output: /--suite requires a value/ },
   { args: ['--suite', '--heavy'], status: 2, output: /--suite requires a value/ },
 ])('validates $args before any build', ({ args, status, output }) => {
+  const cacheExisted = existsSync(buildCache);
   const before = cacheEntries();
   const result = spawnSync(process.execPath, [gateScript, ...args], {
     encoding: 'utf8',
@@ -26,6 +28,7 @@ it.each([
   expect(result.status).toBe(status);
   expect(result.stdout + result.stderr).toMatch(output);
   expect(result.stdout + result.stderr).not.toMatch(/ensureBuild|building|vite build/i);
+  expect(existsSync(buildCache)).toBe(cacheExisted);
   expect(cacheEntries()).toEqual(before);
 });
 

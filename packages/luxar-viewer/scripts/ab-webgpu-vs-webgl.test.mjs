@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
@@ -22,7 +22,7 @@ it.each([
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(status);
     expect(result.stdout + result.stderr).toMatch(output);
-    expect(existsSync(out) ? readdirSync(out) : []).toEqual([]);
+    expect(existsSync(out)).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
