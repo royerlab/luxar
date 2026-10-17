@@ -33,6 +33,9 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 | `--timepoint` | timepoint index (T in TCZYX) |
 | `--array-key` | array key in `.npz` or nested zarr group (e.g. `h2afva/fused`) |
 | `--axes` | explicit per-dim labels (e.g. `z,c,y,x`), bypassing the TCZYX/CZYX/ZYX heuristic |
+| `--voxel-size` | physical spacing `Z,Y,X` in µm, array order (`Y,X` for a plane); fits in physical coordinates. Wins over `--physical` metadata and a config `voxel_size` |
+| `--physical` | use the spacing the file records (OME-Zarr NGFF scale, OME-TIFF `PhysicalSize*`, calibrated ImageJ); prints `Voxel size ... (from <source>)`, warns and stays in voxels when none. Without either flag an anisotropic file prints a one-line hint |
+| `--region` | `z0:z1,y0:y1,x0:x1` crop (numpy half-open voxel spans; empty = whole axis; no steps/negatives). Splats keep their FULL-volume position; `fitting/source_region` records the crop. Local files only |
 | `--downscale` | downsample factor(s) before fitting (scalar or per-axis comma list) |
 
 ### Tiling (large volumes)
@@ -157,7 +160,11 @@ block (saturation exponent alpha etc.) consumed by `fit --tiling content`.
 
 ### Fit config & loader pass-through
 `--preset` (default `n2s`), `--config`, `--device`/`-d`, and the same input-selection
-flags as `fit`: `--channel`/`-c`, `--timepoint`, `--array-key`, `--axes`.
+flags as `fit`: `--channel`/`-c`, `--timepoint`, `--array-key`, `--axes`, plus
+`--voxel-size` / `--physical` (each K is fitted with the spacing but scored on the
+voxel grid; K* is a count either way) and `--region` (K* is then the budget for
+that crop: use the same spans on `fit --region`; excludes `--auto-region`).
+`cal.json` records them under `input_frame`.
 
 `cal` also honours `--floor` (default `auto`, same semantics as `fit`): the floor
 is subtracted ONCE up front so K* is measured on floor-suppressed data (matching

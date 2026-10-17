@@ -25,6 +25,7 @@ importers name the owning module directly, never a re-export root.
 - `benchmark.py` — GPU benchmark helpers
 - `recipe_shared.py` — `--recipe` names/methods/validators shared by the CLI and `cli/lod.py`
 - `planner.py` — content-plan resolution + `run_content_fit`
+- `voxel_frame.py` — voxel spacing (`--voxel-size` > config > `--physical` metadata: NGFF / OME-TIFF / ImageJ) and the `--region` crop for `fit`/`cal`; `FitFrame` applies the crop offset and stamps `fitting/voxel_size`, `voxel_unit`, `voxel_size_source`, `physical_coordinates`, `source_region` at save. `batch-fit --physical` shares its NGFF reading
 - `encoding.py` — `_resolve_encoding_mode` shared by the transform, scene and interchange commands
 - `loading.py` — shared matrix-only loading policy and flatten-first guidance
 
