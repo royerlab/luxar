@@ -47,6 +47,34 @@ def test_tile_amplitude_floor_removes_negligible_splats_before_merge(
     assert seam_mse <= neighbour_mse
 
 
+def test_tile_amplitude_floor_is_invariant_to_input_scale() -> None:
+    y, x = np.mgrid[:24, :48]
+    image = np.exp(-((y - 12) ** 2 / 50 + (x - 24) ** 2 / 450)).astype(np.float32)
+    kwargs = dict(
+        tile_size=32,
+        overlap=8,
+        seeds=128,
+        n_iters=20,
+        device="cpu",
+        verbose=False,
+        cull_retention=None,
+    )
+
+    pruned = []
+    for scale in (1.0, 1000.0):
+        source = image * scale
+        original = fit_tiled(source, **kwargs)
+        trimmed = fit_tiled(source, tile_amplitude_floor=1e-5, **kwargs)
+        span = original.stats["image_max"] - original.stats["image_min"]
+        expected = int(np.count_nonzero(original.amplitudes < 1e-5 * span))
+        assert expected > 0
+        assert trimmed.n_splats == original.n_splats - expected
+        assert np.all(trimmed.amplitudes >= 1e-5 * span)
+        assert trimmed.stats["tile_amplitude_pruned"] == expected
+        pruned.append(expected)
+    assert pruned[0] == pruned[1]
+
+
 @pytest.mark.parametrize("floor", [-1.0, np.nan, np.inf])
 def test_tile_amplitude_floor_rejects_invalid_values(floor: float) -> None:
     with pytest.raises(ValueError, match="tile_amplitude_floor"):
