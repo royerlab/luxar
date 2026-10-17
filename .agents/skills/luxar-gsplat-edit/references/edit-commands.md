@@ -97,10 +97,11 @@ one uncompressed flat payload of free space.
 
 ## convert IN.gsplats.zarr OUT.luxar.zarr
 Wrap a fitted dataset as a web scene. `--center`/`--no-center` (default on),
-`--scale-intensity` (exact `raw × S`, any tree shape; disables auto exposure),
+`--display-gain` (alias `--scale-intensity`; display gain exactly `S`, any tree shape; disables auto exposure),
 `--opacity` (1.0), `--blending-mode` (`additive` default / `normal` / `max` /
-`opaque`). Auto exposure is on by default (`--auto-exposure/--no-auto-exposure`):
-amplitudes are dimmed, never brightened, so the opening view's predicted additive
+`opaque`). The amplitudes stay in data units (`amplitude_unit`, floor in
+`amplitude_offset`); brightness is the node's `display_gain`. Auto exposure is on by
+default (`--auto-exposure/--no-auto-exposure`): the gain is dimmed, never brightened, so the opening view's predicted additive
 p99.9 equals `--target-brightness` (2.0; 0.9 under `None`/`Linear` tone mapping); side views and other timepoints are capped at 4x that.
 
 Appearance is baked in here:
@@ -117,6 +118,13 @@ Appearance is baked in here:
 - `--gamma` (1.0) — display gamma.
 - `--intensity` (1.0) — display intensity multiplier.
 - `--layer`/`--no-layer` (default `layer`) — list the gsplats node in the viewer Layers panel.
+
+Orientation: convert names the centre columns (the store's recorded axis names,
+else array order for a fit; `--dim-order t,z,y,x` overrides; `--dim-order x,y,z`
+on a z,y,x fit is the positional mapping). When the y column precedes the x
+column (image order, as in every fit) it opens facing XY with y pointing down like
+Fiji/napari; other column orders get no opening camera (`viewer_config.camera` `up=(0,-1,0)`, `view_axis="xy"`).
+`--view xz|yz` picks another face; the viewer URL `?viewAxis=` overrides it.
 
 ## migrate-format IN OUT
 Upgrade legacy layouts → v3.4. Five input shapes are auto-detected: v1.0 (flat),

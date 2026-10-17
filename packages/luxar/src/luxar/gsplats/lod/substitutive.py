@@ -855,6 +855,7 @@ def make_substitutive_lod(
     volume: Optional[np.ndarray] = None,
     volume_axes: Optional[Sequence[int]] = None,
     image_min: Optional[float] = None,
+    intensity_scale: Optional[float] = None,
     volume_box: Optional[Sequence[tuple[float, float]]] = None,
     device: Union[str, torch.device, None] = "auto",
     seed: Optional[int] = None,
@@ -989,6 +990,11 @@ def make_substitutive_lod(
         Normalization level removed by the input fit. When omitted, it is read
         from ``data.stats``; per-part recipe callers pass it explicitly because
         converting a bare tree node to ``GSplatData`` has no top-level stats.
+    intensity_scale
+        The input store's cumulative ``transform --scale-intensity`` factor,
+        which the volume re-fit multiplies the raw volume by. When omitted, it
+        is read from ``data.stats`` (``1.0`` when absent); per-part callers pass
+        it for the same reason as ``image_min``.
     volume_box
         Per-coarsened-dim ``(low, high)`` bounds restricting the re-fit to one
         spatial tile, for the per-part (``adaptive``) caller. The re-fit then
@@ -1119,11 +1125,18 @@ def make_substitutive_lod(
         # re-fit re-estimates one from the raw volume and the refined level can
         # end up on a different basis from its siblings (#1177).
         refit_image_min = _resolve_refit_image_min(data, image_min, verbose)
+        from luxar.gsplats.fit_basis import stored_intensity_scale
+
         volume_cfg = replace(
             VolumeRefitConfig(),
             iters=eff_refine_iters,
             conserve_mass=bool(conserve_mass),
             image_min=refit_image_min,
+            intensity_scale=(
+                float(intensity_scale)
+                if intensity_scale is not None
+                else stored_intensity_scale(data.stats)
+            ),
         )
         if device is not None and not (isinstance(device, str) and device == "auto"):
             refit_device = str(device)

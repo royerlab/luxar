@@ -237,6 +237,20 @@ def _merge_fitting_info(
     if source_dtype is not None:
         fitting_info["source_dtype"] = source_dtype
     _carry_spatial_voxel_size(part_stats, fitting_info)
+    # The shared intensity basis. Every task fits against the plan's one
+    # `norm_range`, so the parts agree on it — but the streaming writer has no
+    # root node whose stats would carry it, and without it `gsplat convert`
+    # labels a multi-tile merge "a.u." instead of "counts". Only a unanimous
+    # basis is claimed (`agreed_normalization_stats`); `floor` stays in the
+    # pipeline group where `_batch_floor_stats` puts it.
+    from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
+
+    basis = agreed_normalization_stats(
+        list(part_stats), [int(stats["n_splats"]) for stats in part_stats]
+    )
+    for key in ("image_min", "image_max", "intensity_range", "intensity_scale"):
+        if key in basis:
+            fitting_info[key] = basis[key]
     sum_population_counts(
         part_stats,
         fitting_info,
@@ -746,12 +760,15 @@ def _finalize_part_node(
 
     import dataclasses
 
-    from luxar.gsplats.fit_basis import fit_image_min
-    from luxar.gsplats.lod.recipes import RecipeParams, build_part_lod
+    from luxar.gsplats.lod.recipes import (
+        RecipeParams,
+        build_part_lod,
+        with_input_basis,
+    )
 
-    params = recipe_params if recipe_params is not None else RecipeParams()
-    if params.image_min is None:
-        params = dataclasses.replace(params, image_min=fit_image_min(part.stats))
+    params = with_input_basis(
+        recipe_params if recipe_params is not None else RecipeParams(), part.stats
+    )
     if recipe == "levels" and params.coarsen_dims is None:
         params = dataclasses.replace(
             params, coarsen_dims=_default_part_coarsen_dims(part.ndim, n_timepoints)

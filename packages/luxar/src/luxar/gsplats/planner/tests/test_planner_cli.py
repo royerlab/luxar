@@ -390,11 +390,11 @@ def test_content_fit_threads_iters_into_fit_config(tmp_path, monkeypatch):
 
     real_load = cfg.load_fit_config
 
-    def _spy(**kwargs):
-        # The voxel-frame resolver reads the plain preset/config first (no CLI
-        # overrides); only the content fit's own call carries them.
+    def _spy(*args, **kwargs):
+        # The voxel-frame resolver and CPU thread setup read the config first;
+        # only the content fit's own call carries keyword CLI overrides.
         if "cli_overrides" not in kwargs:
-            return real_load(**kwargs)
+            return real_load(*args, **kwargs)
         captured.update(kwargs)
         raise _Stop()
 

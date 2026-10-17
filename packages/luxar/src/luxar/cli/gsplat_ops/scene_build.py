@@ -65,10 +65,7 @@ def _validate_colormap(colormap: str) -> None:
     try:
         resolve_colormap(colormap)
     except Exception as e:
-        raise typer.BadParameter(
-            f"--colormap '{colormap}' is not a known builtin / "
-            f"matplotlib / colorcet colormap"
-        ) from e
+        raise typer.BadParameter(f"--colormap: {e}") from e
 
 
 def scene_appearance(opts: SceneBuildOptions) -> Dict[str, Any]:
@@ -129,9 +126,12 @@ def _viewer_config(
 
 
 def _exposure(
-    node: Any, orientation: "ConvertOrientation", opts: SceneBuildOptions
+    node: Any,
+    orientation: "ConvertOrientation",
+    opts: SceneBuildOptions,
+    stats: Optional[dict] = None,
 ) -> "ConvertExposure":
-    """Auto exposure / manual scale for the scene, narrated in one line."""
+    """Auto exposure / manual gain for the scene, narrated in one line."""
     from .scene_exposure import resolve_convert_exposure
 
     exposure = resolve_convert_exposure(
@@ -144,10 +144,49 @@ def _exposure(
         opacity=opts.opacity,
         blending_mode=opts.blending_mode,
         tone_mapping=opts.tone_mapping,
+        stats=stats,
     )
     if exposure.line:
         aprint(exposure.line)
     return exposure
+
+
+def _windows_amplitude(node: Any, colormap: Optional[str]) -> bool:
+    """Whether the node renders through a colormap, so ``intensity`` is a WINDOW.
+
+    An explicit ``--colormap`` always does; otherwise a colorless store gets the
+    writer's ``gray`` default, while a store carrying per-splat colours renders
+    them directly (there ``intensity`` is a colour gain, unit-free).
+    """
+    from luxar.gsplats.tree import iter_default_leaves
+
+    if colormap is not None:
+        return True
+    return not any(
+        sub.colors is not None
+        for leaf in iter_default_leaves(node)
+        for sub in leaf.additive_sublods
+    )
+
+
+def _data_unit_intensity(intensity: float, gain: float) -> float:
+    """Restate a ``--intensity`` WINDOW (``[0, 1/I]``) in data units.
+
+    ``--intensity`` is authored against the display-gained amplitudes (what the
+    stored values used to be), so the window ``[0, 1/I]`` covers data values up
+    to ``1/(I·gain)``: the data-unit intensity is ``I·gain``.
+    """
+    from luxar.typing_utils.constants import INTENSITY_MAX, INTENSITY_MIN
+
+    scaled = float(intensity) * float(gain)
+    if not INTENSITY_MIN <= scaled <= INTENSITY_MAX:
+        raise typer.BadParameter(
+            f"--intensity {intensity:g} windows the colormap over [0, "
+            f"{1.0 / max(scaled, 1e-300):.3g}] data units, which needs intensity "
+            f"{scaled:.3g} (outside [{INTENSITY_MIN:g}, {INTENSITY_MAX:g}]). Leave "
+            "--intensity unset and set the window in the viewer's Layers panel."
+        )
+    return scaled
 
 
 def _matrix_source(node: Any, opts: SceneBuildOptions) -> Tuple[Any, Any]:
@@ -215,7 +254,16 @@ def build_gsplat_scene(
         # preset finds the XY plane by name.
         orientation = _orientation(extent, node, stats, opts, remap=matrix)
         viewer_config = _viewer_config(orientation, opts.tone_mapping)
-        exposure = _exposure(data.tree if data is not None else node, orientation, opts)
+        tree = data.tree if data is not None else node
+        exposure = _exposure(tree, orientation, opts, stats)
+        # `--intensity 1` is the identity: no window was authored, the viewer
+        # windows on the data range, and restating it would invent one.
+        if appearance.get("intensity", 1.0) != 1.0 and _windows_amplitude(
+            tree, opts.colormap
+        ):
+            appearance["intensity"] = _data_unit_intensity(
+                appearance["intensity"], exposure.gain
+            )
         attrs: Dict[str, Any] = {
             "normalize_amplitudes": exposure.normalize,
             "opacity": opts.opacity,

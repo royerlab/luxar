@@ -2,13 +2,14 @@
 
 Additive blending sums every splat along the view ray, so per-splat
 normalisation alone opens a dense fit as a white blob. Convert predicts that sum
-down the opening view axis and dims the amplitudes — never brightens — so its
-p99.9 is ``--target-brightness``, stamping the exact raw→stored factor so the
-stored amplitudes divide back to the fit's own values.
+down the opening view axis and dims the node's ``display_gain`` — never
+brightens — so its p99.9 is ``--target-brightness``. The amplitudes themselves
+stay in the fit's data units (WP16), labelled by ``amplitude_unit``.
 """
 
 from __future__ import annotations
 
+import builtins
 from pathlib import Path
 from typing import Any, Dict
 
@@ -27,13 +28,6 @@ from luxar.gsplats.exposure import ExposurePlan, HiddenAxis, plan_projected_expo
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.tree import iter_leaves
 from luxar.io._compiler.gsplat_tree import read_gsplat_node
-
-_EXPOSURE_ATTRS = (
-    "amplitude_normalization_mode",
-    "projected_sum_p999",
-    "projected_sum_target",
-    "projected_sum_axis",
-)
 
 
 def _dense(path: Path, *, provenance: bool = True, scale: float = 500.0) -> Path:
@@ -76,6 +70,16 @@ def _stored_amplitudes(out: Path, name: str = "gsplats") -> np.ndarray:
     )
 
 
+def _gain(out: Path) -> float:
+    """The ``display_gain`` convert stamped (on the leaf, or a wrapper group)."""
+    return float(read_node_attrs(out / "gsplats")["display_gain"])
+
+
+def _per_splat(src: Path) -> float:
+    """The legacy per-splat normalisation factor of the store's amplitudes."""
+    return 1.0 / float(np.percentile(GSplatData.load(src).amplitudes, 99.9))
+
+
 def _partition(runner: CliRunner, src: Path, dst: Path) -> Path:
     result = runner.invoke(
         app, ["gsplat", "partition", str(src), str(dst), "--parts", "2"]
@@ -91,7 +95,8 @@ def test_default_dims_a_saturating_fit_and_stamps_the_prediction(
     out = tmp_path / "scene.luxar.zarr"
     output = _convert(CliRunner(), src, out)
 
-    assert "Exposure: scaled splat brightness" in output
+    assert "Exposure: display gain" in output
+    assert "below per-splat normalisation" in output
     assert "--no-auto-exposure to disable" in output
     attrs = read_node_attrs(out / "gsplats")
     assert attrs["amplitude_normalization_mode"] == "projected"
@@ -99,9 +104,10 @@ def test_default_dims_a_saturating_fit_and_stamps_the_prediction(
     assert attrs["projected_sum_p999"] == pytest.approx(2.0)
     # The fit's columns are (z, y, x); the image-convention camera looks down z.
     assert attrs["projected_sum_axis"] == "z"
-    raw = GSplatData.load(src).amplitudes
-    per_splat = 1.0 / float(np.percentile(raw, 99.9))
-    assert attrs["amplitude_normalization_factor"] < per_splat
+    assert attrs["amplitude_normalization_mode"] == "projected"
+    assert attrs["display_gain"] < _per_splat(src)
+    # The data are not rescaled, so there is no raw→stored factor to record.
+    assert "amplitude_normalization_factor" not in attrs
 
 
 def test_centered_hidden_axis_uses_the_written_coordinates(tmp_path: Path) -> None:
@@ -134,13 +140,11 @@ def test_centered_hidden_axis_uses_the_written_coordinates(tmp_path: Path) -> No
     got = read_node_attrs(centered / "gsplats")
     reference = read_node_attrs(uncentered / "gsplats")
     assert got["projected_sum_p999"] > 0
-    assert got["amplitude_normalization_factor"] < 1 / 500
+    assert got["display_gain"] < 1 / 500
     assert got["projected_sum_p999"] == pytest.approx(
         reference["projected_sum_p999"], rel=1e-4
     )
-    assert got["amplitude_normalization_factor"] == pytest.approx(
-        reference["amplitude_normalization_factor"], rel=1e-4
-    )
+    assert got["display_gain"] == pytest.approx(reference["display_gain"], rel=1e-4)
 
 
 def test_empty_opening_prediction_is_reported_as_empty() -> None:
@@ -155,8 +159,9 @@ def test_empty_opening_prediction_is_reported_as_empty() -> None:
         hidden=[HiddenAxis(3, 0, False, 0, (0, 100))],
     )
     assert plan.predicted_before == 0
-    assert _exposure_line(plan) == (
-        "Exposure: nothing visible at the opening position; brightness unchanged"
+    assert _exposure_line(plan, 0.5) == (
+        "Exposure: nothing visible at the opening position; "
+        "display gain 0.5 (per-splat normalisation)"
     )
 
 
@@ -170,33 +175,34 @@ def test_empty_opening_prediction_can_still_be_capped_elsewhere() -> None:
         side_capped=True,
         cap_source="other timepoints",
     )
-    assert _exposure_line(plan) == (
+    assert _exposure_line(plan, 4e-4) == (
         "Exposure: nothing visible at the opening position; "
-        "scaled splat brightness ×0.25, capped by other timepoints"
+        "display gain 0.0001 (×0.25 below per-splat normalisation), "
+        "capped by other timepoints"
     )
 
 
-def test_stored_amplitudes_divide_back_to_the_fit(tmp_path: Path) -> None:
-    """Round trip: stored / amplitude_normalization_factor == raw amplitudes."""
+def test_scene_keeps_the_fit_amplitudes_in_data_units(tmp_path: Path) -> None:
+    """The scene stores the fit's own amplitudes; brightness is the gain."""
     src = _dense(tmp_path / "dense.gsplats.zarr")
     out = tmp_path / "scene.luxar.zarr"
     _convert(CliRunner(), src, out)
-    factor = read_node_attrs(out / "gsplats")["amplitude_normalization_factor"]
     raw = np.sort(GSplatData.load(src).amplitudes.astype(np.float64))
-    restored = np.sort(_stored_amplitudes(out).astype(np.float64) / factor)
-    np.testing.assert_allclose(restored, raw, rtol=1e-4)
+    stored = np.sort(_stored_amplitudes(out).astype(np.float64))
+    np.testing.assert_allclose(stored, raw, rtol=1e-4)
+    attrs = read_node_attrs(out / "gsplats")
+    # The window the Layers panel opens on is in data units too.
+    lo, hi = attrs["amplitude_data_range"]
+    assert hi == pytest.approx(float(np.percentile(raw, 99.9)), rel=1e-3)
+    assert 0.0 < attrs["display_gain"] < 1.0
 
 
 def test_never_brightens_a_dim_fit(tmp_path: Path) -> None:
     src = _dense(tmp_path / "dense.gsplats.zarr")
     out = tmp_path / "scene.luxar.zarr"
     output = _convert(CliRunner(), src, out, "--target-brightness", "1e9")
-    assert "brightness unchanged" in output
-    attrs = read_node_attrs(out / "gsplats")
-    raw = GSplatData.load(src).amplitudes
-    assert attrs["amplitude_normalization_factor"] == pytest.approx(
-        1.0 / float(np.percentile(raw, 99.9)), rel=1e-6
-    )
+    assert "(per-splat normalisation)" in output
+    assert _gain(out) == pytest.approx(_per_splat(src), rel=1e-6)
 
 
 def _legacy_scene_attrs(src: Path, out: Path) -> Dict[str, Any]:
@@ -218,14 +224,34 @@ def _legacy_scene_attrs(src: Path, out: Path) -> Dict[str, Any]:
     return read_node_attrs(out / "gsplats")
 
 
-def test_no_auto_exposure_reproduces_the_legacy_attrs(tmp_path: Path) -> None:
+def test_no_auto_exposure_gain_reproduces_the_legacy_render(tmp_path: Path) -> None:
+    """``--no-auto-exposure``: data units, gain = the legacy per-splat factor.
+
+    The viewer multiplies the gain into every amplitude-linear term, so
+    ``stored × gain`` is what the legacy (normalised) scene stored, and its
+    colormap window is the legacy one in data units.
+    """
     src = _dense(tmp_path / "dense.gsplats.zarr", provenance=False)
     out = tmp_path / "scene.luxar.zarr"
     output = _convert(CliRunner(), src, out, "--no-auto-exposure")
     assert "Exposure:" not in output
     legacy = _legacy_scene_attrs(src, tmp_path / "legacy.luxar.zarr")
-    assert read_node_attrs(out / "gsplats") == legacy
-    assert not set(_EXPOSURE_ATTRS) & set(legacy)
+    attrs = read_node_attrs(out / "gsplats")
+    factor = legacy["amplitude_normalization_factor"]
+    assert attrs["display_gain"] == pytest.approx(factor, rel=1e-6)
+    assert attrs["amplitude_normalization_mode"] == "per_splat"
+    assert attrs["amplitude_unit"] == "a.u."
+    np.testing.assert_allclose(
+        np.asarray(attrs["amplitude_data_range"]) * attrs["display_gain"],
+        legacy["amplitude_data_range"],
+        rtol=1e-4,
+    )
+    np.testing.assert_allclose(
+        np.sort(_stored_amplitudes(out)) * attrs["display_gain"],
+        np.sort(_stored_amplitudes(tmp_path / "legacy.luxar.zarr")),
+        rtol=1e-3,
+    )
+    assert not {"projected_sum_p999", "projected_sum_target"} & set(attrs)
 
 
 def test_partition_is_auto_exposed_with_one_factor(tmp_path: Path) -> None:
@@ -235,14 +261,17 @@ def test_partition_is_auto_exposed_with_one_factor(tmp_path: Path) -> None:
     )
     out = tmp_path / "scene.luxar.zarr"
     output = _convert(runner, part, out)
-    assert "Exposure: scaled splat brightness" in output
-    factors = set()
+    assert "Exposure: display gain" in output
+    assert "below per-splat normalisation" in output
+    # ONE gain, on the kind=partition wrapper (``display_gain`` composes), so
+    # every part renders at the same exposure; no part carries its own.
+    assert read_node_attrs(out / "gsplats")["kind"] == "partition"
+    assert 0.0 < _gain(out) < 1.0
     for i in range(2):
         attrs = read_node_attrs(out / "gsplats" / f"part_{i}")
         assert attrs["amplitude_normalization_mode"] == "projected"
         assert attrs["projected_sum_p999"] == pytest.approx(2.0)
-        factors.add(attrs["amplitude_normalization_factor"])
-    assert len(factors) == 1
+        assert "display_gain" not in attrs
 
 
 def test_scale_intensity_now_scales_a_partition(tmp_path: Path) -> None:
@@ -252,16 +281,16 @@ def test_scale_intensity_now_scales_a_partition(tmp_path: Path) -> None:
     out = tmp_path / "scene.luxar.zarr"
     output = _convert(runner, part, out, "--scale-intensity", "0.25")
     assert "ignored" not in output
-    assert "manual ×0.25" in output
+    assert "manual gain ×0.25" in output
     raw = np.sort(GSplatData.load(src).amplitudes.astype(np.float64))
     # The partition parts re-encode their amplitudes (uint8 within each part's
     # own bounds), so equality holds to that quantization, not to float32.
     np.testing.assert_allclose(
-        np.sort(_stored_amplitudes(out).astype(np.float64)), raw * 0.25, rtol=5e-3
+        np.sort(_stored_amplitudes(out).astype(np.float64)), raw, rtol=5e-3
     )
+    assert _gain(out) == 0.25
     attrs = read_node_attrs(out / "gsplats" / "part_0")
     assert attrs["amplitude_normalization_mode"] == "manual"
-    assert attrs["amplitude_normalization_factor"] == 0.25
 
 
 def test_non_summing_blending_keeps_per_splat_normalization(tmp_path: Path) -> None:
@@ -270,11 +299,8 @@ def test_non_summing_blending_keeps_per_splat_normalization(tmp_path: Path) -> N
     output = _convert(CliRunner(), src, out, "--blending-mode", "volumetric")
     assert "keeps per-splat normalization" in output
     attrs = read_node_attrs(out / "gsplats")
-    assert "amplitude_normalization_mode" not in attrs
-    raw = GSplatData.load(src).amplitudes
-    assert attrs["amplitude_normalization_factor"] == pytest.approx(
-        1.0 / float(np.percentile(raw, 99.9)), rel=1e-6
-    )
+    assert attrs["amplitude_normalization_mode"] == "per_splat"
+    assert attrs["display_gain"] == pytest.approx(_per_splat(src), rel=1e-6)
 
 
 def test_side_cap_is_named_when_it_binds(tmp_path: Path) -> None:
@@ -342,3 +368,324 @@ def test_non_positive_scale_intensity_is_a_usage_error(
     assert result.exit_code == 2
     assert "positive" in normalized_cli_output(result)
     assert not (tmp_path / "s.luxar.zarr").exists()
+
+
+def test_unknown_colormap_reports_missing_install(tmp_path: Path, monkeypatch) -> None:
+    src = _fit_like(tmp_path / "fit.gsplats.zarr", {})
+    out = tmp_path / "scene.luxar.zarr"
+    real_import = builtins.__import__
+
+    def without_optional_colormaps(name, *args, **kwargs):
+        if name.split(".", 1)[0] in {"matplotlib", "colorcet"}:
+            raise ModuleNotFoundError(f"No module named '{name}'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_optional_colormaps)
+    result = CliRunner().invoke(
+        app, ["gsplat", "convert", str(src), str(out), "--colormap", "notacolormap"]
+    )
+    output = normalized_cli_output(result)
+    assert result.exit_code == 2, output
+    assert "Unknown colormap 'notacolormap'" in output
+    assert "pip install matplotlib colorcet" in output
+    assert not out.exists()
+
+
+def _fit_like(path: Path, stats: Dict[str, Any], *, colors: bool = False) -> Path:
+    """A small fit-shaped store whose root stats carry ``stats``."""
+    rng = np.random.default_rng(5)
+    n = 200
+    GSplatData(
+        centers=rng.uniform(0, 20, (n, 3)).astype(np.float32),
+        amplitudes=rng.uniform(100.0, 4000.0, n).astype(np.float32),
+        cholesky_factors=np.tile(
+            np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (n, 1)
+        ),
+        colors=rng.uniform(0, 1, (n, 3)).astype(np.float32) if colors else None,
+        stats={"source_shape": [20, 20, 20], **stats},
+    ).save(path)
+    return path
+
+
+@pytest.mark.parametrize(
+    ("stats", "unit", "offset"),
+    [
+        (
+            {
+                "source_dtype": "uint16",
+                "intensity_range": 3900.0,
+                "image_min": 112.0,
+                "floor": 112.0,
+            },
+            "counts above background",
+            112.0,
+        ),
+        # `--floor none`: the subtracted level is the data minimum.
+        (
+            {"source_dtype": "uint16", "intensity_range": 3900.0, "image_min": 112.0},
+            "counts above minimum",
+            112.0,
+        ),
+        # A float source below zero still had its minimum subtracted.
+        (
+            {"source_dtype": "float32", "intensity_range": 2.5, "image_min": -0.75},
+            "data units above minimum",
+            -0.75,
+        ),
+        # A level negligible against the range is no offset.
+        (
+            {"source_dtype": "float32", "intensity_range": 2.5, "image_min": 1e-9},
+            "data units",
+            None,
+        ),
+        ({"source_dtype": "uint16", "intensity_range": 3900.0}, "counts", None),
+        (
+            {
+                "source_dtype": "float32",
+                "intensity_range": 2.5,
+                "image_min": 0.25,
+                "floor": 0.25,
+            },
+            "data units above background",
+            0.25,
+        ),
+        ({"source_dtype": "uint16"}, "a.u.", None),
+        ({}, "a.u.", None),
+    ],
+)
+def test_unit_labels_follow_the_fit_basis(
+    tmp_path: Path, stats: Dict[str, Any], unit: str, offset: Any
+) -> None:
+    src = _fit_like(tmp_path / "fit.gsplats.zarr", stats)
+    out = tmp_path / "scene.luxar.zarr"
+    _convert(CliRunner(), src, out)
+    attrs = read_node_attrs(out / "gsplats")
+    assert attrs["amplitude_unit"] == unit
+    if offset is None:
+        assert "amplitude_offset" not in attrs
+    else:
+        assert attrs["amplitude_offset"] == pytest.approx(offset)
+
+
+def test_merge_with_unbased_splats_has_no_count_unit(tmp_path: Path) -> None:
+    based = _fit_like(
+        tmp_path / "based.gsplats.zarr",
+        {
+            "source_dtype": "uint16",
+            "image_min": 112.0,
+            "image_max": 4012.0,
+            "intensity_range": 3900.0,
+        },
+    )
+    unbased = _fit_like(tmp_path / "unbased.gsplats.zarr", {})
+    merged = tmp_path / "merged.gsplats.zarr"
+    result = CliRunner().invoke(
+        app, ["gsplat", "merge", str(based), str(unbased), "-o", str(merged)]
+    )
+    assert result.exit_code == 0, normalized_cli_output(result)
+    out = tmp_path / "scene.luxar.zarr"
+    _convert(CliRunner(), merged, out)
+    attrs = read_node_attrs(out / "gsplats")
+    assert attrs["amplitude_unit"] == "a.u."
+    assert "source_data_range" not in attrs
+
+
+def test_colormap_intensity_window_is_restated_in_data_units(tmp_path: Path) -> None:
+    """``--intensity I`` windowed the gained amplitudes ``[0, 1/I]``; now ``I·g``."""
+    src = _fit_like(tmp_path / "fit.gsplats.zarr", {"intensity_range": 3900.0})
+    out = tmp_path / "scene.luxar.zarr"
+    _convert(CliRunner(), src, out, "--colormap", "viridis", "--intensity", "2")
+    attrs = read_node_attrs(out / "gsplats")
+    assert attrs["intensity"] == pytest.approx(2.0 * attrs["display_gain"])
+
+
+def test_direct_colour_intensity_is_a_unitless_gain(tmp_path: Path) -> None:
+    src = _fit_like(tmp_path / "fit.gsplats.zarr", {}, colors=True)
+    out = tmp_path / "scene.luxar.zarr"
+    _convert(CliRunner(), src, out, "--intensity", "2")
+    assert read_node_attrs(out / "gsplats")["intensity"] == 2.0
+
+
+def test_identity_intensity_is_not_restated(tmp_path: Path) -> None:
+    """``--intensity 1`` authors no window, even under a large manual gain."""
+    src = _fit_like(tmp_path / "fit.gsplats.zarr", {"intensity_range": 3900.0})
+    out = tmp_path / "scene.luxar.zarr"
+    _convert(CliRunner(), src, out, "--scale-intensity", "1000", "--intensity", "1")
+    assert read_node_attrs(out / "gsplats")["intensity"] == 1.0
+
+
+def test_unreachable_intensity_window_is_a_usage_error(tmp_path: Path) -> None:
+    src = _fit_like(tmp_path / "fit.gsplats.zarr", {})
+    result = CliRunner().invoke(
+        app,
+        [
+            "gsplat",
+            "convert",
+            str(src),
+            str(tmp_path / "s.luxar.zarr"),
+            "--scale-intensity",
+            "1000",
+            "--intensity",
+            "2",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "Layers panel" in normalized_cli_output(result)
+
+
+def test_source_data_range_is_the_datas_span_not_the_splat_window(
+    tmp_path: Path,
+) -> None:
+    """``source_data_range`` = [0, image_max - image_min]: the DATA's span above
+    the floor, which overlapping Gaussians' peak amplitudes do not reach."""
+    stats = {
+        "source_dtype": "uint16",
+        "image_min": 100.0,
+        "image_max": 12100.0,
+        "intensity_range": 12000.0,
+        "floor": 100.0,
+    }
+    src = _fit_like(tmp_path / "fit.gsplats.zarr", stats)
+    out = tmp_path / "scene.luxar.zarr"
+    _convert(CliRunner(), src, out)
+    attrs = read_node_attrs(out / "gsplats")
+    assert attrs["source_data_range"] == [0.0, 12000.0]
+    assert attrs["amplitude_offset"] == 100.0
+    assert attrs["amplitude_data_range"][1] < attrs["source_data_range"][1]
+
+
+def test_no_basis_no_source_data_range(tmp_path: Path) -> None:
+    src = _fit_like(tmp_path / "fit.gsplats.zarr", {})
+    out = tmp_path / "scene.luxar.zarr"
+    _convert(CliRunner(), src, out)
+    assert "source_data_range" not in read_node_attrs(out / "gsplats")
+
+
+@pytest.mark.parametrize(
+    ("flag", "value", "expect"),
+    [
+        ("--scale-intensity", "0.5", {"intensity_range": 1950.0, "image_max": 4012.0}),
+        ("--normalize-intensity", "1.0", "normalize"),
+    ],
+)
+def test_transform_intensity_keeps_the_basis_honest(
+    tmp_path: Path, flag: str, value: str, expect: Any
+) -> None:
+    """``--scale-intensity`` and ``--normalize-intensity`` (each one global
+    factor) scale the amplitude-unit basis with the amplitudes and record the
+    factor, so a converted scene says ``a.u.`` instead of claiming counts."""
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+    stats = {
+        "source_dtype": "uint16",
+        "image_min": 112.0,
+        "image_max": 4012.0,
+        "intensity_range": 3900.0,
+        "floor": 112.0,
+    }
+    src = _fit_like(tmp_path / "fit.gsplats.zarr", stats)
+    dst = tmp_path / "t.gsplats.zarr"
+    result = CliRunner().invoke(
+        app, ["gsplat", "transform", str(src), str(dst), flag, value]
+    )
+    assert result.exit_code == 0, normalized_cli_output(result)
+    _, after = load_gsplat_node(dst, include_stats=True)
+    assert after["image_min"] == pytest.approx(112.0)
+    out = tmp_path / "scene.luxar.zarr"
+    _convert(CliRunner(), dst, out)
+    attrs = read_node_attrs(out / "gsplats")
+    if expect == "normalize":
+        scale = after["intensity_scale"]
+        assert scale != pytest.approx(1.0)
+        assert after["intensity_range"] == pytest.approx(3900.0 * scale)
+        assert after["image_max"] == pytest.approx(4012.0)
+        assert attrs["amplitude_unit"] == "a.u."
+        assert "amplitude_offset" not in attrs
+    else:
+        for key, want in expect.items():
+            assert after[key] == pytest.approx(want)
+        assert after["intensity_scale"] == pytest.approx(0.5)
+        assert attrs["amplitude_unit"] == "a.u."
+        assert "amplitude_offset" not in attrs
+        assert attrs["source_data_range"] == pytest.approx([0.0, 1950.0])
+
+
+@pytest.mark.slow
+def test_two_tile_batch_merge_keeps_the_intensity_basis(tmp_path: Path) -> None:
+    """A 2-tile uint16 OME-Zarr batch merge records the shared basis, so
+    ``gsplat convert`` labels its amplitudes ``counts`` rather than ``a.u.``."""
+    import zarr
+    from typer.testing import CliRunner
+
+    from luxar._zarr_compat import read_node_attrs
+    from luxar.cli import app
+    from luxar.cli.gsplat_ops.batch.planning import (
+        ContentKnobs,
+        DenoiseConfig,
+        FitConfig,
+        MergeConfig,
+        plan_batch,
+    )
+    from luxar.gsplats.batch.local_runner import run_batch_local
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+    rng = np.random.default_rng(3)
+    V = np.full((16, 16, 32), 100.0, np.float32)
+    zz, yy, xx = np.mgrid[0:16, 0:16, 0:32]
+    for _ in range(8):
+        cz, cy, cx = rng.integers(3, 13), rng.integers(3, 13), rng.integers(3, 29)
+        V += 3000.0 * np.exp(-((zz - cz) ** 2 + (yy - cy) ** 2 + (xx - cx) ** 2) / 4.0)
+    src = tmp_path / "vol.ome.zarr"
+    root = zarr.open_group(str(src), mode="w")
+    arr = root.create_array("0", shape=V.shape, chunks=(16, 16, 16), dtype="u2")
+    arr[:] = V.astype(np.uint16)
+    root.attrs["multiscales"] = [
+        {
+            "version": "0.4",
+            "axes": [
+                {"name": "z", "type": "space"},
+                {"name": "y", "type": "space"},
+                {"name": "x", "type": "space"},
+            ],
+            "datasets": [
+                {
+                    "path": "0",
+                    "coordinateTransformations": [
+                        {"type": "scale", "scale": [1.0, 1.0, 1.0]}
+                    ],
+                }
+            ],
+        }
+    ]
+    out = tmp_path / "out"
+    plan = plan_batch(
+        input_path=src,
+        output_dir=out,
+        tiling="uniform",
+        tile_size=16,
+        tile_overlap=0,
+        axes_list=["z", "y", "x"],
+        array_key=None,
+        timepoints_slice=None,
+        channels_slice=None,
+        fit=FitConfig(preset="draft", seeds="150", iters=25),
+        denoise=DenoiseConfig(),
+        content=ContentKnobs(),
+        merge=MergeConfig(),
+        merge_recipe_args={},
+    )
+    assert plan.manifest.total_tasks == 2
+    final = run_batch_local(
+        plan.manifest, out, gpus="cpu", jobs_per_gpu=2, verbose=False
+    )
+    node, stats = load_gsplat_node(final, include_stats=True)
+    assert type(node).__name__ == "GSplatPartition"
+    assert stats["source_dtype"] == "uint16"
+    assert stats["intensity_range"] > 0
+    scene = tmp_path / "scene.luxar.zarr"
+    result = CliRunner().invoke(
+        app, ["gsplat", "convert", str(final), str(scene), "--no-center"]
+    )
+    assert result.exit_code == 0, result.output
+    leaf = read_node_attrs(scene / "gsplats" / "part_0")
+    assert leaf["amplitude_unit"].startswith("counts")

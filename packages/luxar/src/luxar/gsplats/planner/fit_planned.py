@@ -114,7 +114,12 @@ def _stamp_planned_normalization(
     """Carry unanimous box normalization provenance onto a merge root."""
     from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
 
-    target.update(agreed_normalization_stats([region.stats for region in regions]))
+    target.update(
+        agreed_normalization_stats(
+            [region.stats for region in regions],
+            [region.n_splats for region in regions],
+        )
+    )
 
 
 def _content_fit_frame(

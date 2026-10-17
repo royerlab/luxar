@@ -3,7 +3,7 @@ name: luxar-data-loading
 description: >-
   Load an nD image / volume into Luxar and select the right slice. Use when a user
   needs to feed a .zarr / .zarr.zip / OME-Zarr / .tiff / .npy / .npz into a gsplat
-  fit/cal/compare, pick a channel or timepoint, choose a nested array key, or fix
+  fit/cal, pick a channel or timepoint, choose a nested array key, or fix
   axis-order detection (TCZYX/CZYX/ZYX) with explicit --axes labels. Covers
   supported formats, the load_volume API, OME-Zarr multiscale/voxel-size discovery,
   and the common "wrong axes / huge movie loaded into RAM" pitfalls.
@@ -22,11 +22,29 @@ right up front avoids fitting the wrong data or blowing up RAM.
 | `.npy` | NumPy array (base dependency) |
 | `.npz` | NumPy archive — first array, or pick with `--array-key` |
 | `.zarr` / `.zarr.zip` | Zarr array or group, incl. OME-Zarr 5D (base dependency) |
-| `.tiff` / `.tif` | needs `pip install "luxar[io]"` (tifffile) |
+| `.tiff` / `.tif` | needs `pip install "luxar[io]"` (tifffile + imagecodecs; compressed LZW/JPEG/zstd TIFF and OME-TIFF need imagecodecs) |
 | other | imageio fallback, needs `pip install "luxar[io]"` |
 
-A missing optional dependency raises an actionable error (e.g. "Install with: `pip
-install luxar[io]`").
+A missing optional dependency raises an actionable error naming the `pip install`
+to run — including a compressed TIFF read without imagecodecs (`pip install
+'luxar[io]'` or `pip install imagecodecs`).
+
+**Physical voxel size is opt-in.** By default `fit`/`cal` work in voxel index
+space: an anisotropic stack fits as if its voxels were cubes (the fit prints a
+hint to pass `--physical` when the file records an anisotropic spacing).
+`--physical` reads the spacing the file records: the OME-Zarr NGFF
+`coordinateTransformations` scale, OME-TIFF `PhysicalSizeZ/Y/X`, or a calibrated
+ImageJ TIFF's spacing (TIFF sizes, OME and ImageJ alike, are converted to µm); one log line names the spacing and its
+source. `--voxel-size Z,Y,X` (µm, array axis order) wins over the metadata and
+over a `--config` `voxel_size:`. `batch-fit --physical` reads NGFF spacing through
+the same helper. The store records the frame under `fitting/` (`voxel_size`,
+`voxel_unit`, `voxel_size_source`, `physical_coordinates`), and `compare`/`render`
+map a physical fit back onto the source voxel grid from that stamp.
+
+**Fit a crop** with `--region z0:z1,y0:y1,x0:x1` (`fit` and `cal`; numpy-style
+half-open voxel spans, an empty span keeps the axis; zarr crops are read lazily).
+The splats keep full-volume coordinates and the store records
+`fitting/source_region`.
 
 ### Microscopy vendor containers
 
@@ -53,14 +71,18 @@ That is the general escape hatch for any unsupported container: decode it to
 zarr yourself and feed Luxar the zarr. Doing so also buys the lazy slicing the
 imageio path does not have.
 
-## Selecting the slice to fit (CLI flags, shared by fit/cal/compare/denoise)
+## Selecting the slice to fit (CLI flags)
 
-| Flag | Meaning |
-| --- | --- |
-| `--channel` / `-c` | channel index (C in TCZYX), 0-based |
-| `--timepoint` | timepoint index (T), 0-based |
-| `--array-key` | array within a `.npz` or **nested zarr group**, e.g. `h2afva/fused` |
-| `--axes` | explicit per-dim labels overriding the heuristic, e.g. `z,c,y,x` |
+| Flag | Meaning | Accepted by |
+| --- | --- | --- |
+| `--channel` / `-c` | channel index (C in TCZYX), 0-based | fit, cal, compare (reference side), denoise |
+| `--timepoint` | timepoint index (T), 0-based | fit, cal, compare (reference side), denoise |
+| `--array-key` | array within a `.npz` or **nested zarr group**, e.g. `h2afva/fused` | fit, cal, compare (reference side), denoise |
+| `--axes` | explicit per-dim labels overriding the heuristic, e.g. `z,c,y,x` | fit, cal, compare (reference side) (and `batch-fit`) |
+
+On `compare` these flags select the **reference** only, the same selection `fit`
+used (e.g. `compare fit.gsplats.zarr stack.tif --axes c,z,y,x -c 1`). They do not
+slice a stacked `.gsplats.zarr`.
 
 ```bash
 luxar gsplat fit data.zarr.zip out.gsplats.zarr --timepoint 0 --channel 0
@@ -75,7 +97,7 @@ Without `--axes`, the loader infers axes from the number of dimensions:
 | ndim | Assumed axes | Default slice |
 | --- | --- | --- |
 | 5D | `TCZYX` | T=`--timepoint` (def 0), C=`--channel` (def 0) → 3D |
-| 4D | `CZYX` (or `TZYX` if `--timepoint` given) | index the leading axis |
+| 4D | `CZYX` if `--channel` given, else `TZYX` if `--timepoint` given | index the leading axis; with NEITHER flag the whole 4D array is used as-is |
 | 3D | `ZYX` | kept as-is |
 | 2D | `YX` | kept as-is |
 | >5D | T=first, extra leading dims folded into channel, last 3 = spatial | |
@@ -86,10 +108,16 @@ the loader squeezes the decoded array and returns it as-is, so a `--channel` /
 exit 1 naming `--axes`). On any non-zarr nD input, pass `--axes` (which does the
 indexing itself).
 
-**Override with `--axes`** when the layout differs (e.g. a camera axis, or `ZCYX`).
-Recognized labels: `time`/`t`, `channel`/`c`/`ch`/`camera`/`cam`, `z`/`y`/`x` (plus
-`depth`/`height`/`width`); unknown labels are treated as spatial. Time/channel axes are
-indexed (default 0) and dropped; spatial axes are kept in the given order.
+**Override with `--axes`** (on `fit` / `cal` / `compare`) when the layout differs (e.g. a
+camera axis, or `ZCYX`). Give exactly one label per array dimension; recognized
+labels are `time`/`t`, `channel`/`c`/`ch`/`camera`/`cam`, `z`/`y`/`x` (plus
+`depth`/`height`/`width`), case-insensitive. **Any other label is an error**, not a
+spatial axis. At most one time axis, indexed by `--timepoint` (default 0). Several
+channel-like axes are allowed: `--channel` is then ONE flat row-major index across
+all of them (e.g. `--axes time,camera,channel,z,y,x` with 2 cameras x 3 channels:
+`--channel 4` = camera 1, channel 1). Time/channel axes are dropped; spatial axes
+are kept in the given order and NOT squeezed, so `--axes z,y,x` keeps a single
+z-plane. On zarr input `--axes` slices lazily, before anything is read.
 
 ## OME-Zarr metadata
 
@@ -103,16 +131,20 @@ tiles over T×C — see the **`luxar-hpc-batch-fit`** skill.
 ## Python API
 
 ```python
-from luxar.cli.gsplat_config import load_volume   # used by fit/cal/compare
+from luxar.io.volume import load_volume   # the loader behind fit/cal/compare/denoise
 
 vol = load_volume(
-    path,                 # Path to .npy/.npz/.zarr/.zarr.zip/.tiff/...
-    channel=None,         # int: channel index (C)
+    path,                 # pathlib.Path to .npy/.npz/.zarr/.zarr.zip/.tiff/...
+    channel=None,         # int: channel index (C); flat across channel axes with axes=
     timepoint=None,       # int: timepoint index (T)
     array_key=None,       # str: array within .npz / nested zarr (e.g. "h2afva/fused")
     axes=None,            # str: explicit labels, e.g. "z,c,y,x"
-)                         # -> float32 ndarray (>=2D), squeezed unless --axes used
+    info=None,            # optional dict: receives "source_dtype" (pre-cast dtype)
+    region=None,          # optional tuple of spatial slices (lazy on zarr)
+)                         # -> float32 ndarray (>=2D), squeezed unless axes= used
 ```
+(`luxar.cli.gsplat_config.load_volume` is the CLI wrapper that turns loader
+errors into clean CLI exits.)
 Zarr arrays are **lazily sliced** before materialization — selecting a timepoint/channel
 reads only that slice, so a huge nD movie is never pulled into RAM whole.
 
@@ -126,7 +158,10 @@ reads only that slice, so a huge nD movie is never pulled into RAM whole.
   file (see "Microscopy vendor containers").
 - **Nested zarr group** → `--array-key path/within/group` (also disambiguates a `.npz`
   with multiple arrays).
-- **TIFF/other won't load** → `pip install "luxar[io]"`.
+- **TIFF/other won't load** → `pip install "luxar[io]"`. "requires the
+  'imagecodecs' package" on an older install → `pip install imagecodecs`.
+- **Anisotropic stack looks squashed** → the fit is in voxel units (see "Physical
+  voxel size" above); refit with `--physical` (or `--voxel-size Z,Y,X`).
 
 ## Next step
 

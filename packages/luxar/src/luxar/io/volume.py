@@ -406,6 +406,28 @@ def _reject_inapplicable_selection(
     )
 
 
+def _read_tiff(tifffile: Any, path: Path) -> Any:
+    """Read a TIFF, turning tifffile's missing-codec error into an install hint.
+
+    LZW/JPEG/zstd TIFFs (common microscope and OME-TIFF exports) may need
+    imagecodecs. tifffile raises a ``ValueError`` for LZW, or an ``ImportError``
+    for its zstd fallback on Python < 3.14; neither names Luxar's extra.
+    """
+    try:
+        return tifffile.imread(str(path))
+    except (ValueError, ImportError) as exc:
+        missing_codec = "imagecodecs" in str(exc) or (
+            isinstance(exc, ImportError) and "compression" in str(exc)
+        )
+        if not missing_codec:
+            raise
+        raise ImportError(
+            f"'{path.name}' is a compressed TIFF and decoding it needs the "
+            f"imagecodecs package ({exc}). Install it with "
+            "`pip install 'luxar[io]'` or `pip install imagecodecs`."
+        ) from exc
+
+
 def load_volume(
     path: Path,
     channel: Optional[int] = None,
@@ -512,7 +534,7 @@ def load_volume(
                 "Loading TIFF files requires tifffile: pip install luxar[io]"
             ) from exc
         aprint(f"Loading TIFF: {path.name}")
-        volume = tifffile.imread(str(path))
+        volume = _read_tiff(tifffile, path)
         tiff_meta = _read_tiff_meta(path, info)
 
     else:

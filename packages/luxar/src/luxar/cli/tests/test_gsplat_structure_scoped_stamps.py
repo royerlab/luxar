@@ -104,7 +104,8 @@ _EXEMPT: Dict[str, Any] = {
     "floor_strategy": "specimen",
     "image_min": 0.0,
     "image_max": 4095.0,
-    "intensity_range": 4095.0,
+    "intensity_range": 2047.5,
+    "intensity_scale": 0.5,
 }
 
 #: Fit provenance the scrub must not touch (#1737 / #1601 threaded this through;

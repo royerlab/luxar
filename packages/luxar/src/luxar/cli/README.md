@@ -315,7 +315,7 @@ luxar gsplat info splats.gsplats.zarr
 ```
 
 #### `luxar gsplat view`
-Open a `.gsplats.zarr` in the web viewer. By default it builds the scene `gsplat convert` would write — image-convention orientation and opening camera, auto exposure, the same defaults — in a temporary directory that is removed on exit, and serves that, printing the Exposure line and a "Built a temporary scene" line. The build re-writes the splats (a partition/nested store is grafted node for node, which still copies its arrays): about 1 s for a 30k-splat fit and 8-11 s for 1M splats on a laptop CPU, roughly half of it auto exposure. `--auto-exposure/--no-auto-exposure`, `--target-brightness`, `--dim-order`, `--view` and `--colormap` work as on `convert`. `--raw` serves the standalone `.gsplats.zarr` **directly** via `?src=` with no scene round-trip — a v3.4 node subtree the viewer renders as is (every tree shape; archives are extracted first) — with stored amplitudes and positional axes.
+Open a `.gsplats.zarr` in the web viewer. By default it builds the scene `gsplat convert` would write — image-convention orientation and opening camera, auto exposure, the same defaults — in a temporary directory that is removed on exit, and serves that, printing the Exposure line and a "Built a temporary scene" line. The build re-writes the splats (a partition/nested store is grafted node for node, which still copies its arrays): about 1 s for a 30k-splat fit and 8-11 s for 1M splats on a laptop CPU, roughly half of it auto exposure. `--auto-exposure/--no-auto-exposure`, `--target-brightness`, `--dim-order`, `--view` and `--colormap` work as on `convert`. `--raw` serves the store **directly** via `?src=` with no scene round-trip: the standalone `.gsplats.zarr` is a v3.4 node subtree the viewer renders as is (every tree shape; archives are extracted first), shown with its stored amplitudes and positional axes.
 ```bash
 luxar gsplat view splats.gsplats.zarr
 luxar gsplat view splats.gsplats.zarr --target-brightness 3  # brighter opening view
@@ -385,6 +385,8 @@ grid over the full volume — and cannot be combined with `--region`.
 
 `--quiet` drops the fit narration but still prints the one-line `Fitting backend: …` summary (model class + kernel backend), so a silent fall back to the slow PyTorch renderer is visible; quiet inner fits (`cal`, content boxes) print it once per process. A content-tiled fit (`--tiling content`) quiets its inner box fits (no per-box fit tree; each distinct warning, such as the CPU-fallback ones, is shown once for the run) and prints one progress stream instead: a start line per box (zero-based `--plan-box` number, one-based position in the run, budget), iteration lines at 25/50/75% of each box, and a completion line with kept splats, the box PSNR (on its padded crop), elapsed time and a budget-weighted ETA. `-j N` prints the completion (or FAILED) line per finished worker.
 
+On the CPU (`--device cpu`, or no GPU), a 3D fit runs on fused numba kernels (`Model class: GaussianSplatModelCPUNative`; in the `gsplats` extra, compiled on first use and cached) on the physical cores; 2D and 4D+ CPU fits, or a 3D fit without numba, use the PyTorch renderer. `fit` and `cal` also widen torch's own thread count to `min(physical cores, 8)` when it is still on one thread (as under the `hatch run` pin) and print `CPU: using N threads`. `--tile`/`--plan-box` workers skip automatic widening, but a parent-provided `LUXAR_CPU_THREADS` share sets torch's count there too. `LUXAR_CPU_THREADS=N` sets both counts (`0` leaves torch alone) and `LUXAR_CPU_BACKEND=auto|native|torch` forces the renderer. What to expect and how to keep a CPU fit short: "Fitting on a CPU or a Mac" in [`gsplats/README.md`](../gsplats/README.md#fitting-on-a-cpu-or-a-mac).
+
 `--floor specimen` is the opt-in specimen-in-medium mode. It first excludes the bright signal class with a full-distribution Otsu cut, then splits the remaining background band and accepts its upper mode only when both background populations are compact; otherwise it falls back to `auto`. The chosen branch is recorded as `floor_strategy` next to the applied `floor`. `batch-fit` rejects this spec because its one-level-across-time reduction cannot safely combine selected and fallback slices; calibrate a representative volume and pass the measured numeric floor instead.
 
 `--floor` (default `auto`) subtracts a background pedestal (clip at 0) before normalization, so output amplitudes are background-relative. `auto` = histogram-mode estimate (a no-op on clean data); `pNN` subtracts that percentile of non-zero voxels; a plain number is a fixed level; `none` and `0` both disable suppression (legacy hard-min). Both volume-derived forms exclude exact-zero voxels so masked/out-of-FOV padding does not move their population. Negative user levels are rejected, while a negative level produced internally from dark-frame-corrected data is retained. With a supplied `norm_range`, the erase-all guard and high endpoint use that whole-volume range unchanged so every tile keeps the same physical scale. Uniform and content fits resolve that raw-input range once for the whole selected volume and forward it to every tile or box; a degenerate range is declined so each child can fall back to its own usable scale. Otherwise the guard compares the resolved level with the data maximum (the bounded sample maximum on lazy whole-volume paths), never the configured normalization percentile's high endpoint. With a nonzero `norm_percentile` from YAML, normalization's percentile-derived low endpoint remains an independent lower bound: if it is above the requested floor, that higher endpoint is what is actually subtracted and recorded; if the floor rises above the percentile-derived high endpoint but remains below the data maximum, the high endpoint expands to that maximum so real signal is retained. Under **any** tiling the spec is resolved against the **whole volume**, never against a tile or box crop — which would make abutting regions fit against different baselines and show brightness steps at their boundaries. `uniform` and `content` resolve it once in the parent and hand every tile/box that concrete level (each child's normalization floor is still clamped up to the shared range's low endpoint when that endpoint lies above the level); a `-j N` parent that had to resolve the level to weigh its tiles forwards that concrete level and the raw-input range to its workers, and a hand-run `--tile k/M` worker resolves the same spec against the same whole volume, which agrees because the sampler is deterministic. `batch-fit` extends both across time: one global level for the whole timelapse, resolved at plan time as the **minimum** of the levels measured on a bounded set of evenly spaced `(t, c)` slices spanning the whole store — up to 4 timepoints (always including `t=0` and `t=T-1` when `T > 1`) x up to 4 channel-like coordinates — plus, without denoising, one raw-input range reduced over those same samples and recorded in the manifest (`floor_level`, `norm_range`). Denoising batches leave that automatically sampled range unset so each task resolves on the data it fits: denoise-corrected input for an on-the-fly uniform tile, or the denoised store in `preprocess` mode (including content boxes). An explicit configured `norm_range` remains an intentional override. A minimum is a lower bound on every **sampled** slice's pedestal, so it cannot clip a sampled timepoint or channel to zero (which the tile worker would report as a legitimately empty tile, silently dropping that slice from the merge). Bounded sampling can only bound what it samples: a dimmer NON-sampled slice (a blank/bleached frame between samples, a channel above the cap) can still be erased that way — use `--floor none` or an explicit numeric `--floor N` when a particular slice must survive. With `--denoise` on a `uniform` tiled fit the level is resolved on the **denoised** basis (each tile is denoised before the level is subtracted, so it has to be — #1178), which means cross-worker agreement now also depends on every worker receiving the same `h` (and the same `--denoise-backend`), not only the same volume and spec. That correction is measured on a bounded denoise probe, so it is exact for a volume the probe covers whole and, above that, is applied for a `pNN` floor only: with the default `--floor auto` on a large volume the level stays on the raw basis and one note says so, since a crop-measured histogram-mode shift is dominated by noise. Pass `--floor pNN` (or fit un-tiled) if you want the level itself resolved on denoised data.
@@ -397,23 +399,41 @@ A folded tile is the one case where a tile is **larger** than `--tile-size`: the
 Convert .gsplats.zarr to a Luxar scene for the web viewer.
 ```bash
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --center
-luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --scale-intensity 0.1
+luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --display-gain 1e-4  # brightness only; data untouched
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --view xz        # face the XZ plane
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --dim-order x,y,z  # opt out
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --target-brightness 3  # brighter
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --no-auto-exposure     # legacy
 ```
 
+**True data units.** The scene keeps the fit's amplitudes exactly as the
+`.gsplats.zarr` stores them — source data units above the subtracted background
+(detector counts for an integer source) — so the viewer's Layers panel reads in
+the data's own units: the **Splat amplitude** window's tooltip gives the unit
+(e.g. "counts above background") and the data's own range with its floor
+(`source_data_range`, "Data range: 0 – 12,000 (floor 100)").
+A splat amplitude is one Gaussian's PEAK; overlapping splats sum to the data
+value, so the window sits below the data range. Brightness is a separate
+per-node `display_gain` attr (the panel's **Brightness** control), which the
+viewer multiplies into the emission (and the volumetric density) but not the
+colormap lookup, so the render is the one rescaling the data would have given.
+Convert stamps `amplitude_unit` (`counts` / `data units`, `above background`
+when a floor was subtracted, `above minimum` when only the source minimum was,
+`a.u.` for a store with no recorded normalisation basis), `amplitude_offset`
+(that level, possibly negative for float data) and `source_data_range`; see `docs/guides/user/LUXAR_ZARR_FORMAT.md`
+§ "Amplitude units and display gain". `--intensity` on a colormapped node is
+restated as the matching data-unit window (`I × gain`).
+
 **Auto exposure (default).** Additive blending sums every splat along the view
 ray, so normalizing each splat's amplitude (p99.9 → 1) still opens a dense fit as
 a saturated white blob. Convert predicts the opening view's per-pixel sum down
 its view axis (each splat's projected footprint, LUT/colour gain and opacity
 included, through the colour window the compiler will stamp;
-`luxar.gsplats.exposure`) and dims the amplitudes so its p99.9 equals
+`luxar.gsplats.exposure`) and dims the display gain so its p99.9 equals
 `--target-brightness` — default 2.0 under ACES/AgX/Neutral/Reinhard/Cineon (and
 when `--tone-mapping` is unset), 0.9 under `None`/`Linear`, which clip at 1.0 —
 printing e.g. `Exposure:
-scaled splat brightness ×0.31 so the default view isn't saturated (projected
+display gain 2.4e-4 (×0.31 below per-splat normalisation) so the default view isn't saturated (projected
 p99.9 6.4 → 2.0; --no-auto-exposure to disable)`. The two side views (orbit
 90°) and up to four more evenly spaced timepoints of the first hidden discrete
 axis are predicted too and capped at 4× the target (`SIDE_CAP`), so a thin slab
@@ -423,13 +443,13 @@ weighted where the viewer opens them (a discrete axis at its minimum — a
 timelapse at its first timepoint — a continuous one at its centre). It never
 brightens, applies only to `additive`/`luminous` blending, and works on
 partition/LOD stores; 10M splats take ~7 s and ~1 GB (the set is subsampled to
-2M before any covariance is built). The total raw→stored factor is
-stamped as `amplitude_normalization_factor` (with
-`amplitude_normalization_mode="projected"` and the prediction), so `stored /
-factor` gives back the fit's amplitudes; the `.gsplats.zarr` is untouched.
-`--no-auto-exposure` is the legacy per-splat normalization, attr for attr.
-`--scale-intensity S` replaces both with exactly `raw × S` (mode `"manual"`) on
-any tree shape, partitions included.
+2M before any covariance is built). The gain (per-splat normalization × the
+exposure factor) is stamped as `display_gain`, with
+`amplitude_normalization_mode="projected"` and the prediction; the stored
+amplitudes are the fit's own and the `.gsplats.zarr` is untouched.
+`--no-auto-exposure` makes the gain the legacy per-splat normalization alone
+(mode `"per_splat"`, the legacy render); `--display-gain S` (old name `--scale-intensity`, unlike `gsplat transform --scale-intensity`, which edits the data) makes it exactly
+`S` (mode `"manual"`) on any tree shape, partitions included.
 
 Fitted image volumes open in the **image convention** (the Fiji/napari view: x
 right, y down, looking along +z through the stack). A fit's center columns are

@@ -5,7 +5,10 @@ reference volume. Getting a meaningful number out of that takes four
 reconciliations, each of which used to be the user's problem:
 
 * **Basis.** A render is background-relative (``V - image_min``); the reference
-  is shifted onto that basis first (#1173).
+  is shifted onto that basis first (#1173). A ``transform --scale-intensity``
+  edit (the store's ``intensity_scale``) is divided back out of the amplitudes,
+  so the render is in the reference's units and a display rescale is not scored
+  as reconstruction error.
 * **Grid.** A physical-output fit's centers are in physical units; they are
   divided back by the stored ``voxel_size`` (or ``--voxel-size``) so they land on
   the reference's voxel grid. ``--at-fit-resolution`` additionally undoes a
@@ -36,6 +39,15 @@ if TYPE_CHECKING:
     import numpy as np
 
     from luxar.gsplats.gsplat_data import GSplatData
+
+#: Printed when a store keeps ``image_min`` but records no ``intensity_range``.
+_NO_AMPLITUDE_BASIS_HINT = (
+    "the dataset records image_min but no amplitude basis (intensity_range): an "
+    "amplitude edit that is not one global factor (an offset, a clamp, a "
+    "per-splat reweight) or a merge of differently scaled fits dropped it, so "
+    "the stored amplitudes are no longer in source units and the scores below "
+    "include that difference. Score the store from before the edit."
+)
 
 #: Below this share of splat centers inside the reference grid, the command warns
 #: that the splats are probably not in the reference's voxel frame.
@@ -101,6 +113,8 @@ class _Context:
     ref_shape: tuple[int, ...] = ()
     render_shape: tuple[int, ...] = ()
     image_min: Optional[float] = None
+    #: The store's recorded ``intensity_scale`` the render was divided by.
+    intensity_scale: float = 1.0
     grid: _ScoringGrid = field(default_factory=_ScoringGrid)
     foreground_method: str = "otsu_smoothed"
     dimension_metadata: Any = None
@@ -448,6 +462,32 @@ def _score(
             )
 
 
+def _undo_intensity_scale(data: "GSplatData", stats: Any) -> tuple["GSplatData", float]:
+    """``data`` back in source units, and the recorded scale that was undone.
+
+    The reference, its peak, the floor and the foreground threshold all stay in
+    the reference's own units; only the render moves, so every metric keeps
+    the meaning it has on an unedited store.
+    """
+    from luxar.gsplats.fit_basis import stored_intensity_scale
+    from luxar.gsplats.scoring_grid import amplitudes_in_source_units
+
+    scale = stored_intensity_scale(stats)
+    if scale != 1.0:
+        aprint(
+            f"Basis: amplitudes divided by intensity_scale={scale:.6g} (a "
+            "transform --scale-intensity / --normalize-intensity edit); scored in "
+            "the source's units"
+        )
+    elif stats and "image_min" in stats and "intensity_range" not in stats:
+        # A non-invertible amplitude edit (offset, clamp, per-splat reweight) or a
+        # merge of fits on different scales drops the amplitude basis but keeps
+        # the raw level, so the shift above still runs on amplitudes it no longer
+        # describes.
+        aprint(f"WARNING: {_NO_AMPLITUDE_BASIS_HINT}")
+    return amplitudes_in_source_units(data, scale), scale
+
+
 def _compare(opts: CompareOptions) -> tuple[dict[str, Any], _Context]:
     """Load, map, render and score; returns the metrics and what was compared."""
     from luxar.gsplats.scoring_grid import map_to_grid
@@ -480,6 +520,7 @@ def _compare(opts: CompareOptions) -> tuple[dict[str, Any], _Context]:
     ctx.render_shape = _render_shape(opts, ctx.ref_shape, ctx.ndim)
     aprint(f"Comparison shape: {ctx.render_shape}")
     scored = map_to_grid(data, scale=ctx.grid.scale, origin=origin)
+    scored, ctx.intensity_scale = _undo_intensity_scale(scored, data.stats)
     warn_if_outside_grid(scored.centers, ctx.render_shape)
     metrics = _score(
         scored, ref, fg, render_shape=ctx.render_shape, opts=opts, truncate=truncate
@@ -585,6 +626,8 @@ def _json_record(
         "foreground_method": ctx.foreground_method,
         "foreground_threshold_raw": ctx.foreground_threshold_raw,
     }
+    if ctx.intensity_scale != 1.0:
+        record["intensity_scale"] = ctx.intensity_scale
     for key, value in metrics.items():
         ok, converted = json_safe_value(value)
         # Non-finite floats (a perfect score is +inf) become null: valid JSON.

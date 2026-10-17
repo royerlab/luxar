@@ -791,6 +791,7 @@ def run_fit_volume(
     from luxar.cli.gsplat_config import (
         DEFAULT_FIT_PRESET,
         dump_default_config,
+        load_fit_config,
         load_volume,
     )
 
@@ -826,8 +827,20 @@ def run_fit_volume(
 
     try:
         from luxar.gsplats import fit_gaussian_splats
+        from luxar.gsplats.utils.cpu_threads import cpu_threads_for
 
-        with asection(f"Fitting Gaussian Splats: {input_path.name}"):
+        thread_config = load_fit_config(preset, config, {"device": device})
+        # A tile/box worker uses its parent's CPU thread share when provided.
+        is_worker = (tile, plan_box) != (None, None)
+        with (
+            asection(f"Fitting Gaussian Splats: {input_path.name}"),
+            cpu_threads_for(
+                thread_config["device"],
+                worker=is_worker,
+                use_cuda=thread_config["use_cuda"],
+                use_metal=thread_config["use_metal"],
+            ),
+        ):
             # 1. Load volume
             with asection("Loading volume"):
                 # `load_volume` returns float32 whatever the file holds, so the
