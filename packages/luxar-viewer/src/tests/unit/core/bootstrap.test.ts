@@ -249,6 +249,49 @@ describe('bootstrapStandalone', () => {
     });
   });
 
+  describe('WebGPU startup', () => {
+    it('starts device acquisition before app init', async () => {
+      const requestDevice = vi.fn().mockResolvedValue({});
+      const requestAdapter = vi.fn().mockResolvedValue({
+        features: new Set<string>(),
+        limits: { maxVertexBuffers: 16 },
+        requestDevice,
+      });
+      vi.stubGlobal('navigator', { ...navigator, gpu: { requestAdapter } });
+      let release!: () => void;
+      mocks.init.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)));
+
+      const booted = bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, renderer: 'webgpu' },
+      });
+      await vi.waitFor(() => expect(requestDevice).toHaveBeenCalledTimes(1));
+      expect(mocks.init).toHaveBeenCalledTimes(1);
+      expect(mocks.init.mock.calls[0]?.[0]).toHaveProperty('preRequestedWebGPUDevice');
+      release();
+      await booted;
+    });
+
+    it('skips device acquisition for WebGL', async () => {
+      const requestAdapter = vi.fn();
+      vi.stubGlobal('navigator', { ...navigator, gpu: { requestAdapter } });
+      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+      expect(requestAdapter).not.toHaveBeenCalled();
+      expect(mocks.init.mock.calls[0]?.[0]).not.toHaveProperty('preRequestedWebGPUDevice');
+    });
+
+    it('skips device acquisition for forceWebGL', async () => {
+      const requestAdapter = vi.fn();
+      vi.stubGlobal('navigator', { ...navigator, gpu: { requestAdapter } });
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, renderer: 'webgpu', webgpuForceWebGL: true },
+      });
+      expect(requestAdapter).not.toHaveBeenCalled();
+      expect(mocks.init.mock.calls[0]?.[0]).not.toHaveProperty('preRequestedWebGPUDevice');
+    });
+  });
+
   describe('session overrides', () => {
     it('applies the OPFS read concurrency URL override', async () => {
       const original = config.cache.opfsReadConcurrency;

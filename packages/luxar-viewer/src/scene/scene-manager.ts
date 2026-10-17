@@ -91,6 +91,7 @@ import {
   createWebGLRenderer,
   createWebGPURenderer,
   selectBackend,
+  type WebGPUDeviceRequest,
 } from './scene-manager/render-pipeline/renderer-setup';
 import { createPostProcessing } from './scene-manager/render-pipeline/post-processing-setup';
 import { ResizeOrchestrator } from './scene-manager/viewport/resize-orchestrator';
@@ -442,6 +443,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * `?renderer=webgl|webgpu` URL parameter through `LuxarAppOptions`.
    */
   private rendererOverride: 'webgl' | 'webgpu' | undefined;
+  private preRequestedWebGPUDevice?: Promise<WebGPUDeviceRequest>;
   /**
    * Diagnostic WebGPURenderer mode. When true and the selected renderer is
    * WebGPURenderer, pass `{ forceWebGL: true }` so Three.js uses its
@@ -479,6 +481,8 @@ export class SceneManager extends THREE.EventDispatcher<{
      * ultimately from the `?renderer=webgl|webgpu` URL parameter.
      */
     renderer?: 'webgl' | 'webgpu';
+    /** One-shot device request from standalone bootstrap. */
+    preRequestedWebGPUDevice?: Promise<WebGPUDeviceRequest>;
     /**
      * Diagnostic flag for `WebGPURenderer({ forceWebGL: true })`.
      * Threaded from `LuxarAppOptions.webgpuForceWebGL`, ultimately from
@@ -513,6 +517,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.viewAxisOverride = options.viewAxis ?? null;
     this.debug = options.debug ?? false;
     this.rendererOverride = options.renderer;
+    this.preRequestedWebGPUDevice = options.preRequestedWebGPUDevice;
     this.webgpuForceWebGL = options.webgpuForceWebGL ?? false;
     this.perfTimestamp = options.perfTimestamp ?? false;
     this.hdr = options.hdr ?? false;
@@ -597,6 +602,8 @@ export class SceneManager extends THREE.EventDispatcher<{
    * See `BROWSER_SUPPORT_POLICY.md` for the policy.
    */
   private async setupWebGPURenderer(): Promise<void> {
+    const preRequestedWebGPUDevice = this.preRequestedWebGPUDevice;
+    this.preRequestedWebGPUDevice = undefined;
     const result = await createWebGPURenderer(this.canvasElement, {
       debug: this.debug,
       webgpuForceWebGL: this.webgpuForceWebGL,
@@ -604,6 +611,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       hdr: this.hdr,
       hdrHeadroom: this.hdrHeadroom,
       rendererOverride: this.rendererOverride,
+      preRequestedWebGPUDevice,
     });
     if (result.fallback) {
       // Adapter below the WebGPU spec minimum (< 8 vertex buffers)
@@ -615,9 +623,9 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.capabilities = result.capabilities;
 
     // Fetch the TSL/WebGPU material cone before anything can ask for a
-    // material. This is the ONLY place it is loaded on the production path, and
-    // the reason the default WebGL session never downloads the ~182 kB gzipped
-    // `three-webgpu` chunk (issue #1679).
+    // material. The bootstrap prefetch may already have started this load;
+    // only WebGPU sessions request the ~182 kB gzipped `three-webgpu` chunk
+    // (issue #1679).
     //
     // Ordering is load-bearing and already guaranteed: `init()` awaits
     // `setupRenderer()` (this) before `setupPostProcessing()`, which builds the
