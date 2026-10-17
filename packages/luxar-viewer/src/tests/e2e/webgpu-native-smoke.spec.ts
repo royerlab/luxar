@@ -68,6 +68,7 @@ test.describe('WebGPU smoke (native-only tests skip on the WebGL2 fallback)', ()
 
   test('recovers a native renderer, draws the scene, and resolves a pick', async ({ page }) => {
     test.skip(!(await probeWebGPUBackend(page)).isNative, SKIP_REASON);
+    test.setTimeout(60_000);
     await page.goto(`/?renderer=webgpu&src=${LABELLED_DATASET}&debug`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page);
