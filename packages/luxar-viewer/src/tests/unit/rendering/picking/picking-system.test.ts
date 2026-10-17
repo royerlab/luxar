@@ -82,7 +82,12 @@ describe('mesh pick corner selection', () => {
             extension ? { FIRST_VERTEX_CONVENTION_WEBGL: 1, provokingVertexWEBGL: vi.fn() } : null,
         }),
       } as unknown as THREE.WebGLRenderer;
-      const capabilities = { ...makeStubCapabilities(), apiSurface, readbackYDown: webgpu };
+      const capabilities = {
+        ...makeStubCapabilities(),
+        apiSurface,
+        nativeWebGPUBackend: webgpu,
+        readbackYDown: !webgpu,
+      };
       const system = new PickingSystem(renderer, capabilities, makeCamera(), vi.fn());
       const geometry = new THREE.BufferGeometry();
       geometry.setIndex([0, 1, 2]);

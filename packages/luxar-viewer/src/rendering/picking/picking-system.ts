@@ -252,10 +252,9 @@ export class PickingSystem {
 
     // On GL, either switch to first-vertex flat sampling or rotate mesh index
     // triples so last-vertex sampling still returns the original first corner.
-    // readbackYDown identifies the native WebGPU backend, including when the
-    // renderer API surface is WebGPU but its effective backend is GL.
+    // The renderer API surface can be WebGPU while its effective backend is GL.
     this.rotateMeshPickIndices =
-      !alignProvokingVertexWithWebGPU(this.renderer) && !this.capabilities.readbackYDown;
+      !alignProvokingVertexWithWebGPU(this.renderer) && !this.capabilities.nativeWebGPUBackend;
 
     log.info(Modules.RENDERER, 'PickingSystem initialized (5x5 RGBA32F)');
   }
