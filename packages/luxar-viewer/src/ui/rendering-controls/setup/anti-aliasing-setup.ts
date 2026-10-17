@@ -122,6 +122,7 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
     .name('MSAA Enabled')
     .onChange((value: boolean) => {
       settings.msaaEnabled = postProcessing.setMSAAEnabled(value);
+      if (settings.msaaEnabled !== value) msaaControl.updateDisplay();
       saveSettings();
       triggerAnimation();
       // Show/hide MSAA settings folder
@@ -160,6 +161,7 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
       .name('Sample Count')
       .onChange((value: number) => {
         settings.msaaSamples = postProcessing.setMSAASamples(value);
+        if (settings.msaaSamples !== value) msaaSamplesControl.updateDisplay();
         saveSettings();
         triggerAnimation();
       });

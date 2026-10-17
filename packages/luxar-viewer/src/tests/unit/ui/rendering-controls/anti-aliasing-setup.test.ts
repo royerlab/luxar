@@ -17,6 +17,7 @@ interface ControllerStub {
   name: ReturnType<typeof vi.fn>;
   onChange: ReturnType<typeof vi.fn>;
   hide: ReturnType<typeof vi.fn>;
+  updateDisplay: ReturnType<typeof vi.fn>;
   domElement: HTMLElement;
   _onChangeFn: ((value: unknown) => void) | null;
 }
@@ -26,6 +27,7 @@ function makeController(): ControllerStub {
     name: vi.fn(),
     onChange: vi.fn(),
     hide: vi.fn(),
+    updateDisplay: vi.fn(),
     domElement: document.createElement('div'),
     _onChangeFn: null,
   };
@@ -229,6 +231,16 @@ describe('setupAntiAliasingControls', () => {
   });
 
   describe('MSAA toggle', () => {
+    it('restores the checkbox when the manager refuses to enable MSAA', () => {
+      stubs.postProcessing.setMSAAEnabled.mockReturnValue(false);
+      setupAntiAliasingControls(stubs.context);
+      const msaaToggle = stubs.aaFolder.controllers[2];
+      msaaToggle._onChangeFn?.(true);
+      expect(stubs.settings.msaaEnabled).toBe(false);
+      expect(msaaToggle.updateDisplay).toHaveBeenCalled();
+      expect(stubs.aaFolder.subFolders.get('MSAA Settings')?.hide).toHaveBeenCalled();
+    });
+
     it('forwards on + opens/shows MSAA sub-folder', () => {
       setupAntiAliasingControls(stubs.context);
       const msaaToggle = stubs.aaFolder.controllers[2];
