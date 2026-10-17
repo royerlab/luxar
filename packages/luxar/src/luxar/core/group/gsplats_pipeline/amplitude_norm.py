@@ -74,6 +74,7 @@ Design decisions, and why
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Tuple, Union
 
 import numpy as np
@@ -101,11 +102,42 @@ IN_RANGE_TOLERANCE = 1e-6
 #: actually stored. Absent when nothing was scaled.
 NORMALIZATION_FACTOR_ATTR = "amplitude_normalization_factor"
 
+#: Provenance attrs stamped by ``gsplat convert``'s auto exposure (see
+#: :mod:`luxar.gsplats.exposure`): how the stored amplitudes were derived and
+#: what the opening view was predicted to look like. Like the factor, the viewer
+#: does not read them.
+NORMALIZATION_MODE_ATTR = "amplitude_normalization_mode"
+PROJECTED_SUM_P999_ATTR = "projected_sum_p999"
+PROJECTED_SUM_TARGET_ATTR = "projected_sum_target"
+PROJECTED_SUM_AXIS_ATTR = "projected_sum_axis"
+
+
+@dataclass(frozen=True)
+class AmplitudeScale:
+    """An EXACT raw-to-stored amplitude factor, applied unconditionally.
+
+    Unlike a float ``normalize_amplitudes`` target (which divides by the
+    measured reference, so the factor carries the percentile's rounding), this
+    applies — and stamps as ``amplitude_normalization_factor`` — exactly
+    ``factor``, so a reader can divide it back out bit-for-bit. A factor of 1.0
+    is a no-op and stamps nothing.
+    """
+
+    factor: float
+
+    def __post_init__(self) -> None:
+        if not (np.isfinite(self.factor) and self.factor > 0.0):
+            raise ValueError(
+                f"AmplitudeScale factor must be positive and finite, got {self.factor!r}"
+            )
+
+
 #: Accepted spellings of the ``normalize_amplitudes`` argument.
 #: ``True``/``"auto"`` -> scale to 1.0 only when the reference exceeds 1.0;
 #: ``False``/``None`` -> leave amplitudes alone;
-#: ``float`` -> scale the reference to exactly that value, unconditionally.
-NormalizeSpec = Union[bool, str, float, None]
+#: ``float`` -> scale the reference to exactly that value, unconditionally;
+#: :class:`AmplitudeScale` -> multiply by exactly that factor.
+NormalizeSpec = Union[bool, str, float, AmplitudeScale, None]
 
 
 def _sample_reference(values: np.ndarray) -> float:
@@ -146,6 +178,8 @@ def resolve_factor(spec: NormalizeSpec, reference: float) -> Optional[float]:
     """
     if spec is None or spec is False:
         return None
+    if isinstance(spec, AmplitudeScale):
+        return None if spec.factor == 1.0 else float(spec.factor)
 
     if spec is True or (isinstance(spec, str) and spec.lower() == "auto"):
         target = 1.0

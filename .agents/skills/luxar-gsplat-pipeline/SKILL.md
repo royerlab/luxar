@@ -75,6 +75,13 @@ somewhat more, never fewer. The preset silently moves `max_eccentricity` too
 Supported `fit` inputs: `.zarr`, `.zarr.zip`, `.tiff`, `.npy`, `.npz`. For a
 nested zarr group use `--array-key h2afva/fused`.
 
+Anisotropic stack → physically scaled, image-oriented scene:
+`luxar gsplat fit stack.ome.tif s.gsplats.zarr --physical` then `luxar gsplat
+convert s.gsplats.zarr s.luxar.zarr`. `--physical` reads NGFF / OME-TIFF / ImageJ
+spacing (one line says which); `--voxel-size Z,Y,X` (µm, array order) wins.
+`--region z0:z1,y0:y1,x0:x1` fits a crop placed at its full-volume position
+(`fitting/source_region`); `cal` takes the same three flags.
+
 ### Background floor suppression (`--floor`, default `auto`)
 
 A constant pedestal (camera offset, autofluorescence) is the worst case for a
@@ -753,7 +760,13 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
 ```
 
 The CLI shortcut `luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --center`
-does (a) for you and writes a ready-to-serve scene.
+does (a) for you and writes a ready-to-serve scene. It also auto-exposes: amplitudes
+are dimmed (never brightened) so the opening view's predicted additive p99.9 is
+`--target-brightness` (2.0; 0.9 under `--tone-mapping None|Linear`) instead of a saturated blob (side views and other timepoints capped at 4x); `--no-auto-exposure` opts
+out. The Python adders keep per-splat normalisation — for the same result call
+`luxar.gsplats.exposure.plan_projected_exposure` and pass
+`normalize_amplitudes=AmplitudeScale(factor)` (from
+`luxar.core.group.gsplats_pipeline.amplitude_norm`).
 
 ## Notes
 

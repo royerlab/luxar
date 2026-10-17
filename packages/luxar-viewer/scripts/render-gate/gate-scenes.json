@@ -481,11 +481,33 @@
           "id": "idle_after_drag_mixed",
           "store": "gate/mixed.luxar.zarr",
           "pose": { "position": [14, 9, 16], "target": [0, 0, 0], "up": [0, 1, 0] },
-          "workload": { "kind": "drag", "px": 4, "tailMs": 3000 },
+          "workload": { "kind": "drag", "px": 4, "tailMs": 3000, "idleMs": 1000 },
           "staleFrameCheck": true,
+          "expectations": {
+            "idleRenders": "zero",
+            "idleUploadBytesBuffer": "zero",
+            "idleUploadBytesTexture": "zero"
+          },
           "metrics": [
             { "name": "render.count", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "renders", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            { "name": "tailRenders", "better": "lower", "kind": "counter", "report": true },
+            { "name": "tailSettled", "better": "higher", "kind": "counter", "report": true },
+            {
+              "name": "tailUploadBytesBuffer",
+              "better": "lower",
+              "kind": "counter",
+              "report": true
+            },
+            {
+              "name": "tailUploadBytesTexture",
+              "better": "lower",
+              "kind": "counter",
+              "report": true
+            },
+            { "name": "idleRenders", "better": "lower", "kind": "counter" },
+            { "name": "idleUploadBytesBuffer", "better": "lower", "kind": "counter" },
+            { "name": "idleUploadBytesTexture", "better": "lower", "kind": "counter" },
             { "name": "ext.gpuUploadBytes", "better": "lower", "kind": "counter" },
             { "name": "gpu.uploadBytes", "better": "lower", "kind": "counter" }
           ]
@@ -625,6 +647,7 @@
           "metrics": [
             {
               "name": "gpu.uploadBytes/tick",
+              "report": true,
               "of": "gpu.uploadBytes",
               "per": "ticks",
               "better": "lower",
@@ -633,6 +656,7 @@
             },
             {
               "name": "gpu.uploadBytes.texture/tick",
+              "report": true,
               "of": "gpu.uploadBytes.texture",
               "per": "ticks",
               "better": "lower",
@@ -641,6 +665,7 @@
             },
             {
               "name": "render.count/tick",
+              "report": true,
               "of": "render.count",
               "per": "ticks",
               "better": "lower",

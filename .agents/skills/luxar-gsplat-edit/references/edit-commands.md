@@ -97,8 +97,11 @@ one uncompressed flat payload of free space.
 
 ## convert IN.gsplats.zarr OUT.luxar.zarr
 Wrap a fitted dataset as a web scene. `--center`/`--no-center` (default on),
-`--scale-intensity`, `--opacity` (1.0), `--blending-mode` (`additive` default /
-`normal` / `max` / `opaque`).
+`--scale-intensity` (exact `raw × S`, any tree shape; disables auto exposure),
+`--opacity` (1.0), `--blending-mode` (`additive` default / `normal` / `max` /
+`opaque`). Auto exposure is on by default (`--auto-exposure/--no-auto-exposure`):
+amplitudes are dimmed, never brightened, so the opening view's predicted additive
+p99.9 equals `--target-brightness` (2.0; 0.9 under `None`/`Linear` tone mapping); side views and other timepoints are capped at 4x that.
 
 Appearance is baked in here:
 - `--colormap` (default `gray`) — builtin or any matplotlib/colorcet name (e.g. `plasma`).

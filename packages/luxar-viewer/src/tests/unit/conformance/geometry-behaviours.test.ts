@@ -145,11 +145,13 @@ describe('geometry-subset scan', () => {
       "it.each(['points', 'lines', 'gsplats', 'mesh'])('all %s', () => {});",
       "it.each(['mesh'])('one %s', () => {});",
       "it.each([['quad', 1], ['capsule', 2]])('%s', () => {});",
+      "it. /* trivia */ each(['points', 'lines'])('c %s', () => {});",
     ].join('\n');
     const findings = findGeometrySubsetEaches(src);
     expect(findings.map((f) => [f.line, f.types])).toEqual([
       [1, ['points', 'lines', 'gsplats']],
       [3, ['points', 'lines']],
+      [9, ['points', 'lines']],
     ]);
   });
 

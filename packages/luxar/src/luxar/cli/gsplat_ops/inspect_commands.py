@@ -763,6 +763,34 @@ def _resolve_view_target(path: Path) -> tuple[Path, Optional[Path]]:
     return resolve_store_path(path)
 
 
+def _build_view_scene(store: Path, opts: Any) -> tuple[Path, Path]:
+    """Build ``gsplat convert``'s scene for ``store`` in a fresh temp directory.
+
+    Returns ``(temp_dir, scene_path)``; the caller removes ``temp_dir``. The
+    directory is created BEFORE the build, so a build that fails part-way still
+    leaves the caller something to clean up — hence the cleanup here on error.
+    """
+    import tempfile
+    import time
+
+    from .scene_build import build_gsplat_scene
+
+    scene_dir = Path(tempfile.mkdtemp(prefix="luxar_gsplat_view_"))
+    scene_path = scene_dir / f"{store.name.split('.')[0] or 'gsplats'}.luxar.zarr"
+    start = time.perf_counter()
+    try:
+        with asection("Building a temporary scene (as `gsplat convert` would)"):
+            build_gsplat_scene(store, scene_path, opts)
+    except BaseException:
+        shutil.rmtree(scene_dir, ignore_errors=True)
+        raise
+    aprint(
+        f"Built a temporary scene in {time.perf_counter() - start:.1f}s "
+        f"(removed on exit; --raw serves the node tree as is)"
+    )
+    return scene_dir, scene_path
+
+
 def quick_view(
     path: Path = typer.Argument(
         ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
@@ -776,15 +804,53 @@ def quick_view(
         help="Open a browser (default: yes, where one can be seen).",
     ),
     cors_origin: CorsOriginOption = _DEFAULT_CORS_ORIGIN,
+    raw: bool = typer.Option(
+        False,
+        "--raw",
+        help="Serve the .gsplats.zarr node tree as is (no temporary scene: no "
+        "image orientation, no auto exposure, raw stored amplitudes).",
+    ),
+    auto_exposure: bool = typer.Option(
+        True,
+        "--auto-exposure/--no-auto-exposure",
+        help="As for `gsplat convert`: dim splat brightness so the opening view "
+        "is not saturated (side views and other timepoints capped at 4x the "
+        "target).",
+    ),
+    target_brightness: Optional[float] = typer.Option(
+        None,
+        "--target-brightness",
+        min=1e-6,
+        help="Auto-exposure target for the predicted projected p99.9 "
+        "(default 2.0, the ACES value).",
+    ),
+    dim_order: Optional[str] = typer.Option(
+        None,
+        "--dim-order",
+        help="Name each center column (e.g. 'z,y,x'), as for `gsplat convert`.",
+    ),
+    view: Optional[str] = typer.Option(
+        None, "--view", help="Opening view: xy (default for image fits), xz, or yz."
+    ),
+    colormap: Optional[str] = typer.Option(
+        None, "--colormap", help="Colormap for scalar amplitudes (default gray)."
+    ),
 ) -> None:
     """Quick view of a Gaussian splat dataset in the Luxar web viewer.
 
-    The standalone ``.gsplats.zarr`` is a v3.4 node subtree — exactly what the
-    viewer renders inside a scene — so it is served **directly** (``?src=``) and
-    opened with no scene-compile round-trip. This works for every tree shape:
-    a single leaf, an additive ladder, a ``kind=lod`` substitutive hierarchy, a
-    ``kind=partition`` split, and arbitrary nestings. The viewer frames the
-    camera on the file's ``position_bounds``, so no centroid mutation is needed.
+    By default the store is turned into a TEMPORARY scene through exactly the
+    ``gsplat convert`` code path — image-convention orientation and opening
+    camera, auto exposure, the same appearance defaults — written to a temp
+    directory that is removed on exit, and that scene is served. So the first
+    look matches what ``convert`` would publish. The build re-writes the splats
+    (a partition / nested tree is grafted node for node, which still copies its
+    arrays), so it costs a few seconds on a large store.
+
+    ``--raw`` keeps the old behaviour: the standalone ``.gsplats.zarr`` is a v3.4
+    node subtree the viewer renders directly (``?src=``), with no scene-compile
+    round-trip — every tree shape works, framed on the file's
+    ``position_bounds`` — but amplitudes are the stored (raw) ones and the axes
+    are positional.
 
     Compressed archives (``.gsplats.zarr.zip`` / ``.gsplats.zarr.tar.gz``) are
     extracted to a temporary directory before serving.
@@ -800,11 +866,27 @@ def quick_view(
         viewer_port: Port for viewer
         open_browser: Whether to open browser automatically
         cors_origin: Allowed CORS origin for both servers (default "local").
+        raw: Serve the node tree directly instead of a temporary scene.
+        auto_exposure: Auto exposure for the temporary scene.
+        target_brightness: Auto-exposure target.
+        dim_order: Column names, as for ``gsplat convert``.
+        view: Opening view preset, as for ``gsplat convert``.
+        colormap: Colormap for scalar amplitudes.
     """
     # Bound before the `try` so the `finally` below can test it: the store
     # resolver answers None for a directory store, and `rmtree(None)` raises —
     # turning a real error into an unrelated one.
     temp_dir: Optional[Path] = None
+    scene_dir: Optional[Path] = None
+    # SIGTERM / SIGHUP (a harness timeout, `luxar stop`, a closed terminal —
+    # also mid-build) unwind through the `finally` below instead of killing the
+    # process, so the temp scene and any extraction are always removed.
+    from contextlib import ExitStack
+
+    from luxar.cli.demo_runs import exit_on_termination_signals
+
+    signals = ExitStack()
+    signals.enter_context(exit_on_termination_signals())
     try:
         import threading
 
@@ -830,8 +912,21 @@ def quick_view(
             # round-trip — the viewer consumes the node tree directly, which is
             # the only path that supports partition/nested roots.
             serve_target, temp_dir = _resolve_view_target(path)
+            if raw:
+                aprint(f"Serving node tree directly: {serve_target.name}")
+            else:
+                from .scene_build import SceneBuildOptions
 
-            aprint(f"Serving node tree directly: {serve_target.name}")
+                scene_dir, serve_target = _build_view_scene(
+                    serve_target,
+                    SceneBuildOptions(
+                        auto_exposure=auto_exposure,
+                        target_brightness=target_brightness,
+                        dim_order=dim_order,
+                        view=view,
+                        colormap=colormap,
+                    ),
+                )
 
             # Find available ports
             actual_port = pick_port(port, host, label="data")
@@ -893,8 +988,10 @@ def quick_view(
         # `typer.Exit` a failed `pick_port` raises AFTER the archive has been
         # extracted, both left a full uncompressed copy of the dataset behind
         # in /tmp.
-        if temp_dir is not None:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        for scratch in (temp_dir, scene_dir):
+            if scratch is not None:
+                shutil.rmtree(scratch, ignore_errors=True)
+        signals.close()
 
 
 def compare_quality(
