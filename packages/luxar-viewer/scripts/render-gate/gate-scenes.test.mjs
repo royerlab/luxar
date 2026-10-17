@@ -135,7 +135,6 @@ describe('render-gate scene manifest', () => {
     );
   });
 
-
   it('declares every suite metric in its known direction', () => {
     expect(() => validateMetricDirections(manifest.suites)).not.toThrow();
     // Every metric the shipped manifest gates on has its direction pinned, so

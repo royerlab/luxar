@@ -647,7 +647,6 @@
           "metrics": [
             {
               "name": "gpu.uploadBytes/tick",
-              "report": true,
               "of": "gpu.uploadBytes",
               "per": "ticks",
               "better": "lower",
@@ -656,7 +655,6 @@
             },
             {
               "name": "gpu.uploadBytes.texture/tick",
-              "report": true,
               "of": "gpu.uploadBytes.texture",
               "per": "ticks",
               "better": "lower",
@@ -665,7 +663,6 @@
             },
             {
               "name": "render.count/tick",
-              "report": true,
               "of": "render.count",
               "per": "ticks",
               "better": "lower",
