@@ -598,7 +598,7 @@ export async function createWebGPURenderer(
     } catch (err) {
       log.warning(
         Modules.RENDERER,
-        `WebGPU requestDevice failed (${err}); falling through to Three's internal compat-mode init.`
+        `WebGPU requestDevice failed (${err}).`
       );
     }
   }
