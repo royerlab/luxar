@@ -22,3 +22,7 @@ export function scorePerfMetric(name, backend, base, cand, base2, absTolerance =
   }
   return { ...medians, ...pacing, ...judgePerf(base, cand, noiseFloor(base, base2), absTolerance) };
 }
+
+export function perfRowStatus(metrics) {
+  return Object.values(metrics).some((metric) => metric.verdict === 'fail') ? 'fail' : 'pass';
+}
