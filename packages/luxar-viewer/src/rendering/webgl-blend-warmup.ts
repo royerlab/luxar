@@ -648,6 +648,9 @@ export class WebGLBlendWarmupManager {
     this.armed = false;
     this.activationToken++;
     this.generation++;
+    // A compileAsync link from the old renderer may still be pending (or may
+    // never complete after context loss). Do not let it hold up the new scene.
+    this.drainPromise = null;
     this.queue = [];
     for (const completion of Array.from(this.warmCompletions)) {
       this.settleWarmCompletion(completion);
@@ -744,7 +747,8 @@ export class WebGLBlendWarmupManager {
   private startDrain(): void {
     if (this.drainPromise || !this.enabled) return;
     const generation = this.generation;
-    this.drainPromise = this.drain(generation).finally(() => {
+    const drainPromise: Promise<void> = this.drain(generation).finally(() => {
+      if (this.drainPromise !== drainPromise) return;
       this.drainPromise = null;
       if (this.enabled && this.armed && this.queue.length > 0) {
         this.startDrain();
@@ -752,6 +756,7 @@ export class WebGLBlendWarmupManager {
         this.resolveWarmCompletionsIfIdle(generation);
       }
     });
+    this.drainPromise = drainPromise;
   }
 
   private async drain(generation: number): Promise<void> {

@@ -385,6 +385,45 @@ describe('WebGLBlendWarmupManager', () => {
     expect(manager.getStats()).toMatchObject({ queued: 3, compiled: 3 });
   });
 
+  it('starts a new warm-up after clear while an old link is pending', async () => {
+    const finishLinks: Array<() => void> = [];
+    const compileOne = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishLinks.push(resolve);
+        })
+    );
+    const manager = new WebGLBlendWarmupManager(
+      async () => undefined,
+      compileOne,
+      activateImmediately
+    );
+    const config = {
+      enabled: true,
+      renderer: {} as THREE.WebGLRenderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    };
+    manager.configure(config);
+    const first = manager.warmScene(makeRenderableMesh('points'));
+    await vi.waitFor(() => expect(compileOne).toHaveBeenCalledTimes(1));
+
+    manager.configure(config);
+    await first;
+    const second = manager.warmScene(makeRenderableMesh('points'));
+    await vi.waitFor(() => expect(compileOne).toHaveBeenCalledTimes(2));
+    expect(manager.getStats().compiled).toBe(0);
+    finishLinks[0]?.();
+    expect(manager.getStats().compiled).toBe(0);
+    finishLinks[1]?.();
+    await vi.waitFor(() => expect(compileOne).toHaveBeenCalledTimes(3));
+    finishLinks[2]?.();
+    await vi.waitFor(() => expect(compileOne).toHaveBeenCalledTimes(4));
+    finishLinks[3]?.();
+    await second;
+    expect(manager.getStats().compiled).toBe(3);
+  });
+
   it('releases scene warming on its readiness budget and keeps draining after', async () => {
     vi.useFakeTimers();
     try {
