@@ -17,19 +17,63 @@ describe.each(materials)('%s TSL blend state', (_name, make) => {
     const material = make();
     const version = material.version;
     const vertexNode = material.vertexNode;
-    const fragmentNode = material.fragmentNode;
+    const colorNode = material.colorNode;
 
     material.applyBlendingMode('luminous');
     expect(material.depthTest).toBe(true);
     expect(material.blending).toBe(THREE.AdditiveBlending);
     expect(material.vertexNode).toBe(vertexNode);
-    expect(material.fragmentNode).toBe(fragmentNode);
+    expect(material.colorNode).toBe(colorNode);
     expect(material.version).toBe(version);
 
     material.applyBlendingMode('additive');
     expect(material.depthTest).toBe(false);
     expect(material.vertexNode).toBe(vertexNode);
-    expect(material.fragmentNode).toBe(fragmentNode);
+    expect(material.colorNode).toBe(colorNode);
     expect(material.version).toBe(version);
   });
+});
+
+// geometry-subset: gsplat normal uses a different fragment branch from the other types.
+describe.each(materials.filter(([name]) => name !== 'gsplats'))(
+  '%s TSL blend factors',
+  (_name, make) => {
+    it('switches normal ↔ luminous without invalidating the node graph', () => {
+      const material = make();
+      material.applyBlendingMode('normal');
+      const version = material.version;
+      const colorNode = material.colorNode;
+
+      material.applyBlendingMode('luminous');
+      expect(material.blending).toBe(THREE.AdditiveBlending);
+      expect(material.colorNode).toBe(colorNode);
+      expect(material.version).toBe(version);
+
+      material.applyBlendingMode('normal');
+      expect(material.blending).toBe(THREE.NormalBlending);
+      expect(material.colorNode).toBe(colorNode);
+      expect(material.version).toBe(version);
+    });
+  }
+);
+
+it('gsplats switch max ↔ opaque blend equations without rebuilding their peak graph', () => {
+  const material = new GSplatTSLMaterial({ blendingMode: 'max' });
+  const version = material.version;
+  const vertexNode = material.vertexNode;
+  const colorNode = material.colorNode;
+
+  material.applyBlendingMode('opaque');
+  expect(material.blendEquation).toBe(THREE.AddEquation);
+  expect(material.depthWrite).toBe(true);
+  expect(material.vertexNode).toBe(vertexNode);
+  expect(material.colorNode).toBe(colorNode);
+  expect(material.version).toBe(version);
+
+  material.applyBlendingMode('max');
+  expect(material.blendEquation).toBe(THREE.MaxEquation);
+  expect(material.depthWrite).toBe(false);
+  expect(material.vertexNode).toBe(vertexNode);
+  expect(material.colorNode).toBe(colorNode);
+  expect(material.version).toBe(version);
 });

@@ -528,6 +528,55 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
     expect(webglErrors.length).toBe(0);
   });
 
+  test('WebGPU applies gsplat blend pipeline changes in both directions without a graph rebuild', async ({
+    page,
+  }) => {
+    await page.goto(`/?src=${GSPLAT_OVERLAP_FIXTURE}&renderer=webgpu&debug&dpr=1`);
+    await waitForLuxarReady(page);
+    await waitForGSplatsCommitted(page);
+
+    const offsets: Array<[number, number]> = [];
+    for (let x = 0.1; x <= 0.9; x += 0.05) {
+      for (let y = 0.1; y <= 0.9; y += 0.05) offsets.push([x, y]);
+    }
+    const pixels = async () => {
+      await waitForNextRender(page, 3);
+      return samplePixelsAt(page, 'canvas#app', offsets, 'framebuffer');
+    };
+    const changeMode = async (mode: 'max' | 'opaque') => {
+      await page.evaluate((nextMode) => {
+        (window as any).__luxarDebug.scene.traverse((obj: any) => {
+          if (obj.userData?.nodeType === 'gsplats') obj.material?.applyBlendingMode(nextMode);
+        });
+      }, mode);
+    };
+    const replaceWithFreshClones = async () => {
+      await page.evaluate(() => {
+        (window as any).__luxarDebug.scene.traverse((obj: any) => {
+          if (obj.userData?.nodeType === 'gsplats' && obj.material) {
+            obj.material = obj.material.clone();
+          }
+        });
+      });
+    };
+
+    await changeMode('max'); // Enter the peak-projection, alpha=1 graph variant.
+    const max = await pixels();
+    await changeMode('opaque'); // Same graph; only the pipeline state changes.
+    const switchedOpaque = await pixels();
+    await replaceWithFreshClones();
+    const freshOpaque = await pixels();
+    expect(switchedOpaque).toEqual(freshOpaque);
+
+    await changeMode('max');
+    const switchedMax = await pixels();
+    await replaceWithFreshClones();
+    const freshMax = await pixels();
+    expect(switchedMax).toEqual(freshMax);
+    expect(max).toEqual(freshMax);
+    expect(switchedOpaque).not.toEqual(switchedMax);
+  });
+
   test('background splat shows through the overlap (real alpha-over)', async ({ page }) => {
     // Scope: this gate owns only "both splats visible + the background
     // survives the overlap". The exact blend state is asserted by
