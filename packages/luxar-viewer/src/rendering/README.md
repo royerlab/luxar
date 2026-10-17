@@ -643,7 +643,7 @@ postProcessing.updateDetectorNoiseSettings({
 - SSAA above 1x suspends MSAA; disable SSAA to see the configured MSAA mode
 - Check console for GPU support warnings
 - Under WebGL2, MSAA requires float-buffer extensions on the active context; check `RendererCapabilities.maxMSAASamples > 0`
-- Under WebGPU, MSAA is native (no extension required); the same `maxMSAASamples` query reports the adapter's supported sample counts
+- Native WebGPU uses 4x MSAA (or 0 in compatibility mode); the WebGL2 bridge and WebGL use their context's `MAX_SAMPLES` limit. The settings control offers only usable counts.
 - Will not show effect with additive blending
 - Try switching to normal blending mode to verify
 

@@ -724,6 +724,60 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     mgr.dispose();
   });
 
+  it('allocates 4 samples for a native WebGPU 2x request and reports that count', async () => {
+    await loadTslMaterials();
+    const capabilities = mockCaps('webgpu');
+    materialManager.setCaps(capabilities);
+    const renderer = makeMockRenderer() as Renderer & {
+      backend: { isWebGPUBackend: boolean };
+    };
+    renderer.backend = { isWebGPUBackend: true };
+    const mgr = new PostProcessingManager(
+      renderer,
+      capabilities,
+      new THREE.Scene(),
+      new THREE.PerspectiveCamera(),
+      { width: 64, height: 64 }
+    );
+    expect(mgr.setMSAASamples(2)).toBe(4);
+    expect(mgr.setMSAAEnabled(true)).toBe(true);
+    expect(peek(mgr).hdrTarget.samples).toBe(4);
+    mgr.dispose();
+  });
+
+  it('retains bridge sample counts on a WebGPU surface', async () => {
+    await loadTslMaterials();
+    const capabilities = mockCaps('webgpu', { maxMSAASamples: 8 });
+    materialManager.setCaps(capabilities);
+    const renderer = makeMockRenderer() as Renderer & {
+      backend: { isWebGLBackend: boolean };
+    };
+    renderer.backend = { isWebGLBackend: true };
+    const mgr = new PostProcessingManager(
+      renderer,
+      capabilities,
+      new THREE.Scene(),
+      new THREE.PerspectiveCamera(),
+      { width: 64, height: 64 }
+    );
+    expect(mgr.getSupportedMSAASamples()).toEqual([0, 2, 4, 8]);
+    expect(mgr.setMSAASamples(2)).toBe(2);
+    expect(mgr.setMSAAEnabled(true)).toBe(true);
+    expect(peek(mgr).hdrTarget.samples).toBe(2);
+    mgr.dispose();
+  });
+
+  it('treats zero samples as MSAA off even after an enabled target existed', () => {
+    const mgr = makeManager();
+    mgr.setMSAAEnabled(true);
+    expect(peek(mgr).hdrTarget.samples).toBe(4);
+    expect(mgr.setMSAASamples(0)).toBe(0);
+    expect(peek(mgr).hdrTarget.samples).toBe(0);
+    expect(mgr.setMSAAEnabled(true)).toBe(false);
+    expect(peek(mgr).hdrTarget.samples).toBe(0);
+    mgr.dispose();
+  });
+
   it('logs the effective MSAA state while SSAA suspends configured samples', () => {
     const mgr = makeManager();
     mgr.setMSAAEnabled(true);

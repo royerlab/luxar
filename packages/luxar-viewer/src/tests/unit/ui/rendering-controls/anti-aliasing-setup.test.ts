@@ -16,6 +16,8 @@ import { setupAntiAliasingControls } from '../../../../ui/rendering-controls/set
 interface ControllerStub {
   name: ReturnType<typeof vi.fn>;
   onChange: ReturnType<typeof vi.fn>;
+  hide: ReturnType<typeof vi.fn>;
+  updateDisplay: ReturnType<typeof vi.fn>;
   domElement: HTMLElement;
   _onChangeFn: ((value: unknown) => void) | null;
 }
@@ -24,6 +26,8 @@ function makeController(): ControllerStub {
   const ctrl: ControllerStub = {
     name: vi.fn(),
     onChange: vi.fn(),
+    hide: vi.fn(),
+    updateDisplay: vi.fn(),
     domElement: document.createElement('div'),
     _onChangeFn: null,
   };
@@ -87,6 +91,7 @@ interface ContextStubs {
     setFXAAEnabled: ReturnType<typeof vi.fn>;
     setMSAAEnabled: ReturnType<typeof vi.fn>;
     setMSAASamples: ReturnType<typeof vi.fn>;
+    getSupportedMSAASamples: ReturnType<typeof vi.fn>;
   };
   saveSettings: ReturnType<typeof vi.fn>;
   triggerAnimation: ReturnType<typeof vi.fn>;
@@ -108,8 +113,9 @@ function makeContext(initialSettings: Partial<ContextStubs['settings']> = {}): C
     setSSAAEnabled: vi.fn(),
     setSSAAMultiplier: vi.fn(),
     setFXAAEnabled: vi.fn(),
-    setMSAAEnabled: vi.fn(),
-    setMSAASamples: vi.fn(),
+    setMSAAEnabled: vi.fn().mockImplementation((value: boolean) => value),
+    setMSAASamples: vi.fn().mockImplementation((value: number) => value),
+    getSupportedMSAASamples: vi.fn().mockReturnValue([0, 2, 4, 8]),
   };
   const saveSettings = vi.fn();
   const triggerAnimation = vi.fn();
@@ -225,6 +231,16 @@ describe('setupAntiAliasingControls', () => {
   });
 
   describe('MSAA toggle', () => {
+    it('restores the checkbox when the manager refuses to enable MSAA', () => {
+      stubs.postProcessing.setMSAAEnabled.mockReturnValue(false);
+      setupAntiAliasingControls(stubs.context);
+      const msaaToggle = stubs.aaFolder.controllers[2];
+      msaaToggle._onChangeFn?.(true);
+      expect(stubs.settings.msaaEnabled).toBe(false);
+      expect(msaaToggle.updateDisplay).toHaveBeenCalled();
+      expect(stubs.aaFolder.subFolders.get('MSAA Settings')?.hide).toHaveBeenCalled();
+    });
+
     it('forwards on + opens/shows MSAA sub-folder', () => {
       setupAntiAliasingControls(stubs.context);
       const msaaToggle = stubs.aaFolder.controllers[2];
@@ -251,6 +267,23 @@ describe('setupAntiAliasingControls', () => {
   });
 
   describe('MSAA samples', () => {
+    it('offers only native WebGPU 4x and snaps a saved 2x value', () => {
+      stubs.postProcessing.getSupportedMSAASamples.mockReturnValue([0, 4]);
+      stubs.postProcessing.setMSAASamples.mockReturnValue(4);
+      stubs.settings.msaaSamples = 2;
+      setupAntiAliasingControls(stubs.context);
+      const msaaSub = stubs.aaFolder.subFolders.get('MSAA Settings')!;
+      expect(msaaSub.add).toHaveBeenCalledWith(stubs.settings, 'msaaSamples', [4]);
+      expect(stubs.settings.msaaSamples).toBe(4);
+    });
+
+    it('hides MSAA controls when the backend cannot multisample', () => {
+      stubs.postProcessing.getSupportedMSAASamples.mockReturnValue([0]);
+      setupAntiAliasingControls(stubs.context);
+      expect(stubs.aaFolder.controllers[2].hide).toHaveBeenCalled();
+      expect(stubs.aaFolder.subFolders.get('MSAA Settings')?.add).not.toHaveBeenCalled();
+    });
+
     it('forwards the sample count value to postProcessing', () => {
       setupAntiAliasingControls(stubs.context);
       const msaaSub = stubs.aaFolder.subFolders.get('MSAA Settings')!;

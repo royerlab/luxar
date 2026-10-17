@@ -303,6 +303,7 @@ export function createRendererCapabilities(
     renderer as unknown as {
       backend?: {
         isWebGPUBackend?: boolean;
+        compatibilityMode?: boolean;
         device?: { limits?: { maxTextureDimension2D?: number } };
         gl?: WebGL2RenderingContext;
       };
@@ -329,12 +330,23 @@ export function createRendererCapabilities(
     }
   }
 
+  let maxMSAASamples = 4;
+  if (backend?.isWebGPUBackend === true) {
+    maxMSAASamples = backend.compatibilityMode === true ? 0 : 4;
+  } else if (backend?.gl && typeof backend.gl.getParameter === 'function') {
+    const bridgeSamples: unknown = backend.gl.getParameter(backend.gl.MAX_SAMPLES);
+    maxMSAASamples =
+      typeof bridgeSamples === 'number' && Number.isInteger(bridgeSamples) && bridgeSamples > 0
+        ? bridgeSamples
+        : 0;
+  }
+
   return {
     apiSurface: 'webgpu',
     framebufferYDown,
     readbackYDown: backend?.isWebGPUBackend === true,
     hdr,
-    maxMSAASamples: 4, // WebGPU adapters guarantee at least 4× MSAA
+    maxMSAASamples,
     maxTextureSize,
     maxRenderbufferSize,
     pointSizeRange: [1, 1024],
