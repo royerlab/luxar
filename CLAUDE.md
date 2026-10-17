@@ -39,9 +39,9 @@ count automatically (except in `--tile`/`--plan-box` workers). A parent-provided
 kernels of a 3D CPU fit use the physical cores by default. `LUXAR_CPU_THREADS=N`
 sets the width explicitly, and `0` disables the torch adjustment. For a demo,
 a benchmark or a library call, export the width you want. Set `MKL_NUM_THREADS`
-too, not just `OMP_NUM_THREADS`: torch
-takes its intra-op count from MKL here, so overriding OMP alone still leaves
-`torch.get_num_threads() == 1` before the CLI adjustment. Outside the CLI the
+too, not just `OMP_NUM_THREADS`: torch takes its intra-op count from MKL here,
+so overriding OMP alone still leaves `torch.get_num_threads() == 1` before the
+CLI adjustment. Outside the CLI the
 numba kernel width comes from `LUXAR_CPU_THREADS` only.
 ```bash
 LUXAR_CPU_THREADS=8 hatch run luxar gsplat fit vol.tiff out.gsplats.zarr --device cpu
