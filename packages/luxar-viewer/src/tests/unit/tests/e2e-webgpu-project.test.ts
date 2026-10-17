@@ -12,7 +12,11 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { requiresNativeWebGPU, withWebGPURenderer } from '../../e2e/webgpu-project';
+import {
+  isUnpinnedViewerPage,
+  requiresNativeWebGPU,
+  withWebGPURenderer,
+} from '../../e2e/webgpu-project';
 
 const BASE = 'http://127.0.0.1:5173';
 
@@ -64,5 +68,24 @@ describe('requiresNativeWebGPU', () => {
     'not a url',
   ])('does not require it of %s', (url) => {
     expect(requiresNativeWebGPU(url)).toBe(false);
+  });
+});
+
+describe('isUnpinnedViewerPage', () => {
+  it.each([`${BASE}/?debug`, `${BASE}/index.html?src=x`])(
+    'detects a viewer page that bypassed the rewrite: %s',
+    (url) => {
+      expect(isUnpinnedViewerPage(url)).toBe(true);
+    }
+  );
+
+  it.each([
+    `${BASE}/?renderer=webgpu`,
+    `${BASE}/?renderer=webgl`,
+    `${BASE}/?renderer`,
+    `${BASE}/tsl-harness.html`,
+    'about:blank',
+  ])('leaves pinned and non-viewer pages alone: %s', (url) => {
+    expect(isUnpinnedViewerPage(url)).toBe(false);
   });
 });

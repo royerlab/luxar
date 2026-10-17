@@ -5,16 +5,16 @@
 import { test, Page } from '@playwright/test';
 
 import { isTypingSurfaceInPage } from './page-predicates';
-import { isWebGPUProject, requiresNativeWebGPU } from './webgpu-project';
+import { isUnpinnedViewerPage, isWebGPUProject, requiresNativeWebGPU } from './webgpu-project';
 
 /**
  * Wait for Luxar to fully initialize
  * Increased timeout for E2E tests with real dataset loading
  *
  * In the native-WebGPU project (`chromium-webgpu`, see `webgpu-project.ts`)
- * this is also where that project's premise is enforced: a viewer page asking
- * for `renderer=webgpu` must have come up on a native, non-fallback WebGPU
- * adapter, or the call throws — see {@link assertNativeWebGPUIfRequired}.
+ * this is also where that project's premise is enforced: viewer pages must
+ * select a renderer, and those asking for `renderer=webgpu` must have come up
+ * on a native, non-fallback WebGPU adapter — see {@link assertNativeWebGPUIfRequired}.
  */
 export async function waitForLuxarReady(page: Page, timeout = 45000): Promise<void> {
   await page.waitForFunction(
@@ -56,7 +56,14 @@ export async function assertNativeWebGPUIfRequired(page: Page): Promise<void> {
     // Called outside a running test (a generator script): nothing to enforce.
     return;
   }
-  if (!inWebGPUProject || !requiresNativeWebGPU(page.url())) return;
+  if (!inWebGPUProject) return;
+  if (isUnpinnedViewerPage(page.url())) {
+    throw new Error(
+      `chromium-webgpu project: ${page.url()} is a viewer page that bypassed the ` +
+        'renderer=webgpu rewrite. Use the shared page fixture or withWebGPURenderer.'
+    );
+  }
+  if (!requiresNativeWebGPU(page.url())) return;
 
   const probe = await probeWebGPUBackend(page);
   const adapter = probe.adapter;

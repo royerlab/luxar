@@ -16,7 +16,8 @@
  *    to every viewer URL the spec did not already pin with `renderer=`.
  * 2. `waitForLuxarReady` (helpers.ts) fails fast, through
  *    {@link requiresNativeWebGPU}, when such a page did not come up on a
- *    native, non-fallback WebGPU backend. A silent WebGL2 fallback would turn
+ *    native, non-fallback WebGPU backend. It also rejects viewer pages that
+ *    bypassed the URL rewrite. A silent WebGL2 fallback would turn
  *    the whole project into a second copy of the default one.
  * 3. {@link skipUnlessWebGL} keeps out the specs that drive raw WebGL
  *    (`WEBGL_lose_context`, a `webgl2` context's own error queue), which have
@@ -122,4 +123,15 @@ export function requiresNativeWebGPU(pageURL: string): boolean {
     url.searchParams.get('renderer') === 'webgpu' &&
     !url.searchParams.has('webgpuForceWebgl')
   );
+}
+
+/** Whether a viewer page has no renderer selection and bypassed the fixture rewrite. */
+export function isUnpinnedViewerPage(pageURL: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(pageURL);
+  } catch {
+    return false;
+  }
+  return isViewerPage(url) && !url.searchParams.has('renderer');
 }

@@ -113,8 +113,8 @@ What the project changes, all in `webgpu-project.ts`:
   already carry a `renderer=` parameter. Harness pages, embed examples and
   explicitly pinned `renderer=webgl` loads are untouched.
 - **Fail closed.** `waitForLuxarReady` throws if such a page came up on three's
-  WebGL2 fallback or on a software adapter, rather than letting the project
-  quietly re-run the WebGL suite. `LUXAR_E2E_WEBGPU_ALLOW_FALLBACK=1` accepts a
+  WebGL2 fallback or on a software adapter, and rejects viewer pages that
+  bypass the URL rewrite. `LUXAR_E2E_WEBGPU_ALLOW_FALLBACK=1` accepts a
   SwiftShader adapter (for a GPU-less box; slow, and not what users run).
   Pages with `webgpuForceWebgl` are exempt: they ask for the fallback.
 - **GL error checks.** `getWebGLErrors` drains the renderer's uncaptured GPU
@@ -133,8 +133,9 @@ What the project changes, all in `webgpu-project.ts`:
   overwrite those baselines with WebGPU pixels.
 
 Specs that import `test` from `@playwright/test` directly do not get the URL
-rewrite. The viewer specs among them import `rendererTest` from `./fixtures`
-instead, which adds only the rewrite (see [Shared Fixture](#shared-fixture-fixturests)).
+rewrite. Viewer specs needing WebGPU coverage use `test` or `rendererTest` from
+`./fixtures` for a shared `page`; specs creating their own page apply
+`withWebGPURenderer` before navigation (see [Shared Fixture](#shared-fixture-fixturests)).
 
 ### Parallelism is sized to the machine
 
