@@ -112,6 +112,22 @@ describe('WebGPUDeviceRecovery', () => {
     expect(h.deps.onLost).not.toHaveBeenCalled();
   });
 
+  it('suppresses restoration when disposed during a rebuild', async () => {
+    let finish!: (ok: boolean) => void;
+    const h = harness(() => new Promise<boolean>((resolve) => (finish = resolve)));
+    h.devices[0].lose({ reason: 'unknown' });
+    await settle();
+    expect(h.deps.recreateRenderer).toHaveBeenCalledTimes(1);
+    h.recovery.dispose();
+    finish(true);
+    await settle();
+    expect(h.deps.onRestored).not.toHaveBeenCalled();
+    expect(h.deps.onUnrecoverable).not.toHaveBeenCalled();
+    h.devices[1].lose({ reason: 'unknown' });
+    await settle();
+    expect(h.deps.recreateRenderer).toHaveBeenCalledTimes(1);
+  });
+
   it('simulateLoss runs the same sequence without a real loss', async () => {
     const h = harness(async () => true);
     await h.recovery.simulateLoss();

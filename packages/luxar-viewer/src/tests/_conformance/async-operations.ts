@@ -295,6 +295,11 @@ export const ASYNC_OPERATIONS: readonly AsyncOperation[] = [
     tests: ['rendering/post-processing-manager-lifecycle.test.ts'],
   },
   {
+    id: 'WebGPU device recovery',
+    symbols: ['scene/scene-manager/render-pipeline/webgpu-device-recovery.ts#WebGPUDeviceRecovery'],
+    tests: ['scene/scene-manager/render-pipeline/webgpu-device-recovery.test.ts'],
+  },
+  {
     id: 'UI panels with async work',
     symbols: [
       'ui/data-loading-monitor.ts#DataLoadingMonitor',
