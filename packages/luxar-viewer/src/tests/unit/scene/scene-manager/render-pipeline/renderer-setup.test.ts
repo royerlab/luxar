@@ -289,13 +289,15 @@ describe('createWebGPURenderer', () => {
 
   it('preserves early adapter fallback without constructing a WebGPU renderer', async () => {
     const adapter = makeAdapter({ maxVertexBuffers: 4 });
-    stubNavigatorGpu(vi.fn().mockResolvedValue(adapter));
+    let resolveAdapter!: (adapter: ReturnType<typeof makeAdapter>) => void;
+    stubNavigatorGpu(vi.fn(() => new Promise((resolve) => (resolveAdapter = resolve))));
 
     const early = requestWebGPUDevice();
+    expect(loadTslMaterials).toHaveBeenCalledTimes(1);
+    resolveAdapter(adapter);
     const result = await createWebGPURenderer(makeCanvas(), { preRequestedWebGPUDevice: early });
     expect(result).toEqual({ fallback: true });
     expect(adapter.requestDevice).not.toHaveBeenCalled();
-    expect(loadTslMaterials).not.toHaveBeenCalled();
     expect(webgpuConstructorArgs).toHaveLength(0);
   });
 

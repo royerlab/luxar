@@ -1,7 +1,7 @@
 /**
  * Renderer-construction helpers extracted from SceneManager.
  *
- * Four concerns live here:
+ * Five concerns live here:
  *
  *   - `configureRendererBackend` — point the backend-dependent rendering
  *     paths (texture layout, ordering applies, RenderObject eviction,
@@ -11,9 +11,10 @@
  *   - `createWebGLRenderer` — construct a `THREE.WebGLRenderer`
  *     from the configured WebGL2 context, build the renderer-
  *     capabilities snapshot, configure HDR.
- *   - `createWebGPURenderer` — construct a `WebGPURenderer`,
- *     request a high-limit core adapter / device (workaround for
- *     compat-mode limits), init() it, and build the
+ *   - `requestWebGPUDevice` — start a high-limit core adapter / device
+ *     request and the lazy TSL chunk fetch before renderer construction.
+ *   - `createWebGPURenderer` — consume a bootstrap request once (or start
+ *     a fresh one), construct and init() a `WebGPURenderer`, and build the
  *     capabilities snapshot.
  *
  * Each `create*Renderer` function returns
@@ -339,10 +340,13 @@ async function requestCoreAdapter(): Promise<GPUAdapterLike | null> {
   return adapter ?? gpu.requestAdapter().catch(() => null);
 }
 
-/** Start adapter/device acquisition without loading Three's WebGPU chunk. */
+/** Start adapter/device acquisition and the lazy WebGPU chunk fetch. */
 export async function requestWebGPUDevice(
   rendererOverride?: 'webgl' | 'webgpu'
 ): Promise<WebGPUDeviceRequest> {
+  // Start the chunk transfer before waiting for the adapter. The awaited
+  // setup load joins this request, or retries if the prefetch fails.
+  void loadTslMaterials().catch(() => undefined);
   const adapter = await requestCoreAdapter();
   if (!adapter) return { fallback: false, device: undefined };
   const adapterMax = adapter.limits?.maxVertexBuffers;
@@ -364,9 +368,6 @@ export async function requestWebGPUDevice(
   const requestedMax = typeof adapterMax === 'number' ? Math.min(adapterMax, 16) : undefined;
   const requiredLimits = requestedDeviceLimits(adapter.limits, requestedMax);
   logRequestedDeviceLimits(adapter.limits, requiredLimits, requestedMax);
-  // The TSL registry imports the lazy three/webgpu chunk. Start both while
-  // requestDevice is in flight, and let the normal setup await retry a failure.
-  void loadTslMaterials().catch(() => undefined);
   try {
     const device = await adapter.requestDevice({
       requiredFeatures: [...adapter.features],
@@ -524,10 +525,9 @@ function resolveWebGPUDeviceRequest(options: CreateWebGPUOptions): Promise<WebGP
 }
 
 /**
- * Construct a `WebGPURenderer`. Negotiates a "core" adapter with
- * raised vertex-buffer / buffer-size / texture-dimension limits to
- * bypass three's compat-mode defaults (see
- * {@link forwardedAdapterLimits}). Performs `await renderer.init()`
+ * Construct a `WebGPURenderer`. Consumes a pre-requested device or starts a
+ * fresh request with raised limits to bypass three's compat-mode defaults
+ * (see {@link forwardedAdapterLimits}). Performs `await renderer.init()`
  * before returning.
  *
  * When the adapter advertises `maxVertexBuffers < 8` (WebGPU spec
@@ -567,7 +567,7 @@ export async function createWebGPURenderer(
   // bundle, which every WebGL session then downloads and never runs (issue
   // #1679). `selectBackend()` is pure and synchronous and has already chosen
   // WebGPU by the time we get here. The TSL prefetch usually put this chunk
-  // on the wire during requestDevice; direct callers still fetch it here.
+  // on the wire before adapter negotiation; direct callers still fetch it here.
   const { WebGPURenderer } = await import('three/webgpu');
   const hdrPlan = planHdrOutput(options, device);
 
