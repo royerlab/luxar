@@ -789,6 +789,15 @@ def test_python_recipe_gets_the_gain_convert_stamps(tmp_path: Path) -> None:
     order = ["z", "y", "x"]
 
     attrs = auto_exposure_attrs(src, dim_order=order, camera=camera)
+    assert attrs == auto_exposure_attrs(
+        src, dim_order=order, dimensions=Dimensions.default_3d(), camera=camera
+    )
+    side_camera = CameraConfig(view_axis="yz")
+    assert auto_exposure_attrs(src, dim_order=order, camera=side_camera) == (
+        auto_exposure_attrs(
+            src, dim_order=order, dimensions=Dimensions.default_3d(), camera=side_camera
+        )
+    )
     assert attrs["normalize_amplitudes"] is False
     assert attrs["amplitude_normalization_mode"] == "projected"
     assert attrs["projected_sum_axis"] == "z"

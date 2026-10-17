@@ -46,6 +46,12 @@ from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, 
 import numpy as np
 
 from luxar.gsplats.amplitude_reference import automatic_factor, sample_reference
+from luxar.gsplats.exposure_attrs import (
+    NORMALIZATION_MODE_ATTR,
+    PROJECTED_SUM_AXIS_ATTR,
+    PROJECTED_SUM_P999_ATTR,
+    PROJECTED_SUM_TARGET_ATTR,
+)
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -973,7 +979,7 @@ def _world_index(letter: str, displayed: List[str]) -> int:
 
 
 def opening_view_columns(
-    dimensions: "Dimensions",
+    dimensions: Optional["Dimensions"],
     dim_order: Optional[Sequence[str]] = None,
     camera: Optional["CameraConfig"] = None,
 ) -> Tuple[List[int], Optional[int], Optional[str]]:
@@ -984,8 +990,12 @@ def opening_view_columns(
     third displayed dimension. A planar scene has no view axis. Raises
     ``ValueError`` when a displayed dimension has no center column.
     """
-    names = _column_names(dimensions, dim_order)
-    displayed = [dimensions.dimensions[i].name for i in dimensions.displayed]
+    if dimensions is None:
+        names = list(dim_order) if dim_order is not None else ["x", "y", "z"]
+        displayed = ["x", "y", "z"]
+    else:
+        names = _column_names(dimensions, dim_order)
+        displayed = [dimensions.dimensions[i].name for i in dimensions.displayed]
     columns = [names.index(name) for name in displayed]
     if len(displayed) != 3:
         return columns, None, None
@@ -1043,17 +1053,14 @@ def opening_truncation_radius(node: "GSplatNode") -> float:
     return DEFAULT_TRUNCATION_RADIUS
 
 
-def _default_dimensions(ndim: int, dim_order: Optional[Sequence[str]]) -> "Dimensions":
-    """``Dimensions.default_3d()`` for a 3-column store; anything else must say."""
-    from luxar.core.dimensions import Dimensions
-
+def _check_default_dimensions(ndim: int, dim_order: Optional[Sequence[str]]) -> None:
+    """Only xyz 3-column stores can use the viewer's default dimensions."""
     names = list(dim_order) if dim_order is not None else ["x", "y", "z"][:ndim]
     if ndim != 3 or sorted(n.lower() for n in names) != ["x", "y", "z"]:
         raise ValueError(
             f"a {ndim}-column store needs dimensions= (the scene's Dimensions) "
             "to know which columns are displayed"
         )
-    return Dimensions.default_3d()
 
 
 def auto_exposure_attrs(
@@ -1114,13 +1121,6 @@ def auto_exposure_attrs(
         ...                               colormap=cmap),
         ...     )
     """
-    from luxar.core.group.gsplats_pipeline.amplitude_norm import (
-        NORMALIZATION_MODE_ATTR,
-        PROJECTED_SUM_AXIS_ATTR,
-        PROJECTED_SUM_P999_ATTR,
-        PROJECTED_SUM_TARGET_ATTR,
-    )
-
     node, source_stats = _exposure_source(source)
     if stats is None:
         stats = source_stats
@@ -1136,7 +1136,7 @@ def auto_exposure_attrs(
     if blending_mode not in SUMMING_BLENDING_MODES or centers.shape[0] == 0:
         return per_splat_only()
     if dimensions is None:
-        dimensions = _default_dimensions(centers.shape[1], dim_order)
+        _check_default_dimensions(centers.shape[1], dim_order)
     if target is None:
         target = default_target_brightness(tone_mapping)
     try:
@@ -1150,7 +1150,9 @@ def auto_exposure_attrs(
             colors,
             view_axis=axis_col,
             display_dims=columns,
-            hidden=opening_hidden_axes(dimensions, centers, dim_order),
+            hidden=opening_hidden_axes(dimensions, centers, dim_order)
+            if dimensions is not None
+            else [],
             colormap=colormap,
             opacity=opacity,
             data_range=stamped_amplitude_window(node, per_splat),
