@@ -2,9 +2,10 @@
 
 Verified from `cli/gsplat_ops/transforms/`, `scene_commands.py`, and
 `inspect_commands.py`. The read-only inspection commands accept flat, partition,
-or nested LOD stores. `partition`, `cull`, `filter`, `slice`, `decimate`, and
-`merge` require a flat (matrix-shaped) store; run `luxar gsplat flatten` first
-for partition or nested inputs. These write-output commands take `--encoding`/`-e`
+or nested LOD stores. `partition`, `cull`, `filter`, `slice`, and `decimate`
+require a flat (matrix-shaped) store; run `luxar gsplat flatten` first
+for partition or nested inputs. `merge` flattens partition and nested inputs
+itself. These write-output commands take `--encoding`/`-e`
 (`auto`/`precision`/`memory`, default `auto`): `transform`, `slice`, `filter`,
 `cull`, `merge`, `partition`, `additive`, `convert`. `flatten` is precision-only.
 All of those
