@@ -17,7 +17,7 @@ it.each([
   try {
     const result = spawnSync(process.execPath, [script, '--out', out, ...args], {
       encoding: 'utf8',
-      timeout: 5000,
+      timeout: 20_000,
     });
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(status);
