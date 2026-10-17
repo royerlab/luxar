@@ -41,6 +41,27 @@ function fragmentFor(material: MegaShaderTSLMaterial): string {
 }
 
 describe('mega-shader HDR WGSL', () => {
+  it('pins the generated shoulder expression used by the numeric reference', () => {
+    const material = new MegaShaderTSLMaterial({
+      toneMapping: THREE.ReinhardToneMapping,
+      hdrOutputPeak: 3,
+    });
+    const wgsl = fragmentFor(material);
+    const start = wgsl.indexOf('\tif ( ( ( nodeVar3 > 0.5 )');
+    const end = wgsl.indexOf('\t} else {', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(wgsl.slice(start, end).replaceAll('\t', '  ')).toMatchInlineSnapshot(`
+      "  if ( ( ( nodeVar3 > 0.5 ) && ( object.nodeUniform5 > 1.0 ) ) ) {
+
+          nodeVar5 = max( ( object.nodeUniform5 - reinhardToneMapping( vec3<f32>( 0.5 ), 1.0 ).x ), 0.0001 );
+          nodeVar4 = min( ( nodeVar2 * vec3<f32>( ( ( object.nodeUniform5 - ( nodeVar5 * exp( ( ( ( - ( ( reinhardToneMapping( vec3<f32>( 0.501 ), 1.0 ).x - reinhardToneMapping( vec3<f32>( 0.499 ), 1.0 ).x ) / 0.002 ) ) * ( nodeVar3 - 0.5 ) ) / nodeVar5 ) ) ) ) / max( reinhardToneMapping( vec3<f32>( nodeVar3 ), 1.0 ).x, 0.000001 ) ) ) ), vec3<f32>( object.nodeUniform5 ) );
+
+      "
+    `);
+    material.dispose();
+  });
+
   it.each([
     [
       'Reinhard',
