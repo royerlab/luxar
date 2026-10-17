@@ -4784,12 +4784,54 @@ class TestCalibrateCommand:
         assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
 
         with open(out_json) as f:
-            region = json.load(f)["calibration_region"]
+            cal = json.load(f)
+        region = cal["calibration_region"]
         assert region is not None and region["strategy"] != "whole"
 
         assert "region-scoped" in result.stdout
         assert "--seeds" in result.stdout
         assert "--tiling content" in result.stdout
+        # ...and it restates the crop K* as a whole-volume --seeds budget, by
+        # the content planner's per-box density transfer.
+        whole = cal["whole_volume_seeds"]
+        assert whole is not None and whole["n_boxes"] > 1
+        assert whole["seeds"] > 0
+        assert f"fit --seeds {whole['seeds']:,}" in " ".join(result.stdout.split())
+
+    def test_cal_region_prints_a_whole_volume_seeds_budget(
+        self,
+        runner: CliRunner,
+        multiblob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """``cal --region``: the crop K* comes with a whole-input --seeds budget."""
+        import json
+
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cal",
+                str(multiblob_volume),
+                str(out_json),
+                "--k-grid",
+                "30,90",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+                "--region",
+                ":20,:20,:",
+            ],
+        )
+        assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
+        whole = json.loads(out_json.read_text())["whole_volume_seeds"]
+        assert whole is not None and whole["n_boxes"] == 4
+        assert "region-scoped" in result.stdout
 
     def test_cal_default_k_star_is_not_flagged(
         self,

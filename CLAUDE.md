@@ -514,8 +514,12 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 
 # Tiling: `--tiling auto` (default) picks none/uniform/content automatically
 # (none if the volume fits one tile — a total voxel budget, so small/medium
-# stacks stay whole and avoid tile seams; content if a density is supplied;
-# else uniform). A tiled fit (`--tiling uniform` or `--tiling content`) emits a
+# stacks stay whole and avoid tile seams: 64 Mvoxel on the CPU, sized from the
+# GPU's free memory up to 256 Mvoxel on CUDA/MPS — so the choice is
+# MACHINE-DEPENDENT — where a whole fit was also ~2x faster than uniform tiles
+# at equal --seeds on a GB10; `--recipe` / `-j` > 1 keep a volume over 64 Mvoxel
+# tiled; content if a density is supplied; else uniform). Uniform tiles are Hann-blended: seamless under additive, but
+# `max` blending shows a dark seam cross (convert warns; fit --tiling none). A tiled fit (`--tiling uniform` or `--tiling content`) emits a
 # `kind=partition` by default (one part per tile/box, for viewer frustum
 # culling); pass `--flat` for a single flat leaf. Whole-volume fits
 # (`--tiling none`/small auto) stay a single leaf.
@@ -716,7 +720,13 @@ luxar gsplat compare fitted.gsplats.zarr original.npy --output-json metrics.json
 # Sweeps K, identifies the held-out PSNR peak (K*), and reports the noise floor.
 # Uses the manuscript's Noise2Self protocol: 5% donut-median masking; held-out
 # evaluation against the original (pre-mask) values at masked voxels.
-luxar gsplat cal volume.tiff cal.json                            # 10-point sweep, [1K, 512K]
+# Defaults: bounds sized from the foreground voxel count (k_max = fg voxels / 2,
+# <= 512K), early stop after 2 points with no > 0.1 dB gain (or 1 point >= 0.2 dB
+# below the best), one extension below a
+# bottom-edge K*, K* on the FOREGROUND held-out curve; cal.json rewritten after every
+# point (Ctrl-C keeps them). Opt out: explicit bounds / --no-early-stop /
+# --no-extend-below / --k-star-metric psnr_minmax.
+luxar gsplat cal volume.tiff cal.json                            # 10 points, bounds from the foreground
 luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000  # Faster: 5-point sweep
 luxar gsplat cal volume.zarr cal.json --k-grid '1000,4000,16000,64000,256000'  # Explicit
 luxar gsplat cal volume.tiff cal.json --pdf cal_report.pdf       # Multi-page PDF report
@@ -730,12 +740,16 @@ luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomia
 luxar gsplat cal volume.zarr cal.json --fit-exponent --exponent-scales 128,192,256
 # `cal` applies the SAME `--floor` (default auto) as `fit`, subtracting the floor
 # ONCE up front so K* is measured on floor-suppressed data (matching how you fit).
-# Pass `--floor none` to reproduce the legacy hard-min manuscript numbers.
-luxar gsplat cal volume.tiff cal.json --floor none               # legacy (no floor)
+# The legacy hard-min manuscript numbers need the manuscript sweep too:
+luxar gsplat cal volume.tiff cal.json --floor none --k-star-metric psnr_minmax \
+    --k-min 1000 --k-max 512000 --no-early-stop --no-extend-below  # legacy
 # Output: K* + curve type {peak | plateau | signal_limited | low_k_optimal} + noise-floor σ̂ + PSNR ceiling.
 # A K* on the smallest/largest grid point, or a curve moving < 1 dB over the whole grid,
 # prints a ⚠ (also under --quiet) and lands in cal.json `held_out_peak.warnings`:
 # the sweep did not bracket the optimum, so extend --k-min / --k-max / --k-grid.
+# K* is a SEEDING budget: cal prints what `fit --seeds K*` will store after the
+# default cull. A --region/--auto-region K* is a crop budget: cal also prints a
+# whole-volume --seeds (cal.json `whole_volume_seeds`).
 # Then re-run fit at the recommended K: luxar gsplat fit volume.zarr out.zarr --seeds <K*>
 
 # Canonical end-to-end pipeline: cal → fit (at K*) → lod (--recipe flat|stream|tiles|overview|adaptive|levels)

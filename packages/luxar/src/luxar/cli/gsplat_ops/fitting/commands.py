@@ -158,13 +158,27 @@ def calibrate_command(
     k_grid: Optional[str] = typer.Option(
         None,
         "--k-grid",
-        help="Explicit comma-separated K values (e.g. '1000,4000,16000'). Overrides --n-grid/--k-min/--k-max.",
+        help="Explicit comma-separated K values (e.g. '1000,4000,16000'). "
+        "Overrides --n-grid/--k-min/--k-max. Early stop and the low-edge "
+        "extension still apply (add --no-early-stop --no-extend-below to fit "
+        "exactly these points).",
     ),
     n_grid: int = typer.Option(
         10, "--n-grid", help="Number of K values when --k-grid is not given"
     ),
-    k_min: int = typer.Option(1_000, "--k-min", help="Smallest K in the sweep"),
-    k_max: int = typer.Option(512_000, "--k-max", help="Largest K in the sweep"),
+    k_min: Optional[int] = typer.Option(
+        None,
+        "--k-min",
+        help="Smallest K in the sweep (default: derived from the volume with "
+        "--k-max; 1000 when only --k-max is given).",
+    ),
+    k_max: Optional[int] = typer.Option(
+        None,
+        "--k-max",
+        help="Largest K in the sweep (default: derived from the volume's "
+        "foreground voxel count, at most 512000; 512000 when only --k-min is "
+        "given). See `cal.json` sweep.auto_grid for the derivation.",
+    ),
     progression: str = typer.Option(
         "exp",
         "--progression",
@@ -250,16 +264,18 @@ def calibrate_command(
         "empty = whole axis). K* is then the budget for THAT crop: pass it to "
         "`fit --region` with the same spans. Excludes --auto-region.",
     ),
-    # Regime-robust extensions (all opt-in; defaults preserve manuscript behaviour)
+    # K* metric (CLI default: foreground; psnr_minmax is the manuscript metric)
     k_star_metric: str = typer.Option(
-        "psnr_minmax",
+        "psnr_foreground",
         "--k-star-metric",
         help=(
-            "Metric for K* selection: psnr_minmax (default, manuscript) | "
-            "psnr_foreground | psnr_fg_weighted | gain. For sparse or "
-            "deconvolved data, psnr_fg_weighted balances signal fidelity against "
-            "background haze. gain is diagnostic only: it selects identically "
-            "to psnr_minmax because its baseline is constant across K."
+            "Metric for K* selection: psnr_foreground (default: held-out PSNR "
+            "over foreground voxels, the score `fit` headlines) | psnr_minmax "
+            "(the manuscript's whole-volume metric, always reported alongside) "
+            "| psnr_fg_weighted | gain. On a noisy sparse stack the whole-volume "
+            "curve is nearly flat and its K* moved across a 4x range with the "
+            "grid; the foreground curve picked the same K* on every grid. gain "
+            "is diagnostic only: it selects identically to psnr_minmax."
         ),
     ),
     fg_bg_ratio: float = typer.Option(
@@ -317,8 +333,10 @@ def calibrate_command(
             "Measure the saturation exponent alpha (K~features^alpha) instead of "
             "assuming the default 0.44: calibrate K* at several region scales "
             "(--exponent-scales) and regress log K* on log n_features. The fitted "
-            "alpha is written into splat_density. WARNING: multiplies runtime by "
-            "the number of scales (each is a full K-sweep)."
+            "alpha is written into splat_density. Each scale re-runs the main "
+            "sweep's K grid in full (no early stop) and detects K* with the same "
+            "--k-star-metric (psnr_foreground by default, so alpha regresses "
+            "foreground K*). WARNING: multiplies runtime by the number of scales."
         ),
     ),
     exponent_scales: Optional[str] = typer.Option(
@@ -328,6 +346,23 @@ def calibrate_command(
             "Comma-separated region edge lengths for --fit-exponent "
             "(default '128,192,256'). Each yields one (n_features, K*) point."
         ),
+    ),
+    early_stop: bool = typer.Option(
+        True,
+        "--early-stop/--no-early-stop",
+        help="End the sweep once the K*-metric has gained no more than 0.1 dB "
+        "for 2 consecutive grid points, or one point falls >= 0.2 dB below the "
+        "best, and the measured curve is already decidable (a peak, or a flat "
+        "plateau spanning >= 0.3 dB). On a creeping curve with no knee the "
+        "early-stopped K* follows where the sweep stopped (as the full-grid K* "
+        "follows --k-max): use --no-early-stop with an explicit --k-max to see "
+        "the whole curve. Skipped K are recorded in cal.json under sweep.",
+    ),
+    extend_below: bool = typer.Option(
+        True,
+        "--extend-below/--no-extend-below",
+        help="When K* lands on the smallest grid point, fit up to 2 cheaper "
+        "points below it (once) so the optimum is bracketed.",
     ),
     # Optional outputs
     pdf_report: Optional[Path] = typer.Option(
@@ -404,6 +439,8 @@ def calibrate_command(
         voxel_size=voxel_size,
         physical=physical,
         region_spec=region,
+        early_stop=early_stop,
+        extend_below=extend_below,
     )
 
 

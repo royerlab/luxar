@@ -608,7 +608,7 @@ luxar gsplat compare fitted.gsplats.zarr original.tiff --at-fit-resolution
 #### `luxar gsplat cal`
 Calibrate the splat count `K` via blind-spot cross-validation. Sweeps `K`, identifies the held-out PSNR peak (`K*`) using the manuscript's Noise2Self protocol (5% donut-median masking), and reports the noise floor. Defaults to the `n2s` fit preset so the held-out curve has enough optimizer budget to reach the overfit regime.
 ```bash
-luxar gsplat cal volume.tiff cal.json                            # 10-point sweep, [1K, 512K]
+luxar gsplat cal volume.tiff cal.json                            # 10 points, bounds from the foreground
 luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000  # Faster sweep
 luxar gsplat cal volume.zarr cal.json --k-grid '1000,4000,16000,64000,256000'  # Explicit
 luxar gsplat cal volume.tiff cal.json --pdf cal_report.pdf       # Multi-page PDF report
@@ -616,6 +616,26 @@ luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomia
 luxar gsplat cal stack.ome.tif cal.json --physical               # K* for a `fit --physical`
 luxar gsplat cal big.zarr cal.json --region 40:120,:,1024:2048   # K* for `fit --region` (same spans)
 ```
+
+Sweep defaults (details and measurements: the `luxar-gsplat-pipeline` skill's calibration-sweep reference):
+with no `--k-grid`/`--k-min`/`--k-max` the bounds come from the volume (`k_max` =
+foreground voxels / 2, clamped to [4000, 512000]; `k_min` = `k_max` / 512; recorded
+under `sweep.auto_grid`); the sweep stops after 2 points without a > 0.1 dB gain
+on the K\*-metric, or at once when a point falls ≥ 0.2 dB below the best, but
+only once the measured curve spans the 0.3 dB knee margin and is not still
+climbing (`--no-early-stop`); a K\* on the smallest point that is also the
+curve's best adds up to 2 cheaper points below it, once (`--no-extend-below`); and K\* is chosen on the
+FOREGROUND held-out curve (`--k-star-metric psnr_foreground`; the whole-volume
+`psnr_minmax` K\* is still reported). Each point prints elapsed time and an ETA,
+and `cal.json` is rewritten after every point (`status: partial`); Ctrl-C keeps
+the measured points (`status: interrupted`, exit 130) and prints the best-so-far
+K\*. PSNRs print on the robust peak (p99.99 - floor), as `fit`/`compare` report
+them; `cal.json` also keeps the full-range curves. K\* is a SEEDING budget: the
+table's `stored` column and the closing line say how many splats `fit --seeds K`
+keeps after its default speck pruning + cull (estimated from cal's own fits). A
+`--region`/`--auto-region` K\* is a crop budget; `cal` also prints (and stores as
+`whole_volume_seeds`) a whole-input `--seeds` budget, the content planner's density
+transfer summed over crop-sized boxes.
 
 `--voxel-size` / `--physical` resolve the spacing exactly as `fit` does. Each K is
 fitted WITH that spacing (it shapes the fit: anisotropic initial sigma,
@@ -632,7 +652,7 @@ extra); `cal` checks for it before the sweep and exits at once when it is
 missing. The per-K slice montages of `--keep-fits` are pages of that report, so
 `--keep-fits` alone needs nothing extra.
 
-**Options**: `--k-grid` (explicit comma-separated K values), `--n-grid` (default 10), `--k-min` (default 1000), `--k-max` (default 512000), `--progression` (exp/power), `--power`, `--mask-seed`, `--mask-fraction` (default 0.05), `--preset` (default n2s), `--config`, `--floor` (background floor / DC-offset suppression, default `auto` — K* is measured on floor-suppressed data, matching `fit`; pass `none` for the legacy hard-min behavior), `--device/-d`, `--k-star-metric` (psnr_minmax/psnr_foreground/psnr_fg_weighted/gain), `--fg-bg-ratio` (default 1, equal total foreground/background weight for `psnr_fg_weighted`), `--auto-region/--no-auto-region` + `--region-size`/`--region-strategy` (calibrate on a content-rich sub-region), `--feature-metric`, `--saturation-exponent`, `--rd-model/--no-rd-model`, `--fit-exponent`/`--exponent-scales` (measure the saturation exponent alpha instead of assuming the default), `--pdf` (multi-page PDF report), `--keep-fits` (persist per-K fits), `--quiet/-q`, plus volume-loader pass-through (`--channel/-c`, `--timepoint`, `--array-key`, `--axes`). For sparse or deconvolved volumes, prefer `psnr_fg_weighted`: it balances signal fidelity against background haze. `gain` remains a useful reported diagnostic, but its K* is identical to `psnr_minmax` because the predict-zero baseline is constant across K.
+**Options**: `--k-grid` (explicit comma-separated K values), `--n-grid` (default 10), `--k-min`/`--k-max` (default: from the volume, above), `--early-stop/--no-early-stop`, `--extend-below/--no-extend-below`, `--progression` (exp/power), `--power`, `--mask-seed`, `--mask-fraction` (default 0.05), `--preset` (default n2s), `--config`, `--floor` (background floor / DC-offset suppression, default `auto` — K* is measured on floor-suppressed data, matching `fit`; pass `none` for the legacy hard-min behavior), `--device/-d`, `--k-star-metric` (psnr_foreground default / psnr_minmax / psnr_fg_weighted / gain), `--fg-bg-ratio` (default 1, equal total foreground/background weight for `psnr_fg_weighted`), `--auto-region/--no-auto-region` + `--region-size`/`--region-strategy` (calibrate on a content-rich sub-region), `--feature-metric`, `--saturation-exponent`, `--rd-model/--no-rd-model`, `--fit-exponent`/`--exponent-scales` (measure the saturation exponent alpha instead of assuming the default), `--pdf` (multi-page PDF report), `--keep-fits` (persist per-K fits), `--quiet/-q`, plus volume-loader pass-through (`--channel/-c`, `--timepoint`, `--array-key`, `--axes`). For sparse or deconvolved volumes, prefer `psnr_fg_weighted`: it balances signal fidelity against background haze. `gain` remains a useful reported diagnostic, but its K* is identical to `psnr_minmax` because the predict-zero baseline is constant across K.
 
 #### `luxar gsplat migrate-format`
 Convert a legacy `.gsplats.zarr` layout to the current node-tree format. Five input shapes are auto-detected: v1.0 (single flat splat set), v1.1 (multi-LOD additive `/splats/lod_<i>/` subgroups), a pre-v2.0 substitutive directory (`manifest.json` + `level_<i>.gsplats.zarr`), the v2.0 `substitutive_<s>/additive_<a>/` matrix, and a v3.0/v3.1 store whose `kind=lod` groups still carry the pre-v3.2 `pixel_size` selector attrs (rewritten as `selector: "screen-area"` + derived per-child `coverage_fraction`). All migrate to a single current-format (v3.4) `.gsplats.zarr`. By default the output adopts the AUTO encoding policy, so legacy float32 Cholesky factors are re-encoded as the split diagonal/off-diagonal arrays with certified uint8 per-column quantization (the encode-time covariance certificate escalates to uint16 when the measured Σ error demands it); pass `--lossless` to keep them float32 for archival fidelity.

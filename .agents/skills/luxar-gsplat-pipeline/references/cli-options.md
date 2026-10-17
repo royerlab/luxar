@@ -13,7 +13,7 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 ### Core
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--seeds` / `-s` | auto | int = splat count — a WHOLE-VOLUME budget (what a default `cal` reports as K*); a tiled fit divides it across the tiles that survive the resolved floor plus Hann window instead of giving each tile the full count. `fit --tiling uniform` (sequential AND the `-j N` parent, which forwards an exact per-worker count) and `batch-fit` with tile-local reads use a mass-weighted split: Hann voxels × `(mean above-floor intensity / ceiling)^--saturation-exponent`. A tile holding >= 1/4 of the equal mass share never gets < 1/4 of the equal seed share, so dim structured tiles are proportional rather than starved. Equal share (`ceil(K/N)`) only where nobody weighed it: a hand-run `--tile k/M`, and a `batch-fit` plan with tile-local reads off. The occupancy scan does not replay optional per-tile denoising, so denoising can still empty a counted tile. `K` below the non-empty count gives 1 per such tile; a tile weighted to zero is skipped. A non-positive int is left alone so the fitter still rejects it. float in (0,1] = compression ratio, scale-free so applied per tile unchanged; `auto`. Ignored under `--tiling content` (budgets come from the density plan). A `cal --auto-region` K* is region-scoped, NOT a whole-volume budget — transfer it via `--cal` + `--tiling content`, not `--seeds` |
+| `--seeds` / `-s` | auto | int = splat count — a WHOLE-VOLUME budget (what a default `cal` reports as K*); a tiled fit divides it across the tiles that survive the resolved floor plus Hann window instead of giving each tile the full count. `fit --tiling uniform` (sequential AND the `-j N` parent, which forwards an exact per-worker count) and `batch-fit` with tile-local reads use a mass-weighted split: Hann voxels × `(mean above-floor intensity / ceiling)^--saturation-exponent`. A tile holding >= 1/4 of the equal mass share never gets < 1/4 of the equal seed share, so dim structured tiles are proportional rather than starved. Equal share (`ceil(K/N)`) only where nobody weighed it: a hand-run `--tile k/M`, and a `batch-fit` plan with tile-local reads off. The occupancy scan does not replay optional per-tile denoising, so denoising can still empty a counted tile. `K` below the non-empty count gives 1 per such tile; a tile weighted to zero is skipped. A non-positive int is left alone so the fitter still rejects it. float in (0,1] = compression ratio, scale-free so applied per tile unchanged; `auto`. Ignored under `--tiling content` (budgets come from the density plan). A `cal --auto-region` / `--region` K* is region-scoped, NOT a whole-volume budget — pass `--seeds` the whole-volume budget `cal` prints (`whole_volume_seeds` in cal.json), or transfer the density via `--cal` + `--tiling content` |
 | `--floor` | auto | background floor / DC-offset suppression subtracted (clip at 0) BEFORE normalization, so output amplitudes are background-relative. `auto` = histogram-mode estimate (capped at the median; a no-op on clean data). `pNN` = subtract that percentile of non-zero voxels; a plain number = fixed value; `none` or `0` = disable (legacy hard-min). Resolved against the WHOLE volume under any tiling — never against a tile or box crop, so every tile/box works from the same level. `uniform`/`content` resolve it once in the parent and pass the number down; a uniform `-j N` parent that resolves the level while weighing its tiles forwards that concrete level and the raw-input range, while a hand-run `--tile k/M` worker resolves the same spec against the same whole volume. A user numeric floor on that hand-run worker is guarded against the whole-volume maximum just as it is without tiling; a parent-forwarded level is marked resolved and applied verbatim |
 | `--iters` / `-n` | preset | max optimization iterations |
 | `--preset` | none | `draft` / `standard` / `hifi` / `ultra` / `n2s` (see preset table) |
@@ -173,9 +173,11 @@ block (saturation exponent alpha etc.) consumed by `fit --tiling content`.
 ### K grid
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--k-grid` | none | explicit K values (overrides n-grid/min/max) |
+| `--k-grid` | none | explicit K values (overrides n-grid/min/max); early stop and the low-edge extension still apply unless `--no-early-stop --no-extend-below` |
 | `--n-grid` | 10 | number of K values |
-| `--k-min` / `--k-max` | 1000 / 512000 | sweep bounds |
+| `--k-min` / `--k-max` | from the volume | sweep bounds. Unset: `k_max` = foreground voxels / 2 (clamped to [4000, 512000]), `k_min` = `k_max` / 512 (recorded in `cal.json` `sweep.auto_grid`); one given: the other keeps 1000 / 512000 |
+| `--early-stop` / `--no-early-stop` | on | stop after 2 points with no > 0.1 dB gain on the K*-metric, or one point ≥ 0.2 dB below the best |
+| `--extend-below` / `--no-extend-below` | on | K* on the smallest point: fit up to 2 cheaper points below, once |
 | `--progression` | exp | `exp` (log-spaced) / `power` |
 | `--power` | 2 | exponent when `--progression power` |
 
@@ -195,12 +197,14 @@ that crop: use the same spans on `fit --region`; excludes `--auto-region`).
 
 `cal` also honours `--floor` (default `auto`, same semantics as `fit`): the floor
 is subtracted ONCE up front so K* is measured on floor-suppressed data (matching
-how you fit). Pass `--floor none` to reproduce the legacy hard-min numbers.
+how you fit). The legacy hard-min manuscript numbers need `--floor none` AND the
+manuscript sweep: `--k-star-metric psnr_minmax --k-min 1000 --k-max 512000
+--no-early-stop --no-extend-below`.
 
 ### Regime-robust extensions
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--k-star-metric` | psnr_minmax | `psnr_minmax` / `psnr_foreground` / `psnr_fg_weighted` / `gain`; prefer `psnr_fg_weighted` for sparse or deconvolved volumes. `gain` is diagnostic and selects identically to `psnr_minmax` because its baseline is constant across K |
+| `--k-star-metric` | psnr_foreground | `psnr_foreground` / `psnr_minmax` (manuscript; always reported) / `psnr_fg_weighted` / `gain`. The foreground curve picked one K* on every grid tried; the whole-volume one moved 250 → 2000 on a noisy sparse stack (see calibration-sweep.md). `gain` is diagnostic and selects identically to `psnr_minmax` because its baseline is constant across K |
 | `--fg-bg-ratio` | 1.0 | foreground:background total-weight ratio for `psnr_fg_weighted`; 1 gives equal total weight over the held-out subset |
 | `--auto-region` / `--no-auto-region` | off | calibrate on a content-rich sub-region |
 | `--region-size` | 256 | auto-region edge (voxels) |
@@ -208,11 +212,15 @@ how you fit). Pass `--floor none` to reproduce the legacy hard-min numbers.
 | `--feature-metric` | peaks | `peaks` / `edges` / `intensity` |
 | `--saturation-exponent` | 0.44 | K ~ features^alpha |
 | `--rd-model` / `--no-rd-model` | on | fit parametric error-vs-K model |
-| `--fit-exponent` | false | measure alpha across scales (multiplies runtime) |
+| `--fit-exponent` | false | measure alpha across scales (multiplies runtime): each scale re-runs the main K grid in full (no early stop) and regresses K* under the same `--k-star-metric` — foreground K* by default now, `psnr_minmax` before |
 | `--exponent-scales` | 128,192,256 | region edges for `--fit-exponent` |
 
 ### Outputs
 `--pdf PATH` (report), `--keep-fits DIR` (persist per-K fits + slice montages), `--quiet`/`-q`.
+`cal.json` is rewritten after every point (`status: partial`); Ctrl-C keeps the
+measured points (`status: interrupted`, exit 130) and prints the best-so-far K*.
+PSNRs print on the robust peak (p99.99 - floor, as `fit`/`compare`); `cal.json`
+keeps both (`held_out_psnr_robust_db` beside the full-range `held_out_psnr_db`).
 
 ---
 

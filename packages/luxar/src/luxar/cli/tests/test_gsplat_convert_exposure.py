@@ -886,3 +886,32 @@ def test_python_recipe_falls_back_when_a_hidden_dim_has_no_column(
         attrs = auto_exposure_attrs(src, dim_order=["z", "y", "x"], dimensions=dims)
     assert attrs["amplitude_normalization_mode"] == "per_splat"
     assert attrs["display_gain"] == pytest.approx(_per_splat(src), rel=1e-3)
+
+
+def test_max_blending_warns_on_a_tiled_fit(tmp_path: Path) -> None:
+    """`max` over Hann-blended tiles shows seams; convert says so (only then)."""
+    from luxar.cli.gsplat_ops.scene_build import max_blending_seam_warning
+
+    src = _dense(tmp_path / "in.gsplats.zarr")
+    plain = _convert(
+        CliRunner(), src, tmp_path / "a.luxar.zarr", "--blending-mode", "max"
+    )
+    assert "dark seams" not in plain
+    data = GSplatData.load(src)
+    data.stats["tiled_fitting"] = True
+    tiled = tmp_path / "tiled.gsplats.zarr"
+    data.save(tiled)
+    output = _convert(
+        CliRunner(), tiled, tmp_path / "b.luxar.zarr", "--blending-mode", "max"
+    )
+    assert "dark seams" in output and "--tiling none" in output
+    additive = _convert(CliRunner(), tiled, tmp_path / "c.luxar.zarr")
+    assert "dark seams" not in additive
+    # content tiling keeps whole splats per core box; a partition cut from ONE
+    # fit records that fit's iterations; an unmarked partition is conditional.
+    assert (
+        max_blending_seam_warning("max", {"planned_fit": True}, partition=True) is None
+    )
+    assert max_blending_seam_warning("max", {"iterations": 10}, partition=True) is None
+    hedged = max_blending_seam_warning("max", {}, partition=True)
+    assert hedged is not None and hedged.startswith("⚠ --blending-mode max: if this")

@@ -91,8 +91,8 @@ Two things trip up nearly everyone who views their own fitted volume:
 
 - **A dense fluorescence volume under `additive` blending saturates to a white
   blob**, because every splat along a ray adds. Pick the blending for the data:
-  `blending_mode="max"` (a maximum-intensity projection), or `"volumetric"` with
-  `absorption=` for emission–absorption depth; then set exposure with `opacity`
+  `blending_mode="max"`, or `"volumetric"` with `absorption=` for
+  emission–absorption depth; then set exposure with `opacity`
   (see "Appearance is authored" below). The modes are `normal`, `additive`, `max`,
   `opaque`, `luminous`, `volumetric`. `luxar gsplat convert` keeps the
   amplitudes in source data units and auto-exposes a separate `display_gain`
@@ -119,6 +119,14 @@ Two things trip up nearly everyone who views their own fitted volume:
 
   Pass the store PATH (it reads the unit labels' stats and takes tiled fits).
   Each channel is exposed on its own; where channels overlap their colours add.
+
+  **`max` is not a MIP.** It keeps the brightest SINGLE splat on each ray, and a
+  structure many splats share (any splat fit) reads dimmer than its voxel MIP.
+  On a UNIFORM TILED fit it shows a dark seam cross: the Hann-blended tiles split
+  each overlap's signal between their splats (Hann weights of 1/2 each at
+  mid-overlap), which additive sums back and `max` does not: a 20-35% dip in a
+  measured 3x3-tile fit (`convert` warns). For max-blend
+  viewing, fit with `--tiling none`.
 
 ## Dimensions = the coordinate system
 

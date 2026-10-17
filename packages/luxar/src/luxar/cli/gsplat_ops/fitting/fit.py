@@ -271,6 +271,25 @@ def _declare_pre_downscale_source(
     fit_config["source_shape"] = [int(s) for s in original_shape]
 
 
+def _fit_device_name(thread_config: dict) -> Optional[str]:
+    """The device a fit with ``thread_config`` runs on (``cuda``/``mps``/``cpu``).
+
+    Sizes ``--tiling auto``'s whole-volume budget; ``None`` if unresolvable.
+    """
+    from luxar.gsplats.utils.device import resolve_torch_device
+
+    try:
+        return str(
+            resolve_torch_device(
+                thread_config.get("device"),
+                use_cuda=thread_config.get("use_cuda", True),
+                use_metal=thread_config.get("use_metal", True),
+            )
+        )
+    except (RuntimeError, ValueError):
+        return None
+
+
 def run_fit_volume(
     input_path: Optional[Path] = typer.Argument(
         None, help="Input volume (.npy/.npz/.tiff/.zarr)"
@@ -937,6 +956,8 @@ def run_fit_volume(
                 parsed_tile_volume_shape or volume.shape,
                 tile_size,
                 _has_density,
+                device=_fit_device_name(thread_config),
+                wants_tiles=recipe is not None or str(jobs).strip() not in ("", "1"),
             )
             _require_content_for_plan_only(plan_only, resolved_tiling)
 

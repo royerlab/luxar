@@ -43,9 +43,8 @@ Always prefer this order; each step writes a file the next consumes:
 
 ```bash
 # 1. Calibrate K (Noise2Self blind-spot sweep). Writes cal.json.
-luxar gsplat cal volume.tiff cal.json                  # 10-point sweep [1K, 512K]
+luxar gsplat cal volume.tiff cal.json                  # 10 points, bounds from the foreground
 luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000   # faster
-luxar gsplat cal volume.tiff cal.json --pdf cal_report.pdf        # PDF report
 
 # 2. Fit at the recommended K* (read K* from cal.json, or use a --preset).
 luxar gsplat fit volume.tiff splats.gsplats.zarr --seeds <K*>
@@ -56,24 +55,23 @@ luxar gsplat fit data.zarr.zip splats.gsplats.zarr --timepoint 0 --channel 0
 luxar gsplat lod splats.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6
 ```
 
-**Check where K\* landed before trusting it.** A K\* at the bottom or top edge of
-the swept grid (or a `signal_limited` curve) means the sweep did not bracket the
-peak — widen the grid (`--k-min`/`--k-max`, or an explicit `--k-grid`) and rerun.
-The faster `--n-grid 5 --k-max 128000` sweep above can cap K\* at its own ceiling;
-a K\* that moves when the grid moves was never measured.
+**Check where K\* landed before trusting it.** `cal` sizes its grid from the
+foreground voxel count, stops once the foreground held-out curve stops gaining
+or falls past its peak, and extends once below a bottom-edge K\*; a K\* still on an edge (or
+`signal_limited`) is a bound: widen `--k-min`/`--k-max` and rerun. K\* is a SEEDING
+budget: `cal` prints what `fit --seeds K*` will store. A `--region`/`--auto-region`
+K\* is a crop budget; `cal` also prints a whole-volume `--seeds` for the simple path.
+Details and measurements: [references/calibration-sweep.md](references/calibration-sweep.md).
 
 Presets: `draft` / `standard` / `hifi` / `ultra` / `n2s` (`n2s` = the manuscript's
 blind-spot protocol, and `cal`'s default). Override any preset knob, e.g.
 `--iters 8000`. Generate a config template with
 `luxar gsplat fit --dump-config --preset hifi > config.yaml`, then `--config config.yaml`.
 
-Every preset and all three Python fitters default to `cull_retention=0.999`, a
-near-lossless trim keeping 99.9% of cumulative amplitude (the earlier 0.95 flat
-default could produce a false `signal_limited` curve in `cal`, which therefore
-defaults to `n2s`: 20,000 iters). A bare `fit` (= the `standard` preset) and both
-tiling paths use 0.999. Still, **`--seeds` proposes and `cull_retention` disposes**: on
-heavy-tailed sparse data the culled tail is a lot of splats, so the final count
-is not `--seeds`. A bigger preset is not free either: `early_stop_patience` grows
+Every preset, fitter and tiling path defaults to `cull_retention=0.999` (keep
+99.9% of cumulative amplitude; `cal` defaults to `n2s`, 20,000 iters). Still,
+**`--seeds` proposes and the closing cull disposes**: on heavy-tailed sparse data
+the culled tail is a lot of splats (cal's `stored` column shows how many). A bigger preset is not free either: `early_stop_patience` grows
 with it (200 → 500, tested only every 25th iteration, so the larger one burns AT
 LEAST 500 iterations after the last improvement), and it silently moves
 `max_eccentricity` (10 → 20 from `draft` to `ultra`; `n2s` stays at 10).
@@ -209,14 +207,14 @@ Each of these has burned a whole fit cycle. Check them before you launch a long 
   --seeds K` divides K across the tiles it makes. The *Python* `fit_tiled_gsplats`
   does NOT — an integer `seeds` there is handed to every tile unchanged, so N tiles
   fit ~N × seeds splats. And `--tiling auto` is the DEFAULT, so a gigavoxel volume
-  tiles whether or not you asked (the whole-volume threshold is 64 Mvoxel).
+  tiles whether or not you asked (see "Tiled fits" for the whole-volume threshold).
 - **`--cal` / `--k-star-ref` / `--feature-*` apply ONLY to `--tiling content`.**
   Under `--tiling none|uniform` they are ignored — the CLI prints a `⚠ … apply only
   to --tiling content` line, but in a long arbol log that scrolls past. The symptom
   is a fit that lands at a few hundred splats when you asked for K* = 128,000,
   because `seeds` silently fell back to `auto`. A `cal --auto-region` K* is
-  *region-scoped* anyway: transfer it with `--cal` + `--tiling content`, never by
-  passing it to `--seeds`.
+  *region-scoped* anyway: pass `--seeds` the whole-volume budget `cal` prints for
+  it, or transfer the density with `--cal` + `--tiling content`.
 - **`fit` refuses an existing output** unless you pass `--overwrite` (like `lod`,
   `additive`, `transform`), so a re-run of a chained script stops at the first fit.
 - **A/B two fits only at equal splat count.** Splat count dominates every quality
@@ -335,12 +333,13 @@ wrapper; use those recipes directly. Large byte size alone is not a reason to ch
 
 ## Tiled fits (large volumes)
 
-`--tiling auto` (default) picks none/uniform/content. A tiled fit emits a
-`kind=partition` (one part per tile) for viewer frustum culling; `--flat` forces a
-single leaf.
+`--tiling auto` (default) picks none/uniform/content: whole volume up to 64 Mvoxel
+on CPU, up to 256 M by the GPU's free memory (machine-dependent; faster on a GB10);
+`--recipe`/`-j` keep >64 M tiled. A tiled fit emits a `kind=partition`; `--flat`
+forces one leaf. Uniform tiles are Hann-blended: `max` blending shows a seam cross.
 
 ```bash
-# Uniform tiles with seamless Hann stitching.
+# Uniform tiles with Hann stitching (seamless under additive blending).
 luxar gsplat fit large.zarr out.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32
 # Parallel tiles on ONE GPU (no Slurm); -j auto accounts for GPU memory plus
 # shared host RAM/CPU limits.

@@ -243,6 +243,42 @@ def _graft_extent(node: Any, opts: SceneBuildOptions) -> Any:
     return np.array([bounds[0], bounds[1]], dtype=np.float32)
 
 
+def max_blending_seam_warning(
+    blending_mode: str, stats: Dict[str, Any], *, partition: bool
+) -> Optional[str]:
+    """The warning for ``max`` blending over a fit whose tiles were blended.
+
+    ``max`` keeps the brightest SINGLE splat on each ray; it is not a
+    maximum-intensity projection of the fitted volume. A uniform tiled fit
+    multiplies every tile by a Hann window, so where two tiles overlap each
+    one's splats carry a window-weighted share of the signal — about half at
+    the middle of the overlap. Additive blending sums the shares back to the
+    whole; ``max`` keeps only the larger one, so the tile overlaps render as a
+    dark seam cross. A content-tiled fit (``planned_fit``) keeps whole splats by
+    core box and has no shares to lose, and a partition cut from ONE fit
+    (``gsplat partition`` / ``lod --recipe tiles``) carries that fit's own
+    ``iterations`` stamp. A partition with no record of any of these is warned
+    about conditionally (a ``batch-fit`` merge of uniform tiles carries no root
+    marker).
+    """
+    if blending_mode != "max" or stats.get("planned_fit"):
+        return None
+    if stats.get("tiled_fitting"):
+        lead = "this is a uniform tiled fit"
+    elif partition and "iterations" not in stats:
+        lead = "if this partition came from uniform tiles (fit/batch-fit)"
+    else:
+        return None
+    return (
+        f"⚠ --blending-mode max: {lead}, expect dark seams where tiles "
+        "overlap. `max` shows the brightest single splat per ray, not a "
+        "maximum-intensity projection: the Hann-blended tiles split each "
+        "overlap's signal between their splats, which additive blending sums "
+        "back but max does not. For max-blend viewing refit with --tiling none "
+        "(whole volume), or use additive/volumetric blending."
+    )
+
+
 def build_gsplat_scene(
     input_path: Path, output_path: Path, opts: SceneBuildOptions
 ) -> None:
@@ -264,6 +300,11 @@ def build_gsplat_scene(
         amplitude_bits = resolve_amplitude_bits(
             "auto", source_dtype=stats.get("source_dtype")
         )
+    seam_warning = max_blending_seam_warning(
+        opts.blending_mode, stats, partition=not matrix
+    )
+    if seam_warning:
+        aprint(seam_warning)
     if matrix:
         data, extent = _matrix_source(node, opts)
     else:

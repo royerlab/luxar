@@ -32,9 +32,6 @@
     "packages/luxar/src/luxar/cli/gsplat_ops/benchmark.py::benchmark_gpu": [
       21
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/fitting/calibrate.py::run_calibrate_command": [
-      30
-    ],
     "packages/luxar/src/luxar/cli/gsplat_ops/fitting/fit.py::run_fit_volume": [
       16
     ],
@@ -331,9 +328,6 @@
     ],
     "packages/luxar/src/luxar/gsplats/calibration/curve_analysis.py::find_k_star": [
       11
-    ],
-    "packages/luxar/src/luxar/gsplats/calibration/driver.py::calibrate": [
-      20
     ],
     "packages/luxar/src/luxar/gsplats/culling.py::cull_by_contribution": [
       16

@@ -800,14 +800,18 @@ result.to_json(Path("cal.json"))
 ### CLI
 
 ```bash
-luxar gsplat cal volume.tiff cal.json                            # default 10-point sweep
+luxar gsplat cal volume.tiff cal.json                            # 10 points, bounds from the foreground, early stop
 luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000  # faster
 luxar gsplat cal volume.zarr cal.json --k-grid '1000,4000,16000,64000,256000'
 luxar gsplat cal volume.tiff cal.json --pdf cal.pdf              # multi-page report
 luxar gsplat cal volume.tiff cal.json --pdf cal.pdf --keep-fits fits/  # + slice montage
 ```
 
-After calibration, re-fit at the recommended budget: `luxar gsplat fit volume.zarr out.zarr --seeds <K*>`.
+After calibration, re-fit at the recommended budget: `luxar gsplat fit volume.zarr out.zarr --seeds <K*>`
+(a `--region`/`--auto-region` K* is a crop budget: use the whole-volume `--seeds` it prints).
+The CLI's sweep defaults (data-derived bounds, early stop, one extension below a
+bottom-edge K*, foreground K*-metric, per-point `cal.json` checkpoints) are in
+`calibration/README.md`.
 
 ### Functions
 
@@ -817,13 +821,13 @@ After calibration, re-fit at the recommended budget: `luxar gsplat fit volume.za
 - `estimate_noise_floor(V) -> NoiseFloor` — ensemble of Laplacian MAD (Immerkaer 1996), Haar HH-subband MAD (Donoho & Johnstone 1994), and background-region MAD; the median across estimators is robust to one outlier on the low side (typical when the dark tail is quantised).
 - `build_k_grid(explicit=None, n_points=10, k_min=1_000, k_max=512_000, progression="exp", power=2)` — exponential (geometric/log-spaced) or polynomial K grid; `explicit` takes precedence when given.
 - `find_k_star(k_values, held_out_psnr_values) -> HeldOutPeak` — hybrid peak-detection rule from `splat_count_vs_quality §4.2`: returns the argmax when both flanks are ≥ 0.1 dB below; the smallest K within 0.3 dB of the max for a plateau; the largest K when the curve is monotone-rising in range (signal-limited).
-- `calibrate(V, k_grid, *, fit_kwargs=None, mask_seed=42, mask_fraction=0.05, donut_radius=1, keep_fits=None, progress_callback=None) -> CalibrationResult` — top-level driver.
+- `calibrate(V, k_grid, *, fit_kwargs=None, mask_seed=42, mask_fraction=0.05, donut_radius=1, keep_fits=None, progress_callback=None, sweep_control=None, checkpoint=None) -> CalibrationResult` — top-level driver (`sweep_control` enables early stop / the low-edge extension; `checkpoint` receives a partial result after every point; Ctrl-C raises `CalibrationInterrupted` carrying the measured points).
 
 ### Result Container
 
 `CalibrationResult` carries the full sweep:
 
-- `k_values_requested`, `k_values_effective` — splat counts before and after the post-fit cull.
+- `k_values_requested`, `k_values_effective` — the seeding budgets and the counts after the post-fit cull; `k_values_stored` / `k_star_stored` — what `fit --seeds K` stores after its default speck pruning + cull.
 - `held_out_psnr_db`, `train_psnr_db`, `held_out_mse` — at each K, against the original volume.
 - `full_psnr_db`, `full_ssim` — over the whole volume against the original (cross-run comparable).
 - `held_out_peak` (`HeldOutPeak`) — recommended `k_star`, curve `type`, `confidence_db`.
