@@ -465,6 +465,8 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
   it('releases every resized target on a DPR-size round trip', () => {
     const mgr = makeManager({ width: 64, height: 64 });
     mgr.setBloomEnabled(true);
+    mgr.setMSAAEnabled(true);
+    expect(peek(mgr).hdrTarget.samples).toBe(4);
     const targets = () => {
       const resources = mgr as unknown as {
         hdrTarget: THREE.WebGLRenderTarget;
@@ -494,6 +496,7 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
         return onDispose;
       });
       mgr.resize(width, height);
+      expect(peek(mgr).hdrTarget.samples).toBe(4);
       for (const onDispose of disposed) expect(onDispose).toHaveBeenCalledTimes(1);
     }
 

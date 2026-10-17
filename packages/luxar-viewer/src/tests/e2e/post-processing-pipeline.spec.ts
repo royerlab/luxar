@@ -74,11 +74,13 @@ test.describe('Post-Processing Pipeline', () => {
       const initialDpr = renderer.getPixelRatio();
       const reducedDpr = initialDpr * 0.75;
 
-      // Exercise the HDR, LDR/FXAA and bloom targets through the resize path.
+      // Exercise the multisampled HDR, LDR/FXAA and bloom targets through the resize path.
       postProcessing.setBloomEnabled(true);
       postProcessing.setFXAAEnabled(true);
+      postProcessing.setMSAAEnabled(true);
       const sample = () => ({
         dpr: renderer.getPixelRatio() as number,
+        samples: postProcessing.hdrTarget.samples as number,
         textures: renderer.info.memory.textures as number,
         targets: (renderer.info.memory.renderTargets as number | undefined) ?? null,
       });
@@ -108,9 +110,11 @@ test.describe('Post-Processing Pipeline', () => {
     }
     expect(counts.reducedDpr).toBeLessThan(counts.initialDpr);
     expect(counts.initial.dpr).toBe(counts.initialDpr);
+    expect(counts.initial.samples).toBeGreaterThan(0);
     expect(counts.initial.textures).toBeGreaterThan(0);
     const reducedCount = counts.afterSteps[0];
     expect(reducedCount.dpr).toBeCloseTo(counts.reducedDpr, 2);
+    expect(reducedCount.samples).toBeGreaterThan(0);
     expect(reducedCount.textures).toBeGreaterThan(0);
     expect(counts.afterSteps).toEqual([
       reducedCount,
