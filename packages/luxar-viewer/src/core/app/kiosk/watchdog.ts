@@ -14,10 +14,9 @@
  * three layers, cannot interfere with recovery, and inherently gives recovery
  * first refusal — the grace timer is simply cancelled if the context returns.
  *
- * WebGPU device loss has no canvas event and no recovery in this release, so it
- * arrives through `onUnrecoverableLoss` and always ends in the reload — after
- * the same grace period, which also spaces out reloads of a device that is
- * lost again at once.
+ * WebGPU device loss has no canvas event, so it arrives through `onDeviceLost`
+ * (and its recovery through `onDeviceRestored`); the viewer rebuilds the
+ * renderer on a fresh device, and the same grace period gives that its chance.
  *
  * Ports-injected (timers, reload, canvas) so a test can drive it without a
  * browser, and so nothing here reaches for a singleton it was not handed.
@@ -39,10 +38,12 @@ export interface KioskWatchdogPorts {
   /** Called instead of reloading when the context comes back in time. */
   onRecovered?: () => void;
   /**
-   * Subscribe to a loss nothing recovers from (WebGPU `device.lost`); returns
-   * the unsubscribe. Absent = only the WebGL canvas events are watched.
+   * Subscribe to a WebGPU device loss; returns the unsubscribe. Absent = only
+   * the WebGL canvas events are watched.
    */
-  onUnrecoverableLoss?: (listener: () => void) => () => void;
+  onDeviceLost?: (listener: () => void) => () => void;
+  /** Subscribe to a WebGPU device RECOVERY (cancels the pending reload); returns the unsubscribe. */
+  onDeviceRestored?: (listener: () => void) => () => void;
 }
 
 export interface KioskWatchdog {
@@ -86,7 +87,8 @@ export function startKioskWatchdog(ports: KioskWatchdogPorts): KioskWatchdog {
 
   ports.canvas.addEventListener('webglcontextlost', onLost);
   ports.canvas.addEventListener('webglcontextrestored', onRestored);
-  const unsubscribeLoss = ports.onUnrecoverableLoss?.(onLost);
+  const unsubscribeLoss = ports.onDeviceLost?.(onLost);
+  const unsubscribeRestore = ports.onDeviceRestored?.(onRestored);
 
   return {
     dispose(): void {
@@ -99,6 +101,7 @@ export function startKioskWatchdog(ports: KioskWatchdogPorts): KioskWatchdog {
       ports.canvas.removeEventListener('webglcontextlost', onLost);
       ports.canvas.removeEventListener('webglcontextrestored', onRestored);
       unsubscribeLoss?.();
+      unsubscribeRestore?.();
     },
   };
 }

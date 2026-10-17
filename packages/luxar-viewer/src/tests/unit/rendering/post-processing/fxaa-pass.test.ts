@@ -8,6 +8,7 @@ import type { RendererCapabilities } from '../../../../rendering/renderer-capabi
 function mockCaps(): RendererCapabilities {
   return {
     apiSurface: 'webgl2',
+    backendKind: 'webgl',
     framebufferYDown: false,
     readbackYDown: false,
     hdr: {

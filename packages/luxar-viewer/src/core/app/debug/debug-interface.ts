@@ -106,7 +106,9 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     get camera() {
       return ports.sceneManager.camera;
     },
-    renderer: ports.sceneManager.renderer,
+    get renderer() {
+      return ports.sceneManager.renderer;
+    },
     controls: ports.sceneManager.controls,
     postProcessing: ports.sceneManager.postProcessing,
     // The scene environment's state, and the `?bakeEnv` hand-off slot the
