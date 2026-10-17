@@ -230,12 +230,15 @@ def _resolve_reduction_device(
     """
     target_device = resolve_torch_device(device)
     if target_device.type == "mps":
-        warnings.warn(
-            f"{caller}: MPS backend lacks float64 support; falling back to CPU. "
-            "Pass device='cpu' explicitly to silence.",
-            RuntimeWarning,
-            stacklevel=3,
-        )
+        # Only an explicit MPS request deserves a warning; "auto" resolving to
+        # MPS on a Mac simply means "the CPU path", which the CLI cannot avoid.
+        if device is not None and str(device) != "auto":
+            warnings.warn(
+                f"{caller}: MPS backend lacks float64 support; falling back to "
+                "CPU (pass device='cpu' / --device cpu to silence).",
+                RuntimeWarning,
+                stacklevel=3,
+            )
         target_device = torch.device("cpu")
     return target_device
 
