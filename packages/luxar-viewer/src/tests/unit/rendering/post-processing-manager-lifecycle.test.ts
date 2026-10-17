@@ -745,6 +745,28 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     mgr.dispose();
   });
 
+  it('retains bridge sample counts on a WebGPU surface', async () => {
+    await loadTslMaterials();
+    const capabilities = mockCaps('webgpu', { maxMSAASamples: 8 });
+    materialManager.setCaps(capabilities);
+    const renderer = makeMockRenderer() as Renderer & {
+      backend: { isWebGLBackend: boolean };
+    };
+    renderer.backend = { isWebGLBackend: true };
+    const mgr = new PostProcessingManager(
+      renderer,
+      capabilities,
+      new THREE.Scene(),
+      new THREE.PerspectiveCamera(),
+      { width: 64, height: 64 }
+    );
+    expect(mgr.getSupportedMSAASamples()).toEqual([0, 2, 4, 8]);
+    expect(mgr.setMSAASamples(2)).toBe(2);
+    expect(mgr.setMSAAEnabled(true)).toBe(true);
+    expect(peek(mgr).hdrTarget.samples).toBe(2);
+    mgr.dispose();
+  });
+
   it('treats zero samples as MSAA off even after an enabled target existed', () => {
     const mgr = makeManager();
     mgr.setMSAAEnabled(true);
