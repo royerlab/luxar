@@ -23,9 +23,10 @@ export type { WebGPURenderer } from 'three/webgpu';
  *
  * `THREE.WebGLRenderer` is the production default (GLSL `ShaderMaterial`).
  * `WebGPURenderer` (TSL `NodeMaterial`) is selectable via
- * `?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`; it dispatches to a
- * real WebGPU adapter when available or falls back to its internal
- * WebGL2 backend. Consumers hold renderer references typed as `Renderer`.
+ * `?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`. Without a native
+ * WebGPU device, the explicit `?renderer=webgpu` may use three's internal
+ * WebGL2 backend; the environment selection falls back to `WebGLRenderer`.
+ * Consumers hold renderer references typed as `Renderer`.
  */
 export type Renderer = THREE.WebGLRenderer | WebGPURenderer;
 
