@@ -908,8 +908,7 @@ def run_fit_volume(
         from luxar.gsplats.utils.cpu_threads import cpu_threads_for
 
         thread_config = load_fit_config(preset, config, {"device": device})
-        # A tile/box worker is one of N processes its parent already sized
-        # against the CPU count, so it keeps the inherited thread count.
+        # A tile/box worker uses its parent's CPU thread share when provided.
         is_worker = (tile, plan_box) != (None, None)
         with (
             asection(f"Fitting Gaussian Splats: {input_path.name}"),

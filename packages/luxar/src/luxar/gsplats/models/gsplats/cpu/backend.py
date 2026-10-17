@@ -10,8 +10,8 @@
 * ``torch`` -- always the PyTorch renderer.
 
 ``LUXAR_CPU_THREADS`` sets the kernels' thread count (default: the physical
-cores available to this process). numba keeps its own thread pool, so this
-neither reads nor changes torch's intra-op setting.
+cores available to this process). numba keeps its own thread pool; CLI fit/cal
+configures torch's intra-op threads separately from the same variable.
 
 Nothing compiles at import: the kernels compile on first use and numba's
 ``cache=True`` stores them -- beside the module in a writable checkout, in the

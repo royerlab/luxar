@@ -115,8 +115,7 @@ def _worker_env(gpu: int, workers: dict[int, int], host_workers: int) -> dict[st
     if gpu < 0:
         from luxar.gsplats.utils.device import cpu_worker_threads_env
 
-        # CPU workers share the cores: without a share each one's native CPU
-        # kernels default to every physical core.
+        # CPU workers share the cores for native kernels and CLI torch setup.
         return {
             "CUDA_VISIBLE_DEVICES": "",
             QUALITY_WORKERS_PER_DEVICE_ENV: quality_workers,

@@ -78,7 +78,7 @@ plus the first-call JIT time; a quiet fit's one-line summary names
 | Variable | Values | Effect |
 |----------|--------|--------|
 | `LUXAR_CPU_BACKEND` | `auto` (default), `native`, `torch` | `auto` uses the kernels when numba imports; `native` raises if it does not; `torch` always uses the PyTorch renderer. |
-| `LUXAR_CPU_THREADS` | positive int or `0` | Kernel thread count (default: physical cores available to the process; `0` uses the default), resolved once per value. numba keeps its own pool; torch's intra-op setting is neither read nor changed here. Multi-worker CPU fits (`fit -j N`, content `-j N`, `batch-fit run --gpus cpu`, Slurm `--parallel`) give each worker its share unless you set a nonzero value. |
+| `LUXAR_CPU_THREADS` | positive int or `0` | A positive value sets both native kernel threads and CLI `fit`/`cal` torch threads. Unset or `0` uses available physical cores for the kernels; unset lets CLI torch auto widen to at most 8 threads when it has one, while `0` leaves torch alone. Multi-worker CPU fits (`fit -j N`, content `-j N`, `batch-fit run --gpus cpu`, Slurm `--parallel`) give each worker a share for both unless you set a nonzero value. |
 | `NUMBA_CACHE_DIR` | path | Where compiled kernels are cached (numba's own variable). |
 
 **Torch threads still matter.** With the render off torch, what remains on
