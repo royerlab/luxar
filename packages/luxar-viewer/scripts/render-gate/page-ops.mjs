@@ -381,6 +381,7 @@ export async function gpuCost({ k = 20, warm = 10, reps = 5 }) {
  *   pose: { position: number[], target: number[], up: number[] } }} opts
  * @returns {Promise<{ frames: number, renders: number, frameMs?: number,
  *   throughputMs?: number, p95Ms?: number, rendersPerFrame: number }>}
+ * Unpaced mode reports throughputMs only, without frameMs or p95Ms.
  */
 export async function motion({
   frames = 180,
@@ -390,7 +391,11 @@ export async function motion({
   pipelined = false,
   unpaced = false,
 }) {
+  if (pipelined && unpaced) throw new Error('pipelined and unpaced cannot be combined');
   const dbg = window.__luxarDebug;
+  if (unpaced && typeof dbg.animationController?.prepareFrame !== 'function') {
+    return { frames, renders: 0, throughputMs: undefined, rendersPerFrame: 0 };
+  }
   const pp = dbg.app.sceneManager.postProcessing;
   const renderer = dbg.app.sceneManager.renderer;
   const backend = renderer.backend;

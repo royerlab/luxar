@@ -40,8 +40,8 @@ import { classifyRow, sameCounts, scoreControlPick, strip } from './classify.mjs
 import { pickWithinDraw, scoreBlocks, scoreFloatBuffers, scorePickBuffers } from './exactness.mjs';
 import { writeUlpHeatmap } from './heatmap.mjs';
 import * as ops from './page-ops.mjs';
-import { pacingBound } from './pacing.mjs';
-import { judgePerf, median, noiseFloor, ROTATIONS } from './perf-stats.mjs';
+import { scorePerfMetric } from './perf-row.mjs';
+import { ROTATIONS } from './perf-stats.mjs';
 import { startServer } from './server.mjs';
 import { loadExpectations, runSuite, suiteMarkdown, validateMetricDirections } from './suites.mjs';
 
@@ -422,17 +422,7 @@ async function runPerf(session, servers) {
         const base = samples.base.map((s) => s[m]);
         const base2 = samples.base2.map((s) => s[m]);
         const cand = samples.cand.map((s) => s[m]);
-        row.metrics[m] = {
-          baseMedian: median(base),
-          candMedian: median(cand),
-          ...judgePerf(base, cand, noiseFloor(base, base2), PERF_ABS_TOLERANCE[m] ?? 0),
-        };
-        if (m === 'throughputMs') {
-          row.metrics[m].pacingBound = {
-            base: pacingBound(backend, row.metrics[m].baseMedian),
-            cand: pacingBound(backend, row.metrics[m].candMedian),
-          };
-        }
+        row.metrics[m] = scorePerfMetric(m, backend, base, cand, base2, PERF_ABS_TOLERANCE[m] ?? 0);
       }
       row.status = Object.values(row.metrics).some((v) => v.verdict === 'fail') ? 'fail' : 'pass';
       results.push(row);
@@ -548,8 +538,13 @@ function markdown(meta, exact, perf, suites) {
         const paced = Object.entries(v.pacingBound ?? {})
           .filter(([, bound]) => bound)
           .map(([arm]) => arm);
+        const pacingNote = paced.length
+          ? v.verdict === 'pacing-bound'
+            ? ` (${paced.join(', ')})`
+            : ` (pacing-bound: ${paced.join(', ')})`
+          : '';
         lines.push(
-          `| ${r.case} | ${r.backend} | ${m} | ${fmtNum(v.baseMedian, 3)} | ${fmtNum(v.candMedian, 3)} | ${fmtNum(v.ratio, 3)} | ${fmtNum(v.lo, 3)}–${fmtNum(v.hi, 3)} | ${typeof v.floor === 'number' ? `${fmtNum(v.floor * 100, 1)}%` : '-'} | ${v.verdict}${paced.length ? ` (pacing-bound: ${paced.join(', ')})` : ''} |`
+          `| ${r.case} | ${r.backend} | ${m} | ${fmtNum(v.baseMedian, 3)} | ${fmtNum(v.candMedian, 3)} | ${fmtNum(v.ratio, 3)} | ${fmtNum(v.lo, 3)}–${fmtNum(v.hi, 3)} | ${typeof v.floor === 'number' ? `${fmtNum(v.floor * 100, 1)}%` : '-'} | ${v.verdict}${pacingNote} |`
         );
       }
     }

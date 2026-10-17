@@ -69,7 +69,9 @@ it('reports the A/A buffers and scene state for an excluded view', () => {
 it('flags only WebGL throughput close to the measured 60 Hz floor', () => {
   expect(pacingBound('webgl', 17.2)).toBe(true);
   expect(pacingBound('webgl', 15.6)).toBe(false);
-  expect(pacingBound('webgl', 18)).toBe(false);
+  expect(pacingBound('webgl', 16)).toBe(false);
+  expect(pacingBound('webgl', 17.7)).toBe(true);
+  expect(pacingBound('webgl', 18.2)).toBe(false);
   expect(pacingBound('webgpu', 17.2)).toBe(false);
   expect(pacingBound('webgl', NaN)).toBe(false);
 });
@@ -99,7 +101,7 @@ it('shows pacing-bound arms in a saved throughput report', () => {
             lo: 0.14,
             hi: 0.16,
             floor: 0.01,
-            verdict: 'win',
+            verdict: 'pacing-bound',
             pacingBound: { base: true, cand: false },
           },
         },
@@ -110,5 +112,5 @@ it('shows pacing-bound arms in a saved throughput report', () => {
   const jsonPath = join(dir, 'report.json');
   writeFileSync(jsonPath, JSON.stringify(report));
   execFileSync(process.execPath, ['scripts/render-gate/run-gate.mjs', '--from-json', jsonPath]);
-  expect(readFileSync(join(dir, 'report.md'), 'utf8')).toContain('pacing-bound: base');
+  expect(readFileSync(join(dir, 'report.md'), 'utf8')).toContain('pacing-bound (base)');
 });

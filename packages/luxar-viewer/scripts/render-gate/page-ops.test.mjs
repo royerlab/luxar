@@ -175,6 +175,22 @@ describe('motion frame timing', () => {
     });
   }
 
+  it('leaves older baselines usable when prepareFrame is unavailable', async () => {
+    install('webgl');
+    delete page.dbg.animationController.prepareFrame;
+    const mo = await motion({ frames: 4, warm: 1, pose, unpaced: true });
+    expect(mo.throughputMs).toBeUndefined();
+    expect(page.rafCalls).toBe(0);
+  });
+
+  it('rejects combining pipelined and unpaced modes', async () => {
+    install('webgl');
+    await expect(
+      motion({ frames: 4, warm: 1, pose, pipelined: true, unpaced: true })
+    ).rejects.toThrow(/pipelined.*unpaced/);
+    expect(page.rafCalls).toBe(0);
+  });
+
   it('restores the WebGL framebuffer binding it reads through', async () => {
     install('webgl');
     const gl = page.dbg.app.sceneManager.renderer.backend.gl;
