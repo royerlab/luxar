@@ -37,6 +37,10 @@ vi.mock('three/webgpu', () => {
   return { WebGPURenderer: FakeWebGPURenderer };
 });
 
+vi.mock('../../../../../rendering/tsl/load', () => ({
+  loadTslMaterials: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Mock the capabilities + HDR helpers — they run after WebGPURenderer
 // construction in createWebGPURenderer's epilogue.
 vi.mock('../../../../../rendering/renderer-capabilities', () => ({
@@ -55,6 +59,7 @@ vi.mock('../../../../../utils/hdr/hdr-detection', () => ({
 }));
 
 import * as THREE from 'three';
+import { loadTslMaterials } from '../../../../../rendering/tsl/load';
 // Imports MUST come after vi.mock to honour the mocks.
 import {
   createWebGPURenderer,
@@ -162,6 +167,7 @@ describe('createWebGPURenderer', () => {
   beforeEach(() => {
     originalNavigator = globalThis.navigator;
     webgpuConstructorArgs.length = 0;
+    vi.mocked(loadTslMaterials).mockClear();
   });
 
   afterEach(() => {
@@ -271,6 +277,7 @@ describe('createWebGPURenderer', () => {
 
     const early = requestWebGPUDevice('webgpu');
     await vi.waitFor(() => expect(requestDevice).toHaveBeenCalledTimes(1));
+    expect(loadTslMaterials).toHaveBeenCalledTimes(1);
     const creating = createWebGPURenderer(makeCanvas(), { preRequestedWebGPUDevice: early });
     expect(webgpuConstructorArgs).toHaveLength(0);
     resolveDevice(device);
@@ -288,6 +295,7 @@ describe('createWebGPURenderer', () => {
     const result = await createWebGPURenderer(makeCanvas(), { preRequestedWebGPUDevice: early });
     expect(result).toEqual({ fallback: true });
     expect(adapter.requestDevice).not.toHaveBeenCalled();
+    expect(loadTslMaterials).not.toHaveBeenCalled();
     expect(webgpuConstructorArgs).toHaveLength(0);
   });
 

@@ -52,6 +52,7 @@ import {
   type HdrOutputState,
 } from '../../../types/hdr-output';
 import { notifier } from '../../../utils/cross-layer/notifier';
+import { loadTslMaterials } from '../../../rendering/tsl/load';
 
 /**
  * Point the backend-dependent rendering paths at `renderer`. Every renderer
@@ -363,6 +364,9 @@ export async function requestWebGPUDevice(
   const requestedMax = typeof adapterMax === 'number' ? Math.min(adapterMax, 16) : undefined;
   const requiredLimits = requestedDeviceLimits(adapter.limits, requestedMax);
   logRequestedDeviceLimits(adapter.limits, requiredLimits, requestedMax);
+  // The TSL registry imports the lazy three/webgpu chunk. Start both while
+  // requestDevice is in flight, and let the normal setup await retry a failure.
+  void loadTslMaterials().catch(() => undefined);
   try {
     const device = await adapter.requestDevice({
       requiredFeatures: [...adapter.features],
