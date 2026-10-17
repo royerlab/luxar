@@ -57,6 +57,7 @@ class FitConfig:
     psnr_patience: Optional[float] = None
     max_passes: Optional[int] = None
     cull_retention: Optional[float] = None
+    tile_amplitude_floor: Optional[float] = None
     min_extent: Optional[float] = None
     reseed_sigma: Optional[float] = None
 
@@ -1980,6 +1981,7 @@ def _assemble_fit_args(
         ("psnr-patience", fit.psnr_patience),
         ("max-passes", fit.max_passes),
         ("cull-retention", fit.cull_retention),
+        ("tile-amplitude-floor", fit.tile_amplitude_floor),
         ("min-extent", fit.min_extent),
         ("reseed-sigma", fit.reseed_sigma),
     ):

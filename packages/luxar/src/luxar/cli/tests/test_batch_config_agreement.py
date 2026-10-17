@@ -119,6 +119,22 @@ def test_the_commands_were_found_and_are_not_empty() -> None:
     assert all(len(_dataclass_fields(cls)) > 3 for cls in PLAN_CONFIGS)
 
 
+def test_tile_amplitude_floor_reaches_shared_batch_worker_flags() -> None:
+    from luxar.cli.gsplat_ops.batch.planning import _assemble_fit_args
+    from luxar.gsplats.batch.fit_command import fit_args_to_tokens
+    from luxar.gsplats.batch.manifest import BatchManifest
+    from luxar.gsplats.batch.merge_orchestrator import _batch_floor_stats
+
+    args, _, _ = _assemble_fit_args(
+        FitConfig(tile_amplitude_floor=1e-5), DenoiseConfig()
+    )
+    tokens = fit_args_to_tokens(args)
+    assert tokens[tokens.index("--tile-amplitude-floor") + 1] == "1e-05"
+    assert _batch_floor_stats(BatchManifest(fit_args=args)) == {
+        "tile_amplitude_floor": 1e-5
+    }
+
+
 def test_calls_finds_bare_and_qualified_callees() -> None:
     tree = ast.parse('FitConfig(preset="standard")\nplanning.FitConfig(preset="draft")')
     assert _calls(tree, "FitConfig") == [

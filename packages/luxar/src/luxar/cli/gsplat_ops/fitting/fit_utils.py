@@ -22,7 +22,12 @@ if TYPE_CHECKING:
     pass
 
 
-CONTENT_UNSUPPORTED_FIT_FLAGS = ("--denoise", "--downscale", "--progressive")
+CONTENT_UNSUPPORTED_FIT_FLAGS = (
+    "--denoise",
+    "--downscale",
+    "--progressive",
+    "--tile-amplitude-floor",
+)
 
 
 def _invocation_token() -> str:
@@ -78,6 +83,7 @@ class FitPipelineCtx:
     axes: Optional[str]
     lr: Optional[float]
     floor: Optional[str]
+    tile_amplitude_floor: Optional[float]
     norm_range: "Optional[tuple[float, float]]"
     seed_method: Optional[str]
     verbose: bool
@@ -919,6 +925,7 @@ def dispatch_parallel_tiled(
                 # SPEC is guarded there exactly as `--tiling none` guards it.
                 # See _resolved_worker_preprocessing.
                 floor=worker_floor,
+                tile_amplitude_floor=ctx.tile_amplitude_floor,
                 floor_resolved=worker_floor_resolved,
                 norm_range=worker_norm_range,
                 seed_method=ctx.seed_method,
@@ -994,6 +1001,7 @@ def dispatch_parallel_tiled(
                 ),
                 source_dtype=fit_config.get("source_dtype"),
                 floor_strategy=fit_config.get("_floor_strategy"),
+                tile_amplitude_floor=ctx.tile_amplitude_floor,
                 volume=reference_volume,
                 device=ctx.device,
                 fold_tile_slivers=True,
@@ -1584,6 +1592,13 @@ def fit_single_tile(
             seeds=tile_seeds,
             **fit_config,
         )
+        if ctx.tile_amplitude_floor is not None:
+            from luxar.gsplats.fit_tiled_gsplats import _floor_tile_amplitudes
+
+            n_before = result.n_splats
+            result = _floor_tile_amplitudes(result, ctx.tile_amplitude_floor)
+            result.stats["tile_amplitude_floor"] = ctx.tile_amplitude_floor
+            result.stats["tile_amplitude_pruned"] = n_before - result.n_splats
         if (
             cull_retention is not None
             and 0 < float(cull_retention) < 1.0
@@ -1669,6 +1684,7 @@ def fit_sequential_tiled(
         recipe_params=recipe_params,
         fold_tile_slivers=True,
         tile_seed_counts=tile_seed_counts,
+        tile_amplitude_floor=ctx.tile_amplitude_floor,
         **fit_config,
     )
 
