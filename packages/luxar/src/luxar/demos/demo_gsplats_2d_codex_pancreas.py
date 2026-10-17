@@ -426,6 +426,9 @@ def fit_channel_tiled(
         # A global amplitude cull discards both weak halves of the Hann
         # overlap, leaving a dark grid at tile boundaries in this slide.
         cull_retention=None,
+        # Normalized channels contain many fitted splats at ~1e-6 amplitude;
+        # discard them per tile so the merge does not retain the whole seed set.
+        tile_amplitude_floor=1e-5,
     )
 
     n_splats = len(result.amplitudes)

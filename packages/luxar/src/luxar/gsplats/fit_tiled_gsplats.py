@@ -404,6 +404,28 @@ def _cull_keeping_measured_scores(data: GSplatData, retention: float) -> GSplatD
     return out
 
 
+def _floor_tile_amplitudes(data: GSplatData, floor: float) -> GSplatData:
+    """Discard negligible splats while one tile is still the only live result."""
+    if data.n_splats == 0 or floor == 0:
+        return data
+    keep = data.amplitudes >= floor
+    if np.all(keep):
+        return data
+
+    from luxar.gsplats._data.filtering import (
+        measured_stats_snapshot,
+        restore_measured_stats,
+    )
+    from luxar.gsplats.fitting.scale_population import reduce_population_stats
+
+    measured = measured_stats_snapshot(data)
+    out = data.filter(keep)
+    restore_measured_stats(out, measured)
+    reduce_population_stats(data.stats, out.stats, keep)
+    out.stats["n_splats"] = out.n_splats
+    return out
+
+
 def _merge_flat_population_stats(
     results: Sequence[GSplatData], merged: GSplatData, has_lods: bool
 ) -> None:
@@ -1115,6 +1137,7 @@ def fit_tiled(
     psnr_patience: float = 0.5,
     max_passes: Optional[int] = None,
     cull_retention: float | None = 0.999,
+    tile_amplitude_floor: float | None = None,
     partition: bool = False,
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
@@ -1203,6 +1226,12 @@ def fit_tiled(
         this fraction of total amplitude (0--1). Per-tile fitting disables
         culling; the merged result is culled once, or each tile is culled
         separately when ``partition=True``. Set to ``None`` to disable.
+    tile_amplitude_floor : float or None, optional
+        Absolute amplitude threshold applied to each fitted tile before the next
+        tile is fitted and before merging. Use for normalized images whose fits
+        accumulate negligible amplitudes; ``None`` keeps the previous behavior.
+        Unlike cumulative culling, this removes no fixed fraction of the Hann
+        overlap's amplitude. The threshold is in input intensity units.
     source_shape : sequence of int, optional
         Grid of the ACQUISITION, when ``volume`` is already a preprocessed copy
         of it — a caller that decimated before tiling must declare it, or the
@@ -1333,6 +1362,10 @@ def fit_tiled(
     )
     _validate_tile_seed_counts(tile_seed_counts, len(specs))
     _reject_nonpositive_shared_seed_budget(fit_kwargs.get("seeds"), tile_seed_counts)
+    if tile_amplitude_floor is not None and (
+        not np.isfinite(tile_amplitude_floor) or tile_amplitude_floor < 0
+    ):
+        raise ValueError("tile_amplitude_floor must be finite and non-negative")
 
     results: list[GSplatData] = []
     t0 = time.perf_counter()
@@ -1373,6 +1406,10 @@ def fit_tiled(
                 )
                 if floor_strategy is not None:
                     tile_result.stats["floor_strategy"] = floor_strategy
+                if tile_amplitude_floor is not None:
+                    tile_result = _floor_tile_amplitudes(
+                        tile_result, tile_amplitude_floor
+                    )
                 n = tile_result.n_splats
                 if verbose:
                     t_tile = tile_result.stats.get("time_seconds", 0)
