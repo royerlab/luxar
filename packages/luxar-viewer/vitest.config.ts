@@ -42,13 +42,9 @@ export default defineConfig({
     // turned transient slowness into hard `Test timed out` / `Hook timed out`
     // failures. Use the same 60s budget everywhere: off-CI promotion runs share
     // the host with other work and can be more contended than capped CI workers.
-    // Worker sizing remains environment-specific below. Raised 60s -> 120s: the
-    // property-based conformance suite (geometry-behaviours.test.ts, fast-check,
-    // ~21s local) stretched to 63.6s under CI worker contention and tripped the
-    // 60s ceiling, reddening dev with no real regression. 120s keeps the tripwire
-    // for genuinely hung tests while absorbing the contention tail.
-    testTimeout: 120_000,
-    hookTimeout: 120_000,
+    // Worker sizing remains environment-specific below.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
     // Worker threads, not forked processes. A thread reuses the host process's
     // heap and module machinery instead of paying a full V8 + Vite-runtime
     // bootstrap per worker, which is most of the fixed cost when the suite is
