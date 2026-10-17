@@ -309,6 +309,82 @@ describe('WebGLBlendWarmupManager', () => {
     expect(resolved).toBe(true);
   });
 
+  it('counts a variant only after the driver finishes linking it', async () => {
+    const warmupTurns = makeWarmupTurnController();
+    const finishLinks: Array<() => void> = [];
+    const compileOne = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishLinks.push(resolve);
+        })
+    );
+    const manager = new WebGLBlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
+    manager.configure({
+      enabled: true,
+      renderer: {} as THREE.WebGLRenderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+
+    let ready = false;
+    const completion = manager.warmScene(makeRenderableMesh('points')).then(() => {
+      ready = true;
+    });
+    await warmupTurns.releaseNext();
+    expect(compileOne).toHaveBeenCalledTimes(1);
+    expect(manager.getStats().compiled).toBe(0);
+    expect(warmupTurns.pending).toBe(0);
+    expect(ready).toBe(false);
+
+    finishLinks[0]?.();
+    await vi.waitFor(() => expect(manager.getStats().compiled).toBe(1));
+    expect(manager.getStats().compiled).toBe(1);
+    expect(warmupTurns.pending).toBe(1);
+    await warmupTurns.releaseNext();
+    expect(compileOne).toHaveBeenCalledTimes(2);
+    finishLinks[1]?.();
+    await vi.waitFor(() => expect(warmupTurns.pending).toBe(1));
+    await warmupTurns.releaseNext();
+    expect(compileOne).toHaveBeenCalledTimes(3);
+    finishLinks[2]?.();
+    await completion;
+    expect(manager.getStats().compiled).toBe(3);
+    expect(ready).toBe(true);
+  });
+
+  it('uses Three.js async compilation for keeper materials', async () => {
+    const finishLinks: Array<() => void> = [];
+    const compileAsync = vi.fn(
+      () =>
+        new Promise<THREE.Scene>((resolve) => {
+          finishLinks.push(() => resolve(new THREE.Scene()));
+        })
+    );
+    const renderer = { compileAsync } as unknown as THREE.WebGLRenderer;
+    const manager = new WebGLBlendWarmupManager(
+      async () => undefined,
+      undefined,
+      activateImmediately
+    );
+    manager.configure({
+      enabled: true,
+      renderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+
+    const completion = manager.warmScene(makeRenderableMesh('points'));
+    await vi.waitFor(() => expect(compileAsync).toHaveBeenCalledTimes(1));
+    expect(manager.getStats().compiled).toBe(0);
+    finishLinks[0]?.();
+    await vi.waitFor(() => expect(compileAsync).toHaveBeenCalledTimes(2));
+    finishLinks[1]?.();
+    await vi.waitFor(() => expect(compileAsync).toHaveBeenCalledTimes(3));
+    finishLinks[2]?.();
+    await completion;
+    expect(manager.getStats()).toMatchObject({ queued: 3, compiled: 3 });
+  });
+
   it('releases scene warming on its readiness budget and keeps draining after', async () => {
     vi.useFakeTimers();
     try {

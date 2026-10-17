@@ -116,13 +116,13 @@ export type WaitForWarmupTurn = () => Promise<void>;
 /** Defers scene activation past the caller's own turn. */
 export type DeferActivation = (activate: () => void) => void;
 type IdleCallbackScheduler = (callback: () => void, options?: { timeout: number }) => number;
-/** Links one keeper material by compiling `compileObject` against the live scene. */
+/** Links one keeper material against the live scene and waits for driver completion. */
 export type CompileOne = (
   renderer: THREE.WebGLRenderer,
   camera: THREE.Camera,
   targetScene: THREE.Scene,
   compileObject: THREE.Object3D
-) => void;
+) => Promise<void> | void;
 
 const WARMUP_IDLE_TIMEOUT_MS = 250;
 const WARMUP_FALLBACK_DELAY_MS = 50;
@@ -177,16 +177,19 @@ function defaultDeferActivation(activate: () => void): void {
   setTimeout(activate, 0);
 }
 
-function defaultCompileOne(
+async function defaultCompileOne(
   renderer: THREE.WebGLRenderer,
   camera: THREE.Camera,
   targetScene: THREE.Scene,
   compileObject: THREE.Object3D
-): void {
+): Promise<void> {
   const compileScene = new THREE.Scene();
   compileScene.add(compileObject);
-  renderer.compile(compileScene, camera, targetScene);
-  compileScene.remove(compileObject);
+  try {
+    await renderer.compileAsync(compileScene, camera, targetScene);
+  } finally {
+    compileScene.remove(compileObject);
+  }
 }
 
 function hasWarmupMaterialApi(
@@ -773,8 +776,11 @@ export class WebGLBlendWarmupManager {
       }
 
       try {
-        this.compileOne(this.renderer, this.camera, this.targetScene, task.compileObject);
-        this.stats.compiled += 1;
+        await this.compileOne(this.renderer, this.camera, this.targetScene, task.compileObject);
+        if (generation !== this.generation) return;
+        if (this.sourceStates.get(task.sourceMaterial)?.keepers.has(task.keeperMaterial)) {
+          this.stats.compiled += 1;
+        }
       } catch (error) {
         log.warning(
           Modules.RENDERER,
