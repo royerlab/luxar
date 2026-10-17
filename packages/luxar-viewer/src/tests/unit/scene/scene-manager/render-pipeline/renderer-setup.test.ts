@@ -61,7 +61,6 @@ vi.mock('../../../../../utils/hdr/hdr-detection', () => ({
 }));
 
 import * as THREE from 'three';
-import { log, Modules } from '../../../../../utils/log';
 // Imports MUST come after vi.mock to honour the mocks.
 import {
   createUncapturedGpuErrorHandler,
@@ -307,7 +306,7 @@ describe('createWebGPURenderer', () => {
     });
   });
 
-  it('routes uncaptured GPU errors through log.error, set before init()', async () => {
+  it('routes uncaptured GPU errors through log.error', async () => {
     const adapter = makeAdapter({ maxVertexBuffers: 16 });
     stubNavigatorGpu(vi.fn().mockResolvedValue(adapter));
     const error = vi.spyOn(log, 'error').mockImplementation(() => {});

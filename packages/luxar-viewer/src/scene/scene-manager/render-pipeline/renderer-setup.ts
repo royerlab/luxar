@@ -677,8 +677,8 @@ export async function createWebGPURenderer(
     // rgba16float canvas + `toneMapping.mode = 'extended'` (WebGPUBackend).
     ...(hdrPlan !== undefined ? { outputType: THREE.HalfFloatType } : {}),
   } as ConstructorParameters<typeof WebGPURenderer>[0]);
-  // Before init(): three wires `device.onuncapturederror` to this callback
-  // there. Only the native backend ever calls it; the WebGL2 bridge has no
+  // The native backend installs `device.onuncapturederror` during init() and
+  // looks up `renderer.onError` when an error fires. The WebGL2 bridge has no
   // uncaptured-error channel.
   gpuRenderer.onError = createUncapturedGpuErrorHandler();
   await gpuRenderer.init();
