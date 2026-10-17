@@ -204,6 +204,22 @@ def _sample_stride(mask3: np.ndarray, max_samples: int) -> int:
     return max(1, -(-n // max(1, max_samples)))
 
 
+def _coarse_hh(V: np.ndarray, M: np.ndarray, max_samples: int) -> np.ndarray:
+    """Build 2x2-averaged planes one slab at a time for the scale check."""
+    ny, nx = (V.shape[1] // 2) * 2, (V.shape[2] // 2) * 2
+    coarse_m = M[:, :ny:2, :nx:2]
+    stride = _sample_stride(coarse_m, max_samples)
+    slab = max(1, _MASKED_SIGMA_SLAB_VOXELS // ((ny // 2) * (nx // 2)))
+    bands: List[np.ndarray] = []
+    for lo in range(0, V.shape[0], slab):
+        fine = V[lo : lo + slab, :ny, :nx].astype(np.float32, copy=False)
+        coarse_v = fine.reshape(fine.shape[0], ny // 2, 2, nx // 2, 2).mean(axis=(2, 4))
+        hh, _, _ = _block_bands(coarse_v, coarse_m[lo : lo + slab], stride)
+        if hh.size:
+            bands.append(hh)
+    return np.concatenate(bands) if bands else np.empty(0, np.float32)
+
+
 def estimate_masked_noise(
     V: np.ndarray, mask: np.ndarray, *, max_samples: int = 4_000_000
 ) -> MaskedNoise:
@@ -249,16 +265,7 @@ def estimate_masked_noise(
     ratio = nan
     ny, nx = (V3.shape[1] // 2) * 2, (V3.shape[2] // 2) * 2
     if ny >= 4 and nx >= 4 and fine > 0.0:
-        coarse_v = (
-            V3[:, :ny, :nx]
-            .astype(np.float32, copy=False)
-            .reshape(V3.shape[0], ny // 2, 2, nx // 2, 2)
-            .mean(axis=(2, 4))
-        )
-        coarse_m = M3[:, :ny:2, :nx:2]
-        coarse, _, _ = _block_bands(
-            coarse_v, coarse_m, _sample_stride(coarse_m, max_samples)
-        )
+        coarse = _coarse_hh(V3, M3, max_samples)
         if coarse.size:
             ratio = 2.0 * _mad_sigma(coarse) / fine
     reliable = bool(math.isfinite(ratio) and ratio <= MASKED_SIGMA_MAX_SCALE_RATIO)

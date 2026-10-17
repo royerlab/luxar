@@ -269,6 +269,30 @@ def test_quantised_data_does_not_read_as_noise_free() -> None:
     assert est.sigma > 0.0
 
 
+def test_coarse_noise_check_keeps_float64_odd_planes_in_slabs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from luxar.gsplats.calibration import noise_floor
+
+    rng = np.random.default_rng(13)
+    volume = rng.normal(size=(20, 9, 11)).astype(np.float64)
+    mask = np.ones(volume.shape, bool)
+    expected = noise_floor.estimate_masked_noise(volume, mask)
+    original = noise_floor._block_bands
+    coarse_sizes: list[int] = []
+
+    def measured_bands(v: np.ndarray, m: np.ndarray, stride: int):
+        if v.shape[1:] == (4, 5):
+            coarse_sizes.append(v.shape[0])
+        return original(v, m, stride)
+
+    monkeypatch.setattr(noise_floor, "_MASKED_SIGMA_SLAB_VOXELS", 120)
+    monkeypatch.setattr(noise_floor, "_block_bands", measured_bands)
+    actual = noise_floor.estimate_masked_noise(volume, mask)
+    assert coarse_sizes and max(coarse_sizes) <= 6
+    assert actual.scale_ratio == pytest.approx(expected.scale_ratio)
+
+
 def test_compare_reports_the_noise_reference(tmp_path: Path) -> None:
     """A model equal to the clean signal, scored against signal + noise."""
     from luxar.encoding import EncodingMode
