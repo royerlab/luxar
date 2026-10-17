@@ -196,6 +196,12 @@ for (const theme of THEMES) {
 
     await waitForLuxarReady(page);
 
+    // The expanded monitor reaches its 80vh cap with the Dropped Elements
+    // card. Hide the dataset's dimension sliders so they do not cover its
+    // lower rows in this component screenshot.
+    await page.keyboard.press('n');
+    await expect(page.locator('.luxar-dimension-sliders')).toBeHidden();
+
     // Press M twice to cycle to expanded view
     await page.keyboard.press('m');
     await waitForNextRender(page);
