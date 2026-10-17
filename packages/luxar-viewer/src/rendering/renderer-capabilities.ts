@@ -23,9 +23,10 @@ export type { WebGPURenderer } from 'three/webgpu';
  *
  * `THREE.WebGLRenderer` is the production default (GLSL `ShaderMaterial`).
  * `WebGPURenderer` (TSL `NodeMaterial`) is selectable via
- * `?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`; it dispatches to a
- * real WebGPU adapter when available or falls back to its internal
- * WebGL2 backend. Consumers hold renderer references typed as `Renderer`.
+ * `?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`. Without a native
+ * WebGPU device, the explicit `?renderer=webgpu` may use three's internal
+ * WebGL2 backend; the environment selection falls back to `WebGLRenderer`.
+ * Consumers hold renderer references typed as `Renderer`.
  */
 export type Renderer = THREE.WebGLRenderer | WebGPURenderer;
 
@@ -71,6 +72,16 @@ export interface RendererCapabilities {
    * physical backend is captured separately in `readbackYDown`.
    */
   readonly apiSurface: 'webgl2' | 'webgpu';
+  /**
+   * Which GPU API actually runs, which `apiSurface` deliberately does not say:
+   *
+   * - `'webgl'` → `THREE.WebGLRenderer` (GLSL materials);
+   * - `'webgpu-native'` → `WebGPURenderer` on a real WebGPU device (WGSL);
+   * - `'webgpu-gl'` → `WebGPURenderer` on three's internal WebGL2 backend
+   *   (TSL compiled to GLSL): `?webgpuForceWebgl`, or `?renderer=webgpu` in a
+   *   browser without a WebGPU adapter.
+   */
+  readonly backendKind: 'webgl' | 'webgpu-native' | 'webgpu-gl';
   /**
    * True when the effective framebuffer presented by the renderer has
    * row 0 at the **top** of the viewport (real WebGPU; also
@@ -263,6 +274,7 @@ export function createRendererCapabilities(
 
     return {
       apiSurface: 'webgl2',
+      backendKind: 'webgl',
       framebufferYDown,
       readbackYDown: false,
       hdr,
@@ -331,6 +343,7 @@ export function createRendererCapabilities(
 
   return {
     apiSurface: 'webgpu',
+    backendKind: backend?.isWebGPUBackend === true ? 'webgpu-native' : 'webgpu-gl',
     framebufferYDown,
     readbackYDown: backend?.isWebGPUBackend === true,
     hdr,

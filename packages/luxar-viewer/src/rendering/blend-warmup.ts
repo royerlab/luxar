@@ -1,5 +1,5 @@
 /**
- * WebGL-only blend-variant program warm-up.
+ * Blend-variant program / pipeline warm-up, for both renderers.
  *
  * Headless Chromium often runs WebGL through SwiftShader, whose shader/program
  * link step is synchronous and can monopolize the main thread for seconds.
@@ -8,16 +8,20 @@
  * mesh `opaque` cutout). Without a warm-up pass, the first click onto each
  * variant pays that synchronous link cost on the interaction path.
  *
+ * WebGPU pays the same kind of cost per render PIPELINE, and there the blend
+ * state is part of the pipeline: every mode is its own variant (the TSL
+ * wrappers also rebuild their node graph across the peak/sum boundary). So a
+ * WebGPU manager (`pipelineVariants`) keys variants by mode and compiles with
+ * three's `compileAsync`, which builds the same cached pipelines a later
+ * render uses.
+ *
  * This manager pre-compiles every DISTINCT blend-variant program a live visual
  * material can reach, one compile per post-frame idle opportunity so visible
  * rendering and input get a turn before every link. Browsers without idle
  * callbacks use a conservative 50 ms delay. The warmed programs stay pinned
  * by keeper materials until the source material is replaced or disposed.
  *
- * The manager is configured only for classic `THREE.WebGLRenderer`; WebGPU/TSL
- * sessions do not use it.
- *
- * @module rendering/webgl-blend-warmup
+ * @module rendering/blend-warmup
  */
 
 import * as THREE from 'three';
@@ -41,14 +45,39 @@ type WarmupMaterial = THREE.Material & {
 };
 
 /**
- * What the session warms against. A null renderer/camera/scene, a WebGPU
- * surface, or `?noBlendWarmup` all resolve to a disabled manager.
+ * The renderer a warm-up compiles with: a `THREE.WebGLRenderer` (synchronous
+ * `compile`), or a `WebGPURenderer` (`compileAsync`), structurally so this
+ * module never imports the lazy `three/webgpu` chunk.
+ */
+export type WarmupRenderer =
+  | THREE.WebGLRenderer
+  | {
+      getRenderTarget(): THREE.RenderTarget | null;
+      setRenderTarget(target: THREE.RenderTarget | null): void;
+      compileAsync(
+        scene: THREE.Object3D,
+        camera: THREE.Camera,
+        targetScene?: THREE.Scene | null
+      ): Promise<unknown>;
+    };
+
+/**
+ * What the session warms against. A null renderer/camera/scene or
+ * `?noBlendWarmup` resolve to a disabled manager.
  */
 export interface WarmupConfig {
   enabled: boolean;
-  renderer: THREE.WebGLRenderer | null;
+  renderer: WarmupRenderer | null;
   camera: THREE.Camera | null;
   targetScene: THREE.Scene | null;
+  /**
+   * Key variants by blend mode, not only by shader defines: true for WebGPU,
+   * where the blend state belongs to the render pipeline. Defaults to false
+   * (WebGL, where modes differing only in blend state share one program).
+   */
+  pipelineVariants?: boolean;
+  /** Read at compile time because resize or MSAA changes can replace the target. */
+  getRenderTarget?: () => THREE.RenderTarget | null;
 }
 
 /** One queued link: which keeper to compile, and the throwaway object to compile it on. */
@@ -102,7 +131,7 @@ export interface BlendWarmupStats {
 
 /**
  * One outstanding `warmScene` caller. Settled by the drain going idle, by
- * {@link WebGLBlendWarmupManager.clear}, or by the readiness budget expiring —
+ * {@link BlendWarmupManager.clear}, or by the readiness budget expiring —
  * whichever happens first.
  */
 export interface WarmCompletion {
@@ -118,11 +147,12 @@ export type DeferActivation = (activate: () => void) => void;
 type IdleCallbackScheduler = (callback: () => void, options?: { timeout: number }) => number;
 /** Links one keeper material by compiling `compileObject` against the live scene. */
 export type CompileOne = (
-  renderer: THREE.WebGLRenderer,
+  renderer: WarmupRenderer,
   camera: THREE.Camera,
   targetScene: THREE.Scene,
-  compileObject: THREE.Object3D
-) => void;
+  compileObject: THREE.Object3D,
+  getRenderTarget?: () => THREE.RenderTarget | null
+) => void | Promise<void>;
 
 const WARMUP_IDLE_TIMEOUT_MS = 250;
 const WARMUP_FALLBACK_DELAY_MS = 50;
@@ -177,16 +207,39 @@ function defaultDeferActivation(activate: () => void): void {
   setTimeout(activate, 0);
 }
 
-function defaultCompileOne(
-  renderer: THREE.WebGLRenderer,
+async function defaultCompileOne(
+  renderer: WarmupRenderer,
   camera: THREE.Camera,
   targetScene: THREE.Scene,
-  compileObject: THREE.Object3D
-): void {
+  compileObject: THREE.Object3D,
+  getRenderTarget?: () => THREE.RenderTarget | null
+): Promise<void> {
   const compileScene = new THREE.Scene();
   compileScene.add(compileObject);
-  renderer.compile(compileScene, camera, targetScene);
-  compileScene.remove(compileObject);
+  try {
+    if (
+      'compileAsync' in renderer &&
+      !(renderer as { isWebGLRenderer?: boolean }).isWebGLRenderer
+    ) {
+      const targetRenderer = renderer as {
+        getRenderTarget(): THREE.RenderTarget | null;
+        setRenderTarget(target: THREE.RenderTarget | null): void;
+      };
+      const previous = targetRenderer.getRenderTarget();
+      let compile: Promise<unknown>;
+      try {
+        if (getRenderTarget) targetRenderer.setRenderTarget(getRenderTarget());
+        compile = renderer.compileAsync(compileScene, camera, targetScene);
+      } finally {
+        targetRenderer.setRenderTarget(previous);
+      }
+      await compile;
+    } else {
+      (renderer as THREE.WebGLRenderer).compile(compileScene, camera, targetScene);
+    }
+  } finally {
+    compileScene.remove(compileObject);
+  }
 }
 
 function hasWarmupMaterialApi(
@@ -355,13 +408,15 @@ function createCompileObject(source: THREE.Object3D, material: THREE.Material): 
  * changes compile-time state afterwards, {@link clear} on scene replacement,
  * context loss and disposal.
  */
-export class WebGLBlendWarmupManager {
+export class BlendWarmupManager {
   private enabled = false;
   private armed = false;
   private tearingDown = false;
-  private renderer: THREE.WebGLRenderer | null = null;
+  private renderer: WarmupRenderer | null = null;
+  private pipelineVariants = false;
   private camera: THREE.Camera | null = null;
   private targetScene: THREE.Scene | null = null;
+  private getRenderTarget?: () => THREE.RenderTarget | null;
   private generation = 0;
   private activationToken = 0;
   private queue: WarmupTask[] = [];
@@ -400,8 +455,10 @@ export class WebGLBlendWarmupManager {
 
     this.enabled = nextEnabled;
     this.renderer = config.renderer;
+    this.pipelineVariants = config.pipelineVariants === true;
     this.camera = config.camera;
     this.targetScene = config.targetScene;
+    this.getRenderTarget = config.getRenderTarget;
     this.clear();
   }
 
@@ -544,7 +601,11 @@ export class WebGLBlendWarmupManager {
       }
 
       keeper.applyBlendingMode(mode);
-      const variantFingerprint = buildBlendWarmupFingerprint(keeper, object, true);
+      // WebGPU: the blend state is part of the pipeline, so every mode is its own
+      // variant (the cross-source dedupe below still shares it between nodes).
+      const variantFingerprint =
+        buildBlendWarmupFingerprint(keeper, object, true) +
+        (this.pipelineVariants ? `@@mode:${mode}` : '');
       if (state.variants.has(variantFingerprint)) {
         keeper.dispose();
         this.stats.dedupedWithinSource += 1;
@@ -773,12 +834,18 @@ export class WebGLBlendWarmupManager {
       }
 
       try {
-        this.compileOne(this.renderer, this.camera, this.targetScene, task.compileObject);
+        await this.compileOne(
+          this.renderer,
+          this.camera,
+          this.targetScene,
+          task.compileObject,
+          this.getRenderTarget
+        );
         this.stats.compiled += 1;
       } catch (error) {
         log.warning(
           Modules.RENDERER,
-          `Blend warm-up compile skipped after a WebGL compile failure: ${String(error)}`
+          `Blend warm-up compile skipped after a compile failure: ${String(error)}`
         );
       }
     }
@@ -786,7 +853,7 @@ export class WebGLBlendWarmupManager {
 }
 
 /** The LuxarApp's manager (the free functions below drive it). */
-const defaultManager = new WebGLBlendWarmupManager();
+const defaultManager = new BlendWarmupManager();
 
 /**
  * Every live manager on the page: the app's, plus one per `LuxarLayer`
@@ -795,15 +862,15 @@ const defaultManager = new WebGLBlendWarmupManager();
  * that call is routed to the manager whose scene the node lives in — each host
  * warms its own nodes against its own renderer.
  */
-const managers = new Set<WebGLBlendWarmupManager>([defaultManager]);
+const managers = new Set<BlendWarmupManager>([defaultManager]);
 
 /** Add a host's own manager to the routing set (a LuxarLayer's). */
-export function registerBlendWarmupManager(manager: WebGLBlendWarmupManager): void {
+export function registerBlendWarmupManager(manager: BlendWarmupManager): void {
   managers.add(manager);
 }
 
 /** Drop a host's manager from the routing set (its dispose). */
-export function unregisterBlendWarmupManager(manager: WebGLBlendWarmupManager): void {
+export function unregisterBlendWarmupManager(manager: BlendWarmupManager): void {
   if (manager !== defaultManager) managers.delete(manager);
 }
 
@@ -817,7 +884,7 @@ function sceneRootOf(object: THREE.Object3D): THREE.Object3D {
 /**
  * Point the session's warm-up at a renderer, camera and scene, and drop
  * whatever the previous configuration had pinned. Called once per renderer
- * setup; `enabled: false` (WebGPU, or `?noBlendWarmup`) makes every other
+ * setup; `enabled: false` (`?noBlendWarmup`, phones/tablets) makes every other
  * entry point below a no-op.
  */
 export function configureBlendModeProgramWarmup(config: WarmupConfig): void {

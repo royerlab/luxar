@@ -526,9 +526,9 @@ export interface UrlParams {
    */
   lodBias: number | null;
   /**
-   * WebGL-only blend warm-up. **On by default**; pass `?noBlendWarmup`
-   * to disable the off-interaction-path pre-linking of reachable
-   * blend-mode program variants.
+   * Blend warm-up. **On by default**; pass `?noBlendWarmup` to disable the
+   * off-interaction-path pre-compiling of reachable blend-mode program
+   * variants (WebGL) or render pipelines (WebGPU).
    */
   blendWarmup: boolean;
   /**

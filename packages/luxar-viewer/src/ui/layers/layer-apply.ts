@@ -24,7 +24,7 @@ import type { SceneNode } from '../../data/data-loader-types';
 import type { SceneNodeIndex } from '../../data/scene-loader/view-state/scene-node-index';
 import type { BlendingMode } from '../../rendering';
 import { materialManager } from '../../rendering';
-import { scheduleBlendModeProgramWarmupForObject } from '../../rendering/webgl-blend-warmup';
+import { scheduleBlendModeProgramWarmupForObject } from '../../rendering/blend-warmup';
 import { log, Modules } from '../../utils/log';
 import { getColormapTexture } from '../../rendering/colormap-textures';
 import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';

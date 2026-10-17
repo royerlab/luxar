@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import type { BlendingMode } from '../../../types/blending';
+import { BLENDING_MODES, type BlendingMode } from '../../../types/blending';
 import {
-  WebGLBlendWarmupManager,
+  BlendWarmupManager,
   buildBlendWarmupFingerprint,
-} from '../../../rendering/webgl-blend-warmup';
+  type WarmupRenderer,
+} from '../../../rendering/blend-warmup';
 
 class FakeWarmupMaterial extends THREE.ShaderMaterial {
   declare defines: Record<string, unknown>;
@@ -98,12 +99,159 @@ function makeActivationController() {
 
 const activateImmediately = (activate: () => void): void => activate();
 
-describe('WebGLBlendWarmupManager', () => {
+describe('BlendWarmupManager', () => {
+  it('compiles WebGPU keepers against the live HDR target, restores the prior target, and awaits completion', async () => {
+    const previous = new THREE.WebGLRenderTarget(1, 1);
+    const hdr = new THREE.WebGLRenderTarget(1, 1);
+    const resizedHdr = new THREE.WebGLRenderTarget(2, 2);
+    let liveHdr = hdr;
+    const compiledTargets: Array<THREE.RenderTarget | null> = [];
+    let current: THREE.RenderTarget | null = previous;
+    let finish!: () => void;
+    const compileAsync = vi.fn((scene: THREE.Object3D) => {
+      expect(current).toBe(liveHdr);
+      compiledTargets.push(current);
+      expect(scene.children).toHaveLength(1);
+      if (compileAsync.mock.calls.length > 1) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    });
+    const renderer = {
+      getRenderTarget: () => current,
+      setRenderTarget: (target: THREE.RenderTarget | null) => {
+        current = target;
+      },
+      compileAsync,
+    } as WarmupRenderer;
+    const manager = new BlendWarmupManager(() => Promise.resolve(), undefined, activateImmediately);
+    const root = new THREE.Group();
+    root.add(makeRenderableMesh('points'));
+    manager.configure({
+      enabled: true,
+      renderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+      pipelineVariants: true,
+      getRenderTarget: () => liveHdr,
+    });
+
+    const done = manager.warmScene(root);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(compileAsync).toHaveBeenCalledTimes(1);
+    expect(current).toBe(previous);
+    const compileScene = compileAsync.mock.calls[0][0];
+    expect(compileScene.children).toHaveLength(1);
+    liveHdr = resizedHdr;
+    finish();
+    await done;
+    expect(compileScene.children).toHaveLength(0);
+    expect(compileAsync).toHaveBeenCalledTimes(BLENDING_MODES.length);
+    expect(compiledTargets).toEqual([hdr, ...Array(BLENDING_MODES.length - 1).fill(resizedHdr)]);
+    expect(current).toBe(previous);
+  });
+
+  it('uses WebGL compile and detaches a rejected WebGPU compile object', async () => {
+    const compile = vi.fn();
+    const webgl = { isWebGLRenderer: true, compile } as unknown as WarmupRenderer;
+    const manager = new BlendWarmupManager(() => Promise.resolve(), undefined, activateImmediately);
+    const root = new THREE.Group();
+    root.add(makeRenderableMesh('points'));
+    manager.configure({
+      enabled: true,
+      renderer: webgl,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+    await manager.warmScene(root);
+    expect(compile).toHaveBeenCalledTimes(3);
+    expect((compile.mock.calls[0][0] as THREE.Scene).children).toHaveLength(0);
+
+    let compileScene!: THREE.Scene;
+    const rejecting = {
+      compileAsync: vi.fn((scene: THREE.Scene) => {
+        compileScene = scene;
+        return Promise.reject(new Error('compile failed'));
+      }),
+      getRenderTarget: () => null,
+      setRenderTarget: vi.fn(),
+    } as unknown as WarmupRenderer;
+    manager.configure({
+      enabled: true,
+      renderer: rejecting,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+    await manager.warmScene(root);
+    expect(rejecting.compileAsync).toHaveBeenCalled();
+    expect(compileScene.children).toHaveLength(0);
+  });
+  it('pipelineVariants (WebGPU) queues every blend mode, not only define-distinct ones', async () => {
+    const run = async (pipelineVariants: boolean) => {
+      const compileOne = vi.fn();
+      const manager = new BlendWarmupManager(
+        () => Promise.resolve(),
+        compileOne,
+        activateImmediately
+      );
+      const root = new THREE.Group();
+      root.add(makeRenderableMesh('points'));
+      manager.configure({
+        enabled: true,
+        renderer: {} as THREE.WebGLRenderer,
+        camera: new THREE.PerspectiveCamera(),
+        targetScene: new THREE.Scene(),
+        pipelineVariants,
+      });
+      await manager.warmScene(root);
+      return compileOne.mock.calls.length;
+    };
+    // FakeWarmupMaterial: only max and volumetric change defines, so WebGL
+    // collapses the other modes onto one program.
+    expect(await run(false)).toBe(3);
+    expect(await run(true)).toBe(BLENDING_MODES.length);
+  });
+
+  it('awaits an asynchronous compile (WebGPU compileAsync) before the next one', async () => {
+    let finish!: () => void;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const compileOne = vi.fn(async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      if (!finish) await new Promise<void>((r) => (finish = r));
+      inFlight--;
+    });
+    const manager = new BlendWarmupManager(
+      () => Promise.resolve(),
+      compileOne,
+      activateImmediately
+    );
+    const root = new THREE.Group();
+    root.add(makeRenderableMesh('points'));
+    manager.configure({
+      enabled: true,
+      renderer: {} as THREE.WebGLRenderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+      pipelineVariants: true,
+    });
+    const done = manager.warmScene(root);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(compileOne).toHaveBeenCalledTimes(1);
+    finish();
+    await done;
+    expect(maxInFlight).toBe(1);
+    expect(compileOne).toHaveBeenCalledTimes(BLENDING_MODES.length);
+  });
+
   it('defers explicit scene activation and ignores scheduling until it runs', async () => {
     const warmupTurns = makeWarmupTurnController();
     const activations = makeActivationController();
     const compileOne = vi.fn();
-    const manager = new WebGLBlendWarmupManager(warmupTurns.wait, compileOne, activations.defer);
+    const manager = new BlendWarmupManager(warmupTurns.wait, compileOne, activations.defer);
     const root = new THREE.Group();
     const mesh = makeRenderableMesh('points');
     root.add(mesh);
@@ -133,7 +281,7 @@ describe('WebGLBlendWarmupManager', () => {
     const warmupTurns = makeWarmupTurnController();
     const activations = makeActivationController();
     const compileOne = vi.fn();
-    const manager = new WebGLBlendWarmupManager(warmupTurns.wait, compileOne, activations.defer);
+    const manager = new BlendWarmupManager(warmupTurns.wait, compileOne, activations.defer);
     const root = new THREE.Group();
     root.add(makeRenderableMesh('points'));
 
@@ -172,7 +320,7 @@ describe('WebGLBlendWarmupManager', () => {
 
     try {
       const compileOne = vi.fn();
-      const manager = new WebGLBlendWarmupManager(undefined, compileOne);
+      const manager = new BlendWarmupManager(undefined, compileOne);
       manager.configure({
         enabled: true,
         renderer: {} as THREE.WebGLRenderer,
@@ -217,7 +365,7 @@ describe('WebGLBlendWarmupManager', () => {
 
     try {
       const compileOne = vi.fn();
-      const manager = new WebGLBlendWarmupManager(undefined, compileOne);
+      const manager = new BlendWarmupManager(undefined, compileOne);
       manager.configure({
         enabled: true,
         renderer: {} as THREE.WebGLRenderer,
@@ -244,7 +392,7 @@ describe('WebGLBlendWarmupManager', () => {
   it('waits for a render turn before each distinct variant compile', async () => {
     const warmupTurns = makeWarmupTurnController();
     const compiledModes: string[] = [];
-    const manager = new WebGLBlendWarmupManager(
+    const manager = new BlendWarmupManager(
       warmupTurns.wait,
       (_renderer, _camera, _scene, obj) => {
         compiledModes.push(
@@ -286,7 +434,7 @@ describe('WebGLBlendWarmupManager', () => {
   it('resolves scene warming only after every queued variant compiles', async () => {
     const warmupTurns = makeWarmupTurnController();
     const compileOne = vi.fn();
-    const manager = new WebGLBlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
+    const manager = new BlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
     manager.configure({
       enabled: true,
       renderer: {} as THREE.WebGLRenderer,
@@ -314,11 +462,7 @@ describe('WebGLBlendWarmupManager', () => {
     try {
       const warmupTurns = makeWarmupTurnController();
       const compileOne = vi.fn();
-      const manager = new WebGLBlendWarmupManager(
-        warmupTurns.wait,
-        compileOne,
-        activateImmediately
-      );
+      const manager = new BlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
       manager.configure({
         enabled: true,
         renderer: {} as THREE.WebGLRenderer,
@@ -352,7 +496,7 @@ describe('WebGLBlendWarmupManager', () => {
   it('dedupes blend modes that land on the same program variant', async () => {
     const warmupTurns = makeWarmupTurnController();
     const compileOne = vi.fn();
-    const manager = new WebGLBlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
+    const manager = new BlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
 
     manager.configure({
       enabled: true,
@@ -372,7 +516,7 @@ describe('WebGLBlendWarmupManager', () => {
   it('shares one keeper per program variant across nodes with identical materials', async () => {
     const warmupTurns = makeWarmupTurnController();
     const compileOne = vi.fn();
-    const manager = new WebGLBlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
+    const manager = new BlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
     manager.configure({
       enabled: true,
       renderer: {} as THREE.WebGLRenderer,
@@ -401,7 +545,7 @@ describe('WebGLBlendWarmupManager', () => {
 
   it('does not transfer shared variants while clearing every source', async () => {
     const warmupTurns = makeWarmupTurnController();
-    const manager = new WebGLBlendWarmupManager(warmupTurns.wait, vi.fn(), activateImmediately);
+    const manager = new BlendWarmupManager(warmupTurns.wait, vi.fn(), activateImmediately);
     manager.configure({
       enabled: true,
       renderer: {} as THREE.WebGLRenderer,
@@ -424,7 +568,7 @@ describe('WebGLBlendWarmupManager', () => {
   it('hands a shared variant to a surviving node when its owner is released', async () => {
     const warmupTurns = makeWarmupTurnController();
     const compileOne = vi.fn();
-    const manager = new WebGLBlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
+    const manager = new BlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
     manager.configure({
       enabled: true,
       renderer: {} as THREE.WebGLRenderer,
@@ -454,7 +598,7 @@ describe('WebGLBlendWarmupManager', () => {
   it('a variant whose last user is released is forgotten, not transferred', async () => {
     const warmupTurns = makeWarmupTurnController();
     const compileOne = vi.fn();
-    const manager = new WebGLBlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
+    const manager = new BlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
     manager.configure({
       enabled: true,
       renderer: {} as THREE.WebGLRenderer,
@@ -475,7 +619,7 @@ describe('WebGLBlendWarmupManager', () => {
   it('drops queued keepers when the source material is disposed', async () => {
     const warmupTurns = makeWarmupTurnController();
     const compileOne = vi.fn();
-    const manager = new WebGLBlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
+    const manager = new BlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
 
     manager.configure({
       enabled: true,
@@ -498,7 +642,7 @@ describe('WebGLBlendWarmupManager', () => {
   it('drops old keepers when an object switches to a replacement material', async () => {
     const warmupTurns = makeWarmupTurnController();
     const compileOne = vi.fn();
-    const manager = new WebGLBlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
+    const manager = new BlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
 
     manager.configure({
       enabled: true,
@@ -526,7 +670,7 @@ describe('WebGLBlendWarmupManager', () => {
   it('drops queued keepers when a tracked object is removed from the scene', async () => {
     const warmupTurns = makeWarmupTurnController();
     const compileOne = vi.fn();
-    const manager = new WebGLBlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
+    const manager = new BlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
 
     manager.configure({
       enabled: true,
@@ -550,11 +694,7 @@ describe('WebGLBlendWarmupManager', () => {
 
   it('resolves immediately for disabled sessions and empty placeholder nodes', async () => {
     const compileOne = vi.fn();
-    const manager = new WebGLBlendWarmupManager(
-      async () => undefined,
-      compileOne,
-      activateImmediately
-    );
+    const manager = new BlendWarmupManager(async () => undefined, compileOne, activateImmediately);
 
     manager.configure({
       enabled: false,
@@ -578,7 +718,7 @@ describe('WebGLBlendWarmupManager', () => {
   it('preserves the source material state and refreshes on non-blend define changes', async () => {
     const warmupTurns = makeWarmupTurnController();
     const compileOne = vi.fn();
-    const manager = new WebGLBlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
+    const manager = new BlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
 
     manager.configure({
       enabled: true,
