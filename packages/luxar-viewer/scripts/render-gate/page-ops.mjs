@@ -354,7 +354,7 @@ export async function gpuCost({ k = 20, warm = 10, reps = 5 }) {
  * clipping) is exercised, identically in both builds. A static camera
  * measures almost none of it.
  *
- * Every measured frame ENDS WITH A GPU SYNC (a 1-pixel `readPixels` on
+ * In the default mode every measured frame ENDS WITH A GPU SYNC (a 1-pixel `readPixels` on
  * WebGL, `queue.onSubmittedWorkDone()` on WebGPU, as in `gpuCost`), and the
  * frame's time is taken after it. Without it the numbers are CPU submission
  * only: in headless Chrome with vsync off an animation frame never waits for
@@ -371,14 +371,31 @@ export async function gpuCost({ k = 20, warm = 10, reps = 5 }) {
  * frames are not pinned to the display refresh. The caller reads CPU script
  * time around this call (CDP `ScriptDuration`, which does not count the time
  * spent blocked in the sync).
+ * `pipelined` keeps the rAF orbit but syncs only after its last frame.
+ * `unpaced` runs the same camera steps and direct renders without rAF, calling
+ * `prepareFrame()` at each pose to update view-dependent state. Its one final
+ * sync includes the last render; async streaming cannot finish inside the batch.
  *
  * @param {{ frames?: number, warm?: number, degPerFrame?: number,
+ *   pipelined?: boolean, unpaced?: boolean,
  *   pose: { position: number[], target: number[], up: number[] } }} opts
- * @returns {Promise<{ frames: number, renders: number, frameMs: number,
- *   p95Ms: number, rendersPerFrame: number }>}
+ * @returns {Promise<{ frames: number, renders: number, frameMs?: number,
+ *   throughputMs?: number, p95Ms?: number, rendersPerFrame: number }>}
+ * Unpaced mode reports throughputMs only, without frameMs or p95Ms.
  */
-export async function motion({ frames = 180, warm = 30, degPerFrame = 1, pose }) {
+export async function motion({
+  frames = 180,
+  warm = 30,
+  degPerFrame = 1,
+  pose,
+  pipelined = false,
+  unpaced = false,
+}) {
+  if (pipelined && unpaced) throw new Error('pipelined and unpaced cannot be combined');
   const dbg = window.__luxarDebug;
+  if (unpaced && typeof dbg.animationController?.prepareFrame !== 'function') {
+    return { frames, renders: 0, throughputMs: undefined, rendersPerFrame: 0 };
+  }
   const pp = dbg.app.sceneManager.postProcessing;
   const renderer = dbg.app.sceneManager.renderer;
   const backend = renderer.backend;
@@ -419,13 +436,15 @@ export async function motion({ frames = 180, warm = 30, degPerFrame = 1, pose })
       target: pose.target,
       up: pose.up,
     });
-    dbg.renderOnce();
+    if (!unpaced) dbg.renderOnce();
   };
   for (let i = 0; i < warm; i++) {
     place(i - warm);
+    if (unpaced) dbg.renderOnce();
     await tick();
-    await sync();
+    if (!pipelined) await sync();
   }
+  if (pipelined) await sync();
   let renders = 0;
   const original = pp.render;
   pp.render = function countedRender(...args) {
@@ -436,6 +455,29 @@ export async function motion({ frames = 180, warm = 30, degPerFrame = 1, pose })
   let t0;
   let last;
   try {
+    if (unpaced) {
+      // prepareFrame runs the same view callbacks as an animation tick (LOD,
+      // clipping, depth sort). Direct postProcessing renders alone skip them.
+      // Each pose change wakes the loop, so cancel that pending rAF before
+      // rendering the next pose ourselves.
+      dbg.animationController.stopAnimation();
+      t0 = await sync();
+      for (let i = 0; i < frames; i++) {
+        place(i);
+        dbg.animationController.prepareFrame();
+        // A callback may request another tick; keep the batch free of rAF
+        // work even while the final GPU sync yields to the event loop.
+        dbg.animationController.stopAnimation();
+        pp.render();
+      }
+      last = await sync();
+      return {
+        frames,
+        renders,
+        throughputMs: (last - t0) / frames,
+        rendersPerFrame: renders / frames,
+      };
+    }
     // The loop renders in the animation frame before this tick resolves, so
     // the sync after it covers that frame's GPU work.
     await tick();
@@ -444,12 +486,14 @@ export async function motion({ frames = 180, warm = 30, degPerFrame = 1, pose })
     for (let i = 0; i < frames; i++) {
       place(i);
       await tick();
-      const t = await sync();
+      const t = pipelined ? performance.now() : await sync();
       deltas.push(t - last);
       last = t;
     }
+    if (pipelined) last = await sync();
   } finally {
     pp.render = original;
+    if (unpaced) dbg.animationController.startAnimation();
   }
   deltas.sort((a, b) => a - b);
   return {
@@ -600,6 +644,44 @@ export function endRenderCount() {
     delete pp.__gateOriginalRender;
   }
   return window.__gateRenders ?? 0;
+}
+
+/** Wait for consecutive frames without a render before measuring true idle work. */
+export async function waitForQuiet({ minMs = 3000, quietFrames = 30, timeoutMs = 8000 }) {
+  const pp = window.__luxarDebug.app.sceneManager.postProcessing;
+  const original = pp.render;
+  let renders = 0;
+  let frames = 0;
+  let streak = 0;
+  let sinceFrame = 0;
+  pp.render = function countedRender(...args) {
+    renders++;
+    sinceFrame++;
+    return original.apply(this, args);
+  };
+  const start = performance.now();
+  try {
+    while (performance.now() - start < timeoutMs) {
+      const remaining = timeoutMs - (performance.now() - start);
+      const hadFrame = await new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(false), remaining);
+        requestAnimationFrame(() => {
+          clearTimeout(timer);
+          resolve(true);
+        });
+      });
+      if (!hadFrame) return { renders, frames, settled: false };
+      frames++;
+      streak = sinceFrame === 0 ? streak + 1 : 0;
+      sinceFrame = 0;
+      if (performance.now() - start >= minMs && streak >= quietFrames) {
+        return { renders, frames, settled: true };
+      }
+    }
+    return { renders, frames, settled: false };
+  } finally {
+    pp.render = original;
+  }
 }
 
 /**
