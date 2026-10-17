@@ -242,13 +242,16 @@ provide the second. Each is a key of the manifest's `suites` block and is run by
 
 | suite | what its starter cases do |
 |---|---|
-| `counters` | idle after a small drag (renders, bytes uploaded, stale frame); WebGPU uploads while idle |
+| `counters` | a small drag, its damping tail, then a quiet idle window (renders, buffer/texture uploads, stale frame); WebGPU idle uploads |
 | `playback` | play a hidden time axis (achieved fps, renders, last timepoint shown, duplicate decodes); a slider drag over it |
 | `hosted` | cold loads over the simulated hosted link (first frame, settle, requests and bytes to first frame, concurrency, parts initialised under an authored close-up opening camera) |
 | `trees` | single timeline steps on a time-partitioned tree (step latency, lookups, console calls); an orbit over a LOD ladder |
 | `cache` | several playback loops (duplicate decodes, pinned bytes, server requests) |
 
 ### Declaring a case
+
+This abridged excerpt shows the idle expectations; the manifest also declares
+whole-case render and upload totals and report-only damping-tail metrics.
 
 ```json
 "suites": {
@@ -259,11 +262,15 @@ provide the second. Each is a key of the manifest's `suites` block and is run by
     "cases": [
       { "id": "idle_after_drag_mixed", "store": "gate/mixed.luxar.zarr",
         "pose": { "position": [14, 9, 16], "target": [0, 0, 0], "up": [0, 1, 0] },
-        "workload": { "kind": "drag", "px": 4, "tailMs": 3000 },
+        "workload": { "kind": "drag", "px": 4, "tailMs": 3000, "idleMs": 1000 },
         "staleFrameCheck": true,
+        "expectations": { "idleRenders": "zero",
+                          "idleUploadBytesBuffer": "zero",
+                          "idleUploadBytesTexture": "zero" },
         "metrics": [
-          { "name": "render.count", "better": "lower", "kind": "counter" },
-          { "name": "ext.gpuUploadBytes", "better": "lower", "kind": "counter" } ] } ] } }
+          { "name": "idleRenders", "better": "lower", "kind": "counter" },
+          { "name": "idleUploadBytesBuffer", "better": "lower", "kind": "counter" },
+          { "name": "idleUploadBytesTexture", "better": "lower", "kind": "counter" } ] } ] } }
 ```
 
 A case takes `store` (relative to `datasets/`) or `synthetic` (as in the exact
@@ -285,6 +292,8 @@ metric object. A metric `name` may be:
   the arm), `maxInflight` (the server's peak concurrent requests), and after a
   cold load `requestsToFirstFrame`, `bytesToFirstFrame`, `serialDepth`.
 
+`expectations` on a case apply on every backend even when both builds agree;
+the mixed drag case requires zero renders and uploads in its idle window.
 `kind: "counter"` is judged by `judgeCounter`: when both baseline arms report
 one single value, the medians are compared EXACTLY (`|delta| <= tol` passes; a
 move in the `better` direction is a win, the other way a fail). A counter that
@@ -316,7 +325,7 @@ behind `?.`.
 | kind | params | returns |
 |---|---|---|
 | `idle` | `ms` | `renders`, `frames` |
-| `drag` | `px`, `tailMs` | `renders` (drag + tail), `tailRenders`, `tailFrames` |
+| `drag` | `px`, `tailMs`, `idleMs` | `renders` (drag + tail + idle), `tailRenders`, `tailFrames`, `tailSettled`, `tailUploadBytesBuffer`, `tailUploadBytesTexture`, `idleRenders`, `idleUploadBytesBuffer`, `idleUploadBytesTexture` |
 | `playback` | `dim?`, `fps`, `durationMs` or `loops` | `ticks`, `achievedFps`, `renders`, `rendersPerTick`, `lastTimepointShown`, `wraps`, `tickLatencyP50Ms`/`P90Ms` (records only) |
 | `scrub` | `dim?`, `mode: step\|drag`, `steps`, `intervalMs` | step: `stepMs` (p50), `stepP90Ms`; drag: `commitsDuringDrag`, `dragFrames` |
 | `orbit` | `radius?`, `steps`, `revolutions` | `levelFlips`, `renders` |
@@ -327,7 +336,13 @@ Notes on method:
 
 - `drag` uses real input (Playwright's mouse, dispatched through CDP): an
   in-page synthetic `PointerEvent` has no active pointer, and the controls'
-  `setPointerCapture` throws on it.
+  `setPointerCapture` throws on it. Tail counters start at mouse release;
+  the tail includes intentional camera damping. The subsequent idle window
+  starts after at least `tailMs` and 30 consecutive frames without a render.
+  If the tail does not settle within five more seconds, the row is a harness
+  error (`tailSettled=0`), rather than an idle expectation failure. The suite
+  uses `noBlendWarmup`, which disables the WebGL warm-up keepers; this idle
+  guard does not exercise them.
 - `playback` drives the viewer's own playback
   (`inputHandler.getAnimationManager().play(dim, { targetFPS, loopMode: 'loop' })`)
   after moving the axis to its minimum; `dim` defaults to the first hidden
@@ -369,13 +384,17 @@ ANY baseline build. It counts bytes and calls of WebGL `bufferData`,
 `console.{log,info,warn,error,debug}` calls (`ext.consoleCalls`) and
 `Worker.postMessage` calls. Fetches and resource timing are per realm: requests
 a worker makes are not seen (the server-side figures do see them).
+The upload-byte totals are not directly comparable between backends: WebGPU's
+`writeBuffer` includes changed uniform groups, while WebGL `uniform*()` calls
+are not counted. Compare each backend's idle window with zero, not its upload
+total with the other backend's total.
 
 ### Expectations: `--expect`
 
 A commit that claims an improvement declares it:
 
 ```json
-{ "idle_after_drag_mixed": { "render.count": "zero", "ext.gpuUploadBytes": "win" } }
+{ "idle_after_drag_mixed": { "tailUploadBytesBuffer": "win" } }
 ```
 
 After judging, an unmet expectation fails the row with reason `expectation`:
@@ -384,6 +403,8 @@ with equal medians (for counters); `pass` no regression (pass or win). `n/a`
 never meets an expectation. A case or metric the manifest does not declare is a
 harness error (exit 2). An expectation on a `heavy` case that was skipped fails
 too; pass `--heavy`.
+An `--expect` file adds to the case's shipped expectations. An entry that
+conflicts with a shipped expectation is rejected as a harness error (exit 2).
 
 ### Server profiles
 

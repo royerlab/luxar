@@ -20,6 +20,9 @@ const HARNESS_METRICS = [
   'commitsDuringDrag',
   'dragFrames',
   'firstFrameMs',
+  'idleRenders',
+  'idleUploadBytesBuffer',
+  'idleUploadBytesTexture',
   'lastTimepointShown',
   'levelFlips',
   'maxInflight',
@@ -29,6 +32,10 @@ const HARNESS_METRICS = [
   'serverRequests',
   'settledMs',
   'stepMs',
+  'tailRenders',
+  'tailSettled',
+  'tailUploadBytesBuffer',
+  'tailUploadBytesTexture',
   'ticks',
 ];
 
