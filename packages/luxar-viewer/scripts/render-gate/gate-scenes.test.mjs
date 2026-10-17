@@ -29,6 +29,9 @@ const HARNESS_METRICS = [
   'serverRequests',
   'settledMs',
   'stepMs',
+  'tailRenders',
+  'tailUploadBytesBuffer',
+  'tailUploadBytesTexture',
   'ticks',
 ];
 

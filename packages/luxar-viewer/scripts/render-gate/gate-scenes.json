@@ -486,6 +486,9 @@
           "metrics": [
             { "name": "render.count", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "renders", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            { "name": "tailRenders", "better": "lower", "kind": "counter" },
+            { "name": "tailUploadBytesBuffer", "better": "lower", "kind": "counter" },
+            { "name": "tailUploadBytesTexture", "better": "lower", "kind": "counter" },
             { "name": "ext.gpuUploadBytes", "better": "lower", "kind": "counter" },
             { "name": "gpu.uploadBytes", "better": "lower", "kind": "counter" }
           ]

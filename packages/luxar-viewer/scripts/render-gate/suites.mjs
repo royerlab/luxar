@@ -54,6 +54,8 @@ export const METRIC_DIRECTIONS = Object.freeze({
   'render.count': 'lower',
   renders: 'lower',
   tailRenders: 'lower',
+  tailUploadBytesBuffer: 'lower',
+  tailUploadBytesTexture: 'lower',
   'gpu.uploadBytes': 'lower',
   'gpu.uploadBytes.texture': 'lower',
   'ext.gpuUploadBytes': 'lower',
@@ -247,26 +249,39 @@ export function serverMetrics(log, { navT, firstFrameMs, latencyMs = 0, maxInfli
  * A drag on the canvas with REAL input events (Playwright's mouse, i.e. CDP
  * `Input.dispatchMouseEvent`): an in-page synthetic `PointerEvent` has no
  * active pointer, so the controls' `setPointerCapture` throws on it. Then a
- * `tailMs` idle. `renders` covers drag + tail, `tailRenders` the tail alone.
+ * `tailMs` idle. `renders` covers drag + tail; tail render and upload counts
+ * start at mouse release.
  */
-async function dragWorkload(page, { px = 4, tailMs = 3000, moves = 8 }) {
+export async function dragWorkload(page, { px = 4, tailMs = 3000, moves = 8 }) {
   const box = await page.evaluate(() => {
     const r = window.__luxarDebug.app.sceneManager.renderer.domElement.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   });
   await page.evaluate(ops.beginRenderCount);
   let tail;
+  let uploadsAtRelease;
+  let uploadsAfterTail;
   try {
     await page.mouse.move(box.x, box.y);
     await page.mouse.down();
     await page.mouse.move(box.x + px, box.y, { steps: Math.max(1, moves) });
     await page.mouse.up();
+    uploadsAtRelease = await page.evaluate(ops.readExtCounters);
     tail = await page.evaluate(ops.idle, { ms: tailMs });
+    uploadsAfterTail = await page.evaluate(ops.readExtCounters);
   } finally {
     const renders = await page.evaluate(ops.endRenderCount);
     tail = { ...(tail ?? {}), total: renders };
   }
-  return { renders: tail.total, tailRenders: tail.renders, tailFrames: tail.frames };
+  return {
+    renders: tail.total,
+    tailRenders: tail.renders,
+    tailFrames: tail.frames,
+    tailUploadBytesBuffer:
+      uploadsAfterTail.gpuUploadBytesBuffer - uploadsAtRelease.gpuUploadBytesBuffer,
+    tailUploadBytesTexture:
+      uploadsAfterTail.gpuUploadBytesTexture - uploadsAtRelease.gpuUploadBytesTexture,
+  };
 }
 
 const PAGE_WORKLOADS = {

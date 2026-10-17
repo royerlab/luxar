@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import * as ops from './page-ops.mjs';
 import {
+  dragWorkload,
   judgeMetric,
   meetsExpectation,
   METRIC_DIRECTIONS,
@@ -8,6 +10,41 @@ import {
   validateExpectations,
   validateMetricDirections,
 } from './suites.mjs';
+
+describe('dragWorkload', () => {
+  it('reports only uploads after mouse release as tail work', async () => {
+    const calls = [];
+    let uploads = { gpuUploadBytesBuffer: 0, gpuUploadBytesTexture: 0 };
+    const page = {
+      evaluate: async (fn) => {
+        if (fn === ops.beginRenderCount) return true;
+        if (fn === ops.readExtCounters) return { ...uploads };
+        if (fn === ops.idle) {
+          uploads = { gpuUploadBytesBuffer: 116, gpuUploadBytesTexture: 221 };
+          return { renders: 2, frames: 180 };
+        }
+        if (fn === ops.endRenderCount) return 9;
+        return { x: 10, y: 20 };
+      },
+      mouse: {
+        move: async () => calls.push('move'),
+        down: async () => calls.push('down'),
+        up: async () => {
+          calls.push('up');
+          uploads = { gpuUploadBytesBuffer: 100, gpuUploadBytesTexture: 200 };
+        },
+      },
+    };
+    expect(await dragWorkload(page, { tailMs: 3000 })).toEqual({
+      renders: 9,
+      tailRenders: 2,
+      tailFrames: 180,
+      tailUploadBytesBuffer: 16,
+      tailUploadBytesTexture: 21,
+    });
+    expect(calls).toEqual(['move', 'down', 'move', 'up']);
+  });
+});
 
 const manifestSuites = {
   counters: {
