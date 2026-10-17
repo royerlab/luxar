@@ -200,7 +200,7 @@ def extension_below(
 
     The ratio is the grid's own first step (``k[1] / k[0]``), clamped to
     ``[1.5, 4]`` so an irregular explicit grid neither crawls nor leaps. Points
-    at or below ``floor`` are dropped, as are duplicates.
+    below ``floor`` are dropped, as are duplicates.
     """
     ks = sorted(int(k) for k in k_grid)
     if not ks:
