@@ -17,6 +17,7 @@ import {
   captureCanvasRGBA,
   samplePixelsAt,
   openLayersPanel,
+  probeWebGPUBackend,
 } from './helpers';
 import { EXPECTED_BLEND_STATE as EXPECTED_STATE } from './blending-expected-state';
 
@@ -533,6 +534,10 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
   }) => {
     await page.goto(`/?src=${GSPLAT_OVERLAP_FIXTURE}&renderer=webgpu&debug&dpr=1`);
     await waitForLuxarReady(page);
+    test.skip(
+      !(await probeWebGPUBackend(page)).isNative,
+      'Blend pipeline changes require a native WebGPU backend'
+    );
     await waitForGSplatsCommitted(page);
 
     const offsets: Array<[number, number]> = [];
@@ -550,6 +555,16 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
         });
       }, mode);
     };
+    const materialVersions = async () =>
+      page.evaluate(() => {
+        const versions: number[] = [];
+        (window as any).__luxarDebug.scene.traverse((obj: any) => {
+          if (obj.userData?.nodeType === 'gsplats' && obj.material) {
+            versions.push(obj.material.version);
+          }
+        });
+        return versions;
+      });
     const replaceWithFreshClones = async () => {
       await page.evaluate(() => {
         (window as any).__luxarDebug.scene.traverse((obj: any) => {
@@ -562,13 +577,18 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
 
     await changeMode('max'); // Enter the peak-projection, alpha=1 graph variant.
     const max = await pixels();
+    const peakVersions = await materialVersions();
+    expect(peakVersions.length).toBeGreaterThan(0);
     await changeMode('opaque'); // Same graph; only the pipeline state changes.
+    expect(await materialVersions()).toEqual(peakVersions);
     const switchedOpaque = await pixels();
     await replaceWithFreshClones();
     const freshOpaque = await pixels();
     expect(switchedOpaque).toEqual(freshOpaque);
 
+    const opaqueVersions = await materialVersions();
     await changeMode('max');
+    expect(await materialVersions()).toEqual(opaqueVersions);
     const switchedMax = await pixels();
     await replaceWithFreshClones();
     const freshMax = await pixels();
