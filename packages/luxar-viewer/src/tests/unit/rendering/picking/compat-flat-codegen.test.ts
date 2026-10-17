@@ -1,39 +1,83 @@
 /** Compatibility-mode WebGPU rejects flat varyings with default first sampling. */
-import { readdirSync, readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import * as THREE from 'three';
 import { context } from 'three/tsl';
 import { WGSLNodeBuilder, type NodeMaterial } from 'three/webgpu';
+import ts from 'typescript';
 import { expect, it } from 'vitest';
 
+import {
+  forEachNode,
+  lineOf,
+  parseSourceFile,
+  productionSourceFiles,
+} from '../../../helpers/source-scan';
 import { LineTSLMaterial } from '../../../../rendering/materials/line/material-tsl';
 import { LinePickingTSLMaterial } from '../../../../rendering/picking/line/material-tsl';
 import { GSplatPickingTSLMaterial } from '../../../../rendering/picking/gsplat/material-tsl';
 import { MeshPickingTSLMaterial } from '../../../../rendering/picking/mesh/material-tsl';
 
-const RENDERING = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../../../../rendering'
-);
+function interpolationViolations(file: ts.SourceFile, relative: string): string[] {
+  const violations: string[] = [];
+  forEachNode(file, (node) => {
+    if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return;
+    if (node.expression.name.text !== 'setInterpolation') return;
+    const mode = node.arguments[0];
+    const sampling = node.arguments[1];
+    const site = `${relative}:${lineOf(node)}`;
+    if (!mode || !ts.isStringLiteralLike(mode)) {
+      violations.push(`${site}: interpolation mode must be a literal`);
+    } else if (mode.text === 'flat') {
+      const meshFirst = relative === 'rendering/picking/mesh/pick.tsl.ts';
+      if (
+        node.arguments.length !== 2 ||
+        !sampling ||
+        !(
+          (ts.isStringLiteralLike(sampling) &&
+            (sampling.text === 'either' || (meshFirst && sampling.text === 'first'))) ||
+          (meshFirst && ts.isConditionalExpression(sampling))
+        )
+      ) {
+        violations.push(`${site}: flat interpolation needs compatibility-safe sampling`);
+      }
+    }
+  });
+  return violations;
+}
 
 it('every rendering flat interpolation specifies compatibility-safe sampling', () => {
   const violations: string[] = [];
-  for (const relative of readdirSync(RENDERING, { recursive: true }) as string[]) {
-    if (!relative.endsWith('.ts')) continue;
-    const source = readFileSync(path.join(RENDERING, relative), 'utf8');
-    if (/\.setInterpolation\(\s*['"]flat['"]\s*\)/.test(source)) {
-      violations.push(`${relative}: flat interpolation has no sampling mode`);
-    }
-    if (relative !== path.join('picking', 'mesh', 'pick.tsl.ts') && /['"]first['"]/.test(source)) {
-      violations.push(`${relative}: first sampling is only allowed for mesh picking`);
-    }
+  for (const relative of productionSourceFiles().filter((file) => file.startsWith('rendering/'))) {
+    violations.push(...interpolationViolations(parseSourceFile(relative), relative));
   }
   expect(violations).toEqual([]);
 });
 
-function wgsl(material: NodeMaterial, compatibilityMode: boolean | null = true, omitMode = false): string {
+it.each([
+  ["varying(x).setInterpolation('flat')", 'rendering/example.ts', 1],
+  ["varying(x).setInterpolation(\n'flat',\n)", 'rendering/example.ts', 1],
+  ["const FLAT = 'flat'; varying(x).setInterpolation(FLAT, 'either')", 'rendering/example.ts', 1],
+  ["varying(x).setInterpolation('flat', 'first')", 'rendering/example.ts', 1],
+  [
+    "const order = 'first'; varying(x).setInterpolation('flat', 'either')",
+    'rendering/example.ts',
+    0,
+  ],
+  ["varying(x).setInterpolation('flat', 'first')", 'rendering/picking/mesh/pick.tsl.ts', 0],
+  [
+    "varying(x).setInterpolation('flat', core ? 'first' : 'either')",
+    'rendering/picking/mesh/pick.tsl.ts',
+    0,
+  ],
+] as const)('source scan checks interpolation calls in %s', (source, relative, count) => {
+  const file = ts.createSourceFile(relative, source, ts.ScriptTarget.Latest, true);
+  expect(interpolationViolations(file, relative)).toHaveLength(count);
+});
+
+function wgsl(
+  material: NodeMaterial,
+  compatibilityMode: boolean | null = true,
+  omitMode = false
+): string {
   const renderer = {
     getRenderTarget: () => null,
     getMRT: () => null,
@@ -99,8 +143,11 @@ it('mesh picking keeps first-corner sampling on core WebGPU', () => {
 it.each([
   ['null', null, false],
   ['undefined', true, true],
-] as const)('mesh picking uses either-corner sampling for unknown mode %s', (_name, mode, omitMode) => {
-  const source = wgsl(new MeshPickingTSLMaterial({ nodeId: 1 }), mode, omitMode);
-  expect(source.match(/@interpolate\( flat, either \)/g)).toHaveLength(2);
-  expect(source).not.toContain('@interpolate( flat, first )');
-});
+] as const)(
+  'mesh picking uses either-corner sampling for unknown mode %s',
+  (_name, mode, omitMode) => {
+    const source = wgsl(new MeshPickingTSLMaterial({ nodeId: 1 }), mode, omitMode);
+    expect(source.match(/@interpolate\( flat, either \)/g)).toHaveLength(2);
+    expect(source).not.toContain('@interpolate( flat, first )');
+  }
+);
