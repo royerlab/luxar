@@ -71,6 +71,7 @@ export const METRIC_DIRECTIONS = Object.freeze({
   'decode.count': 'lower',
   'decode.count.lookahead': 'lower',
   'decode.duplicates': 'lower',
+  'fetch.data.requests': 'lower',
   'lod.levelSwaps': 'lower',
   levelFlips: 'lower',
   'scene.getObjectByName': 'lower',
