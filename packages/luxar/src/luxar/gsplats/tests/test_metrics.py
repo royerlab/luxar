@@ -711,6 +711,24 @@ class TestSeparableSSIM:
             sum(refs) / 3, abs=1e-6
         )
 
+    @pytest.mark.parametrize("shape", [(53, 70), (37, 45, 29)])
+    def test_tiled_ragged_edges_match_dense_kernel(
+        self, shape: tuple[int, ...]
+    ) -> None:
+        """The tiled path agrees with the dense n-D kernel at the volume edges.
+
+        Tile 16 / overlap 10 leaves a trailing strip on every axis that
+        ``_compute_tile_slices`` folds into the previous tile, so the last
+        tiles are ragged; their valid maps must still abut the interior ones
+        exactly at the border the dense VALID convolution trims.
+        """
+        g = torch.Generator().manual_seed(3)
+        a = torch.rand(shape, generator=g, dtype=torch.float64)
+        b = (a + 0.1 * torch.randn(shape, generator=g, dtype=torch.float64)).clamp(0, 1)
+        s, n = _ssim_nd_tiled(a, b, window_size=11, data_range=1.0, tile_size=16)
+        assert n == math.prod(d - 10 for d in shape)
+        assert s / n == pytest.approx(self._dense_reference(a, b, 11, 1.0), abs=1e-6)
+
     def test_no_im2col_blowup_on_cpu(self) -> None:
         """A 96^3 CPU SSIM stays near a few volumes of memory and is fast.
 
