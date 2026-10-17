@@ -40,7 +40,8 @@ import { classifyRow, sameCounts, scoreControlPick, strip } from './classify.mjs
 import { pickWithinDraw, scoreBlocks, scoreFloatBuffers, scorePickBuffers } from './exactness.mjs';
 import { writeUlpHeatmap } from './heatmap.mjs';
 import * as ops from './page-ops.mjs';
-import { familyFloor, judgePerf, median, noiseFloor, ROTATIONS } from './perf-stats.mjs';
+import { perfRowStatus, scorePerfMetric } from './perf-row.mjs';
+import { ROTATIONS } from './perf-stats.mjs';
 import { startServer } from './server.mjs';
 import {
   countTimingJudgements,
@@ -359,10 +360,14 @@ async function measureArm(browser, origin, c, backend) {
     const s0 = await script();
     const mo = await page.evaluate(ops.motion, { pose: c.pose ?? d.pose });
     const s1 = await script();
+    const tp = await page.evaluate(ops.motion, { pose: c.pose ?? d.pose, pipelined: true });
+    const unpaced = await page.evaluate(ops.motion, { pose: c.pose ?? d.pose, unpaced: true });
     const wk = await page.evaluate(ops.wake, {});
     return {
       gpuMs: gpu.minMs,
       frameMs: mo.frameMs,
+      throughputMs: tp.frameMs,
+      unpacedThroughputMs: unpaced.throughputMs,
       frameP95Ms: mo.p95Ms,
       // CDP ScriptDuration does not count the time motion's GPU sync blocks in
       // readPixels (measured: 2.3 ms of script in a 55 ms synced frame), so this
@@ -380,6 +385,8 @@ async function measureArm(browser, origin, c, backend) {
 const PERF_METRICS = [
   'gpuMs',
   'frameMs',
+  'throughputMs',
+  'unpacedThroughputMs',
   'frameP95Ms',
   'cpuMs',
   'rendersPerFrame',
@@ -421,15 +428,17 @@ async function runPerf(session, servers, timingTests) {
         const base = samples.base.map((s) => s[m]);
         const base2 = samples.base2.map((s) => s[m]);
         const cand = samples.cand.map((s) => s[m]);
-        const aaFloor = noiseFloor(base, base2);
-        row.metrics[m] = {
-          baseMedian: median(base),
-          candMedian: median(cand),
-          aaFloor,
-          ...judgePerf(base, cand, familyFloor(aaFloor, timingTests), PERF_ABS_TOLERANCE[m] ?? 0),
-        };
+        row.metrics[m] = scorePerfMetric(
+          m,
+          backend,
+          base,
+          cand,
+          base2,
+          PERF_ABS_TOLERANCE[m] ?? 0,
+          timingTests
+        );
       }
-      row.status = Object.values(row.metrics).some((v) => v.verdict === 'fail') ? 'fail' : 'pass';
+      row.status = perfRowStatus(row.metrics);
       results.push(row);
     }
   }
@@ -526,8 +535,10 @@ function markdown(meta, exact, perf, suites) {
       '## Performance (ratio cand/base, 95% CI, run-wide A/A floor)',
       '',
       '`frameMs` / `frameP95Ms` INCLUDE GPU completion: each orbit frame ends with a GPU sync, so a ' +
-        'frame costs its CPU plus GPU work, serialized. `gpuMs` is GPU cost alone (settled pose); ' +
-        '`cpuMs` is script time alone.',
+        'frame costs its CPU plus GPU work, serialized. `throughputMs` syncs once after the rAF ' +
+        'orbit; WebGL rows near 16.7 ms are marked pacing-bound. `unpacedThroughputMs` runs camera ' +
+        'steps without rAF and syncs once, but asynchronous streaming cannot advance between steps. ' +
+        '`gpuMs` is GPU cost alone (settled pose); `cpuMs` is script time alone.',
       '',
       '| case | backend | metric | base | cand | ratio | CI | floor | verdict |',
       '|---|---|---|---|---|---|---|---|---|'
@@ -538,8 +549,16 @@ function markdown(meta, exact, perf, suites) {
         continue;
       }
       for (const [m, v] of Object.entries(r.metrics)) {
+        const paced = Object.entries(v.pacingBound ?? {})
+          .filter(([, bound]) => bound)
+          .map(([arm]) => arm);
+        const pacingNote = paced.length
+          ? v.verdict === 'pacing-bound'
+            ? ` (${paced.join(', ')})`
+            : ` (pacing-bound: ${paced.join(', ')})`
+          : '';
         lines.push(
-          `| ${r.case} | ${r.backend} | ${m} | ${fmtNum(v.baseMedian, 3)} | ${fmtNum(v.candMedian, 3)} | ${fmtNum(v.ratio, 3)} | ${fmtNum(v.lo, 3)}–${fmtNum(v.hi, 3)} | ${typeof v.floor === 'number' ? `${fmtNum(v.floor * 100, 1)}%` : '-'} | ${v.verdict} |`
+          `| ${r.case} | ${r.backend} | ${m} | ${fmtNum(v.baseMedian, 3)} | ${fmtNum(v.candMedian, 3)} | ${fmtNum(v.ratio, 3)} | ${fmtNum(v.lo, 3)}–${fmtNum(v.hi, 3)} | ${typeof v.floor === 'number' ? `${fmtNum(v.floor * 100, 1)}%` : '-'} | ${v.verdict}${pacingNote} |`
         );
       }
     }
