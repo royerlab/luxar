@@ -1137,7 +1137,7 @@ The implementation supports multiple PyTorch devices with performance-aware auto
 |--------|---------------|-------------|-------|
 | **CUDA** (NVIDIA) | ✓ (when available) | Significant speedup | Best performance, custom kernels |
 | **MPS** (Apple Silicon) | ✓ (when available, no CUDA) | GPU-accelerated | Metal backend for 3D volumes; PyTorch renderer otherwise |
-| **CPU** | ✓ (fallback) | Baseline | Reliable; fitting warns it can be orders of magnitude slower than GPU |
+| **CPU** | ✓ (fallback) | Native numba kernels for 3D | 3D fits use fused numba kernels (below); other shapes use the PyTorch renderer, which fitting warns can be orders of magnitude slower than GPU |
 
 ### Device Selection Logic:
 ```python
@@ -1149,6 +1149,10 @@ fitter = GaussianSplatFitter(device="mps")  # Force MPS
 fitter = GaussianSplatFitter(device="cuda")  # Force CUDA
 fitter = GaussianSplatFitter(device="cpu")  # Force CPU
 ```
+
+### CPU threads:
+
+On CPU, `luxar gsplat fit` and `luxar gsplat cal` raise torch to `min(physical cores, 8)` threads for the command when torch still has one thread (the hatch env pins one; scaling stops near 8). An OMP/MKL export that already raised torch's count is left alone; `LUXAR_CPU_THREADS=N` overrides it and also sets native kernel threads. `LUXAR_CPU_THREADS=0` leaves torch alone while the kernels use physical cores. Library calls from Python never change torch's setting (`utils/cpu_threads.py`). Multi-worker fits set a per-worker share for both unless a nonzero value was supplied.
 
 ### Apple Silicon Performance Notes:
 
@@ -1196,6 +1200,10 @@ forces one; a forced backend that cannot run raises, in fitting too.
 
 See [metal/README.md](models/gsplats/metal/README.md) for detailed installation and troubleshooting.
 
+### Native CPU Backend
+
+On the CPU, 3D fits run on fused numba kernels (`GaussianSplatModelCPUNative`): the same numbers as the PyTorch renderer, many times faster (see [cpu/README.md](models/gsplats/cpu/README.md) for measurements). `numba` ships in the `gsplats` extra and compiles the kernels on first use (cached afterwards); without it, CPU fits use the PyTorch renderer. `LUXAR_CPU_BACKEND=auto|native|torch` forces a choice. The kernels use physical cores by default; `LUXAR_CPU_THREADS=N` sets both their width and CLI torch's width as described above.
+
 ## Package Structure
 
 ```
@@ -1231,7 +1239,10 @@ gsplats/
 ├── spatial_hash.py                # Online and batched nD proximity-query grids
 ├── exposure.py                    # Opening-view brightness: predict_projected_sum (additive
 │                                  #   per-pixel sum down the view axis) + plan_projected_exposure
-│                                  #   (the dimming factor `gsplat convert` auto exposure applies)
+│                                  #   (the dimming factor `gsplat convert` folds into display_gain)
+│                                  #   + data_unit_display_attrs / amplitude_unit_attrs (the attrs
+│                                  #   an add_gsplats_* call passes with normalize_amplitudes=False
+│                                  #   to keep data units, as convert does)
 │
 ├── lod/                            # Level-of-Detail post-processing (additive + substitutive)
 │   ├── additive.py                 # compute_additive_order, make_additive_lod
@@ -1277,6 +1288,7 @@ gsplats/
 │   │   ├── gsplat_model.py        # PyTorch model definition
 │   │   ├── rendering_core.py      # Core rendering kernels
 │   │   ├── rendering_wrappers.py  # NumPy/PyTorch rendering convenience wrappers
+│   │   ├── cpu/                   # Native numba kernels for 3D CPU fitting
 │   │   ├── cuda/                  # CUDA kernels for GPU-accelerated splatting
 │   │   └── metal/                 # Metal compute shaders for Apple Silicon
 │   └── utils/

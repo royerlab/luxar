@@ -86,6 +86,15 @@ export interface GSplatMaterialConfig {
   intensity?: number;
   /** Offset (additive brightness shift / black level), default 0.0 */
   offset?: number;
+  /**
+   * Display gain (the node's `display_gain` attr), default 1.0: multiplies the
+   * splat amplitude in every amplitude-linear term of the draw — emission, the
+   * volumetric optical depth, the normal-mode coverage — but NOT the colormap
+   * lookup, which windows the amplitude in its stored (data) units. Identical
+   * to pre-multiplying the stored amplitudes by it (LUXAR_ZARR_FORMAT.md,
+   * "Amplitude units and display gain").
+   */
+  displayGain?: number;
   /** Truncation radius in sigmas (defaults to `GSPLAT_DEFAULT_TRUNCATION_RADIUS`) */
   truncationRadius?: number;
   /** Blending mode */
@@ -206,6 +215,7 @@ export class GSplatMaterial
         uInvGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
         uIntensity: { value: materialConfig.intensity ?? 1.0 },
         uOffset: { value: materialConfig.offset ?? 0.0 },
+        uDisplayGain: { value: materialConfig.displayGain ?? 1.0 },
         // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
         // Flipped by the depth-sort coordinator once the inactive buffer
         // holds a whole permutation (runtime uniform: never a define — a
@@ -344,6 +354,19 @@ export class GSplatMaterial
   /** Current absorption coefficient κ. */
   getAbsorption(): number {
     return this.uniforms.uAbsorption.value as number;
+  }
+
+  /**
+   * Update the display gain (`display_gain`): a plain uniform write, no
+   * recompile. Scales every amplitude-linear term, never the colormap lookup.
+   */
+  updateDisplayGain(gain: number): void {
+    this.uniforms.uDisplayGain.value = gain;
+  }
+
+  /** Current display gain. */
+  getDisplayGain(): number {
+    return this.uniforms.uDisplayGain.value as number;
   }
 
   /**
@@ -506,6 +529,7 @@ export class GSplatMaterial
       gamma: this.userData.gamma ?? 1.0,
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
+      displayGain: this.uniforms.uDisplayGain.value,
       truncationRadius: this.uniforms.uTruncate.value,
       blendingMode: this.userData.blendingMode ?? 'additive',
       transparent: this.transparent,

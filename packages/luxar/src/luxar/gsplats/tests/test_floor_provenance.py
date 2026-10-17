@@ -120,6 +120,18 @@ def _leaf(n: int = 6, ndim: int = 3, stats: Optional[dict] = None) -> GSplatData
 
 
 class TestAgreementRule:
+    def test_intensity_scale_survives_a_merge_of_scaled_inputs(self) -> None:
+        stats = {**BLOCK, "intensity_range": 1950.0, "intensity_scale": 0.5}
+        merged = GSplatData.concatenate([_leaf(stats=stats), _leaf(stats=stats)])
+        assert merged.stats["intensity_scale"] == 0.5
+
+    def test_mixed_intensity_scales_drop_the_amplitude_basis(self) -> None:
+        scaled = {**BLOCK, "intensity_range": 1950.0, "intensity_scale": 0.5}
+        unscaled = {**BLOCK, "intensity_range": 1950.0}
+        merged = GSplatData.concatenate([_leaf(stats=scaled), _leaf(stats=unscaled)])
+        assert "intensity_range" not in merged.stats
+        assert "intensity_scale" not in merged.stats
+
     def test_unanimous_block_is_carried(self) -> None:
         assert agreed_normalization_stats([dict(BLOCK), dict(BLOCK)]) == BLOCK
 
@@ -138,14 +150,36 @@ class TestAgreementRule:
         agreed = agreed_normalization_stats([{"floor": None}, {"floor": None}])
         assert agreed == {"floor": None}
 
+    def test_a_populated_input_without_a_basis_vetoes_the_amplitude_basis(
+        self,
+    ) -> None:
+        """A non-empty input with no ``intensity_range`` (an import, a normalised
+        edit) is in another unit: the merge must not claim counts for it."""
+        agreed = agreed_normalization_stats([dict(BLOCK, n_splats=10), {"n_splats": 5}])
+        assert "intensity_range" not in agreed
+        assert agreed["image_min"] == BLOCK["image_min"]
+        # An EMPTY tile still abstains.
+        kept = agreed_normalization_stats([dict(BLOCK, n_splats=10), {"n_splats": 0}])
+        assert kept["intensity_range"] == BLOCK["intensity_range"]
+
     def test_nothing_recorded_yields_nothing(self) -> None:
         assert agreed_normalization_stats([{}, {"n_splats": 3}]) == {}
 
 
 class TestConcatenate:
+    def test_unbased_nonempty_input_vetoes_basis_but_empty_input_abstains(self) -> None:
+        based = _leaf(stats=dict(BLOCK))
+        unbased = _leaf(stats={})
+        assert "intensity_range" not in GSplatData.concatenate([based, unbased]).stats
+        assert "intensity_range" not in GSplatData.concatenate([unbased, based]).stats
+        assert (
+            GSplatData.concatenate([based, _leaf(n=0)]).stats["intensity_range"]
+            == BLOCK["intensity_range"]
+        )
+
     def test_carries_the_block_its_inputs_agree_on(self) -> None:
         merged = GSplatData.concatenate([_leaf(stats=dict(BLOCK)) for _ in range(3)])
-        for key in NORMALIZATION_STATS_KEYS:
+        for key in BLOCK:
             assert merged.stats[key] == BLOCK[key]
 
     def test_omits_a_floor_its_inputs_disagree_on(self) -> None:
@@ -176,7 +210,7 @@ class TestRoundTrip:
 
         assert _pipeline_attrs(path)["floor"] == 110.0
         stats = load_gsplats(path, include_stats=True).stats
-        for key in NORMALIZATION_STATS_KEYS:
+        for key in BLOCK:
             assert stats[key] == BLOCK[key]
 
     def test_partition(self, tmp_path: Path) -> None:
@@ -189,7 +223,7 @@ class TestRoundTrip:
 
         assert _pipeline_attrs(path)["floor"] == 110.0
         reloaded, stats = load_gsplat_node(path, include_stats=True)
-        for key in NORMALIZATION_STATS_KEYS:
+        for key in BLOCK:
             assert stats[key] == BLOCK[key]
         # The new sibling group must not be mistaken for a part on read.
         assert len(reloaded.children) == 2

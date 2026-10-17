@@ -968,8 +968,23 @@ class TestCalibrationResult:
 
 
 class TestCalibrateSmoke:
-    def test_small_volume_cpu(self, tmp_path: Path):
+    def test_small_volume_cpu(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         # Smoke test: run a 3-K sweep on a tiny synthetic volume on CPU
+        from luxar.gsplats.utils import device as device_utils
+
+        resolved: list[tuple[str | torch.device | None, bool, bool]] = []
+        real_resolve = device_utils.resolve_torch_device
+
+        def spy_resolve(
+            device: str | torch.device | None = None,
+            *,
+            use_cuda: bool = True,
+            use_metal: bool = True,
+        ) -> torch.device:
+            resolved.append((device, use_cuda, use_metal))
+            return real_resolve(device, use_cuda=use_cuda, use_metal=use_metal)
+
+        monkeypatch.setattr(device_utils, "resolve_torch_device", spy_resolve)
         rng = np.random.default_rng(0)
         # Smooth structured signal so even a few splats can land somewhere meaningful
         Y, X, Z = np.meshgrid(
@@ -987,13 +1002,13 @@ class TestCalibrateSmoke:
             k_grid=[20, 80, 200],
             fit_kwargs={
                 "n_iters": 50,
-                "device": "cpu",
                 "verbose": False,
                 "early_stop_patience": 50,
                 "use_cuda": False,
                 "use_metal": False,
             },
         )
+        assert resolved[0] == (None, False, False)
         assert isinstance(result, CalibrationResult)
         assert len(result.held_out_psnr_db) == 3
         assert len(result.train_psnr_db) == 3

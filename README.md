@@ -362,7 +362,10 @@ Mac a developer-built Metal extension (`python setup.py build_ext --inplace
 and `LUXAR_METAL_BACKEND=auto|aot|runtime|torch` force one path on their respective
 platforms. Seeding and the optional non-local-means denoising follow the same
 device choice. If neither kernel path can run, the fit warns and continues on the
-slower PyTorch renderer. Viewing never needs any of this.
+slower PyTorch renderer. On the CPU, 3D fits run on fused kernels that numba (in
+the `gsplats` extra) compiles on first use and caches;
+`LUXAR_CPU_BACKEND=auto|native|torch` overrides the choice and `LUXAR_CPU_THREADS`
+sets their thread count. Viewing never needs any of this.
 
 Every option, with examples, is in the
 [CLI package README](packages/luxar/src/luxar/cli/README.md); the fitting model

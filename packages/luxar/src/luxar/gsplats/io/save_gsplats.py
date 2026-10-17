@@ -329,11 +329,13 @@ _HEADER_STATS_KEYS = (
 #: ``pipeline/`` group) on every writer path — see
 #: ``docs/specs/GSPLATS_ZARR_FORMAT.md`` §"Pipeline Group Attributes" (#1175).
 #:
-#: Numeric values are in the INPUT VOLUME's own units: ``floor`` is the
+#: Fit values start in the INPUT VOLUME's own units: ``floor`` is the
 #: background level subtracted before fitting (``None``/``null`` when
 #: suppression was disabled or refused), ``floor_strategy`` is categorical
 #: estimator provenance, and ``image_min`` / ``image_max`` are the normalization
-#: bounds and ``intensity_range`` their span. A tiled/progressive path removes
+#: bounds and ``intensity_range`` their span (in amplitude units after an
+#: intensity edit); ``intensity_scale`` records that edit's cumulative factor.
+#: A tiled/progressive path removes
 #: the pedestal OUTSIDE the fitter and then fits with ``floor="none"``, so it
 #: must shift its inner bounds back into those units before recording them —
 #: otherwise ``image_min`` would mean the tile's post-subtraction minimum on one
@@ -344,11 +346,13 @@ NORMALIZATION_STATS_KEYS = (
     "image_min",
     "image_max",
     "intensity_range",
+    "intensity_scale",
 )
 
 
 def agreed_normalization_stats(
     stats_list: "Sequence[Optional[Dict[str, Any]]]",
+    counts: "Optional[Sequence[int]]" = None,
 ) -> Dict[str, Any]:
     """The :data:`NORMALIZATION_STATS_KEYS` block the inputs UNANIMOUSLY agree on.
 
@@ -360,9 +364,10 @@ def agreed_normalization_stats(
     on any disagreement it is dropped, and the merged artifact simply says
     nothing rather than something false.
 
-    An input that does not carry a key casts no vote: an empty/skipped tile
-    records no bounds at all, and vetoing on that would erase the block for the
-    whole merge. At least one input must carry the key for it to appear.
+    An empty/skipped tile casts no vote. A populated input without an amplitude
+    basis vetoes that basis; ``counts`` supplies the actual per-input sizes
+    when they are available, since imported splats need not record ``n_splats``
+    in their stats. At least one input must carry a key for it to appear.
     """
     agreed: Dict[str, Any] = {}
     for key in NORMALIZATION_STATS_KEYS:
@@ -372,7 +377,39 @@ def agreed_normalization_stats(
         first = values[0]
         if all(v == first for v in values):
             agreed[key] = first
+    # An absent scale on a fitted input means identity. Equal post-edit ranges
+    # from differently scaled inputs do not share one amplitude unit.
+    scales = [
+        s.get("intensity_scale", 1.0)
+        for s in stats_list
+        if s is not None and "intensity_range" in s
+    ]
+    if scales and any(scale != scales[0] for scale in scales[1:]):
+        agreed.pop("intensity_range", None)
+        agreed.pop("intensity_scale", None)
+    # Abstaining is for EMPTY tiles only. An input that holds splats but records
+    # no intensity basis (an import, a normalised edit) has amplitudes in some
+    # other unit, so the merge cannot claim the others' basis for all of them.
+    if counts is not None and len(counts) != len(stats_list):
+        raise ValueError("counts must match stats_list")
+    if any(
+        (count > 0 if counts is not None else _holds_splats(s or {}))
+        and (s is None or "intensity_range" not in s)
+        for count, s in zip(
+            counts if counts is not None else (0 for _ in stats_list),
+            stats_list,
+            strict=True,
+        )
+    ):
+        agreed.pop("intensity_range", None)
+        agreed.pop("intensity_scale", None)
     return agreed
+
+
+def _holds_splats(stats: Dict[str, Any]) -> bool:
+    """Whether a stats record says its input has splats (``n_splats > 0``)."""
+    n = stats.get("n_splats")
+    return bool(isinstance(n, (int, np.integer)) and not isinstance(n, bool) and n > 0)
 
 
 #: Fit-runtime scratch keys that live in ``stats`` but are NOT persistable

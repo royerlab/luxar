@@ -37,6 +37,8 @@ function makeLayer(overrides: Partial<LayerInfo> = {}): LayerInfo {
     visible: true,
     opacity: 1,
     absorption: 1,
+    brightness: 1,
+    authoredBrightness: 1,
     // Mesh appearance defaults. Present on every LayerInfo (the field set is uniform
     // across types) and inert for a points layer, exactly like `absorption` above.
     ambient: MESH_DEFAULTS.ambient,
@@ -219,6 +221,33 @@ describe('ColormapLegend', () => {
       const labels = legend.getElement().querySelectorAll('.luxar-colormap-legend__labels span');
       expect(labels[0].textContent).toBe('0.50');
       expect(labels[1].textContent).toBe('12.35');
+    });
+
+    it('reads a data-unit layer in the panel formatter, with its unit', () => {
+      layerState.initFromSceneGraph({
+        name: 'root',
+        path: '/',
+        type: 'scene',
+        attrs: {},
+        hasSpatialIndex: false,
+        children: [
+          {
+            name: 'g',
+            path: 'layer/g',
+            type: 'gsplats',
+            attrs: {
+              layer: true,
+              colormap: 'viridis',
+              amplitude_data_range: [5.25212621689, 208.912979126],
+              amplitude_unit: 'counts above background',
+            },
+            hasSpatialIndex: true,
+          },
+        ],
+      } as unknown as SceneNode);
+      const labels = legend.getElement().querySelectorAll('.luxar-colormap-legend__labels span');
+      expect(labels[0].textContent).toBe('5.252');
+      expect(labels[1].textContent).toBe('208.9 counts above background');
     });
 
     it('formats very small numbers in exponential', () => {
