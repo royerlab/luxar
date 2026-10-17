@@ -459,7 +459,6 @@ export async function motion({
       t0 = await sync();
       for (let i = 0; i < frames; i++) {
         place(i);
-        dbg.animationController.stopAnimation();
         dbg.animationController.prepareFrame();
         // A callback may request another tick; keep the batch free of rAF
         // work even while the final GPU sync yields to the event loop.

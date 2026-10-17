@@ -47,7 +47,15 @@ const GPU_MS = 20;
 const RAF_MS = 0.05;
 
 function fakePage(kind) {
-  const page = { clock: 0, gpuQueued: 0, dirty: false, prepared: 0, rafCalls: 0, syncs: 0 };
+  const page = {
+    clock: 0,
+    gpuQueued: 0,
+    dirty: false,
+    preparedPoses: [],
+    rafCalls: 0,
+    syncs: 0,
+    starts: 0,
+  };
   const drain = () => {
     page.syncs++;
     page.clock += page.gpuQueued;
@@ -94,9 +102,11 @@ function fakePage(kind) {
       stopAnimation: () => {
         page.dirty = false;
       },
-      startAnimation: () => {},
+      startAnimation: () => {
+        page.starts++;
+      },
       prepareFrame: () => {
-        page.prepared++;
+        page.preparedPoses.push([...pose.position]);
       },
     },
   };
@@ -150,7 +160,8 @@ describe('motion frame timing', () => {
       expect(mo.throughputMs).toBeGreaterThan(GPU_MS);
       expect(mo.throughputMs).toBeLessThan(GPU_MS + 1);
       expect(mo.rendersPerFrame).toBe(1);
-      expect(page.prepared).toBe(12);
+      expect(page.preparedPoses).toHaveLength(12);
+      expect(new Set(page.preparedPoses.map((p) => p.join(','))).size).toBe(12);
       expect(page.rafCalls).toBe(3);
       expect(page.syncs).toBe(5); // warm 3, drain before batch, drain after batch
     });
@@ -173,5 +184,19 @@ describe('motion frame timing', () => {
     await motion({ frames: 4, warm: 1, pose });
     expect(bound.length).toBeGreaterThan(0);
     expect(bound.at(-1)).toBe('three-target');
+  });
+
+  it('restores the render method and animation after a view callback fails', async () => {
+    install('webgl');
+    const pp = page.dbg.app.sceneManager.postProcessing;
+    const original = pp.render;
+    page.dbg.animationController.prepareFrame = () => {
+      throw new Error('view callback failed');
+    };
+    await expect(motion({ frames: 4, warm: 1, pose, unpaced: true })).rejects.toThrow(
+      'view callback failed'
+    );
+    expect(pp.render).toBe(original);
+    expect(page.starts).toBe(1);
   });
 });

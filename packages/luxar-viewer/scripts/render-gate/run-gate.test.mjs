@@ -53,7 +53,6 @@ it('reports the A/A buffers and scene state for an excluded view', () => {
     suites: {},
   };
   const jsonPath = join(dir, 'report.json');
-  mkdirSync(dir, { recursive: true });
   writeFileSync(jsonPath, JSON.stringify(report));
   execFileSync(process.execPath, ['scripts/render-gate/run-gate.mjs', '--from-json', jsonPath]);
   const markdown = readFileSync(join(dir, 'report.md'), 'utf8');
