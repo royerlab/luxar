@@ -2224,6 +2224,30 @@ describe('SceneManager', () => {
     // of this file (see vi.mock for renderer-setup) so individual tests
     // can override its resolution per case.
 
+    it('hands the bootstrap device request to WebGPU setup only once', async () => {
+      const preRequestedWebGPUDevice = Promise.resolve({ fallback: true as const });
+      vi.mocked(mockedCreateWebGPURenderer)
+        .mockResolvedValueOnce({ fallback: true })
+        .mockResolvedValueOnce({ fallback: true });
+
+      await sceneManager.init({
+        canvas: mockCanvas as any,
+        renderer: 'webgpu',
+        preRequestedWebGPUDevice,
+      });
+      expect(mockedCreateWebGPURenderer).toHaveBeenCalledWith(
+        mockCanvas,
+        expect.objectContaining({ preRequestedWebGPUDevice })
+      );
+
+      await (sceneManager as any).setupWebGPURenderer();
+      expect(mockedCreateWebGPURenderer).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(mockedCreateWebGPURenderer).mock.calls[1]?.[1]).toHaveProperty(
+        'preRequestedWebGPUDevice',
+        undefined
+      );
+    });
+
     it('setupWebGPURenderer delegates to setupWebGLRenderer when createWebGPURenderer reports fallback', async () => {
       // Force the fallback signal.
       vi.mocked(mockedCreateWebGPURenderer).mockResolvedValueOnce({ fallback: true });
