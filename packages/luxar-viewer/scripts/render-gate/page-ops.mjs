@@ -602,6 +602,44 @@ export function endRenderCount() {
   return window.__gateRenders ?? 0;
 }
 
+/** Wait for consecutive frames without a render before measuring true idle work. */
+export async function waitForQuiet({ minMs = 3000, quietFrames = 30, timeoutMs = 8000 }) {
+  const pp = window.__luxarDebug.app.sceneManager.postProcessing;
+  const original = pp.render;
+  let renders = 0;
+  let frames = 0;
+  let streak = 0;
+  let sinceFrame = 0;
+  pp.render = function countedRender(...args) {
+    renders++;
+    sinceFrame++;
+    return original.apply(this, args);
+  };
+  const start = performance.now();
+  try {
+    while (performance.now() - start < timeoutMs) {
+      const remaining = timeoutMs - (performance.now() - start);
+      const hadFrame = await new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(false), remaining);
+        requestAnimationFrame(() => {
+          clearTimeout(timer);
+          resolve(true);
+        });
+      });
+      if (!hadFrame) return { renders, frames, settled: false };
+      frames++;
+      streak = sinceFrame === 0 ? streak + 1 : 0;
+      sinceFrame = 0;
+      if (performance.now() - start >= minMs && streak >= quietFrames) {
+        return { renders, frames, settled: true };
+      }
+    }
+    return { renders, frames, settled: false };
+  } finally {
+    pp.render = original;
+  }
+}
+
 /**
  * Do nothing for `ms` and count what the viewer does anyway: renders and
  * animation frames. An idle viewer should render nothing.
