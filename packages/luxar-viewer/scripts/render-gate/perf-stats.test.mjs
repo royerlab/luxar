@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import { anyMissing, judgeCounter, judgePerf, median, noiseFloor, ratioCI } from './perf-stats.mjs';
+import {
+  anyMissing,
+  familyFloor,
+  HIGH_LOAD_PER_CPU,
+  judgeCounter,
+  judgePerf,
+  loadSummary,
+  median,
+  noiseFloor,
+  normalQuantile,
+  ratioCI,
+} from './perf-stats.mjs';
 
 describe('median', () => {
   it('handles odd, even and empty inputs', () => {
@@ -215,5 +226,69 @@ describe('judgeCounter relTol', () => {
     const base = [181, 181];
     expect(judgeCounter(base, [40, 41], base, { relTol: 0.05 }).verdict).toBe('win');
     expect(judgeCounter(base, [200, 201], base, { relTol: 0.05 }).verdict).toBe('fail');
+  });
+});
+
+describe('loadSummary', () => {
+  it('summarizes each arm and flags a busy host on the median', () => {
+    const rows = [
+      { load1: { base: [2, 3], base2: [2], cand: [4] } },
+      { status: 'error' },
+      { load1: { base: [3], base2: [20], cand: [2] } },
+    ];
+    const quiet = loadSummary(rows, 16);
+    expect(quiet.arms.base).toEqual({ median: 3, max: 3 });
+    expect(quiet.arms.base2).toEqual({ median: 11, max: 20 });
+    // One busy sample (20 on 16 CPUs) does not flag the run; the median does.
+    expect(quiet.maxPerCpu).toBeCloseTo(20 / 16);
+    expect(quiet.high).toBe(false);
+    const busy = loadSummary([{ load1: { base: [12], base2: [11], cand: [13] } }], 16);
+    expect(busy.medianPerCpu).toBeCloseTo(12 / 16);
+    expect(HIGH_LOAD_PER_CPU).toBeLessThan(12 / 16);
+    expect(busy.high).toBe(true);
+  });
+
+  it('is null when no arm recorded the load', () => {
+    expect(loadSummary([{ status: 'error' }, { load1: { base: [] } }], 8)).toBeNull();
+  });
+});
+
+describe('normalQuantile', () => {
+  it('matches standard normal quantiles in the centre and the tails', () => {
+    expect(normalQuantile(0.5)).toBeCloseTo(0, 9);
+    expect(normalQuantile(0.975)).toBeCloseTo(1.959964, 5);
+    expect(normalQuantile(0.01)).toBeCloseTo(-2.326348, 5);
+    expect(normalQuantile(1 - 1e-4)).toBeCloseTo(3.719016, 5);
+  });
+});
+
+describe('familyFloor', () => {
+  it('keeps a single comparison at its own floor', () => {
+    expect(familyFloor(0.02, 1)).toBe(0.02);
+    expect(familyFloor(0.02, 0)).toBe(0.02);
+  });
+
+  it('widens the floor in log space with the number of judgements', () => {
+    const k = (tests) => Math.log1p(familyFloor(0.02, tests)) / Math.log1p(0.02);
+    expect(k(16)).toBeCloseTo(normalQuantile(1 - 0.05 / 32) / normalQuantile(0.975), 9);
+    expect(k(16)).toBeGreaterThan(1.4);
+    expect(k(150)).toBeGreaterThan(k(16));
+    expect(k(150)).toBeLessThan(2);
+  });
+
+  it('turns an A/A ratio just past a one-comparison floor back into a pass', () => {
+    // obsidian A/A, perf-points-5m webgpu throughputMs: ratio 1.0101 against
+    // the 1% minimum floor failed an identical build.
+    const base = [21.0, 21.1, 21.2, 21.3, 21.4, 21.5, 21.6];
+    const cand = base.map((v) => v * 1.0101);
+    expect(judgePerf(base, cand, 0.01).verdict).toBe('fail');
+    expect(judgePerf(base, cand, familyFloor(0.01, 108)).verdict).toBe('pass');
+    expect(
+      judgePerf(
+        base,
+        cand.map((v) => v * 1.05),
+        familyFloor(0.01, 108)
+      ).verdict
+    ).toBe('fail');
   });
 });

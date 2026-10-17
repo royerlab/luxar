@@ -30,7 +30,8 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { availableParallelism, loadavg } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -40,9 +41,22 @@ import { classifyRow, sameCounts, scoreControlPick, strip } from './classify.mjs
 import { pickWithinDraw, scoreBlocks, scoreFloatBuffers, scorePickBuffers } from './exactness.mjs';
 import { writeUlpHeatmap } from './heatmap.mjs';
 import * as ops from './page-ops.mjs';
-import { judgePerf, median, noiseFloor, ROTATIONS } from './perf-stats.mjs';
+import {
+  familyFloor,
+  judgePerf,
+  loadSummary,
+  median,
+  noiseFloor,
+  ROTATIONS,
+} from './perf-stats.mjs';
 import { startServer } from './server.mjs';
-import { loadExpectations, runSuite, suiteMarkdown, validateMetricDirections } from './suites.mjs';
+import {
+  loadExpectations,
+  missingStoreMessage,
+  runSuite,
+  suiteMarkdown,
+  validateMetricDirections,
+} from './suites.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const viewerRoot = resolve(here, '../..');
@@ -98,6 +112,10 @@ const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
   encoding: 'utf8',
 }).trim();
 const manifest = JSON.parse(readFileSync(opts.scenes, 'utf8'));
+const dataRoot = join(repoRoot, 'datasets');
+/** The error of a case whose store is not on disk (with the command that writes it), or null. */
+const missingStore = (c) =>
+  c.store && !existsSync(join(dataRoot, c.store)) ? missingStoreMessage(c.store) : null;
 const log = (m) => console.log(`[render-gate] ${m}`);
 const manifestSuites = manifest.suites ?? {};
 try {
@@ -251,6 +269,11 @@ async function runExact(session, servers, outDir) {
     for (const variant of exactVariants(c)) {
       const tag = `${c.id} ${variant.backend} dsf${variant.dsf}`;
       log(`exact: ${tag}`);
+      const missing = missingStore(c);
+      if (missing) {
+        results.push({ case: c.id, ...variant, view: '*', status: 'error', failures: [missing] });
+        continue;
+      }
       let arms;
       try {
         // Warm-up pass per build, discarded. On ANGLE/Metal the FIRST load of a
@@ -353,10 +376,14 @@ async function measureArm(browser, origin, c, backend) {
     const s0 = await script();
     const mo = await page.evaluate(ops.motion, { pose: c.pose ?? d.pose });
     const s1 = await script();
+    // The same orbit without the per-frame sync (see `motion`): throughput,
+    // free of the WebGPU sync's per-frame latency. Outside the script window.
+    const tp = await page.evaluate(ops.motion, { pose: c.pose ?? d.pose, pipelined: true });
     const wk = await page.evaluate(ops.wake, {});
     return {
       gpuMs: gpu.minMs,
       frameMs: mo.frameMs,
+      throughputMs: tp.frameMs,
       frameP95Ms: mo.p95Ms,
       // CDP ScriptDuration does not count the time motion's GPU sync blocks in
       // readPixels (measured: 2.3 ms of script in a 55 ms synced frame), so this
@@ -365,6 +392,11 @@ async function measureArm(browser, origin, c, backend) {
       rendersPerFrame: mo.rendersPerFrame,
       wakeRenders: wk.renders,
       wakeBlockMs: wk.blockMs,
+      // Reported, not judged: the raw gpuCost repetitions, the unsynced
+      // orbit's render count (free of the WebGPU sync bias) and host load.
+      gpuRepsMs: gpu.msPerFrame,
+      throughputRendersPerFrame: tp.rendersPerFrame,
+      load1: loadavg()[0],
     };
   } finally {
     await context.close();
@@ -374,6 +406,7 @@ async function measureArm(browser, origin, c, backend) {
 const PERF_METRICS = [
   'gpuMs',
   'frameMs',
+  'throughputMs',
   'frameP95Ms',
   'cpuMs',
   'rendersPerFrame',
@@ -393,9 +426,17 @@ async function runPerf(session, servers) {
   const rounds = opts.rounds ?? d.rounds;
   const results = [];
   const cases = manifest.perf.filter((c) => !opts.only || opts.only.includes(c.id));
+  const backends = selectBackends(opts.backends, d.backends);
+  // Every judgement this run makes: the family the floors are widened for.
+  const tests = cases.length * backends.length * PERF_METRICS.length;
   for (const c of cases) {
-    for (const backend of selectBackends(opts.backends, d.backends)) {
+    for (const backend of backends) {
       log(`perf: ${c.id} ${backend} (${rounds} rounds)`);
+      const missing = missingStore(c);
+      if (missing) {
+        results.push({ case: c.id, backend, status: 'error', failures: [missing] });
+        continue;
+      }
       const samples = { base: [], base2: [], cand: [] };
       try {
         for (let r = 0; r < rounds; r++) {
@@ -410,15 +451,30 @@ async function runPerf(session, servers) {
         results.push({ case: c.id, backend, status: 'error', failures: [String(e.message ?? e)] });
         continue;
       }
-      const row = { case: c.id, backend, metrics: {} };
+      const pickArms = (field) => ({
+        base: samples.base.map((x) => x[field]),
+        base2: samples.base2.map((x) => x[field]),
+        cand: samples.cand.map((x) => x[field]),
+      });
+      const row = {
+        case: c.id,
+        backend,
+        metrics: {},
+        load1: pickArms('load1'),
+        // Raw per-arm samples (every metric plus the reported-only fields),
+        // so a report can be re-judged offline.
+        samples,
+      };
       for (const m of PERF_METRICS) {
         const base = samples.base.map((s) => s[m]);
         const base2 = samples.base2.map((s) => s[m]);
         const cand = samples.cand.map((s) => s[m]);
+        const aaFloor = noiseFloor(base, base2);
         row.metrics[m] = {
           baseMedian: median(base),
           candMedian: median(cand),
-          ...judgePerf(base, cand, noiseFloor(base, base2), PERF_ABS_TOLERANCE[m] ?? 0),
+          aaFloor,
+          ...judgePerf(base, cand, familyFloor(aaFloor, tests), PERF_ABS_TOLERANCE[m] ?? 0),
         };
       }
       row.status = Object.values(row.metrics).some((v) => v.verdict === 'fail') ? 'fail' : 'pass';
@@ -480,6 +536,19 @@ function markdown(meta, exact, perf, suites) {
     `- class: ${opts.cls}; intended: ${opts.intended.join(', ') || '-'}`
   );
   lines.push(`- host: ${meta.host}; GPU: ${meta.gpu ?? '?'}`);
+  const load = meta.hostLoad;
+  if (load) {
+    const arms = Object.entries(load.arms)
+      .map(([arm, v]) => `${arm} ${fmtNum(v.median, 1)} (max ${fmtNum(v.max, 1)})`)
+      .join(', ');
+    lines.push(`- host load (1-min average, ${load.cpus} CPUs): ${arms}`);
+    if (load.high) {
+      lines.push(
+        `- **warning: the host was busy** (median load ${fmtNum(load.medianPerCpu, 2)} per CPU). ` +
+          'Timings shared the machine with other work; read perf verdicts with care and rerun on an idle host.'
+      );
+    }
+  }
   if (meta.browserRelaunches > 0) {
     lines.push(
       `- browser relaunched ${meta.browserRelaunches}x after disconnecting (cases retried once)`
@@ -515,11 +584,14 @@ function markdown(meta, exact, perf, suites) {
   }
   if (perf) {
     lines.push(
-      '## Performance (ratio cand/base, 95% CI, A/A floor)',
+      '## Performance (ratio cand/base, 95% CI, A/A floor widened for the run)',
       '',
       '`frameMs` / `frameP95Ms` INCLUDE GPU completion: each orbit frame ends with a GPU sync, so a ' +
-        'frame costs its CPU plus GPU work, serialized. `gpuMs` is GPU cost alone (settled pose); ' +
-        '`cpuMs` is script time alone.',
+        'frame costs its CPU plus GPU work, serialized, plus the sync itself (on WebGPU a round trip ' +
+        'of up to ~4 ms). `throughputMs` is the same orbit with one sync at the end: CPU and GPU ' +
+        'overlap, the sync is paid once. `gpuMs` is GPU cost alone (settled pose); `cpuMs` is script ' +
+        'time alone. `floor` is the A/A band widened for the number of judgements in the run ' +
+        '(`familyFloor`); `report.json` keeps the one-comparison band as `aaFloor`.',
       '',
       '| case | backend | metric | base | cand | ratio | CI | floor | verdict |',
       '|---|---|---|---|---|---|---|---|---|'
@@ -558,7 +630,6 @@ async function main() {
   const outDir = resolve(arg('out', join(repoRoot, 'delme', 'gate', label)));
   mkdirSync(outDir, { recursive: true });
 
-  const dataRoot = join(repoRoot, 'datasets');
   let exact = null;
   let perf = null;
   const suites = {};
@@ -653,6 +724,7 @@ async function main() {
     cand: { ref: cand.ref, sha: cand.sha },
     host: `${process.platform}/${process.arch}`,
     gpu: [...seenGpus].join(' | '),
+    hostLoad: loadSummary(rows, availableParallelism()),
     browserRelaunches,
     verdict,
     options: opts,

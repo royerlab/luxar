@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  caseBackends,
+  countTimingJudgements,
   judgeMetric,
   meetsExpectation,
   METRIC_DIRECTIONS,
+  missingStoreMessage,
   serverMetrics,
   validateExpectations,
   validateMetricDirections,
@@ -131,6 +134,40 @@ describe('judgeMetric', () => {
     );
     expect(timing.verdict).toBe('n/a');
   });
+
+  it('widens a timing verdict for the judged family while retaining the A/A floor', () => {
+    const m = { name: 'ms', kind: 'timing' };
+    const samples = {
+      base: arm([100, 100, 100], 'ms'),
+      base2: arm([100, 100, 100], 'ms'),
+      cand: arm([101.2, 101.2, 101.2], 'ms'),
+    };
+    expect(judgeMetric(m, samples, 1)).toMatchObject({ verdict: 'fail', aaFloor: 0.01 });
+    const family = judgeMetric(m, samples, 4);
+    expect(family).toMatchObject({ verdict: 'pass', aaFloor: 0.01 });
+    expect(family.floor).toBeGreaterThan(family.aaFloor);
+  });
+});
+
+describe('countTimingJudgements', () => {
+  it('counts selected, gating timing metrics on each eligible backend', () => {
+    const cases = [
+      { id: 'a', metrics: [{ kind: 'timing' }, { kind: 'timing', report: true }, {}] },
+      { id: 'b', backends: ['webgpu'], metrics: [{ kind: 'timing' }] },
+      { id: 'c', heavy: true, metrics: [{ kind: 'timing' }] },
+    ];
+    const defaults = { backends: ['webgl'] };
+    const opts = { backends: ['webgl', 'webgpu'], heavy: false };
+    expect(countTimingJudgements(cases, defaults, opts)).toBe(3);
+    expect(
+      countTimingJudgements(
+        cases.filter((c) => c.id !== 'b'),
+        defaults,
+        opts
+      )
+    ).toBe(2);
+    expect(countTimingJudgements(cases, defaults, { ...opts, heavy: true })).toBe(5);
+  });
 });
 
 describe('validateMetricDirections', () => {
@@ -192,5 +229,47 @@ describe('serverMetrics', () => {
   it('omits the first-frame figures when the workload reported no first frame', () => {
     const m = serverMetrics([], { navT: 0, firstFrameMs: undefined, maxInflight: 0 });
     expect(m).toEqual({ serverRequests: 0, serverBytes: 0, maxInflight: 0 });
+  });
+});
+
+describe('caseBackends', () => {
+  const webglOnly = { backends: ['webgl'] };
+
+  it('runs a suite default when --backends is not given', () => {
+    expect(caseBackends({}, webglOnly, null)).toEqual(['webgl']);
+    expect(caseBackends({}, {}, null)).toEqual(['webgl', 'webgpu']);
+  });
+
+  it('lets an explicit --backends widen a suite default', () => {
+    expect(caseBackends({}, webglOnly, ['webgl', 'webgpu'])).toEqual(['webgl', 'webgpu']);
+    expect(caseBackends({}, webglOnly, ['webgpu'])).toEqual(['webgpu']);
+  });
+
+  it('does not widen a suite to the exactness-only webgpu-gl arm', () => {
+    const every = ['webgl', 'webgpu', 'webgpu-gl'];
+    expect(caseBackends({}, webglOnly, every)).toEqual(['webgl', 'webgpu']);
+    expect(caseBackends({}, { backends: ['webgl', 'webgpu-gl'] }, every)).toEqual(every);
+  });
+
+  it("only narrows a case's own backends", () => {
+    const c = { backends: ['webgpu'] };
+    expect(caseBackends(c, webglOnly, null)).toEqual(['webgpu']);
+    expect(caseBackends(c, webglOnly, ['webgl', 'webgpu'])).toEqual(['webgpu']);
+    expect(caseBackends(c, webglOnly, ['webgl'])).toEqual([]);
+  });
+});
+
+describe('missingStoreMessage', () => {
+  it('names the generator command that writes a gate store', () => {
+    const msg = missingStoreMessage('gate/sp64_closeup_authored.luxar.zarr');
+    expect(msg).toContain('store missing: datasets/gate/sp64_closeup_authored.luxar.zarr');
+    expect(msg).toContain(
+      'generate_gate_scenes.py --out datasets/gate --only sp64_closeup_authored'
+    );
+    expect(missingStoreMessage('gate/zip_mixed.luxar.zarr.zip')).toContain('--only zip_mixed');
+  });
+
+  it('gives no command for a store the generator does not write', () => {
+    expect(missingStoreMessage('other/x.zarr')).toBe('store missing: datasets/other/x.zarr');
   });
 });
