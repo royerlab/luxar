@@ -18,6 +18,13 @@ import type { BloomChain } from '../bloom/chain';
 /** Validated MSAA sample counts. */
 export const VALID_MSAA_SAMPLES = [0, 2, 4, 8, 16] as const;
 
+/** Counts the active backend can actually render. Zero means MSAA is off. */
+export function supportedMSAASamples(maxSamples: number, nativeWebGPU: boolean): number[] {
+  return VALID_MSAA_SAMPLES.filter(
+    (count) => count <= maxSamples && (!nativeWebGPU || count === 0 || count === 4)
+  );
+}
+
 // =====================================================================
 // Bloom
 // =====================================================================
@@ -91,19 +98,22 @@ export function clampBloomLevels(
 // =====================================================================
 
 /** Validate + clamp an MSAA sample count against device capabilities. */
-export function validateMSAASamples(samples: number, maxSamples: number): number {
-  if (!(VALID_MSAA_SAMPLES as readonly number[]).includes(samples)) {
-    log.warning(Modules.POST_PROCESSING, `Invalid MSAA samples: ${samples}. Using 4.`);
-    samples = 4;
-  }
-  if (samples > maxSamples) {
-    log.warning(
-      Modules.POST_PROCESSING,
-      `Requested ${samples} MSAA samples but GPU max is ${maxSamples}. Clamping.`
-    );
-    samples = maxSamples;
-  }
-  return samples;
+export function validateMSAASamples(
+  samples: number,
+  maxSamples: number,
+  nativeWebGPU = false
+): number {
+  const supported = supportedMSAASamples(maxSamples, nativeWebGPU);
+  if (supported.includes(samples)) return samples;
+  // Retain the existing 4x fallback for malformed requests, then snap to
+  // a supported count. A 2x request on native WebGPU chooses 4x, not 1x.
+  const requested = (VALID_MSAA_SAMPLES as readonly number[]).includes(samples) ? samples : 4;
+  const resolved = supported.reduce(
+    (best, count) => (Math.abs(count - requested) <= Math.abs(best - requested) ? count : best),
+    0
+  );
+  log.warning(Modules.POST_PROCESSING, `MSAA samples ${samples} unsupported; using ${resolved}.`);
+  return resolved;
 }
 
 // =====================================================================

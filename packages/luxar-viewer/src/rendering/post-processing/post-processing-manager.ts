@@ -51,6 +51,7 @@ import {
   updateBloomSettings as updateBloomSettingsImpl,
   clampBloomLevels,
   validateMSAASamples,
+  supportedMSAASamples,
   setVignetteEnabled as setVignetteEnabledImpl,
   setChromaticLensDistortionEnabled as setChromaticLensDistortionEnabledImpl,
   updateChromaticLensDistortion as updateChromaticLensDistortionImpl,
@@ -198,6 +199,9 @@ export class PostProcessingManager {
     this.renderer.toneMapping = THREE.NoToneMapping; // We tone-map in mega-shader.
 
     this.renderSize = { ...size };
+
+    this.msaaSamples = this.resolveMSAASamples(this.msaaSamples);
+    if (this.capabilities.maxMSAASamples < 2) this.msaaEnabled = false;
 
     this.hdrHeadroom = capabilities.hdrOutput?.headroom ?? 1;
     this.initializeTransientResources({ applyDefaults: true });
@@ -641,14 +645,31 @@ export class PostProcessingManager {
   // MSAA + SSAA (canvas-level; reallocate HDR target on change)
   // ================================================================
 
-  setMSAAEnabled(enabled: boolean): void {
-    if (this.msaaEnabled === enabled) return;
+  private get nativeWebGPU(): boolean {
+    return (
+      this.capabilities.apiSurface === 'webgpu' &&
+      (this.renderer as { backend?: { isWebGPUBackend?: boolean } }).backend?.isWebGPUBackend ===
+        true
+    );
+  }
+
+  getSupportedMSAASamples(): number[] {
+    return supportedMSAASamples(this.capabilities.maxMSAASamples, this.nativeWebGPU);
+  }
+
+  private resolveMSAASamples(samples: number): number {
+    return validateMSAASamples(samples, this.capabilities.maxMSAASamples, this.nativeWebGPU);
+  }
+
+  setMSAAEnabled(enabled: boolean): boolean {
+    if (this.msaaEnabled === enabled) return this.msaaEnabled;
     if (enabled) {
       const maxSamples = this.capabilities.maxMSAASamples;
       if (maxSamples < 2) {
         log.error(Modules.POST_PROCESSING, `MSAA not supported (MAX_SAMPLES: ${maxSamples})`);
-        return;
+        return this.msaaEnabled;
       }
+      this.msaaSamples = this.resolveMSAASamples(this.msaaSamples);
     }
     this.msaaEnabled = enabled;
     this.reallocateForSize();
@@ -656,16 +677,18 @@ export class PostProcessingManager {
       Modules.POST_PROCESSING,
       `MSAA ${enabled ? `enabled (${this.describeMSAA()})` : 'disabled'}`
     );
+    return this.msaaEnabled;
   }
 
-  setMSAASamples(samples: number): void {
-    const validated = validateMSAASamples(samples, this.capabilities.maxMSAASamples);
-    if (this.msaaSamples === validated) return;
+  setMSAASamples(samples: number): number {
+    const validated = this.resolveMSAASamples(samples);
+    if (this.msaaSamples === validated) return validated;
     this.msaaSamples = validated;
     if (this.msaaEnabled) {
       this.reallocateForSize();
       log.info(Modules.POST_PROCESSING, `MSAA samples set to ${this.describeMSAA()}`);
     }
+    return validated;
   }
 
   setSSAAEnabled(enabled: boolean): void {

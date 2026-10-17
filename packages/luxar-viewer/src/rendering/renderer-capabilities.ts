@@ -303,6 +303,7 @@ export function createRendererCapabilities(
     renderer as unknown as {
       backend?: {
         isWebGPUBackend?: boolean;
+        compatibilityMode?: boolean;
         device?: { limits?: { maxTextureDimension2D?: number } };
         gl?: WebGL2RenderingContext;
       };
@@ -334,7 +335,11 @@ export function createRendererCapabilities(
     framebufferYDown,
     readbackYDown: backend?.isWebGPUBackend === true,
     hdr,
-    maxMSAASamples: 4, // WebGPU adapters guarantee at least 4× MSAA
+    maxMSAASamples: backend?.isWebGPUBackend
+      ? backend.compatibilityMode
+        ? 0
+        : 4
+      : ((backend?.gl?.getParameter(backend.gl.MAX_SAMPLES) as number | null) ?? 0),
     maxTextureSize,
     maxRenderbufferSize,
     pointSizeRange: [1, 1024],

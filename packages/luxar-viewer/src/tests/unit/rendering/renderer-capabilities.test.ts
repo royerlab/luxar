@@ -225,6 +225,21 @@ describe('createRendererCapabilities (GL probes)', () => {
   });
 });
 
+describe('createRendererCapabilities (WebGPU MSAA)', () => {
+  it('reports 4 for native core and 0 for native compatibility mode', () => {
+    const renderer = { backend: { isWebGPUBackend: true, compatibilityMode: false } } as Renderer;
+    expect(createRendererCapabilities(renderer).maxMSAASamples).toBe(4);
+    renderer.backend.compatibilityMode = true;
+    expect(createRendererCapabilities(renderer).maxMSAASamples).toBe(0);
+  });
+
+  it('uses the WebGL2 bridge context limit', () => {
+    const gl = { MAX_SAMPLES, getParameter: (param: number) => (param === MAX_SAMPLES ? 8 : 0) };
+    const renderer = { backend: { isWebGLBackend: true, gl } } as unknown as Renderer;
+    expect(createRendererCapabilities(renderer).maxMSAASamples).toBe(8);
+  });
+});
+
 describe('createRendererCapabilities (WebGPU limits)', () => {
   it.each([false, true])('reads native backend=%s for readback Y', (isNative) => {
     const renderer = {

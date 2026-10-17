@@ -19,6 +19,8 @@ import { FOLDER_ICONS } from '../folder-icons';
  */
 export function setupAntiAliasingControls(context: SetupContext): SetupResult {
   const { gui, settings, postProcessing, saveSettings, triggerAnimation } = context;
+  const msaaChoices = postProcessing.getSupportedMSAASamples().filter((samples) => samples > 0);
+  settings.msaaSamples = postProcessing.setMSAASamples(settings.msaaSamples);
 
   const controllers: SetupResult['controllers'] = {};
 
@@ -119,11 +121,11 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
     .add(settings, 'msaaEnabled')
     .name('MSAA Enabled')
     .onChange((value: boolean) => {
-      postProcessing.setMSAAEnabled(value);
+      settings.msaaEnabled = postProcessing.setMSAAEnabled(value);
       saveSettings();
       triggerAnimation();
       // Show/hide MSAA settings folder
-      if (value) {
+      if (settings.msaaEnabled) {
         msaaFolder.show();
         msaaFolder.open();
       } else {
@@ -150,25 +152,24 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
       '• Smooths geometric edges without blurring the image\n' +
       '• Works well with additive blending'
   );
+  if (msaaChoices.length === 0) msaaControl.hide();
 
-  const msaaSamplesControl = msaaFolder
-    .add(settings, 'msaaSamples', [2, 4, 8])
-    .name('Sample Count')
-    .onChange((value: number) => {
-      postProcessing.setMSAASamples(value);
-      saveSettings();
-      triggerAnimation();
-    });
+  if (msaaChoices.length > 0) {
+    const msaaSamplesControl = msaaFolder
+      .add(settings, 'msaaSamples', msaaChoices)
+      .name('Sample Count')
+      .onChange((value: number) => {
+        settings.msaaSamples = postProcessing.setMSAASamples(value);
+        saveSettings();
+        triggerAnimation();
+      });
 
-  // Set tooltip for MSAA sample count
-  msaaSamplesControl.domElement.setAttribute(
-    'title',
-    'MSAA Sample Count: Number of samples per pixel\n' +
-      '• 2 = Minimal smoothing, lowest cost\n' +
-      '• 4 = Good balance (default for most GPUs)\n' +
-      '• 8 = Best quality, highest cost\n' +
-      '• More samples = smoother edges but more GPU work'
-  );
+    msaaSamplesControl.domElement.setAttribute(
+      'title',
+      'MSAA Sample Count: Number of samples per pixel\n' +
+        '• More samples = smoother edges but more GPU work'
+    );
+  }
 
   // Initially show/hide folders based on settings
   if (settings.ssaaEnabled) {
@@ -178,7 +179,7 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
     ssaaFolder.hide();
   }
 
-  if (!settings.msaaEnabled) {
+  if (!settings.msaaEnabled || msaaChoices.length === 0) {
     msaaFolder.hide();
   }
 
