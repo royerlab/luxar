@@ -350,11 +350,12 @@ def report_auto_jobs(jobs: str | int, worker_limit: "WorkerLimit") -> None:
 
 
 def _tile_worker_env(workers: int) -> dict[str, str]:
-    """The parent environment, plus a per-worker CPU-kernel thread share.
+    """The parent environment, plus a per-worker CPU thread share.
 
     ``workers`` concurrent fits would each default the native CPU kernels to
-    every physical core; give each ``physical_cores // workers`` instead,
-    unless the user set ``LUXAR_CPU_THREADS``. Harmless for GPU workers.
+    every physical core; give each ``physical_cores // workers`` for both the
+    kernels and CLI torch, unless the user set a nonzero
+    ``LUXAR_CPU_THREADS``. Harmless for GPU workers.
     """
     from luxar.gsplats.utils.device import cpu_worker_threads_env
 
