@@ -40,9 +40,15 @@ import { classifyRow, sameCounts, scoreControlPick, strip } from './classify.mjs
 import { pickWithinDraw, scoreBlocks, scoreFloatBuffers, scorePickBuffers } from './exactness.mjs';
 import { writeUlpHeatmap } from './heatmap.mjs';
 import * as ops from './page-ops.mjs';
-import { judgePerf, median, noiseFloor, ROTATIONS } from './perf-stats.mjs';
+import { familyFloor, judgePerf, median, noiseFloor, ROTATIONS } from './perf-stats.mjs';
 import { startServer } from './server.mjs';
-import { loadExpectations, runSuite, suiteMarkdown, validateMetricDirections } from './suites.mjs';
+import {
+  countTimingJudgements,
+  loadExpectations,
+  runSuite,
+  suiteMarkdown,
+  validateMetricDirections,
+} from './suites.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const viewerRoot = resolve(here, '../..');
@@ -388,7 +394,7 @@ const PERF_METRICS = [
  */
 const PERF_ABS_TOLERANCE = { wakeBlockMs: 0.2 };
 
-async function runPerf(session, servers) {
+async function runPerf(session, servers, timingTests) {
   const d = manifest.perfDefaults;
   const rounds = opts.rounds ?? d.rounds;
   const results = [];
@@ -410,15 +416,17 @@ async function runPerf(session, servers) {
         results.push({ case: c.id, backend, status: 'error', failures: [String(e.message ?? e)] });
         continue;
       }
-      const row = { case: c.id, backend, metrics: {} };
+      const row = { case: c.id, backend, metrics: {}, samples };
       for (const m of PERF_METRICS) {
         const base = samples.base.map((s) => s[m]);
         const base2 = samples.base2.map((s) => s[m]);
         const cand = samples.cand.map((s) => s[m]);
+        const aaFloor = noiseFloor(base, base2);
         row.metrics[m] = {
           baseMedian: median(base),
           candMedian: median(cand),
-          ...judgePerf(base, cand, noiseFloor(base, base2), PERF_ABS_TOLERANCE[m] ?? 0),
+          aaFloor,
+          ...judgePerf(base, cand, familyFloor(aaFloor, timingTests), PERF_ABS_TOLERANCE[m] ?? 0),
         };
       }
       row.status = Object.values(row.metrics).some((v) => v.verdict === 'fail') ? 'fail' : 'pass';
@@ -562,6 +570,12 @@ async function main() {
   let exact = null;
   let perf = null;
   const suites = {};
+  const timingTests =
+    (runsBuiltIn('perf')
+      ? manifest.perf.filter((c) => !opts.only || opts.only.includes(c.id)).length *
+        selectBackends(opts.backends, manifest.perfDefaults.backends).length *
+        PERF_METRICS.length
+      : 0) + countTimingJudgements(manifestSuites, selectedSuites, opts);
   let browserRelaunches = 0;
 
   if (runsBuiltIn('exact') || runsBuiltIn('perf')) {
@@ -582,7 +596,7 @@ async function main() {
       if (runsBuiltIn('perf')) {
         const session = browserSession(true);
         try {
-          perf = await runPerf(session, servers);
+          perf = await runPerf(session, servers, timingTests);
         } finally {
           browserRelaunches += session.relaunches();
           await session.close();
@@ -630,6 +644,7 @@ async function main() {
         dataRoot,
         opts,
         expectations,
+        timingTests,
         log,
       });
     } finally {

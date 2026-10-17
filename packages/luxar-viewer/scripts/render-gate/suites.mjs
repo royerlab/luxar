@@ -22,6 +22,7 @@ import { installExtCounters } from './ext-counters.mjs';
 import * as ops from './page-ops.mjs';
 import {
   anyMissing,
+  familyFloor,
   judgeCounter,
   judgePerf,
   median,
@@ -170,7 +171,7 @@ export function meetsExpectation(want, judged, kind) {
  *   With `of` and `per`, the judged value is `sample[of] / sample[per]`.
  * @param {{ base: object[], base2: object[], cand: object[] }} samples
  */
-export function judgeMetric(m, samples) {
+export function judgeMetric(m, samples, tests = 1) {
   const better = m.better ?? 'lower';
   const kind = m.kind ?? 'counter';
   // `of`/`per` judge a ratio of two sample fields, e.g. upload bytes per
@@ -193,11 +194,13 @@ export function judgeMetric(m, samples) {
       ...judgeCounter(base, cand, base2, { better, tol: m.tol ?? 0, relTol: m.relTol ?? 0 }),
     };
   if (anyMissing(base, cand, base2)) return { ...common, verdict: 'n/a' };
+  const aaFloor = noiseFloor(base, base2);
   return {
     ...common,
     baseMedian: median(base),
     candMedian: median(cand),
-    ...judgePerf(base, cand, noiseFloor(base, base2), m.tol ?? 0, { better }),
+    aaFloor,
+    ...judgePerf(base, cand, familyFloor(aaFloor, tests), m.tol ?? 0, { better }),
   };
 }
 
@@ -380,6 +383,29 @@ function applyExpectations(row, c, expected) {
   }
 }
 
+/** Backends selected for one manifest case. */
+function caseBackends(c, defaults, requested) {
+  if (c.backends) return requested ? c.backends.filter((b) => requested.includes(b)) : c.backends;
+  const fallback = defaults.backends ?? ['webgl', 'webgpu'];
+  if (!requested) return fallback;
+  return requested.filter((b) => ['webgl', 'webgpu'].includes(b) || fallback.includes(b));
+}
+
+/** Count gating timing judgments over every selected manifest suite. */
+export function countTimingJudgements(suites, selected, opts) {
+  let count = 0;
+  for (const name of selected) {
+    const suite = suites[name];
+    const defaults = suite.defaults ?? {};
+    for (const c of suite.cases ?? []) {
+      if ((opts.only && !opts.only.includes(c.id)) || (c.heavy && !opts.heavy)) continue;
+      const metrics = (c.metrics ?? []).filter((m) => m.kind === 'timing' && !m.report).length;
+      count += metrics * caseBackends(c, defaults, opts.backends).length;
+    }
+  }
+  return count;
+}
+
 /**
  * Run one manifest suite.
  *
@@ -393,6 +419,7 @@ function applyExpectations(row, c, expected) {
  * @param {string} p.dataRoot Datasets root (a missing store is an error row).
  * @param {object} p.opts Run options (`only`, `backends`, `rounds`, `heavy`).
  * @param {object|null} p.expectations Validated `--expect` content.
+ * @param {number} p.timingTests Gating timing judgments across the run.
  * @param {(m: string) => void} p.log
  * @returns {Promise<object[]>} Rows.
  */
@@ -406,6 +433,7 @@ export async function runSuite({
   dataRoot,
   opts,
   expectations,
+  timingTests = 1,
   log,
 }) {
   const defaults = suite.defaults ?? {};
@@ -414,8 +442,7 @@ export async function runSuite({
   const cases = (suite.cases ?? []).filter((c) => !opts.only || opts.only.includes(c.id));
   for (const c of cases) {
     const expected = expectations?.[c.id];
-    const allowed = c.backends ?? defaults.backends ?? ['webgl', 'webgpu'];
-    const backends = (opts.backends ?? allowed).filter((b) => allowed.includes(b));
+    const backends = caseBackends(c, defaults, opts.backends);
     if (c.heavy && !opts.heavy) {
       const row = {
         suite: name,
@@ -465,7 +492,9 @@ export async function runSuite({
         rows.push({ ...row, status: 'error', failures: [String(e.message ?? e)] });
         continue;
       }
-      for (const m of c.metrics ?? []) row.metrics[m.name] = judgeMetric(m, samples);
+      row.samples = samples;
+      for (const m of c.metrics ?? [])
+        row.metrics[m.name] = judgeMetric(m, samples, m.report ? 1 : timingTests);
       // A `report` metric is judged and shown but cannot fail the row (a timed
       // total whose per-tick twin is the one that gates).
       const gating = (c.metrics ?? []).filter((m) => !m.report);

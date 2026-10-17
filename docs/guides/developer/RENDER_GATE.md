@@ -215,9 +215,14 @@ between rounds. Each arm records:
   0/0 or x/0 ratio would otherwise decide the verdict).
 
 A metric fails when its point ratio `median(candidate) / median(baseline)`
-exceeds `1 + floor`, and is reported as a win below `1 − floor`. `floor` is the
-band a no-change comparison spans: the bootstrap 95% CI of the two baseline arms'
-ratio, never below 1%. The candidate's own CI is reported but does not decide,
+exceeds `1 + floor`, and is reported as a win below the matching lower bound.
+The raw `aaFloor` is the band a single no-change comparison spans: the
+bootstrap 95% CI of the two baseline arms' ratio, never below 1%. The judged
+`floor` widens that band for all selected perf and gating workload timing
+judgements in the run (cases × eligible backends × metrics), including a
+`--suite all` run. Report-only metrics do not add to that count; counters keep
+their own comparison. Both floors and the raw per-arm samples are in
+`report.json`. The candidate's own CI is reported but does not decide,
 because testing one CI edge against another CI's half-width counts the sampling
 noise twice and fails unchanged builds at small round counts.
 
@@ -289,7 +294,7 @@ metric object. A metric `name` may be:
 one single value, the medians are compared EXACTLY (`|delta| <= tol` passes; a
 move in the `better` direction is a win, the other way a fail). A counter that
 varies between baseline arms falls back to the A/A floor. `kind: "timing"` is
-judged by `judgePerf` against the A/A floor, in the declared `better`
+judged by `judgePerf` against the run-wide floor, in the declared `better`
 direction. A metric an arm does not report (an older baseline has no viewer
 counters) reads `n/a`: never a pass for an expected metric.
 
