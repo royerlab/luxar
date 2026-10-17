@@ -26,7 +26,10 @@ const webgpuConstructorArgs = vi.hoisted<Array<unknown>>(() => []);
 const fakeBackend = vi.hoisted(() => ({ isWebGPUBackend: true, device: {} }));
 // What `(dynamic-range: high)` answers for the HDR-output gate.
 const displayHdr = vi.hoisted(() => ({ hdr: false }));
+const webgpuImport = vi.hoisted(() => ({ failures: 0, calls: 0 }));
 vi.mock('three/webgpu', () => {
+  webgpuImport.calls++;
+  if (webgpuImport.failures-- > 0) throw new Error('chunk unavailable');
   class FakeWebGPURenderer {
     init = vi.fn(async () => {});
     backend = fakeBackend;
@@ -36,6 +39,8 @@ vi.mock('three/webgpu', () => {
   }
   return { WebGPURenderer: FakeWebGPURenderer };
 });
+const loadTslMaterials = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock('../../../../../rendering/tsl/load', () => ({ loadTslMaterials }));
 
 // Mock the capabilities + HDR helpers — they run after WebGPURenderer
 // construction in createWebGPURenderer's epilogue.
@@ -213,6 +218,28 @@ describe('createWebGPURenderer', () => {
       requestDevice,
     };
   }
+
+  it('starts both imports while requestDevice is pending and retries a failed renderer prefetch', async () => {
+    let releaseDevice!: (device: object) => void;
+    const requestDevice = vi.fn(
+      () =>
+        new Promise<object>((resolve) => {
+          releaseDevice = resolve;
+        })
+    );
+    const adapter = makeAdapter({ maxVertexBuffers: 16, requestDevice });
+    stubNavigatorGpu(vi.fn().mockResolvedValue(adapter));
+    webgpuImport.failures = 1;
+    loadTslMaterials.mockClear();
+
+    const creating = createWebGPURenderer(makeCanvas(), {});
+    await vi.waitFor(() => expect(requestDevice).toHaveBeenCalledOnce());
+    expect(loadTslMaterials).toHaveBeenCalledOnce();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseDevice({});
+    expect(await creating).toMatchObject({ fallback: false });
+    expect(webgpuImport.calls).toBe(2);
+  });
 
   it('forceWebGL diagnostic mode: skips navigator.gpu and sets forceWebGL on renderer', async () => {
     // Even if navigator.gpu exists, forceWebGL must bypass it.

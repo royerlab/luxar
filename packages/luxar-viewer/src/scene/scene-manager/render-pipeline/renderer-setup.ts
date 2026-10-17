@@ -591,7 +591,7 @@ export async function createWebGPURenderer(
     // adapter is going WebGPU. Only a requestDevice failure under
     // `requireNativeAdapter` (rare) pays for a download it then does not use.
     // A failed prefetch is retried by the awaits below and in SceneManager.
-    webgpuModule = import('three/webgpu');
+    void (webgpuModule = import('three/webgpu')).catch(() => undefined);
     loadTslMaterials().catch(() => undefined);
     try {
       device = await adapter.requestDevice({ requiredFeatures, requiredLimits });
