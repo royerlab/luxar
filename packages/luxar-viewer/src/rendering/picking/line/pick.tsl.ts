@@ -65,6 +65,7 @@ import {
   sanitizeNonNegative,
   sanitizeAlpha,
   type TSLNode,
+  loadTexel,
   sortedIndexNode,
   densityDroppedNode,
   tslLineEndPixelWidth,
@@ -240,12 +241,12 @@ export function linePickWebGPUFactory(
     ).toVar();
     const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
     const texelY: TSLNode = lineBase.div(lineTexW).toVar();
-    const lineT0: TSLNode = uLineTex.load(ivec2(texelX, texelY)).toVar();
-    const lineT1: TSLNode = uLineTex.load(ivec2(texelX.add(int(1)), texelY)).toVar();
-    const lineT2: TSLNode = uLineTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
-    const lineT3: TSLNode = uLineTex.load(ivec2(texelX.add(int(3)), texelY)).toVar();
-    const lineT4: TSLNode = uLineTex.load(ivec2(texelX.add(int(4)), texelY)).toVar();
-    const lineT5: TSLNode = uLineTex.load(ivec2(texelX.add(int(5)), texelY)).toVar();
+    const lineT0: TSLNode = loadTexel(uLineTex, ivec2(texelX, texelY)).toVar();
+    const lineT1: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(1)), texelY)).toVar();
+    const lineT2: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(2)), texelY)).toVar();
+    const lineT3: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(3)), texelY)).toVar();
+    const lineT4: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(4)), texelY)).toVar();
+    const lineT5: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(5)), texelY)).toVar();
     const aStartPos: TSLNode = vec3(lineT0).toVar();
     const aStartWidth: TSLNode = lineT0.w.toVar();
     const aEndPos: TSLNode = vec3(lineT1).toVar();

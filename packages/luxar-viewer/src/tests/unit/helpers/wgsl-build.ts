@@ -29,16 +29,17 @@ interface BuilderSurface {
   camera: THREE.Camera;
   scene: THREE.Scene;
   material: NodeMaterial;
+  vertexShader: string;
   fragmentShader: string;
   build(): void;
 }
 
-/** Build a material without a GPU and return its WGSL fragment shader. */
-export function wgslFragmentFor(
+/** Build a material without a GPU. */
+function buildWGSL(
   material: THREE.Material,
-  camera: THREE.Camera = new THREE.PerspectiveCamera(),
-  geometry: THREE.BufferGeometry = new THREE.BufferGeometry()
-): string {
+  camera: THREE.Camera,
+  geometry: THREE.BufferGeometry
+): BuilderSurface {
   const mesh = new THREE.Mesh(geometry, material);
   const builder = new WGSLNodeBuilder(
     mesh,
@@ -48,5 +49,23 @@ export function wgslFragmentFor(
   builder.scene = new THREE.Scene();
   builder.material = material as NodeMaterial;
   builder.build();
-  return String(builder.fragmentShader);
+  return builder;
+}
+
+/** Build a material without a GPU and return its WGSL fragment shader. */
+export function wgslFragmentFor(
+  material: THREE.Material,
+  camera: THREE.Camera = new THREE.PerspectiveCamera(),
+  geometry: THREE.BufferGeometry = new THREE.BufferGeometry()
+): string {
+  return String(buildWGSL(material, camera, geometry).fragmentShader);
+}
+
+/** Build a material without a GPU and return its WGSL vertex shader. */
+export function wgslVertexFor(
+  material: THREE.Material,
+  camera: THREE.Camera = new THREE.PerspectiveCamera(),
+  geometry: THREE.BufferGeometry = new THREE.BufferGeometry()
+): string {
+  return String(buildWGSL(material, camera, geometry).vertexShader);
 }

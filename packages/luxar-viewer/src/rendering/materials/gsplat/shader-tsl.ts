@@ -83,6 +83,7 @@ import {
   invalidFloatTSL,
   perspectiveNearFadeTSL,
   sanitizeAlpha,
+  loadTexel,
   type TSLNode,
   sortedIndexNode,
   densityDroppedNode,
@@ -697,10 +698,10 @@ export function gsplatWebGPUFactory(
     ).toVar();
     const texelX: TSLNode = splatBase.mod(splatTexW).toVar();
     const texelY: TSLNode = splatBase.div(splatTexW).toVar();
-    const splatT0: TSLNode = uSplatTex.load(ivec2(texelX, texelY)).toVar();
-    const splatT1: TSLNode = uSplatTex.load(ivec2(texelX.add(int(1)), texelY)).toVar();
-    const splatT2: TSLNode = uSplatTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
-    const splatT3: TSLNode = uSplatTex.load(ivec2(texelX.add(int(3)), texelY)).toVar();
+    const splatT0: TSLNode = loadTexel(uSplatTex, ivec2(texelX, texelY)).toVar();
+    const splatT1: TSLNode = loadTexel(uSplatTex, ivec2(texelX.add(int(1)), texelY)).toVar();
+    const splatT2: TSLNode = loadTexel(uSplatTex, ivec2(texelX.add(int(2)), texelY)).toVar();
+    const splatT3: TSLNode = loadTexel(uSplatTex, ivec2(texelX.add(int(3)), texelY)).toVar();
     const aCenter: TSLNode = vec3(splatT0).toVar(); // 3D world centre
     const aAmplitude: TSLNode = splatT0.w.toVar();
     const aCholesky01: TSLNode = splatT1.xy.toVar(); // [L00, L10]

@@ -78,6 +78,7 @@ import {
   sanitizeAlpha,
   sanitizeNonNegative,
   tslLineJointCapSuppression,
+  loadTexel,
   type TSLNode,
   sortedIndexNode,
   densityDroppedNode,
@@ -183,12 +184,12 @@ export function capsuleLineWebGPUFactory(
     ).toVar();
     const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
     const texelY: TSLNode = lineBase.div(lineTexW).toVar();
-    const lineT0: TSLNode = uLineTex.load(ivec2(texelX, texelY)).toVar();
-    const lineT1: TSLNode = uLineTex.load(ivec2(texelX.add(int(1)), texelY)).toVar();
-    const lineT2: TSLNode = uLineTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
-    const lineT3: TSLNode = uLineTex.load(ivec2(texelX.add(int(3)), texelY)).toVar();
-    const lineT4: TSLNode = uLineTex.load(ivec2(texelX.add(int(4)), texelY)).toVar();
-    const lineT5: TSLNode = uLineTex.load(ivec2(texelX.add(int(5)), texelY)).toVar();
+    const lineT0: TSLNode = loadTexel(uLineTex, ivec2(texelX, texelY)).toVar();
+    const lineT1: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(1)), texelY)).toVar();
+    const lineT2: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(2)), texelY)).toVar();
+    const lineT3: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(3)), texelY)).toVar();
+    const lineT4: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(4)), texelY)).toVar();
+    const lineT5: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(5)), texelY)).toVar();
 
     const mvStart: TSLNode = modelViewMatrix.mul(vec4(lineT0.xyz, 1.0)).toVar();
     const mvEnd: TSLNode = modelViewMatrix.mul(vec4(lineT1.xyz, 1.0)).toVar();
@@ -311,8 +312,8 @@ export function capsuleLineWebGPUFactory(
         .toVar();
       const pBase: TSLNode = slot.mul(int(6)).toVar();
       const pt0: TSLNode = ivec2(pBase.mod(lineTexW), pBase.div(lineTexW)).toVar();
-      const pStart: TSLNode = uLineTex.load(pt0).toVar();
-      const pEnd: TSLNode = uLineTex.load(ivec2(pt0.x.add(int(1)), pt0.y)).toVar();
+      const pStart: TSLNode = loadTexel(uLineTex, pt0).toVar();
+      const pEnd: TSLNode = loadTexel(uLineTex, ivec2(pt0.x.add(int(1)), pt0.y)).toVar();
       const farTexel: TSLNode = code.greaterThan(0.0).select(pEnd, pStart).toVar();
       const farObj: TSLNode = farTexel.xyz.toVar();
       pFarWidth.assign(sanitizeNonNegative(farTexel.w, 0.0));
