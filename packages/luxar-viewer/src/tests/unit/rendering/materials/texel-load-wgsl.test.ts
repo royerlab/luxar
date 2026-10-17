@@ -48,6 +48,7 @@ function vertexWGSL(material: NodeMaterial): string {
 }
 
 describe('element texture loads in generated WGSL', () => {
+  // geometry-subset: Mesh reads vertex buffers rather than element data textures.
   it.each([
     ['gsplat', () => new GSplatTSLMaterial(), 4],
     ['point', () => new PointTSLMaterial(), 3],
