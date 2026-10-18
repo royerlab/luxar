@@ -11,13 +11,19 @@ selects every CUDA device that clears the free-memory floor.
 
 from __future__ import annotations
 
+import math
 import os
+import re
+import subprocess  # nosec B404 # fixed argv, macOS core count only
+import sys
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Optional
 
 import torch
 
+from . import CPU_THREADS_ENV as CPU_THREADS_ENV
 from .worker_memory import (
     cuda_worker_count,
     task_working_set_bytes,
@@ -88,8 +94,12 @@ def cpu_fallback_hint(platform: Optional[str] = None) -> str:
 _CPU_WARNING_ISSUED = False
 
 
-def warn_cpu_fitting(stacklevel: int = 3) -> None:
-    """Warn once per process that Gaussian splat fitting is running on CPU."""
+def warn_cpu_fitting(stacklevel: int = 3, detail: str = "") -> None:
+    """Warn once per process that Gaussian splat fitting is running on CPU.
+
+    ``detail`` is appended verbatim (initialization passes why the native CPU
+    kernels are not in use, when that is the reason the slow path runs).
+    """
     global _CPU_WARNING_ISSUED
     import warnings
 
@@ -97,7 +107,7 @@ def warn_cpu_fitting(stacklevel: int = 3) -> None:
         return
     message = (
         "Gaussian splat fitting is running on CPU, which can be orders of "
-        "magnitude SLOWER than a GPU. " + cpu_fallback_hint()
+        "magnitude SLOWER than a GPU. " + cpu_fallback_hint() + detail
     )
     warnings.warn(message, UserWarning, stacklevel=stacklevel)
     _CPU_WARNING_ISSUED = True
@@ -212,8 +222,81 @@ def available_host_memory_bytes() -> Optional[int]:
     return int(pages * page_size)
 
 
+def _cgroup_v2_quota(cpu_max: Path) -> Optional[float]:
+    """``quota / period`` from a cgroup v2 ``cpu.max`` file; None if unlimited."""
+    try:
+        quota, period = cpu_max.read_text().split()[:2]
+        return None if quota == "max" else int(quota) / int(period)
+    except (OSError, ValueError):
+        return None
+
+
+def _cgroup_v1_quota(cpu_dir: Path) -> Optional[float]:
+    """``quota / period`` from a cgroup v1 cpu controller dir; None if unlimited."""
+    try:
+        quota = int((cpu_dir / "cpu.cfs_quota_us").read_text())
+        period = int((cpu_dir / "cpu.cfs_period_us").read_text())
+    except (OSError, ValueError):
+        return None
+    return quota / period if quota > 0 and period > 0 else None
+
+
+def _cgroup_quota_dirs(root: Path, proc_cgroup: Path) -> list[tuple[Path, bool]]:
+    """``(directory, is_v2)`` for this process's cgroup and its ancestors."""
+    try:
+        entries = proc_cgroup.read_text().splitlines()
+    except OSError:
+        return []
+    dirs: list[tuple[Path, bool]] = []
+    for entry in entries:
+        hierarchy, _, rest = entry.partition(":")
+        controllers, _, path = rest.partition(":")
+        if hierarchy == "0" and not controllers:
+            node, top, v2 = root / path.lstrip("/"), root, True
+        elif "cpu" in controllers.split(","):
+            node, top, v2 = root / "cpu" / path.lstrip("/"), root / "cpu", False
+        else:
+            continue
+        dirs.extend(
+            (parent, v2)
+            for parent in (node, *node.parents)
+            if top in (parent, *parent.parents)
+        )
+    return dirs
+
+
+def _cgroup_cpu_limit(
+    root: Path = Path("/sys/fs/cgroup"),
+    proc_cgroup: Path = Path("/proc/self/cgroup"),
+) -> Optional[int]:
+    """CPUs granted by a cgroup CPU quota (``docker --cpus``), or None.
+
+    Neither the affinity mask nor ``os.process_cpu_count`` sees a quota: a
+    ``--cpus 4`` container still reports every host CPU, and a pool sized to
+    those CPUs oversubscribes the quota. The tightest quota along this
+    process's cgroup and its ancestors wins (v2 ``cpu.max``, else the v1
+    ``cpu.cfs_quota_us``/``cpu.cfs_period_us`` pair), rounded up.
+    """
+    limits = []
+    for cgroup_dir, v2 in _cgroup_quota_dirs(root, proc_cgroup):
+        if v2:
+            quota = _cgroup_v2_quota(cgroup_dir / "cpu.max")
+        else:
+            quota = _cgroup_v1_quota(cgroup_dir)
+        if quota is not None:
+            limits.append(quota)
+    return max(1, math.ceil(min(limits))) if limits else None
+
+
 def _effective_cpu_count() -> int:
-    """Return CPUs available to this process, respecting affinity/cgroups."""
+    """Return CPUs available to this process: affinity, capped by a cgroup quota."""
+    count = _affinity_cpu_count()
+    limit = _cgroup_cpu_limit() if sys.platform.startswith("linux") else None
+    return count if limit is None else max(1, min(count, limit))
+
+
+def _affinity_cpu_count() -> int:
+    """Return CPUs this process may run on (the affinity mask)."""
     process_cpu_count = getattr(os, "process_cpu_count", None)
     if process_cpu_count is not None:
         count = process_cpu_count()
@@ -234,6 +317,69 @@ def _effective_cpu_count() -> int:
         except OSError:
             pass
     return max(1, os.cpu_count() or 1)
+
+
+def _linux_physical_cores() -> Optional[int]:
+    """Distinct (physical id, core id) pairs in ``/proc/cpuinfo``."""
+    try:
+        with open("/proc/cpuinfo", encoding="ascii", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        return None
+    cores: set[tuple[str, str]] = set()
+    for block in text.split("\n\n"):
+        phys = re.search(r"^physical id\s*:\s*(\S+)", block, re.M)
+        core = re.search(r"^core id\s*:\s*(\S+)", block, re.M)
+        if phys and core:
+            cores.add((phys.group(1), core.group(1)))
+    return len(cores) or None
+
+
+def _macos_physical_cores() -> Optional[int]:
+    """``sysctl hw.physicalcpu``."""
+    try:
+        out = subprocess.run(  # nosec B603 # fixed argv, no shell
+            ["/usr/sbin/sysctl", "-n", "hw.physicalcpu"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        ).stdout
+        return int(out.strip()) or None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+@lru_cache(maxsize=1)
+def physical_core_count() -> int:
+    """Physical cores, capped by the CPUs this process may run on.
+
+    The cap is :func:`_effective_cpu_count` -- the affinity mask (and on
+    Python 3.13+ ``os.process_cpu_count``), which is what a Slurm or
+    ``taskset`` CPU binding restricts, further capped by a cgroup CPU *quota*
+    (a container's ``--cpus``), which the affinity mask does not show.
+    """
+    usable = _effective_cpu_count()
+    if sys.platform.startswith("linux"):
+        physical = _linux_physical_cores()
+    elif sys.platform == "darwin":
+        physical = _macos_physical_cores()
+    else:
+        physical = None
+    return max(1, min(usable, physical or usable))
+
+
+def cpu_worker_threads_env(workers: int) -> dict[str, str]:
+    """``LUXAR_CPU_THREADS`` for one of ``workers`` concurrent CPU fit processes.
+
+    Each worker would otherwise default to every physical core and the
+    workers would oversubscribe the machine. Empty when the user set a nonzero
+    value (their choice is inherited unchanged).
+    """
+    if os.environ.get(CPU_THREADS_ENV, "").strip() not in ("", "0"):
+        return {}
+    share = max(1, physical_core_count() // max(1, int(workers)))
+    return {CPU_THREADS_ENV: str(share)}
 
 
 def _intraop_thread_count() -> int:

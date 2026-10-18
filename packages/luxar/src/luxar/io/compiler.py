@@ -13,6 +13,7 @@ import shutil
 import tempfile
 import uuid
 from contextlib import contextmanager
+from dataclasses import replace as dataclass_replace
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -76,7 +77,10 @@ from ._compiler.bounds import (
     expand_bounds_with_transforms,
     update_scene_bounds,
 )
-from ._compiler.colormap import write_colormap_lut_if_needed
+from ._compiler.colormap import (
+    lut_tone_mapping_notice_applies,
+    write_colormap_lut_if_needed,
+)
 from ._compiler.context import (
     DatasetCtx,
     GeometryWriteCtx,
@@ -2064,9 +2068,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Validate every path segment (rejects empty/dot-prefixed names —
         # the F1/F5 chokepoint) + strip the leading slash.
         path = _validate_node_path(path)
-        metadata = _write_gsplat_leaf_subtree_impl(
-            self._make_gsplats_ctx(source_dtype=_source_dtype), path, leaf, **attrs
+        ctx = dataclass_replace(
+            self._make_gsplats_ctx(source_dtype=_source_dtype),
+            warn_on_missing_tone_mapping=not self._lut_tone_mapping_warned,
         )
+        metadata = _write_gsplat_leaf_subtree_impl(ctx, path, leaf, **attrs)
+        # The leaf writer emits the ACES/LUT notice on its own (it threads no
+        # flag back); record it so the Node's write_group does not repeat it.
+        if lut_tone_mapping_notice_applies(
+            attrs.get("colormap"), ctx.scene_tone_mapping
+        ):
+            self._lut_tone_mapping_warned = True
         self._metadata_cache[path.lstrip("/")] = metadata
         return metadata
 

@@ -219,10 +219,26 @@ class TestIntensityEditsKeepTheBasisHonest:
     def test_affine_without_offset_is_a_scale(self) -> None:
         assert self._data().affine_intensity(2.0).stats["intensity_range"] == 8000.0
 
+    def test_normalize_is_one_global_factor_and_records_it(self) -> None:
+        """A normalise to a target is still one exact multiplier, so scorers can
+        take it back out exactly like ``--scale-intensity``."""
+        data = self._data()
+        factor = 1.0 / float(data.amplitudes.max())
+        out = data.normalize_intensity(1.0)
+        assert out.stats["intensity_scale"] == pytest.approx(factor)
+        assert out.stats["intensity_range"] == pytest.approx(4000.0 * factor)
+        assert out.stats["image_min"] == 100.0
+        assert out.stats["image_max"] == 4100.0
+
+    def test_a_round_trip_back_to_one_drops_the_scale(self) -> None:
+        """x49 then x1/49 is 0.9999999999999999 in floats: that residue must not
+        label a no-op store as edited (convert would say ``a.u.``)."""
+        out = self._data().scale_intensity(49.0).scale_intensity(1.0 / 49.0)
+        assert "intensity_scale" not in out.stats
+
     @pytest.mark.parametrize(
         "edit",
         [
-            lambda d: d.normalize_intensity(1.0),
             lambda d: d.affine_intensity(1.0, 5.0),
             lambda d: d.clamp_intensity(max=500.0),
             lambda d: d.reweight_amplitude(np.linspace(0.5, 1.0, d.n_splats)),
