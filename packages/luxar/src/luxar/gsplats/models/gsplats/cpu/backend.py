@@ -180,9 +180,9 @@ def size_numba_pool() -> None:
         # numba copies the count into the module that launches the pool when
         # that module is imported (`import numba` already does); the launch
         # reads the copy.
-        parallel = sys.modules.get("numba.np.ufunc.parallel")
-        if parallel is not None and hasattr(parallel, "NUM_THREADS"):
-            parallel.NUM_THREADS = pool
+        launcher: Any = sys.modules.get("numba.np.ufunc.parallel")
+        if launcher is not None and hasattr(launcher, "NUM_THREADS"):
+            launcher.NUM_THREADS = pool
 
 
 def _import_kernel_module() -> ModuleType:
