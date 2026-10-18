@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import * as ops from './page-ops.mjs';
 import {
+  countTimingJudgements,
   dragWorkload,
   judgeMetric,
   meetsExpectation,
@@ -394,6 +395,58 @@ describe('judgeMetric', () => {
       { base: [{}], base2: [{}], cand: [{ x: 1 }] }
     );
     expect(timing.verdict).toBe('n/a');
+  });
+
+  it('passes an A/A fluctuation at the run-wide floor and preserves the raw floor', () => {
+    const samples = {
+      base: arm([100, 100, 100, 100, 100], 'firstFrameMs'),
+      base2: arm([100, 100, 100, 100, 100], 'firstFrameMs'),
+      cand: arm([101.2, 101.2, 101.2, 101.2, 101.2], 'firstFrameMs'),
+    };
+    const timing = { name: 'firstFrameMs', kind: 'timing' };
+    expect(judgeMetric(timing, samples, 1).verdict).toBe('fail');
+    expect(judgeMetric(timing, samples, 4)).toMatchObject({ verdict: 'pass', aaFloor: 0.01 });
+    expect(judgeMetric(timing, samples, 4).floor).toBeGreaterThan(0.01);
+    expect(judgeMetric({ name: 'firstFrameMs', kind: 'counter' }, samples, 4).verdict).toBe('fail');
+  });
+});
+
+describe('countTimingJudgements', () => {
+  it('counts only selected gating timings across eligible backends and suites', () => {
+    const suites = {
+      hosted: {
+        defaults: { backends: ['webgl'] },
+        cases: [
+          {
+            id: 'load',
+            metrics: [
+              { name: 'firstFrameMs', kind: 'timing' },
+              { name: 'settledMs', kind: 'timing' },
+              { name: 'bytes', kind: 'counter' },
+              { name: 'totalMs', kind: 'timing', report: true },
+            ],
+          },
+          { id: 'heavy', heavy: true, metrics: [{ name: 'stepMs', kind: 'timing' }] },
+        ],
+      },
+      playback: {
+        cases: [
+          { id: 'play', backends: ['webgpu'], metrics: [{ name: 'achievedFps', kind: 'timing' }] },
+        ],
+      },
+    };
+    expect(
+      countTimingJudgements(suites, ['hosted', 'playback'], { backends: ['webgl', 'webgpu'] })
+    ).toBe(3);
+    expect(
+      countTimingJudgements(suites, ['hosted'], { backends: ['webgl', 'webgpu'], only: ['load'] })
+    ).toBe(2);
+    expect(
+      countTimingJudgements(suites, ['hosted', 'playback'], {
+        backends: ['webgl', 'webgpu'],
+        heavy: true,
+      })
+    ).toBe(4);
   });
 });
 

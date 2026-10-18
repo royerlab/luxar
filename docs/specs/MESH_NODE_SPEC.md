@@ -1327,7 +1327,7 @@ The mesh is drawn **indexed** (`faces` is the index buffer, §6.1), so under `dr
 triangle ordinal (`gl_VertexID / 3` would be meaningless: shared vertices break it, and WebGL2 has no
 `gl_PrimitiveID`). This pick vertex shader is the one place mesh diverges from the shared helper; the
 `mesh-pick.{vertex,fragment}` codegen snapshots of §6.4 cover it. The TSL twin (§6.4) must declare the
-`vElementId` (and `vNodeId`) varyings with `.setInterpolation('flat')`: TSL `varying()` interpolates
+`vElementId` (and `vNodeId`) varyings with flat interpolation: TSL `varying()` interpolates
 linearly by default, and the point TSL pick (`rendering/picking/point/pick.tsl.ts`) only escapes without
 `flat` because a single-instance quad's four corners all carry the same id (interpolation is the
 identity). That identity fails for a mesh — `gl_VertexID` differs at every triangle corner, so a
@@ -1337,18 +1337,27 @@ the point pick, whose implicit-identity interpolation is unsafe for a shared-ver
 
 **Provoking-vertex convention (which corner wins).** A `flat` varying is sourced from **one** corner of
 the triangle, and the two backends do not default to the same one: OpenGL ES 3.0 (the GLSL backend) fixes
-the provoking vertex to the **last** vertex of the primitive, while the WGSL `@interpolate( flat )` three
-emits for `.setInterpolation('flat')` defaults to `first`-vertex sampling. Left there, the same click on
+the provoking vertex to the **last** vertex of the primitive, while core WebGPU explicitly uses
+`@interpolate( flat, first )`. Left there, the same click on
 the same triangle `(i0, i1, i2)` reports `i2` on WebGL and `i0` on WebGPU. The pick **contract** at
 vertex granularity is the original first vertex of the front-most triangle under the cursor. The GLSL pick path
 enables the `WEBGL_provoking_vertex` extension when present and sets
-`provokingVertexWEBGL(FIRST_VERTEX_CONVENTION_WEBGL)`, aligning WebGL with WebGPU's first-vertex rule —
+`provokingVertexWEBGL(FIRST_VERTEX_CONVENTION_WEBGL)`, aligning WebGL with core WebGPU's first-vertex rule —
 context-wide state, but safe: every other `flat` varying in the shipped materials is a per-**instance**
 constant (point/gsplat quads, line segments), identical at all corners, so the convention flip is
 observable only by mesh. Where the extension is unavailable, the mesh's shared index buffer instead
 cyclically rotates each triple `(i0, i1, i2)` to `(i1, i2, i0)`. Winding, depth, and coverage stay
 the same; WebGL's last vertex is now `i0`. The rotation applies both when picking is registered after
 the first geometry commit and to later slice and depth-sort index writes. No shadow geometry is needed.
+WebGL and core WebGPU therefore agree **exactly** on the reported corner in every case, via the
+extension or the rotation fallback. Compatibility-mode WebGPU is the one case that still diverges: it
+forbids `first` sampling outright, so its mesh pick shader uses `@interpolate( flat, either )`; the
+returned id remains *a corner of the hit triangle*, but the backend is free to choose any of the
+three. That stands as a **documented exception** to §6.4's matching-output rule, now narrowed to
+compatibility-mode WebGPU alone, and pick parity tests against it must assert the returned id is *a
+corner of the expected face* (membership), not one exact corner. (Making the id corner-independent
+outright would need per-corner pick data — a de-indexed shadow geometry, 3× pick memory — abandoning
+the shared-`BufferGeometry` design above for the pick pass alone; rejected for v1.)
 
 **Pick fragment output.** The `mesh-pick.fragment` writes the same shared vec4 the readback decodes —
 `vec4(vNodeId, vElementId.x, brightness, vElementId.y)` — with `brightness` the fragment's
@@ -1418,9 +1427,11 @@ write time (`ValidationError`, via `validate_vertices_for_writing`, §3.5) — t
 loader-side `LoaderError` pin.
 
 **Accepted v1 limitation.** `vElementId` is a `flat` varying, so within a triangle it resolves to that
-triangle's **original first vertex**, not the cursor's barycentric-nearest vertex. Hovering a triangle
-therefore reports the same vertex on either backend. Barycentric-nearest-vertex resolution would
-need a de-indexed pick geometry or per-corner attributes plus barycentrics — a follow-up, not v1.
+triangle's **original first vertex** on WebGL and core WebGPU (on compatibility-mode WebGPU, to *a*
+corner of that triangle — see the provoking-vertex note above), not the cursor's barycentric-nearest
+vertex. Hovering a triangle therefore reports the same vertex on WebGL and core WebGPU.
+Barycentric-nearest-vertex resolution would need a de-indexed pick geometry or per-corner attributes
+plus barycentrics — a follow-up, not v1.
 
 **FACE granularity** (e.g. highlighting a whole triangle) is deferred: it needs either a de-indexed pick
 geometry or a per-corner face-id attribute, **plus** a compacted→original face map to stay stable under
@@ -1746,9 +1757,11 @@ been widened deliberately, each behind its capability flag.
       codegen snapshot) as the GLSL twin's pin. Verified to go **red** against a build that binds the raw
       untransformed normal, or uses the plain model-view instead of the inverse-transpose — either
       mislights the rotated node / skews normals off-perpendicular under the anisotropic scale
-- [x] TS unit / E2E (pick corner contract, §6.5): a pick on a mesh triangle resolves to
-      its original first corner on both backends; GL uses the extension where available and
-      otherwise rotates the index triples cyclically
+- [x] TS unit / E2E (pick corner contract, §6.5): a pick on a mesh triangle resolves to its
+      original first corner on WebGL and core WebGPU — GL uses `WEBGL_provoking_vertex` where
+      available and otherwise rotates the index triples cyclically so the two always agree
+      exactly; on compatibility-mode WebGPU (no `first` sampling) it resolves only to **a
+      corner vertex of that face** — assert membership in `(i0, i1, i2)`, never one exact corner
 - [x] Codegen snapshots: 6 new variants = 12 files (§6.4) — incl. the per-blend-mode
       `mesh-additive`/`mesh-max` variants
 - [x] Fixture: `tests/fixtures/generate_test_data.py` gains a mesh fixture (auto-picked up by
