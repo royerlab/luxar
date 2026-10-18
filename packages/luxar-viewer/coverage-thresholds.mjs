@@ -50,10 +50,12 @@ export const COVERAGE_THRESHOLDS = {
   // Global — every file in the report, the subtrees below included.
   // The trajectory tests raised the merged dev measurement to 91.00, leaving
   // the previous floor more than three points below measured coverage.
-  lines: 90,
+  // The eight visual/pick WGSL codegen cases in #3194 lifted it to 94.13.
+  lines: 93,
   // The picking tests in #3004 raised measured coverage to 90.00, leaving
   // the old floor outside the slack budget.
-  statements: 89,
+  // The #3194 WGSL cases lifted it to 92.78.
+  statements: 91,
   // functions 84 -> 86 after the chunk-boundary prefetch planner/loader tests
   // (#2686): measured 86.61 -> 87.01 and check-coverage-slack flagged the old
   // floor as stale.
@@ -137,9 +139,10 @@ export const COVERAGE_THRESHOLDS = {
   // lines 78 -> 84 and functions 79 -> 85 after
   // `tests/unit/rendering/picking/pick-depth-camera-kind.test.ts` began building
   // the five TSL pick graphs with a real WGSLNodeBuilder (no GPU), which runs
-  // their factory bodies: measured lines 85.93, functions 86.27. The visual
-  // shader bodies are still reached only by the browser parity spec.
-  'src/rendering/**': { lines: 84, functions: 85, branches: 78 },
+  // their factory bodies: measured lines 85.93, functions 86.27. The eight
+  // visual/pick WGSL cases in #3194 lifted lines/functions/branches to
+  // 92.36/90.37/81.57.
+  'src/rendering/**': { lines: 91, functions: 89, branches: 80 },
 
   // The last two measured top-level source directories without a sub-gate;
   // until 2026-10 their coverage could erode freely inside the global pool.
@@ -149,8 +152,8 @@ export const COVERAGE_THRESHOLDS = {
 
 /** Last accepted coverage measurements for each floor. */
 export const COVERAGE_RECORDED = {
-  lines: 91.0,
-  statements: 90.0,
+  lines: 94.13,
+  statements: 92.78,
   functions: 89.74,
   branches: 85.1,
   'src/types/**': { lines: 99, functions: 96.77, branches: 98.05 },
@@ -165,7 +168,7 @@ export const COVERAGE_RECORDED = {
   'src/ui/**': { lines: 92.0, functions: 86.95, branches: 80.06 },
   'src/core/**': { lines: 93.02, functions: 81.03, branches: 88.02 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
-  'src/rendering/**': { lines: 85.93, functions: 86.27, branches: 79.46 },
+  'src/rendering/**': { lines: 92.36, functions: 90.37, branches: 81.57 },
   'src/audio/**': { lines: 96.38, functions: 95.48, branches: 84.11 },
   'src/profiling/**': { lines: 96.94, functions: 96.34, branches: 89.61 },
 };
