@@ -6,6 +6,7 @@ piped ``--help`` width, the ``cal --pdf`` dependency preflight, the tiled
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import time
@@ -22,6 +23,7 @@ from luxar.cli.gsplat_ops.fitting.fit import _done_seconds, _refuse_existing_out
 from luxar.cli.tests._testing import normalized_cli_output
 from luxar.cli.utils import local_input_path, reject_remote_input
 
+_ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
 _FAST_FIT = ["--preset", "draft", "--seeds", "40", "--iters", "60", "--device", "cpu"]
 _TILED = ["--tiling", "uniform", "--tile-size", "12", "--overlap", "2"]
 
@@ -204,7 +206,9 @@ class TestPipedHelpWidth:
             env=env,
             check=True,
         ).stdout
-        return max(len(line) for line in out.splitlines())
+        # Rich still colours piped output when GITHUB_ACTIONS or FORCE_COLOR is
+        # set (as on CI); measure the visible width, not the escape bytes.
+        return max(len(_ANSI_SGR.sub("", line)) for line in out.splitlines())
 
     def test_piped_help_is_not_clipped_to_80_columns(self) -> None:
         assert 80 < self._help_width() <= 120
