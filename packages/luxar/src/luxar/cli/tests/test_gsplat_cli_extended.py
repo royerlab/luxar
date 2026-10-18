@@ -1001,6 +1001,158 @@ class TestFitCommand:
         assert result.exit_code == 0, f"fit failed: {result.stdout}"
         assert out.exists()
 
+    def test_fit_on_cpu_applies_and_restores_thread_count(
+        self,
+        runner: CliRunner,
+        small_volume_npy: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """`fit --device cpu` runs at the resolved width, then restores it."""
+        import torch
+
+        previous = torch.get_num_threads()
+        target = 2 if previous != 2 else 3
+        monkeypatch.setenv("LUXAR_CPU_THREADS", str(target))
+        calls: list[int] = []
+        real_set = torch.set_num_threads
+
+        def spy(n: int) -> None:
+            calls.append(n)
+            real_set(n)
+
+        monkeypatch.setattr(torch, "set_num_threads", spy)
+        out = tmp_path / "fitted-cpu.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(out),
+                "--iters",
+                "1",
+                "--seeds",
+                "2",
+                "--tiling",
+                "none",
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"fit failed: {result.stdout}"
+        assert calls == [target, previous]
+        assert torch.get_num_threads() == previous
+        assert f"CPU: using {target} threads" in result.stdout
+
+    def test_fit_config_cpu_fallback_widens_threads(
+        self,
+        runner: CliRunner,
+        small_volume_npy: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import torch
+
+        from luxar.gsplats.utils import cpu_threads
+
+        previous = torch.get_num_threads()
+        target = 2 if previous != 2 else 3
+        monkeypatch.setenv("LUXAR_CPU_THREADS", str(target))
+        config = tmp_path / "cpu.yaml"
+        config.write_text("use_cuda: false\nuse_metal: false\n")
+        calls: list[int] = []
+        thread_options: list[dict[str, Any]] = []
+        real_set = torch.set_num_threads
+        real_context = cpu_threads.cpu_threads_for
+
+        def spy_context(device: str | None, **kwargs: Any) -> Any:
+            thread_options.append(kwargs)
+            return real_context(device, **kwargs)
+
+        def spy(n: int) -> None:
+            calls.append(n)
+            real_set(n)
+
+        monkeypatch.setattr(torch, "set_num_threads", spy)
+        monkeypatch.setattr(cpu_threads, "cpu_threads_for", spy_context)
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(tmp_path / "configured.gsplats.zarr"),
+                "--config",
+                str(config),
+                "--iters",
+                "1",
+                "--seeds",
+                "2",
+                "--tiling",
+                "none",
+            ],
+        )
+        assert result.exit_code == 0, f"fit failed: {result.stdout}"
+        assert len(thread_options) == 1
+        assert thread_options[0]["use_cuda"] is False
+        assert thread_options[0]["use_metal"] is False
+        assert calls == [target, previous]
+        assert f"CPU: using {target} threads" in result.stdout
+
+    def test_tile_worker_does_not_widen_threads(
+        self,
+        runner: CliRunner,
+        small_volume_npy: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import torch
+
+        from luxar.gsplats.utils import cpu_threads
+
+        monkeypatch.delenv("LUXAR_CPU_THREADS", raising=False)
+        monkeypatch.setenv("OMP_NUM_THREADS", "1")
+        monkeypatch.setenv("MKL_NUM_THREADS", "1")
+        monkeypatch.setattr(cpu_threads, "physical_cpu_count", lambda: 4)
+        previous = torch.get_num_threads()
+        torch.set_num_threads(1)
+        calls: list[int] = []
+        real_set = torch.set_num_threads
+
+        def spy(n: int) -> None:
+            calls.append(n)
+            real_set(n)
+
+        monkeypatch.setattr(torch, "set_num_threads", spy)
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "gsplat",
+                    "fit",
+                    str(small_volume_npy),
+                    str(tmp_path / "tile.gsplats.zarr"),
+                    "--tile",
+                    "1/8",
+                    "--tile-size",
+                    "8",
+                    "--overlap",
+                    "0",
+                    "--iters",
+                    "1",
+                    "--seeds",
+                    "2",
+                    "--device",
+                    "cpu",
+                ],
+            )
+            assert result.exit_code == 0, f"tile fit failed: {result.stdout}"
+            assert calls == []
+            assert torch.get_num_threads() == 1
+        finally:
+            real_set(previous)
+
     def test_fit_output_is_loadable(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
     ) -> None:
@@ -4221,6 +4373,64 @@ def multiblob_volume(tmp_path: Path) -> Path:
 
 
 class TestCalibrateCommand:
+    @pytest.mark.parametrize("device_args", [[], ["--device", "cpu"]])
+    def test_cal_cpu_widens_threads(
+        self,
+        runner: CliRunner,
+        smooth_blob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        device_args: list[str],
+    ) -> None:
+        import torch
+
+        from luxar.gsplats.utils import cpu_threads
+
+        previous = torch.get_num_threads()
+        target = 2 if previous != 2 else 3
+        monkeypatch.setenv("LUXAR_CPU_THREADS", str(target))
+        calls: list[int] = []
+        thread_options: list[dict[str, Any]] = []
+        real_set = torch.set_num_threads
+        real_context = cpu_threads.cpu_threads_for
+
+        def spy_context(device: str | None, **kwargs: Any) -> Any:
+            thread_options.append(kwargs)
+            return real_context(device, **kwargs)
+
+        def spy(n: int) -> None:
+            calls.append(n)
+            real_set(n)
+
+        monkeypatch.setattr(torch, "set_num_threads", spy)
+        monkeypatch.setattr(cpu_threads, "cpu_threads_for", spy_context)
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cal",
+                str(smooth_blob_volume),
+                str(tmp_path / "cal.json"),
+                "--n-grid",
+                "2",
+                "--k-min",
+                "20",
+                "--k-max",
+                "100",
+                "--config",
+                str(fast_fit_config),
+                *device_args,
+            ],
+        )
+        assert result.exit_code == 0, f"cal failed: {result.stdout}"
+        assert len(thread_options) == 1
+        assert thread_options[0]["use_cuda"] is False
+        assert thread_options[0]["use_metal"] is False
+        assert calls == [target, previous]
+        assert torch.get_num_threads() == previous
+        assert f"CPU: using {target} threads" in result.stdout
+
     def test_cal_basic(
         self,
         runner: CliRunner,
