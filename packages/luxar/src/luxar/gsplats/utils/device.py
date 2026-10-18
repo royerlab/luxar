@@ -11,6 +11,7 @@ selects every CUDA device that clears the free-memory floor.
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import subprocess  # nosec B404 # fixed argv, macOS core count only
@@ -221,8 +222,81 @@ def available_host_memory_bytes() -> Optional[int]:
     return int(pages * page_size)
 
 
+def _cgroup_v2_quota(cpu_max: Path) -> Optional[float]:
+    """``quota / period`` from a cgroup v2 ``cpu.max`` file; None if unlimited."""
+    try:
+        quota, period = cpu_max.read_text().split()[:2]
+        return None if quota == "max" else int(quota) / int(period)
+    except (OSError, ValueError):
+        return None
+
+
+def _cgroup_v1_quota(cpu_dir: Path) -> Optional[float]:
+    """``quota / period`` from a cgroup v1 cpu controller dir; None if unlimited."""
+    try:
+        quota = int((cpu_dir / "cpu.cfs_quota_us").read_text())
+        period = int((cpu_dir / "cpu.cfs_period_us").read_text())
+    except (OSError, ValueError):
+        return None
+    return quota / period if quota > 0 and period > 0 else None
+
+
+def _cgroup_quota_dirs(root: Path, proc_cgroup: Path) -> list[tuple[Path, bool]]:
+    """``(directory, is_v2)`` for this process's cgroup and its ancestors."""
+    try:
+        entries = proc_cgroup.read_text().splitlines()
+    except OSError:
+        return []
+    dirs: list[tuple[Path, bool]] = []
+    for entry in entries:
+        hierarchy, _, rest = entry.partition(":")
+        controllers, _, path = rest.partition(":")
+        if hierarchy == "0" and not controllers:
+            node, top, v2 = root / path.lstrip("/"), root, True
+        elif "cpu" in controllers.split(","):
+            node, top, v2 = root / "cpu" / path.lstrip("/"), root / "cpu", False
+        else:
+            continue
+        dirs.extend(
+            (parent, v2)
+            for parent in (node, *node.parents)
+            if top in (parent, *parent.parents)
+        )
+    return dirs
+
+
+def _cgroup_cpu_limit(
+    root: Path = Path("/sys/fs/cgroup"),
+    proc_cgroup: Path = Path("/proc/self/cgroup"),
+) -> Optional[int]:
+    """CPUs granted by a cgroup CPU quota (``docker --cpus``), or None.
+
+    Neither the affinity mask nor ``os.process_cpu_count`` sees a quota: a
+    ``--cpus 4`` container still reports every host CPU, and a pool sized to
+    those CPUs oversubscribes the quota. The tightest quota along this
+    process's cgroup and its ancestors wins (v2 ``cpu.max``, else the v1
+    ``cpu.cfs_quota_us``/``cpu.cfs_period_us`` pair), rounded up.
+    """
+    limits = []
+    for cgroup_dir, v2 in _cgroup_quota_dirs(root, proc_cgroup):
+        if v2:
+            quota = _cgroup_v2_quota(cgroup_dir / "cpu.max")
+        else:
+            quota = _cgroup_v1_quota(cgroup_dir)
+        if quota is not None:
+            limits.append(quota)
+    return max(1, math.ceil(min(limits))) if limits else None
+
+
 def _effective_cpu_count() -> int:
-    """Return CPUs available to this process, respecting affinity/cgroups."""
+    """Return CPUs available to this process: affinity, capped by a cgroup quota."""
+    count = _affinity_cpu_count()
+    limit = _cgroup_cpu_limit() if sys.platform.startswith("linux") else None
+    return count if limit is None else max(1, min(count, limit))
+
+
+def _affinity_cpu_count() -> int:
+    """Return CPUs this process may run on (the affinity mask)."""
     process_cpu_count = getattr(os, "process_cpu_count", None)
     if process_cpu_count is not None:
         count = process_cpu_count()
@@ -282,8 +356,8 @@ def physical_core_count() -> int:
 
     The cap is :func:`_effective_cpu_count` -- the affinity mask (and on
     Python 3.13+ ``os.process_cpu_count``), which is what a Slurm or
-    ``taskset`` CPU binding restricts. A cgroup CPU *quota* (e.g. a container's
-    ``--cpus``) is not read.
+    ``taskset`` CPU binding restricts, further capped by a cgroup CPU *quota*
+    (a container's ``--cpus``), which the affinity mask does not show.
     """
     usable = _effective_cpu_count()
     if sys.platform.startswith("linux"):

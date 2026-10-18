@@ -39,6 +39,11 @@ import zarr
 # host. `0` = leave torch alone. Set in the environment, not per test, so the
 # subprocesses some tests spawn (`fit --tile`, `-j 2` pools) inherit it too.
 os.environ.setdefault("LUXAR_CPU_THREADS", "0")
+# The native CPU kernels' numba pool would otherwise be sized from the host's
+# CPUs, and two xdist workers inside a CPU-quota'd CI container oversubscribe
+# the quota. Two threads keep the kernels' parallel (prange) path exercised --
+# a race only shows with more than one thread -- without the oversubscription.
+os.environ.setdefault("NUMBA_NUM_THREADS", "2")
 
 
 def confine_temp_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

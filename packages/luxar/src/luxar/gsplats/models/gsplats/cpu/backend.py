@@ -10,8 +10,13 @@
 * ``torch`` -- always the PyTorch renderer.
 
 ``LUXAR_CPU_THREADS`` sets the kernels' thread count (default: the physical
-cores available to this process). numba keeps its own thread pool; CLI fit/cal
-configures torch's intra-op threads separately from the same variable.
+cores available to this process, a container's CPU quota included). numba keeps
+its own thread pool; CLI fit/cal configures torch's intra-op threads separately
+from the same variable. Before numba's first parallel launch the pool itself is
+sized to that count (``NUMBA_NUM_THREADS``, unless set explicitly): numba's
+default is one pool thread per *visible* CPU, which a container's CPU quota
+does not reduce, and under the quota the surplus pool threads starve torch's
+own work in the same fit.
 
 Nothing compiles at import: the kernels compile on first use and numba's
 ``cache=True`` stores them -- beside the module in a writable checkout, in the
@@ -144,6 +149,42 @@ def _use_temp_cache_dir() -> str:
     return path
 
 
+def _numba_pool_launched() -> bool:
+    """Whether numba has already started its thread pool (its size is fixed)."""
+    parallel = sys.modules.get("numba.np.ufunc.parallel")
+    return bool(getattr(parallel, "_is_initialized", False))
+
+
+def size_numba_pool() -> None:
+    """Size numba's thread pool to the CPUs this process may use.
+
+    numba sizes its pool to every *visible* CPU, and a container's CPU quota
+    (``--cpus 4`` still shows all host CPUs) does not change that. The surplus
+    pool threads then compete for the quota with the torch work around each
+    kernel call: one tiled-fit test took 390 s in the CI runner image (4-CPU
+    quota, 16 visible) against 4.5 s with the pool at 4. The pool size is read
+    from ``NUMBA_NUM_THREADS`` at import and used at the first parallel launch,
+    so both are set -- the environment for numba's config reloads and for
+    child processes, the live config when numba is already imported (the
+    ordering curves import it lazily too). An explicit ``NUMBA_NUM_THREADS``
+    wins, and a pool that already started is left alone.
+    """
+    if "NUMBA_NUM_THREADS" in os.environ or _numba_pool_launched():
+        return
+    pool = max(resolve_thread_count(), physical_core_count())
+    os.environ["NUMBA_NUM_THREADS"] = str(pool)
+    numba_module = sys.modules.get("numba")
+    if numba_module is not None:
+        config: Any = numba_module.config  # attributes are set from the environment
+        config.NUMBA_NUM_THREADS = pool
+        # numba copies the count into the module that launches the pool when
+        # that module is imported (`import numba` already does); the launch
+        # reads the copy.
+        parallel = sys.modules.get("numba.np.ufunc.parallel")
+        if parallel is not None and hasattr(parallel, "NUM_THREADS"):
+            parallel.NUM_THREADS = pool
+
+
 def _import_kernel_module() -> ModuleType:
     """Import ``kernels.py``, surviving a cache location numba cannot write.
 
@@ -183,6 +224,7 @@ def _import_kernels() -> ModuleType | None:
         if _KERNELS is not None or _UNAVAILABLE_REASON is not None:
             return _KERNELS
         try:
+            size_numba_pool()
             kernels = _import_kernel_module()
         except ImportError as exc:
             _NUMBA_MISSING = True

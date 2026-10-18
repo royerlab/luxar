@@ -206,3 +206,78 @@ def test_non_finite_splats_are_skipped_and_reported_once(
     out_text = capsys.readouterr().out
     assert out_text.count("non-finite parameters") == 1
     assert "skipped 2 splat(s)" in out_text
+
+
+# ------------------------------------------------------ numba pool size
+
+
+def test_numba_pool_is_sized_to_the_usable_cpus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Not every visible CPU: a container quota shows all of the host's."""
+    monkeypatch.delenv("NUMBA_NUM_THREADS", raising=False)
+    monkeypatch.setattr(backend_mod, "physical_core_count", lambda: 4)
+    monkeypatch.setattr(backend_mod, "_numba_pool_launched", lambda: False)
+    monkeypatch.delitem(sys.modules, "numba", raising=False)
+
+    backend_mod.size_numba_pool()
+
+    assert os.environ["NUMBA_NUM_THREADS"] == "4"
+
+
+def test_numba_pool_covers_a_larger_explicit_thread_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NUMBA_NUM_THREADS", raising=False)
+    monkeypatch.setattr(backend_mod, "physical_core_count", lambda: 4)
+    monkeypatch.setattr(backend_mod, "_numba_pool_launched", lambda: False)
+    monkeypatch.setenv(backend_mod.THREADS_ENV, "6")
+    monkeypatch.delitem(sys.modules, "numba", raising=False)
+
+    backend_mod.size_numba_pool()
+
+    assert os.environ["NUMBA_NUM_THREADS"] == "6"
+
+
+def test_numba_pool_size_respects_an_explicit_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NUMBA_NUM_THREADS", "3")
+    monkeypatch.setattr(backend_mod, "physical_core_count", lambda: 4)
+
+    backend_mod.size_numba_pool()
+
+    assert os.environ["NUMBA_NUM_THREADS"] == "3"
+
+
+def test_numba_pool_is_resized_live_when_numba_is_already_imported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """numba copied the count into its config and launcher at import."""
+    import types
+
+    config = types.SimpleNamespace(NUMBA_NUM_THREADS=16)
+    launcher = types.SimpleNamespace(NUM_THREADS=16, _is_initialized=False)
+    monkeypatch.delenv("NUMBA_NUM_THREADS", raising=False)
+    monkeypatch.setattr(backend_mod, "physical_core_count", lambda: 4)
+    monkeypatch.setitem(sys.modules, "numba", types.SimpleNamespace(config=config))
+    monkeypatch.setitem(sys.modules, "numba.np.ufunc.parallel", launcher)
+
+    backend_mod.size_numba_pool()
+
+    assert (config.NUMBA_NUM_THREADS, launcher.NUM_THREADS) == (4, 4)
+
+
+def test_a_launched_numba_pool_is_left_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import types
+
+    launcher = types.SimpleNamespace(NUM_THREADS=16, _is_initialized=True)
+    monkeypatch.delenv("NUMBA_NUM_THREADS", raising=False)
+    monkeypatch.setitem(sys.modules, "numba.np.ufunc.parallel", launcher)
+
+    backend_mod.size_numba_pool()
+
+    assert "NUMBA_NUM_THREADS" not in os.environ
+    assert launcher.NUM_THREADS == 16
