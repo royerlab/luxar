@@ -1,8 +1,14 @@
 import { pacingBound } from './pacing.mjs';
-import { anyMissing, judgePerf, median, noiseFloor } from './perf-stats.mjs';
+import { anyMissing, familyFloor, judgePerf, median, noiseFloor } from './perf-stats.mjs';
 
-/** Judge one performance metric while preserving unavailable and paced states. */
-export function scorePerfMetric(name, backend, base, cand, base2, absTolerance = 0) {
+/**
+ * Judge one performance metric while preserving unavailable and paced states.
+ *
+ * @param {number} [tests] Gating timing judgements across the run, for the
+ *   Bonferroni-widened A/A floor (see `familyFloor`); defaults to a single
+ *   comparison when the caller judges just this one metric.
+ */
+export function scorePerfMetric(name, backend, base, cand, base2, absTolerance = 0, tests = 1) {
   const medians = {
     baseMedian: anyMissing(base) ? undefined : median(base),
     candMedian: anyMissing(cand) ? undefined : median(cand),
@@ -20,7 +26,13 @@ export function scorePerfMetric(name, backend, base, cand, base2, absTolerance =
   if (pacing.pacingBound?.base || pacing.pacingBound?.cand) {
     return { ...medians, ...pacing, verdict: 'pacing-bound' };
   }
-  return { ...medians, ...pacing, ...judgePerf(base, cand, noiseFloor(base, base2), absTolerance) };
+  const aaFloor = noiseFloor(base, base2);
+  return {
+    ...medians,
+    ...pacing,
+    aaFloor,
+    ...judgePerf(base, cand, familyFloor(aaFloor, tests), absTolerance),
+  };
 }
 
 export function perfRowStatus(metrics) {

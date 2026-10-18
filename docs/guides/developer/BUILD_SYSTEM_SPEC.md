@@ -1068,14 +1068,20 @@ After a dispatched window completes the five protected contexts successfully,
 `repair-cancelled-push-checks` resolves dev's current tip and enumerates commits in
 `main..dev`, newest first. This is necessary because GitHub branch protection does not
 necessarily replace a cancelled push check with a later successful check of the same
-name on the same SHA. It reruns cancelled required jobs from up to two completed push
-suites. The second candidate hedges against a genuinely red newest candidate; repairing
-still-older commits cannot advance the same promotion. One cancelled context uses a
-job-level rerun. Multiple contexts use one failed-jobs rerun because GitHub rejects a
-second job-level rerun after the attempt changes; that run-level path also re-enqueues
-cancelled or failed non-required legs such as Python 3.13/3.14. A failed repaired job is
-terminal for that SHA unless a multi-job failed-jobs rerun includes it; otherwise it
-needs a manual rerun. The repair checkout must remain on dev's ancestry, and an
+name on the same SHA. It repairs required jobs in up to two completed push suites.
+Cancelled jobs qualify directly. A failed job qualifies for interrupt recovery only
+when the last 500 log lines contain an interrupt signature and no pytest failure or
+error marker; an unreadable log is treated as a genuine failure. If any required job
+has a genuine failure, interrupt recovery is skipped for that run, while cancelled
+jobs keep their existing repair path. The second candidate hedges against a genuinely
+red newest candidate; repairing still-older commits cannot advance the same promotion.
+One qualifying context uses a job-level rerun. Multiple contexts use one failed-jobs
+rerun because GitHub rejects a second job-level rerun after the attempt changes; that
+run-level path also re-enqueues cancelled or failed non-required legs such as Python
+3.13/3.14. A repaired job that fails again remains eligible for automatic recovery
+if its latest log tail meets the same interrupt checks above. A genuine failure
+needs a manual rerun unless a multi-job failed-jobs rerun includes it. The repair
+checkout must remain on dev's ancestry, and an
 unresolvable dev ref or off-dev checkout fails loudly. Candidate API failures and
 rejected reruns are warnings so one candidate does not abort the remaining walk.
 
