@@ -144,8 +144,8 @@ export const COVERAGE_THRESHOLDS = {
   // mega-shader/tone-curve tests (#3173), the WebGPU DPR render-target tests
   // (#3171), and the flat-varying codegen tests here each raised measured
   // rendering coverage, pushing the old 84/85 floor past the slack budget.
-  // branches 78 -> 80 (2026-10): the render-gate A/A timing-family tests (#3191)
-  // raised measured rendering branch coverage to 81.04, past the slack budget.
+  // branches 78 -> 80 (2026-10): #3186 recorded 80.95 before its final rebase
+  // onto #3196/#3128, and the merged tree measures 81.04, past the slack budget.
   'src/rendering/**': { lines: 89, functions: 88, branches: 80 },
 
   // The last two measured top-level source directories without a sub-gate;
