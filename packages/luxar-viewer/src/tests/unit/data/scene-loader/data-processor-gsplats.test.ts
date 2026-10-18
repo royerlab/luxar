@@ -684,3 +684,27 @@ describe('projection stage cache (S-cache hit skips the worker projection)', () 
     expect(staged.processed.splatCount).toBe(2000);
   });
 });
+
+describe('display-gain visibility gate', () => {
+  function gainedMesh(name: string, gain: number): THREE.Mesh {
+    const mesh = makeMesh(name);
+    mesh.material = { uniforms: { uDisplayGain: { value: gain } } } as unknown as THREE.Material;
+    return mesh;
+  }
+
+  it('re-states the MIN_AMPLITUDE gate on the stored data-unit amplitudes', async () => {
+    const root = new THREE.Group();
+    root.add(gainedMesh('/g', 1e-4));
+    await processGSplatsData('/g', makeData(), makeViewState(), root, 1);
+    const params = mockProcessGSplats.mock.calls[0][0] as { minAmplitude?: number };
+    // MIN_AMPLITUDE (1e-6) / gain: exactly the splats the pre-scaled scene kept.
+    expect(params.minAmplitude).toBeCloseTo(1e-2, 12);
+  });
+
+  it('sends no gate at the identity, so old scenes project (and cache) unchanged', async () => {
+    const root = new THREE.Group();
+    root.add(gainedMesh('/g', 1));
+    await processGSplatsData('/g', makeData(), makeViewState(), root, 1);
+    expect(mockProcessGSplats.mock.calls[0][0]).not.toHaveProperty('minAmplitude');
+  });
+});

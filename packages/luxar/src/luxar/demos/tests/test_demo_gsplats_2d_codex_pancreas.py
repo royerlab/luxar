@@ -43,7 +43,8 @@ def test_local_tiled_refit_preserves_overlap_contributions(
         fitted_image.T, "Hoechst", tmp_path / "codex.gsplats.zarr.zip"
     )
 
-    assert result.n_splats == 256
+    assert 0 < result.n_splats < 256
+    assert np.all(result.amplitudes >= 1e-5)
     assert result.stats.get("culled") is not True
     pixel_result = result.transform(np.eye(2) / _demo.PIXEL_SIZE)
     reconstruction = pixel_result.render_to_volume(

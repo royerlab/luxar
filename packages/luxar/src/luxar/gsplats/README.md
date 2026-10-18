@@ -181,6 +181,33 @@ reconstruction = render_gaussians_numpy(image.shape, result, truncate=3.0)
 
 The result can be directly passed to `render_gaussians_numpy()` or `render_gaussians_pytorch()` for rendering, or added to a Scene (see below).
 
+### Anisotropic Stacks in Physical Units
+
+From the command line, an anisotropic OME-Zarr or OME-TIFF/ImageJ stack becomes a
+physically scaled, correctly oriented scene in two commands:
+
+```bash
+luxar gsplat fit stack.ome.tif stack.gsplats.zarr --physical   # spacing from the file
+luxar gsplat convert stack.gsplats.zarr stack.luxar.zarr --tone-mapping ACES
+```
+
+`--physical` reads the recorded voxel size (NGFF scale, OME-TIFF `PhysicalSize*`,
+calibrated ImageJ spacing); `--voxel-size Z,Y,X` (µm, array order) states it
+explicitly and wins. `--region z0:z1,y0:y1,x0:x1` fits a crop whose splats keep
+their full-volume position. See the CLI README (`luxar gsplat fit`) for the
+precedence rules. From Python, pass the spacing yourself:
+
+```python
+result = fit_gaussian_splats(volume, voxel_size=(0.29, 0.108, 0.108))
+# centers / cholesky_factors are in µm (output_space="real", the default);
+# result.stats["voxel_size"] and result.stats["physical_coordinates"] record it.
+```
+
+A fit with a `voxel_size` records `voxel_size` and `physical_coordinates` in its
+stats (saved under `fitting/`); the CLI adds `voxel_unit`, `voxel_size_source`
+and, for a crop, `source_region`. A physical fit's `dimension_metadata` names the
+axes with their unit, which `gsplat convert` turns into µm scene dimensions.
+
 ### Tiled Fitting for Large Volumes
 
 For volumes that exceed GPU memory, tiled fitting splits the data into overlapping tiles with cosine (Hann) apodization and fits each tile independently:
@@ -1123,6 +1150,10 @@ fitter = GaussianSplatFitter(device="cuda")  # Force CUDA
 fitter = GaussianSplatFitter(device="cpu")  # Force CPU
 ```
 
+### CPU threads:
+
+On CPU, `luxar gsplat fit` and `luxar gsplat cal` raise torch to `min(physical cores, 8)` threads for the command when torch still has one thread (the hatch env pins one; scaling stops near 8). An OMP/MKL export that already raised torch's count is left alone; `LUXAR_CPU_THREADS=N` overrides it, `LUXAR_CPU_THREADS=0` disables it, and library calls from Python are never changed (`utils/cpu_threads.py`).
+
 ### Apple Silicon Performance Notes:
 
 **MPS auto-selection**: With no CUDA device present, fitting auto-selects MPS on Apple Silicon (`use_metal=True` by default). For 3D volumes the native Metal backend (below) accelerates rendering; other shapes fall back to the PyTorch MPS path.
@@ -1202,6 +1233,12 @@ gsplats/
 ├── calibration_report.py          # Optional matplotlib PDF report for `luxar gsplat cal --pdf`
 ├── gpu_profile.py                 # GPU benchmark profile management
 ├── spatial_hash.py                # Online and batched nD proximity-query grids
+├── exposure.py                    # Opening-view brightness: predict_projected_sum (additive
+│                                  #   per-pixel sum down the view axis) + plan_projected_exposure
+│                                  #   (the dimming factor `gsplat convert` folds into display_gain)
+│                                  #   + data_unit_display_attrs / amplitude_unit_attrs (the attrs
+│                                  #   an add_gsplats_* call passes with normalize_amplitudes=False
+│                                  #   to keep data units, as convert does)
 │
 ├── lod/                            # Level-of-Detail post-processing (additive + substitutive)
 │   ├── additive.py                 # compute_additive_order, make_additive_lod

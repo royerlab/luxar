@@ -78,6 +78,7 @@ export class GSplatPickingMaterial
         ...pickVisibilityUniforms(),
         uProjectionMode: { value: 1 },
         uRayIntegralFactor: { value: computeRayIntegralFactor(GSPLAT_DEFAULT_TRUNCATION_RADIUS) },
+        uDisplayGain: { value: 1 },
         uNodeId: { value: config.nodeId },
         uLabelFilterIndex: { value: 0 },
       },
@@ -154,6 +155,7 @@ export class GSplatPickingMaterial
     copyPickVisibilityUniforms(this.uniforms, cloned.uniforms);
     cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
     cloned.uniforms.uRayIntegralFactor.value = this.uniforms.uRayIntegralFactor.value;
+    cloned.uniforms.uDisplayGain.value = this.uniforms.uDisplayGain.value;
     return cloned as this;
   }
 

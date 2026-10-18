@@ -18,10 +18,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { selectBackends } from './browser.mjs';
 import { installExtCounters } from './ext-counters.mjs';
 import * as ops from './page-ops.mjs';
 import {
   anyMissing,
+  familyFloor,
   judgeCounter,
   judgePerf,
   median,
@@ -54,6 +56,12 @@ export const METRIC_DIRECTIONS = Object.freeze({
   'render.count': 'lower',
   renders: 'lower',
   tailRenders: 'lower',
+  tailSettled: 'higher',
+  tailUploadBytesBuffer: 'lower',
+  tailUploadBytesTexture: 'lower',
+  idleRenders: 'lower',
+  idleUploadBytesBuffer: 'lower',
+  idleUploadBytesTexture: 'lower',
   'gpu.uploadBytes': 'lower',
   'gpu.uploadBytes.texture': 'lower',
   'ext.gpuUploadBytes': 'lower',
@@ -65,6 +73,7 @@ export const METRIC_DIRECTIONS = Object.freeze({
   'decode.count': 'lower',
   'decode.count.lookahead': 'lower',
   'decode.duplicates': 'lower',
+  'fetch.data.requests': 'lower',
   'lod.levelSwaps': 'lower',
   levelFlips: 'lower',
   'scene.getObjectByName': 'lower',
@@ -92,6 +101,14 @@ export const METRIC_DIRECTIONS = Object.freeze({
 export function validateMetricDirections(manifestSuites) {
   for (const suite of Object.values(manifestSuites ?? {})) {
     for (const c of suite.cases ?? []) {
+      for (const [name, want] of Object.entries(c.expectations ?? {})) {
+        if (!(c.metrics ?? []).some((m) => m.name === name)) {
+          throw new Error(`${c.id}: expectation names undeclared metric '${name}'`);
+        }
+        if (!EXPECTATIONS.includes(want)) {
+          throw new Error(`${c.id}.${name}: unknown expectation '${want}'`);
+        }
+      }
       for (const m of c.metrics ?? []) {
         const field = m.of ?? m.name;
         const known = METRIC_DIRECTIONS[field];
@@ -138,6 +155,12 @@ export function validateExpectations(raw, manifestSuites) {
           `--expect: ${caseId}.${metric}: '${want}' is not one of ${EXPECTATIONS.join('|')}`
         );
       }
+      const shipped = c.expectations?.[metric];
+      if (shipped !== undefined && shipped !== want) {
+        throw new Error(
+          `--expect: ${caseId}.${metric} '${want}' conflicts with shipped expectation '${shipped}'`
+        );
+      }
     }
   }
   return raw;
@@ -169,8 +192,9 @@ export function meetsExpectation(want, judged, kind) {
  * @param {{ name: string, of?: string, per?: string, better?: 'lower'|'higher', kind?: 'counter'|'timing', tol?: number, relTol?: number }} m
  *   With `of` and `per`, the judged value is `sample[of] / sample[per]`.
  * @param {{ base: object[], base2: object[], cand: object[] }} samples
+ * @param {number} [tests=1] Gating timing judgments across the run.
  */
-export function judgeMetric(m, samples) {
+export function judgeMetric(m, samples, tests = 1) {
   const better = m.better ?? 'lower';
   const kind = m.kind ?? 'counter';
   // `of`/`per` judge a ratio of two sample fields, e.g. upload bytes per
@@ -186,18 +210,20 @@ export function judgeMetric(m, samples) {
   const base = pick('base');
   const base2 = pick('base2');
   const cand = pick('cand');
-  const common = { kind, better };
+  const common = { kind, better, report: !!m.report };
   if (kind === 'counter')
     return {
       ...common,
       ...judgeCounter(base, cand, base2, { better, tol: m.tol ?? 0, relTol: m.relTol ?? 0 }),
     };
   if (anyMissing(base, cand, base2)) return { ...common, verdict: 'n/a' };
+  const aaFloor = noiseFloor(base, base2);
   return {
     ...common,
     baseMedian: median(base),
     candMedian: median(cand),
-    ...judgePerf(base, cand, noiseFloor(base, base2), m.tol ?? 0, { better }),
+    aaFloor,
+    ...judgePerf(base, cand, familyFloor(aaFloor, tests), m.tol ?? 0, { better }),
   };
 }
 
@@ -247,26 +273,51 @@ export function serverMetrics(log, { navT, firstFrameMs, latencyMs = 0, maxInfli
  * A drag on the canvas with REAL input events (Playwright's mouse, i.e. CDP
  * `Input.dispatchMouseEvent`): an in-page synthetic `PointerEvent` has no
  * active pointer, so the controls' `setPointerCapture` throws on it. Then a
- * `tailMs` idle. `renders` covers drag + tail, `tailRenders` the tail alone.
+ * `tailMs` is the minimum damping tail; the idle window starts after 30
+ * consecutive frames without a render. `renders` covers both windows; tail
+ * counts start at release.
  */
-async function dragWorkload(page, { px = 4, tailMs = 3000, moves = 8 }) {
+export async function dragWorkload(page, { px = 4, tailMs = 3000, idleMs = 1000, moves = 8 }) {
   const box = await page.evaluate(() => {
     const r = window.__luxarDebug.app.sceneManager.renderer.domElement.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   });
   await page.evaluate(ops.beginRenderCount);
   let tail;
+  let uploadsAtRelease;
+  let uploadsAfterTail;
+  let idle;
+  let uploadsAfterIdle;
   try {
     await page.mouse.move(box.x, box.y);
     await page.mouse.down();
     await page.mouse.move(box.x + px, box.y, { steps: Math.max(1, moves) });
     await page.mouse.up();
-    tail = await page.evaluate(ops.idle, { ms: tailMs });
+    uploadsAtRelease = await page.evaluate(ops.readExtCounters);
+    tail = await page.evaluate(ops.waitForQuiet, { minMs: tailMs, timeoutMs: tailMs + 5000 });
+    uploadsAfterTail = await page.evaluate(ops.readExtCounters);
+    if (!tail.settled) throw new Error('drag tail did not settle (tailSettled=0)');
+    idle = await page.evaluate(ops.idle, { ms: idleMs });
+    uploadsAfterIdle = await page.evaluate(ops.readExtCounters);
   } finally {
     const renders = await page.evaluate(ops.endRenderCount);
     tail = { ...(tail ?? {}), total: renders };
   }
-  return { renders: tail.total, tailRenders: tail.renders, tailFrames: tail.frames };
+  return {
+    renders: tail.total,
+    tailRenders: tail.renders,
+    tailFrames: tail.frames,
+    tailSettled: 1,
+    tailUploadBytesBuffer:
+      uploadsAfterTail.gpuUploadBytesBuffer - uploadsAtRelease.gpuUploadBytesBuffer,
+    tailUploadBytesTexture:
+      uploadsAfterTail.gpuUploadBytesTexture - uploadsAtRelease.gpuUploadBytesTexture,
+    idleRenders: idle.renders,
+    idleUploadBytesBuffer:
+      uploadsAfterIdle.gpuUploadBytesBuffer - uploadsAfterTail.gpuUploadBytesBuffer,
+    idleUploadBytesTexture:
+      uploadsAfterIdle.gpuUploadBytesTexture - uploadsAfterTail.gpuUploadBytesTexture,
+  };
 }
 
 const PAGE_WORKLOADS = {
@@ -380,6 +431,31 @@ function applyExpectations(row, c, expected) {
   }
 }
 
+/** Backends selected for one manifest case. */
+function caseBackends(c, defaults, requested) {
+  return selectBackends(requested, c.backends ?? defaults.backends ?? ['webgl', 'webgpu']);
+}
+
+/** Count gating timing judgments over every selected manifest suite. */
+export function countTimingJudgements(suites, selected, opts) {
+  let count = 0;
+  for (const name of selected) {
+    const suite = suites[name];
+    const defaults = suite.defaults ?? {};
+    for (const c of suite.cases ?? []) {
+      if ((opts.only && !opts.only.includes(c.id)) || (c.heavy && !opts.heavy)) continue;
+      const metrics = (c.metrics ?? []).filter((m) => m.kind === 'timing' && !m.report).length;
+      count += metrics * caseBackends(c, defaults, opts.backends).length;
+    }
+  }
+  return count;
+}
+
+/** Whether any metric that contributes to the case verdict regressed. */
+export function rowRegressed(caseMetrics, judged) {
+  return caseMetrics.some((m) => !m.report && judged[m.name].verdict === 'fail');
+}
+
 /**
  * Run one manifest suite.
  *
@@ -393,6 +469,7 @@ function applyExpectations(row, c, expected) {
  * @param {string} p.dataRoot Datasets root (a missing store is an error row).
  * @param {object} p.opts Run options (`only`, `backends`, `rounds`, `heavy`).
  * @param {object|null} p.expectations Validated `--expect` content.
+ * @param {number} p.timingTests Gating timing judgments across the run.
  * @param {(m: string) => void} p.log
  * @returns {Promise<object[]>} Rows.
  */
@@ -406,6 +483,7 @@ export async function runSuite({
   dataRoot,
   opts,
   expectations,
+  timingTests = 1,
   log,
 }) {
   const defaults = suite.defaults ?? {};
@@ -413,9 +491,8 @@ export async function runSuite({
   const rows = [];
   const cases = (suite.cases ?? []).filter((c) => !opts.only || opts.only.includes(c.id));
   for (const c of cases) {
-    const expected = expectations?.[c.id];
-    const allowed = c.backends ?? defaults.backends ?? ['webgl', 'webgpu'];
-    const backends = (opts.backends ?? allowed).filter((b) => allowed.includes(b));
+    const expected = { ...expectations?.[c.id], ...c.expectations };
+    const backends = caseBackends(c, defaults, opts.backends);
     if (c.heavy && !opts.heavy) {
       const row = {
         suite: name,
@@ -426,7 +503,7 @@ export async function runSuite({
         failures: ['heavy (pass --heavy)'],
         reasons: [],
       };
-      if (expected) {
+      if (Object.keys(expected).length > 0) {
         row.status = 'fail';
         row.reasons.push('expectation');
         row.failures.push('expectation: case skipped as heavy; pass --heavy');
@@ -465,11 +542,11 @@ export async function runSuite({
         rows.push({ ...row, status: 'error', failures: [String(e.message ?? e)] });
         continue;
       }
-      for (const m of c.metrics ?? []) row.metrics[m.name] = judgeMetric(m, samples);
-      // A `report` metric is judged and shown but cannot fail the row (a timed
-      // total whose per-tick twin is the one that gates).
-      const gating = (c.metrics ?? []).filter((m) => !m.report);
-      if (gating.some((m) => row.metrics[m.name].verdict === 'fail')) {
+      row.samples = samples;
+      for (const m of c.metrics ?? [])
+        row.metrics[m.name] = judgeMetric(m, samples, m.report ? 1 : timingTests);
+      // A `report` metric is judged and shown but does not enter the row verdict.
+      if (rowRegressed(c.metrics ?? [], row.metrics)) {
         row.status = 'fail';
         row.reasons.push('regression');
         row.failures.push('a metric regressed beyond its floor');
@@ -521,8 +598,9 @@ export function suiteMarkdown(name, rows) {
     }
     for (const [m, v] of entries) {
       const exp = v.expected ? ` [expect ${v.expected}: ${v.met ? 'met' : 'UNMET'}]` : '';
+      const report = v.report ? ' (report)' : '';
       lines.push(
-        `| ${r.case} | ${r.backend} | ${m} | ${fmt(v.baseMedian)} | ${fmt(v.candMedian)} | ${fmt(v.ratio)} | ${v.verdict}${exp} |`
+        `| ${r.case} | ${r.backend} | ${m} | ${fmt(v.baseMedian)} | ${fmt(v.candMedian)} | ${fmt(v.ratio)} | ${v.verdict}${report}${exp} |`
       );
     }
     if (r.status !== 'pass')

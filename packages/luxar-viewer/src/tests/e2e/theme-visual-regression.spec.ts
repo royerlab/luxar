@@ -48,18 +48,15 @@ async function waitForTheme(page: Page, themeId: string): Promise<void> {
  */
 for (const theme of THEMES) {
   test(`@visual error dialog - ${theme} theme`, async ({ page }) => {
+    test.setTimeout(90_000);
+
     // Navigate with debug enabled so __luxarDebug.showError is exposed.
     await page.goto(`/?theme=${theme}&debug&dpr=1`);
 
-    // Wait for the theme to be applied AND the debug interface to be
-    // populated. The bootstrap seeds __luxarDebug before init() runs, so
-    // showError is available before the first paint.
+    // The debug hook exists before initialization finishes. Wait for the
+    // viewer first: opening the dataset browser clears any earlier dialog.
     await waitForTheme(page, theme);
-    await page.waitForFunction(
-      () => typeof (window as any).__luxarDebug?.showError === 'function',
-      null,
-      { timeout: 10_000 }
-    );
+    await waitForLuxarReady(page);
 
     // Trigger the same message bootstrap.ts uses on init failure so the
     // dialog content matches the production error path.
@@ -73,9 +70,11 @@ for (const theme of THEMES) {
     // class; error-message is kept as an E2E hook for compatibility.
     const errorDialog = page.locator('.luxar-error-dialog');
     await expect(errorDialog).toBeVisible({ timeout: 5000 });
+    await expect(errorDialog.locator('.luxar-error-dialog__message')).toHaveText(
+      'Failed to start the application. Please check the console for details.'
+    );
 
-    // Frosted-glass uses backdrop-filter blur + an entrance animation; let
-    // it settle so the screenshot is stable.
+    // Let the frosted-glass backdrop-filter settle before capture.
     if (theme === 'frosted-glass') {
       await page.waitForTimeout(500);
     }
@@ -195,6 +194,14 @@ for (const theme of THEMES) {
     await waitForTheme(page, theme);
 
     await waitForLuxarReady(page);
+
+    // The expanded monitor reaches its 80vh cap with the Dropped Elements
+    // card. Hide the dataset's dimension sliders so they do not cover its
+    // lower rows in this component screenshot.
+    const dimensionSliders = page.locator('.luxar-dimension-sliders');
+    await expect(dimensionSliders).toBeVisible();
+    await page.keyboard.press('n');
+    await expect(dimensionSliders).toBeHidden();
 
     // Press M twice to cycle to expanded view
     await page.keyboard.press('m');

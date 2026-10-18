@@ -117,6 +117,8 @@ export interface GSplatMaterialProperties {
   gamma: number;
   intensity: number;
   offset: number;
+  /** Display gain (`display_gain`; identity 1.0) — see `GSplatMaterialConfig`. */
+  displayGain?: number;
   /** Default `GSPLAT_DEFAULT_TRUNCATION_RADIUS` (2.75). */
   truncationRadius?: number;
 }

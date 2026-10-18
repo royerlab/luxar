@@ -74,6 +74,7 @@ layout( std140 ) uniform object {
 	float nodeUniform36;
 	float nodeUniform37;
 	float nodeUniform38;
+	float nodeUniform39;
 };
 
 layout( std140 ) uniform render {
@@ -368,7 +369,7 @@ void main() {
 	nodeVar76 = ( nodeVar76 + nodeVar78 );
 	nodeVar79 = ( 1.0 / sqrt( max( nodeVar74, 0.000001 ) ) );
 	nodeVar80 = ( nodeVar75 * nodeVar79 );
-	nodeVar81 = ( nodeVar40 * nodeVar65 );
+	nodeVar81 = ( ( nodeVar40 * nodeUniform32 ) * nodeVar65 );
 	nodeVar82 = ( nodeVar74 + nodeVar76 );
 	nodeVar83 = sqrt( max( ( ( nodeVar82 * nodeVar82 ) - ( ( ( nodeVar74 * nodeVar76 ) - ( nodeVar75 * nodeVar75 ) ) * 4.0 ) ), 0.0 ) );
 	nodeVar84 = max( ( ( nodeVar82 + nodeVar83 ) * 0.5 ), 0.000001 );
@@ -425,8 +426,8 @@ void main() {
 	}
 
 	nodeVar97 = nodeVar96;
-	nodeVar98 = ( ( ( ( nodeVar81 * nodeUniform32 ) * nodeVar97 ) * max( nodeUniform33, 1.0 ) ) * 1.05 );
-	nodeVar99 = ( nodeUniform34 + ( 0.0001 / max( nodeVar98, 1e-30 ) ) );
+	nodeVar98 = ( ( ( ( nodeVar81 * nodeUniform33 ) * nodeVar97 ) * max( nodeUniform34, 1.0 ) ) * 1.05 );
+	nodeVar99 = ( nodeUniform35 + ( 0.0001 / max( nodeVar98, 1e-30 ) ) );
 
 	if ( ( ( nodeVar98 <= 0.0 ) || ( nodeVar99 >= 1.0 ) ) ) {
 
@@ -437,11 +438,11 @@ void main() {
 
 		if ( ( ( nodeVar99 > 0.0 ) && ( nodeVar99 < 1.0 ) ) ) {
 
-			nodeVar101 = min( nodeUniform35, ( log( nodeVar99 ) * -2.0 ) );
+			nodeVar101 = min( nodeUniform36, ( log( nodeVar99 ) * -2.0 ) );
 
 		} else {
 
-			nodeVar101 = nodeUniform35;
+			nodeVar101 = nodeUniform36;
 
 		}
 
@@ -452,7 +453,7 @@ void main() {
 	nodeVar102 = nodeVar100;
 	nodeVar103 = ( ( ( ( nodeVar49.xy * vec2( nodeVar52 ) ) * vec2( 0.5 ) ) + vec2( 0.5 ) ) * nodeUniform27 );
 
-	if ( ( ( int( nodeUniform36 ) == 1 ) && ( nodeVar46 > 0.0 ) ) ) {
+	if ( ( ( int( nodeUniform37 ) == 1 ) && ( nodeVar46 > 0.0 ) ) ) {
 
 		nodeVar104 = ( ( vec3( fract( ( nodeVar46 * 0.61803398875 ) ), fract( ( nodeVar46 * 0.38196601125 ) ), fract( ( nodeVar46 * 0.75487766625 ) ) ) * vec3( 0.75 ) ) + vec3( 0.25 ) );
 
@@ -470,7 +471,7 @@ void main() {
 	nodeVar106 = ( ( uint( nodeVar14 ) ^ ( uint( nodeVar14 ) >> 16u ) ) * 2146121005u );
 	nodeVar107 = ( ( nodeVar106 ^ ( nodeVar106 >> 15u ) ) * 2221713035u );
 
-	if ( ( ( ( ( ( ( ( nodeVar59 < 0.01 ) || ( nodeVar64 < 0.01 ) ) || ( ! ( ( nodeVar40 < 1e30 ) && ( nodeVar40 > -1e30 ) ) ) ) || ( ( ( ! ( ( nodeVar74 < 1e30 ) && ( nodeVar74 > -1e30 ) ) ) || ( ! ( ( nodeVar75 < 1e30 ) && ( nodeVar75 > -1e30 ) ) ) ) || ( ! ( ( nodeVar76 < 1e30 ) && ( nodeVar76 > -1e30 ) ) ) ) ) || ( ( int( nodeUniform37 ) > 0 ) && ( int( ( nodeVar46 + 0.5 ) ) != int( nodeUniform37 ) ) ) ) || ( ( nodeUniform38 > 0.0 ) && ( ( float( ( nodeVar107 ^ ( nodeVar107 >> 16u ) ) ) * 2.3283064365386963e-10 ) < nodeUniform38 ) ) ) || ( nodeVar102 < 0.0 ) ) ) {
+	if ( ( ( ( ( ( ( ( nodeVar59 < 0.01 ) || ( nodeVar64 < 0.01 ) ) || ( ! ( ( nodeVar40 < 1e30 ) && ( nodeVar40 > -1e30 ) ) ) ) || ( ( ( ! ( ( nodeVar74 < 1e30 ) && ( nodeVar74 > -1e30 ) ) ) || ( ! ( ( nodeVar75 < 1e30 ) && ( nodeVar75 > -1e30 ) ) ) ) || ( ! ( ( nodeVar76 < 1e30 ) && ( nodeVar76 > -1e30 ) ) ) ) ) || ( ( int( nodeUniform38 ) > 0 ) && ( int( ( nodeVar46 + 0.5 ) ) != int( nodeUniform38 ) ) ) ) || ( ( nodeUniform39 > 0.0 ) && ( ( float( ( nodeVar107 ^ ( nodeVar107 >> 16u ) ) ) * 2.3283064365386963e-10 ) < nodeUniform39 ) ) ) || ( nodeVar102 < 0.0 ) ) ) {
 
 		nodeVar105 = vec4( 0.0, 0.0, -2.0, 1.0 );
 

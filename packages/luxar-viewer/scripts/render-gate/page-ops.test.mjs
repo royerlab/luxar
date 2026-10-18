@@ -1,6 +1,132 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { motion, rendererInfo } from './page-ops.mjs';
+import { motion, playback, rendererInfo } from './page-ops.mjs';
+
+describe('LOD playback warm-up', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('settles every timepoint before resetting counters and starting measured playback', async () => {
+    const events = [];
+    let clock = 0;
+    let value = 0;
+    let updated = false;
+    let readyAt = 0;
+    const registry = {
+      list: () => [{ children: [{}, {}], displayedChildIndex: 1 }],
+      isCaptureQuiescent: () => {
+        if (clock < readyAt) return false;
+        events.push(`settled:${value}`);
+        return updated;
+      },
+    };
+    const manager = {
+      play: () => events.push('play'),
+      pause: () => events.push('pause'),
+    };
+    const app = {
+      getDimensions: () => ({
+        ndim: 1,
+        displayed: [],
+        ranges: [[0, 2]],
+        metadata: [{ step: 1 }],
+        currentStep: [value],
+      }),
+      setDimensionValue: (_d, v) => {
+        value = v;
+        updated = false;
+        readyAt = clock + 2;
+        events.push(`set:${v}`);
+      },
+      awaitDimensionUpdate: async () => {
+        updated = true;
+        events.push('updated');
+      },
+      sceneManager: { postProcessing: { render: () => {} } },
+    };
+    vi.stubGlobal('window', {
+      __luxarDebug: {
+        app,
+        inputHandler: { getAnimationManager: () => manager },
+        getSceneLoader: () => ({ getDefaultLoader: () => ({ lodGroupRegistry: registry }) }),
+        getPerf: () => ({ isSettled: updated }),
+        resetPerfCounters: () => events.push('reset'),
+      },
+      __gateExtReset: () => events.push('ext-reset'),
+    });
+    vi.stubGlobal('requestAnimationFrame', (cb) => {
+      clock++;
+      cb();
+    });
+    vi.spyOn(performance, 'now').mockImplementation(() => clock);
+
+    const result = await playback({ settleLodTimepoints: true, durationMs: 3 });
+    expect(result.durationMs).toBeGreaterThanOrEqual(3);
+    expect(events.filter((e) => e.startsWith('set:'))).toEqual([
+      'set:0',
+      'set:1',
+      'set:2',
+      'set:0',
+    ]);
+    expect(events.filter((e) => e.startsWith('settled:'))).toEqual([
+      'settled:0',
+      'settled:1',
+      'settled:2',
+      'settled:0',
+    ]);
+    expect(events.indexOf('reset')).toBeGreaterThan(events.lastIndexOf('updated'));
+    expect(events.indexOf('play')).toBeGreaterThan(events.indexOf('reset'));
+    expect(events.at(-1)).toBe('pause');
+  });
+
+  it.each([
+    ['missing discrete step', undefined, true, true, 'cannot settle non-discrete dimension 0'],
+    ['missing LOD group', 1, false, true, 'LOD settle requires a LOD registry'],
+    ['unsettled LOD', 1, true, false, 'LOD did not settle at timepoint 0'],
+  ])('rejects %s before playback starts', async (_case, step, hasGroup, settles, message) => {
+    let clock = 0;
+    const play = vi.fn();
+    const reset = vi.fn();
+    const app = {
+      getDimensions: () => ({
+        ndim: 1,
+        displayed: [],
+        ranges: [[0, 2]],
+        metadata: [{ step }],
+        currentStep: [0],
+      }),
+      setDimensionValue: vi.fn(),
+      awaitDimensionUpdate: async () => {},
+    };
+    vi.stubGlobal('window', {
+      __luxarDebug: {
+        app,
+        inputHandler: { getAnimationManager: () => ({ play }) },
+        getSceneLoader: () => ({
+          getDefaultLoader: () => ({
+            lodGroupRegistry: {
+              list: () => (hasGroup ? [{}] : []),
+              isCaptureQuiescent: () => settles,
+            },
+          }),
+        }),
+        getPerf: () => ({ isSettled: true }),
+        resetPerfCounters: reset,
+      },
+    });
+    vi.stubGlobal('requestAnimationFrame', (cb) => {
+      clock++;
+      cb();
+    });
+    vi.spyOn(performance, 'now').mockImplementation(() => clock);
+
+    await expect(playback({ settleLodTimepoints: true, timeoutMs: 3 })).rejects.toThrow(message);
+    expect(play).not.toHaveBeenCalled();
+    expect(reset).not.toHaveBeenCalled();
+  });
+});
 
 describe('rendererInfo', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -47,8 +173,17 @@ const GPU_MS = 20;
 const RAF_MS = 0.05;
 
 function fakePage(kind) {
-  const page = { clock: 0, gpuQueued: 0, dirty: false };
+  const page = {
+    clock: 0,
+    gpuQueued: 0,
+    dirty: false,
+    preparedPoses: [],
+    rafCalls: 0,
+    syncs: 0,
+    starts: 0,
+  };
   const drain = () => {
+    page.syncs++;
     page.clock += page.gpuQueued;
     page.gpuQueued = 0;
   };
@@ -89,11 +224,23 @@ function fakePage(kind) {
     renderOnce: () => {
       page.dirty = true;
     },
+    animationController: {
+      stopAnimation: () => {
+        page.dirty = false;
+      },
+      startAnimation: () => {
+        page.starts++;
+      },
+      prepareFrame: () => {
+        page.preparedPoses.push([...pose.position]);
+      },
+    },
   };
   // The viewer's loop renders in the animation frame, before the harness's
   // own frame callback (registered later) runs.
-  page.raf = (cb) =>
-    setTimeout(() => {
+  page.raf = (cb) => {
+    page.rafCalls++;
+    return setTimeout(() => {
       page.clock += RAF_MS;
       if (page.dirty) {
         page.dirty = false;
@@ -101,6 +248,7 @@ function fakePage(kind) {
       }
       cb(page.clock);
     }, 0);
+  };
   return page;
 }
 
@@ -131,7 +279,43 @@ describe('motion frame timing', () => {
       expect(mo.frameMs).toBeLessThan(GPU_MS + 1);
       expect(mo.p95Ms).toBeGreaterThan(GPU_MS);
     });
+
+    it(`measures unpaced motion with one sync and per-step view updates on ${kind}`, async () => {
+      install(kind);
+      const mo = await motion({ frames: 12, warm: 3, pose, unpaced: true });
+      expect(mo.throughputMs).toBeGreaterThan(GPU_MS);
+      expect(mo.throughputMs).toBeLessThan(GPU_MS + 1);
+      expect(mo.rendersPerFrame).toBe(1);
+      expect(page.preparedPoses).toHaveLength(12);
+      expect(new Set(page.preparedPoses.map((p) => p.join(','))).size).toBe(12);
+      expect(page.rafCalls).toBe(3);
+      expect(page.syncs).toBe(5); // warm 3, drain before batch, drain after batch
+    });
+
+    it(`pipelined rAF includes the final GPU work on ${kind}`, async () => {
+      install(kind);
+      const mo = await motion({ frames: 12, warm: 3, pose, pipelined: true });
+      expect(mo.frameMs).toBeGreaterThan(GPU_MS);
+      expect(mo.rendersPerFrame).toBe(1);
+      expect(page.syncs).toBe(3); // warm, initial, final
+    });
   }
+
+  it('leaves older baselines usable when prepareFrame is unavailable', async () => {
+    install('webgl');
+    delete page.dbg.animationController.prepareFrame;
+    const mo = await motion({ frames: 4, warm: 1, pose, unpaced: true });
+    expect(mo.throughputMs).toBeUndefined();
+    expect(page.rafCalls).toBe(0);
+  });
+
+  it('rejects combining pipelined and unpaced modes', async () => {
+    install('webgl');
+    await expect(
+      motion({ frames: 4, warm: 1, pose, pipelined: true, unpaced: true })
+    ).rejects.toThrow(/pipelined.*unpaced/);
+    expect(page.rafCalls).toBe(0);
+  });
 
   it('restores the WebGL framebuffer binding it reads through', async () => {
     install('webgl');
@@ -142,5 +326,19 @@ describe('motion frame timing', () => {
     await motion({ frames: 4, warm: 1, pose });
     expect(bound.length).toBeGreaterThan(0);
     expect(bound.at(-1)).toBe('three-target');
+  });
+
+  it('restores the render method and animation after a view callback fails', async () => {
+    install('webgl');
+    const pp = page.dbg.app.sceneManager.postProcessing;
+    const original = pp.render;
+    page.dbg.animationController.prepareFrame = () => {
+      throw new Error('view callback failed');
+    };
+    await expect(motion({ frames: 4, warm: 1, pose, unpaced: true })).rejects.toThrow(
+      'view callback failed'
+    );
+    expect(pp.render).toBe(original);
+    expect(page.starts).toBe(1);
   });
 });

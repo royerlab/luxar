@@ -94,7 +94,20 @@ class CalibrationResult:
     calibration_region: Optional[Dict[str, Any]] = None
     """Provenance when an auto-selected sub-region was calibrated (else None)."""
     original_volume_shape: Optional[List[int]] = None
-    """Shape of the full input before any region crop (disambiguates cropped PSNR)."""
+    """Shape of the loaded input before any ``--auto-region`` crop.
+
+    Disambiguates cropped PSNR. Under ``cal --region`` the load itself is
+    cropped, so this is the ``--region`` crop's shape (the full input is not read);
+    ``input_frame["source_region"]`` says where that crop sits in the input.
+    """
+    input_frame: Optional[Dict[str, Any]] = None
+    """The voxel spacing and ``--region`` crop the sweep ran on (``cal`` CLI).
+
+    Keys as in a fitted store's ``fitting/`` group: ``voxel_size``,
+    ``voxel_unit``, ``voxel_size_source``, ``physical_coordinates`` (always
+    false: calibration fits stay on the voxel grid) and ``source_region``.
+    ``None`` for a plain voxel-unit, whole-volume calibration.
+    """
     splat_density: Optional[Dict[str, Any]] = None
     """Transferable :class:`SplatDensity` (as dict) for the planner."""
     rd_model: Optional[Dict[str, Any]] = None
@@ -220,6 +233,7 @@ class CalibrationResult:
                 if raw.get("original_volume_shape") is not None
                 else None
             ),
+            input_frame=raw.get("input_frame"),
             splat_density=_rehydrate_nan_dict(raw.get("splat_density")),
             rd_model=_rehydrate_nan_dict(raw.get("rd_model")),
             not_converged=bool(raw.get("not_converged", False)),

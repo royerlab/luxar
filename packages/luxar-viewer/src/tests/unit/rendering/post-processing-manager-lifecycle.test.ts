@@ -48,6 +48,7 @@ function mockCaps(
 ): RendererCapabilities {
   return {
     apiSurface,
+    nativeWebGPUBackend: false,
     framebufferYDown: apiSurface === 'webgpu',
     readbackYDown: false,
     hdr: {
@@ -458,6 +459,47 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
 
     expect(hdrDispose).toHaveBeenCalledTimes(1);
     expect(peek(mgr).hdrTarget).not.toBe(previousHdr);
+
+    mgr.dispose();
+  });
+
+  it('releases every resized target on a DPR-size round trip', () => {
+    const mgr = makeManager({ width: 64, height: 64 });
+    mgr.setBloomEnabled(true);
+    mgr.setMSAAEnabled(true);
+    expect(peek(mgr).hdrTarget.samples).toBe(4);
+    const targets = () => {
+      const resources = mgr as unknown as {
+        hdrTarget: THREE.WebGLRenderTarget;
+        ldrTarget: THREE.WebGLRenderTarget;
+        bloomChain: { mips: { target: THREE.WebGLRenderTarget }[] };
+        refractionSplit: {
+          copyTarget: THREE.WebGLRenderTarget;
+          glassDepthTarget: THREE.WebGLRenderTarget;
+        };
+      };
+      return [
+        resources.hdrTarget,
+        resources.ldrTarget,
+        ...resources.bloomChain.mips.map((mip) => mip.target),
+        resources.refractionSplit.copyTarget,
+        resources.refractionSplit.glassDepthTarget,
+      ];
+    };
+
+    for (const [width, height] of [
+      [128, 96],
+      [64, 64],
+    ]) {
+      const disposed = targets().map((target) => {
+        const onDispose = vi.fn();
+        target.addEventListener('dispose', onDispose);
+        return onDispose;
+      });
+      mgr.resize(width, height);
+      expect(peek(mgr).hdrTarget.samples).toBe(4);
+      for (const onDispose of disposed) expect(onDispose).toHaveBeenCalledTimes(1);
+    }
 
     mgr.dispose();
   });
