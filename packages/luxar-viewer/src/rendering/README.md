@@ -643,7 +643,7 @@ postProcessing.updateDetectorNoiseSettings({
 - SSAA above 1x suspends MSAA; disable SSAA to see the configured MSAA mode
 - Check console for GPU support warnings
 - Under WebGL2, MSAA requires float-buffer extensions on the active context; check `RendererCapabilities.maxMSAASamples > 0`
-- Under WebGPU, `maxMSAASamples` is not an adapter query (WebGPU has no such limit; it allows sample counts 1 and 4 only): it is 4 on a native core device, 0 when the device runs in compatibility mode (three turns off its own canvas MSAA there, and Luxar follows it), and the context's `MAX_SAMPLES` on the WebGL2 bridge (`?webgpuForceWebgl`)
+- Under WebGPU, `maxMSAASamples` is not an adapter query (WebGPU has no such limit; it allows sample counts 1 and 4 only): it is 4 on a native core device, 0 when the device runs in compatibility mode (three turns off its own canvas MSAA there, and Luxar follows it), and the context's `MAX_SAMPLES` on the WebGL2 bridge (`?webgpuForceWebgl`). The settings control offers only usable counts.
 - Will not show effect with additive blending
 - Try switching to normal blending mode to verify
 

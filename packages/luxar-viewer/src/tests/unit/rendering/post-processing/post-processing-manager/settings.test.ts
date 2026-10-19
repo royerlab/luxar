@@ -10,6 +10,7 @@ import {
   updateBloomSettings,
   clampBloomLevels,
   validateMSAASamples,
+  supportedMSAASamples,
   setVignetteEnabled,
   setChromaticLensDistortionEnabled,
   updateChromaticLensDistortion,
@@ -61,6 +62,18 @@ function makeBloomChain() {
 // =====================================================================
 
 describe('validateMSAASamples', () => {
+  it('snaps native WebGPU requests to its only multisampled count', () => {
+    expect(supportedMSAASamples(4, true)).toEqual([0, 4]);
+    expect(validateMSAASamples(2, 4, true)).toBe(4);
+    expect(validateMSAASamples(8, 4, true)).toBe(4);
+    expect(validateMSAASamples(16, 4, true)).toBe(4);
+    expect(validateMSAASamples(4, 0, true)).toBe(0);
+  });
+
+  it('keeps only renderable WebGL sample counts at a non-power-of-two limit', () => {
+    expect(supportedMSAASamples(6, false)).toEqual([0, 2, 4]);
+    expect(validateMSAASamples(8, 6, false)).toBe(4);
+  });
   it('accepts the valid sample counts unchanged when within device max', () => {
     expect(validateMSAASamples(0, 16)).toBe(0);
     expect(validateMSAASamples(2, 16)).toBe(2);
