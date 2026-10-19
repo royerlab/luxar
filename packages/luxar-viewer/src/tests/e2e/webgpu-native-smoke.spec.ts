@@ -29,12 +29,15 @@
  * @see rendering/README.md — Dual-stack architecture overview
  */
 
-import { test, expect } from './fixtures';
+import { test, expect, ALLOW_CONSOLE_ERRORS } from './fixtures';
 import { probeWebGPUBackend, waitForLuxarReady, waitForPointsLoaded } from './helpers';
 
 const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr';
+// The partitioned labelled fixture: its only target at the world origin is
+// "Origin marker". (The flat `test_labelled_points` puts "Point 5" at (0, 0, 5),
+// between the default camera and the origin, so an origin pick returns it.)
 const LABELLED_DATASET =
-  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_labelled_points.luxar.zarr';
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_labelled_partitioned_points.luxar.zarr';
 
 const SKIP_REASON =
   'these tests require a real WebGPU adapter; ' +
@@ -69,6 +72,10 @@ test.describe('WebGPU smoke (native-only tests skip on the WebGL2 fallback)', ()
   test('recovers a native renderer, draws the scene, and resolves a pick', async ({ page }) => {
     test.skip(!(await probeWebGPUBackend(page)).isNative, SKIP_REASON);
     test.setTimeout(60_000);
+    test.info().annotations.push({
+      type: ALLOW_CONSOLE_ERRORS,
+      description: 'A device loss is logged with console.error by design, simulated or not.',
+    });
     await page.goto(`/?renderer=webgpu&src=${LABELLED_DATASET}&debug`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page);
