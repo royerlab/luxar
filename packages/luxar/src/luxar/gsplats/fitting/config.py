@@ -282,9 +282,10 @@ class FitConfig:
     # so only the CALLER knows which one it is holding:
     #
     # * False (default) — RAW-IMAGE-SAMPLED, e.g. ``generate_seeds()`` output
-    #   (the documented explicit-seeding workflow): amplitudes read off the
-    #   original volume, pedestal included. Rescaled as
-    #   ``(a - image_min) / intensity_range``.
+    #   (the documented explicit-seeding workflow): ``s * V`` read off the
+    #   original volume, pedestal included, with ``s = SEED_AMPLITUDE_SCALE``.
+    #   Rescaled as ``(a / s - image_min) * s / intensity_range``, so the
+    #   factor shrinks the signal above the floor, never the pedestal.
     # * True — BACKGROUND-RELATIVE, e.g. a previous fit's output or a
     #   ``.gsplats.zarr`` WRITTEN BY a fit (``gsplat fit`` / ``gsplat lod``):
     #   ``finalize_results`` scales by ``intensity_range`` and never adds
@@ -310,10 +311,12 @@ class FitConfig:
     # If set, these override the default initialization
     init_L: Optional[np.ndarray] = None  # Shape (N, d, d) - Cholesky factors
     # Shape (N,) - amplitudes, in RAW IMAGE INTENSITY units (the same scale as
-    # ``V``, pedestal included), which is what the seeding methods produce.
-    # preprocess_data rescales them to the optimizer's [0, 1] scale as
+    # ``V``, pedestal included, no seeding scale factor). preprocess_data
+    # rescales them to the optimizer's [0, 1] scale as
     # ``(a - image_min) / intensity_range``, so a background floor is removed
-    # exactly once. Amplitudes coming out of a PREVIOUS fit are already
+    # exactly once. (Seeds generated inside the fit, or passed as
+    # ``generate_seeds()`` GSplatData, carry ``SEED_AMPLITUDE_SCALE`` and are
+    # rescaled with it divided out first.) Amplitudes coming out of a PREVIOUS fit are already
     # background-relative (see finalize_results) and must NOT be passed here —
     # pass the whole GSplatData as ``seeds=`` together with
     # ``seed_amps_background_relative=True``, which skips the ``- image_min``

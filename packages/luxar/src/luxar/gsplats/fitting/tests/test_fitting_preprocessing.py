@@ -656,8 +656,9 @@ class TestInitAmpsProvenance:
         """
         V = _pedestal_volume()
         centers = np.array([[12.0, 12.0], [20.0, 20.0], [26.0, 26.0]], np.float32)
-        # Sampled off the raw volume: pedestal level, and two blob-level values.
-        raw_amps = np.array([100.0, 300.0, 500.0], dtype=np.float32)
+        # Sampled off the raw volume as generate_seeds() does (times its 0.9
+        # seeding factor): pedestal level, and two blob-level values.
+        raw_amps = 0.9 * np.array([100.0, 300.0, 500.0], dtype=np.float32)
 
         mock_config_2d.V = V
         mock_config_2d.norm_percentile = 0.0
@@ -669,12 +670,16 @@ class TestInitAmpsProvenance:
         result = preprocess_data(mock_config_2d)
 
         assert result.init_amps is not None
+        # The 0.9 factor is divided out before the pedestal comes off and
+        # re-applied after, so it scales the signal above the floor only.
         expected = np.clip(
-            (raw_amps - result.image_min) / result.intensity_range, 0.0, 1.0
+            (raw_amps / 0.9 - result.image_min) * 0.9 / result.intensity_range,
+            0.0,
+            1.0,
         )
         assert np.allclose(result.init_amps, expected, atol=1e-6)
         # The pedestal-level seed rescales to exactly 0 under this convention
-        # (it would be 0.25 if the floor were skipped).
+        # (it would be 0.225 if the floor were skipped).
         assert float(result.init_amps[0]) == pytest.approx(0.0, abs=1e-6)
 
     def test_config_init_amps_stay_raw_sampled(self, mock_config_2d) -> None:

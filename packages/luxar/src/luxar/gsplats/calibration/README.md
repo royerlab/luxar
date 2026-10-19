@@ -61,8 +61,8 @@ result = calibrate(
 print(f"Recommended K* = {result.held_out_peak.k_star:,}")
 print(f"Curve type     = {result.held_out_peak.type}")  # peak | plateau | signal_limited | low_k_optimal
 print(result.held_out_peak.warnings)  # K* on a grid edge / flat curve → extend the grid
-print(f"Noise floor σ̂ = {result.noise_floor.sigma_hat:.4f}")
-print(f"PSNR ceiling   = {result.noise_floor.psnr_max_db:.1f} dB")
+print(f"RMS noise σ    = {result.noise_sigma_rms:.4g}")  # intensity units
+print(f"PSNR ceiling   = {result.psnr_ceiling_robust_db:.1f} dB")  # robust peak
 
 # Persist or reload
 result.to_json(Path("cal.json"))
@@ -75,7 +75,8 @@ loaded = CalibrationResult.from_json(Path("cal.json"))
 - K values (requested + post-cull effective)
 - Per-K metrics: held-out PSNR/MSE, train PSNR, full PSNR/SSIM
 - `held_out_peak` (`HeldOutPeak`): recommended `k_star`, curve `type`, `confidence_db`, operating point `k_knee`, supporting metadata
-- `noise_floor` (`NoiseFloor`): ensemble `sigma_hat`, component estimators, `psnr_max_db`
+- `noise_floor` (`NoiseFloor`): ensemble `sigma_hat`, component estimators, `psnr_max_db` (a MEDIAN-voxel estimate on the full range: under shot noise it reads the quiet background)
+- `noise_sigma_rms`, `noise_scale_ratio`, `psnr_ceiling_robust_db`: the RMS noise a held-out MSE averages (intensity-binned Haar band of the floor-subtracted volume) and the held-out PSNR ceiling it implies on the robust peak the per-K table uses; this is the ceiling `gsplat cal` prints
 - Optional regime-robust extensions: `held_out_psnr_fg_db`, `held_out_psnr_fg_weighted_db`, `foreground_mask_fraction`, `foreground_otsu_threshold`, `fg_bg_ratio`, `held_out_gain_db`, `predict_zero_baseline_mse`, `calibration_region`, `splat_density`, `rd_model`, `exponent_fit`
 - Fitting provenance: `fit_times_seconds`, `fit_config`, `volume_shape`, `volume_dtype`, `timestamp`, optional `splat_paths` (when `--keep-fits`)
 - JSON (de)serialisation: non-finite floats round-trip as `null` → `nan`/`inf`; additive fields hydrate with defaults so old `cal.json` files keep loading

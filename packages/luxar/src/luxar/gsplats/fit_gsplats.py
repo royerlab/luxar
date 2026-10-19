@@ -523,9 +523,13 @@ def fit_gaussian_splats(
           original volume (up to a fixed seeding scale factor), background
           pedestal included. This is what
           ``generate_seeds()`` returns, i.e. the explicit-seeding workflow
-          (``fit_gaussian_splats(V, seeds=generate_seeds(V))``). They are
-          rescaled as ``(a - image_min) / intensity_range``, so an active
-          ``floor`` is subtracted exactly once.
+          (``fit_gaussian_splats(V, seeds=generate_seeds(V))``). The seeding
+          factor ``s`` is divided out, the pedestal removed and ``s``
+          re-applied (``(a / s - image_min) * s / intensity_range``), so an
+          active ``floor`` is subtracted exactly once and ``s`` never pushes a
+          seed on a pedestal below it. Hand-built amplitudes in raw image
+          units should be multiplied by ``SEED_AMPLITUDE_SCALE`` first, or
+          passed through ``init_amps`` instead.
         - True: BACKGROUND-RELATIVE — the amplitudes already have the pedestal
           removed. This is what a previous fit returns (the fit's output
           amplitudes are the normalized ones times ``intensity_range``, with

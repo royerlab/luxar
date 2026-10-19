@@ -16,6 +16,7 @@ from arbol import aprint, asection
 from scipy.spatial import distance
 
 from luxar.gsplats.fitting.config import FitConfig, PreprocessedData
+from luxar.gsplats.seeds.utils import SEED_AMPLITUDE_SCALE
 
 if TYPE_CHECKING:
     from luxar.gsplats.calibration import FloorEstimate
@@ -101,7 +102,8 @@ class _InitContext:
     # * False (default) — RAW-IMAGE-SAMPLED: amplitudes read off the original
     #   (un-normalized, un-floored) volume, as every seeding method produces
     #   them. Rescaling to the optimizer's [0, 1] scale is
-    #   ``(a - image_min) / intensity_range``.
+    #   ``(a / s - image_min) * s / intensity_range`` with ``s`` the
+    #   sampling factor (``init_amps_scale`` below; 1 for unscaled samples).
     # * True — BACKGROUND-RELATIVE: amplitudes that already have the pedestal
     #   removed, as a previous fit's output does. ``finalize_results`` multiplies
     #   the normalized amplitudes by ``intensity_range`` and deliberately does
@@ -118,6 +120,17 @@ class _InitContext:
     # The seeding path inside ``_generate_seeds`` is unambiguous (it samples the
     # still-raw volume itself) and pins the flag to False.
     init_amps_background_relative: bool = False
+    # The factor a RAW-IMAGE-SAMPLED ``init_amps`` was multiplied by when it was
+    # sampled. Seeding samples ``SEED_AMPLITUDE_SCALE * V`` so overlapping seeds
+    # start below the target; that factor belongs to the signal ABOVE the
+    # background, not to the pedestal. Scaling the raw value (pedestal
+    # included) and then subtracting ``image_min`` put every seed whose
+    # background-relative value is below ``(1 - s) / s`` of the pedestal at
+    # exactly zero: on a pedestal of 405 counts with a robust peak of ~120,
+    # most seeds began dead and were culled after the fit (F7/F10, 16000 seeds
+    # -> 1,829 stored). ``_rescale_init_amps`` undoes the factor before
+    # removing the pedestal and re-applies it to what is left.
+    init_amps_scale: float = 1.0
 
 
 def _rescale_init_amps(
@@ -154,8 +167,11 @@ def _rescale_init_amps(
         # splats below the seed it was handed.
         init_ctx.init_amps = np.maximum(init_ctx.init_amps / intensity_range, 0.0)
     else:
+        scale = float(init_ctx.init_amps_scale)
         init_ctx.init_amps = np.clip(
-            (init_ctx.init_amps - image_min) / intensity_range, 0.0, 1.0
+            (init_ctx.init_amps / scale - image_min) * scale / intensity_range,
+            0.0,
+            1.0,
         )
 
     if verbose:
@@ -246,6 +262,13 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         # Overwrites whatever convention config.init_amps had — the extractor
         # replaced the array.
         init_ctx.init_amps_background_relative = config.seed_amps_background_relative
+        # A raw-image-sampled GSplatData is `generate_seeds()` output, and every
+        # seeding method samples `SEED_AMPLITUDE_SCALE * V`: undo that factor
+        # before the pedestal comes off (see `_InitContext.init_amps_scale`).
+        # A background-relative warm start carries no such factor.
+        init_ctx.init_amps_scale = (
+            1.0 if config.seed_amps_background_relative else SEED_AMPLITUDE_SCALE
+        )
         # A physical-unit seed (a `voxel_size` fit's default `output_space="real"`
         # output) goes back to voxel indices first: the exact inverse of the
         # conversion in `finalize_results`, so the model starts on the seed's
@@ -467,6 +490,7 @@ def _generate_seeds(
         # fallback amplitudes appended by _extend_init_arrays_for_grid_seeds
         # below, which is why concatenating them stays provenance-consistent.
         init_ctx.init_amps_background_relative = False
+        init_ctx.init_amps_scale = SEED_AMPLITUDE_SCALE
         if verbose:
             aprint("Using scale-informed initialization from seeding method")
 
@@ -2272,17 +2296,18 @@ def _extend_init_arrays_for_grid_seeds(
     # Extend init_amps - sample from image at grid seed locations
     grid_centers = seed_centers[n_original:]
     coords_for_interp = grid_centers.T
-    grid_amps = (
-        ndi.map_coordinates(V, coords_for_interp, order=1, mode="nearest") * 0.9
-    ).astype(np.float32)
+    grid_amps = ndi.map_coordinates(V, coords_for_interp, order=1, mode="nearest")
 
     if init_ctx.init_amps is not None:
+        # Same sampling factor as the amplitudes they join (see init_amps_scale).
+        grid_amps = (grid_amps * init_ctx.init_amps_scale).astype(np.float32)
         init_ctx.init_amps = np.concatenate([init_ctx.init_amps, grid_amps], axis=0)
     else:
         # No original init_amps, sample for all
         original_centers = seed_centers[:n_original]
         original_coords = original_centers.T
-        original_amps = (
-            ndi.map_coordinates(V, original_coords, order=1, mode="nearest") * 0.9
+        original_amps = ndi.map_coordinates(V, original_coords, order=1, mode="nearest")
+        init_ctx.init_amps_scale = SEED_AMPLITUDE_SCALE
+        init_ctx.init_amps = (
+            np.concatenate([original_amps, grid_amps], axis=0) * SEED_AMPLITUDE_SCALE
         ).astype(np.float32)
-        init_ctx.init_amps = np.concatenate([original_amps, grid_amps], axis=0)

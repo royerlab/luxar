@@ -153,11 +153,43 @@ class CalibrationResult:
     k_star_stored: Optional[int] = None
     """``k_values_stored`` at the selected K*: what ``fit --seeds K*`` keeps.
     ``K*`` itself is a SEEDING budget, not a stored count."""
+    noise_sigma_rms: float = float("nan")
+    """RMS noise sigma of the calibrated volume, in its intensity units.
+
+    The in-plane Haar HH band binned by local intensity and pooled as an RMS
+    (:func:`~.noise_floor.estimate_masked_noise` over the whole volume), measured
+    on the floor-subtracted volume the held-out scores use as their reference.
+    It is what a held-out MSE averages:
+    fluorescence noise grows with the signal, so the bright voxels set it, while
+    ``noise_floor.sigma_hat`` (a median) reads the dark background. ``nan`` for a
+    ``cal.json`` that predates it."""
+    noise_scale_ratio: float = float("nan")
+    """Coarse- over fine-scale sigma of :attr:`noise_sigma_rms`; above
+    :data:`~.noise_floor.MASKED_SIGMA_MAX_SCALE_RATIO` the finest band also holds
+    signal, so the sigma reads high and the ceiling below reads low."""
+    psnr_ceiling_robust_db: float = float("nan")
+    """Held-out PSNR ceiling on the robust peak (the table's basis):
+    ``20 log10(robust_data_range / noise_sigma_rms)``. A held-out score cannot
+    sit far above it, since the held-out error includes the noise itself."""
     whole_volume_seeds: Optional[Dict[str, Any]] = None
     """For a crop calibration (``cal --region`` / ``--auto-region``): the
     whole-input ``fit --seeds`` budget — the content planner's per-box density
     transfer summed over crop-sized boxes of the input — with its provenance
     (``seeds``, ``n_boxes``, feature counts, ``rule``). ``None`` otherwise."""
+
+    def robust_offset_db(self) -> float:
+        """dB to ADD to a full-range PSNR to restate it on the robust peak.
+
+        PSNR is ``10 log10(peak^2 / MSE)`` and the peak is one constant per
+        volume, so moving from the full range (``max - min``) to the robust
+        peak (``p99.99 - min``, the ``fit``/``compare`` headline) is a constant
+        ``20 log10(robust / full)``: every curve shifts together and K* does
+        not move. ``0`` for a ``cal.json`` that predates the robust peak.
+        """
+        full, robust = self.data_range, self.robust_data_range
+        if math.isfinite(full) and math.isfinite(robust) and full > 0 and robust > 0:
+            return 20.0 * math.log10(robust / full)
+        return 0.0
 
     def incomplete_warning(self) -> Optional[str]:
         """A loud warning when this calibration did not finish, else ``None``.
@@ -315,6 +347,9 @@ class CalibrationResult:
             k_values_fitted=[int(x) for x in raw.get("k_values_fitted", [])],
             k_values_stored=[int(x) for x in raw.get("k_values_stored", [])],
             whole_volume_seeds=raw.get("whole_volume_seeds"),
+            noise_sigma_rms=_opt_float(raw.get("noise_sigma_rms")),
+            noise_scale_ratio=_opt_float(raw.get("noise_scale_ratio")),
+            psnr_ceiling_robust_db=_opt_float(raw.get("psnr_ceiling_robust_db")),
             k_star_stored=(
                 int(raw["k_star_stored"])
                 if raw.get("k_star_stored") is not None
