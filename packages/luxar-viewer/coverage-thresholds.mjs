@@ -144,7 +144,9 @@ export const COVERAGE_THRESHOLDS = {
   // mega-shader/tone-curve tests (#3173), the WebGPU DPR render-target tests
   // (#3171), and the flat-varying codegen tests here each raised measured
   // rendering coverage, pushing the old 84/85 floor past the slack budget.
-  'src/rendering/**': { lines: 89, functions: 88, branches: 78 },
+  // The merged rendering tests also raised branch coverage to 81.04, leaving
+  // the old 78 floor past the slack budget.
+  'src/rendering/**': { lines: 89, functions: 88, branches: 80 },
 
   // The last two measured top-level source directories without a sub-gate;
   // until 2026-10 their coverage could erode freely inside the global pool.
@@ -170,7 +172,7 @@ export const COVERAGE_RECORDED = {
   'src/ui/**': { lines: 92.64, functions: 88.12, branches: 80.49 },
   'src/core/**': { lines: 92.99, functions: 82.41, branches: 88.16 },
   'src/input/**': { lines: 92.96, functions: 89.41, branches: 86.11 },
-  'src/rendering/**': { lines: 90.79, functions: 90.14, branches: 80.95 },
+  'src/rendering/**': { lines: 90.79, functions: 90.14, branches: 81.04 },
   'src/audio/**': { lines: 96.5, functions: 95.48, branches: 84.11 },
   'src/profiling/**': { lines: 96.63, functions: 96.25, branches: 88.75 },
 };
