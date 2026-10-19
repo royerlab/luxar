@@ -384,6 +384,21 @@ describe('createWebGPURenderer', () => {
   });
 
   describe('requireNativeAdapter', () => {
+    it('skips the TSL prefetch when native WebGPU is unavailable', async () => {
+      stubNavigatorGpu(undefined);
+      expect(await requestWebGPUDevice(undefined, true)).toEqual({ fallback: true });
+      expect(loadTslMaterials).not.toHaveBeenCalled();
+    });
+
+    it('prefetches TSL for the explicit WebGPU bridge without navigator.gpu', async () => {
+      stubNavigatorGpu(undefined);
+      expect(await requestWebGPUDevice('webgpu', false)).toEqual({
+        fallback: false,
+        device: undefined,
+      });
+      expect(loadTslMaterials).toHaveBeenCalledOnce();
+    });
+
     it('falls back to WebGL without navigator.gpu, before importing three/webgpu', async () => {
       stubNavigatorGpu(undefined);
       const result = await createWebGPURenderer(makeCanvas(), { requireNativeAdapter: true });

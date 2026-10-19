@@ -399,10 +399,10 @@ export async function requestWebGPUDevice(
   rendererOverride?: 'webgl' | 'webgpu',
   requireNativeAdapter?: boolean
 ): Promise<WebGPUDeviceRequest> {
-  // Start the TSL chunk transfer before waiting for the adapter. The awaited
-  // setup load joins this request, or retries if the prefetch fails.
-  void loadTslMaterials().catch(() => undefined);
   const hasGpu = (navigator as NavigatorWithGPU).gpu !== undefined;
+  // Start the TSL chunk before waiting for the adapter when this session can
+  // still use WebGPU. The awaited setup load retries if the prefetch fails.
+  if (hasGpu || !requireNativeAdapter) void loadTslMaterials().catch(() => undefined);
   const adapter = await requestCoreAdapter();
   if (!adapter) {
     if (lacksRequiredNativeDevice(requireNativeAdapter, hasGpu, false, undefined)) {
@@ -431,10 +431,9 @@ export async function requestWebGPUDevice(
   logRequestedDeviceLimits(adapter.limits, requiredLimits, requestedMax);
 
   // Fetch the `three/webgpu` chunk WHILE the device is requested (~125 ms on
-  // an RTX 3070), not after: getting an adapter already means this session is
-  // going WebGPU. Only a requestDevice failure under `requireNativeAdapter`
-  // (rare) pays for a download it then does not use. A failed prefetch is
-  // retried wherever `loadThreeWebGPU` actually imports the module.
+  // an RTX 3070), not after. A failed requestDevice under
+  // `requireNativeAdapter` can leave this download unused. A failed prefetch
+  // is retried wherever `loadThreeWebGPU` actually imports the module.
   const webgpuModule = import('three/webgpu');
   void webgpuModule.catch(() => undefined);
 
