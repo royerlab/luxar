@@ -1,21 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 
-import { CI_CHECKS, checkEnvironment, reportResult, runChecks } from './run-ci-checks.mjs';
-
-describe('checkEnvironment', () => {
-  it('raises the lint heap while preserving existing Node options and other checks', () => {
-    const env = { NODE_OPTIONS: '--trace-warnings', PATH: '/bin' };
-    expect(checkEnvironment('lint', env)).toEqual({
-      NODE_OPTIONS: '--trace-warnings --max-old-space-size=4096',
-      PATH: '/bin',
-    });
-    expect(checkEnvironment('typecheck', env)).toBe(env);
-    expect(checkEnvironment('lint', { PATH: '/bin' }).NODE_OPTIONS).toBe(
-      '--max-old-space-size=4096'
-    );
-  });
-});
+import { CI_CHECKS, reportResult, runChecks } from './run-ci-checks.mjs';
 
 describe('runChecks', () => {
   it('runs every check and reports all failures', () => {
