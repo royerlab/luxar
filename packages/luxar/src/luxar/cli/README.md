@@ -18,6 +18,21 @@ luxar serve my_data.luxar.zarr --viewer
 luxar info my_data.luxar.zarr --stats
 ```
 
+**Fitting your own volume? Start here.** Three commands take a TIFF, OME-Zarr or
+`.npy` volume to the viewer (`--physical` uses the voxel spacing an OME/ImageJ
+TIFF or OME-Zarr records; a `.npy` has none, so drop it there or pass
+`--voxel-size`):
+
+```bash
+luxar gsplat fit stack.tif fit.gsplats.zarr --physical   # spacing from TIFF/OME-Zarr metadata
+luxar gsplat convert fit.gsplats.zarr scene.luxar.zarr
+luxar serve scene.luxar.zarr --viewer
+```
+
+`luxar gsplat view fit.gsplats.zarr` does the last two in one step. Everything
+below is the full option reference; reach for it (and `luxar gsplat cal`, which
+picks the splat budget) once the defaults are not enough.
+
 The same commands are also available programmatically: `luxar.cli` exports the
 Typer `app`, which you can invoke directly (e.g. from a script or a test):
 

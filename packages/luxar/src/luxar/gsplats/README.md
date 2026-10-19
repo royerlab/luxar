@@ -1,5 +1,9 @@
 # Gaussian Splatting Package for Luxar
 
+> **Start here.** From the command line, the three-command recipe in the
+> [CLI README](../cli/README.md#quick-start) takes a volume to the viewer; from
+> Python, see [Quick Start](#quick-start) below. The rest of this page is reference.
+
 High-performance n-dimensional oriented Gaussian splatting with automatic optimization for efficient image and volume reconstruction.
 
 ## Overview

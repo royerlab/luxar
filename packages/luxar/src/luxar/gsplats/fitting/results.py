@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     import torch
 
 import numpy as np
-from arbol import aprint, asection
+from arbol import Arbol, aprint, asection
 
 from luxar.gsplats.fit_basis import reference_on_fit_basis
 from luxar.gsplats.fitting.config import (
@@ -109,8 +109,9 @@ def _print_amplitude_histogram(
             # Bar with color gradient
             bar_len = round(bar_width * count / max_count) if max_count > 0 else 0
             cidx = min(i * len(_GRADIENT_CODES) // n_bins, len(_GRADIENT_CODES) - 1)
-            color = f"\033[38;5;{_GRADIENT_CODES[cidx]}m"
-            bar = color + "█" * bar_len + _RESET
+            bar = "█" * bar_len
+            if Arbol.colorful:  # off under NO_COLOR / in a redirected log
+                bar = f"\033[38;5;{_GRADIENT_CODES[cidx]}m{bar}{_RESET}"
             pad = " " * (bar_width - bar_len)
 
             aprint(f"  {lo:9.6f} ┤{bar}{pad} {count:>{count_width}} ({pct:5.1f}%)")

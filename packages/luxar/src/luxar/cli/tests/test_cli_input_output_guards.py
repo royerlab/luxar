@@ -1,5 +1,6 @@
 """CLI guards around inputs and outputs: overwrite refusal, remote URLs,
-piped ``--help`` width, the ``cal --pdf`` dependency preflight, the tiled
+piped ``--help`` width, the ``cal --pdf`` dependency preflight, a
+``--channel`` the input cannot apply (a usage error, no traceback), the tiled
 ``Done:`` timing, and ``merge`` flattening a partition input.
 """
 
@@ -128,6 +129,31 @@ class TestFitOverwrite:
             worker=False,
             plan_only=False,
         )
+
+
+class TestSelectionUsageErrors:
+    def test_channel_on_a_npy_is_a_usage_error_without_traceback(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        stack = tmp_path / "czyx.npy"
+        np.save(stack, np.zeros((3, 6, 6, 6), np.float32))
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(stack),
+                str(tmp_path / "out.gsplats.zarr"),
+                *_FAST_FIT,
+                "--channel",
+                "2",
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        text = normalized_cli_output(result)
+        assert "Cannot apply channel=2" in text and "--axes" in text
+        assert "Traceback" not in result.output
+        assert result.exception is None or isinstance(result.exception, SystemExit)
 
 
 class TestDoneTiming:

@@ -1,7 +1,7 @@
 # Utils Package
 
 The `utils` package provides cross-cutting utility functions for Luxar, including
-array manipulation, atomic directory copies, console verbosity, deprecation
+array manipulation, atomic directory copies, console colour and verbosity, deprecation
 notices, LOD policy, paths, and reusable scene generators. Demo-owned
 downloads, dataset resolution, and runtime helpers live under `luxar.demos` and are imported through that
 package's public barrel.
@@ -193,6 +193,15 @@ Stable fingerprints for Python sources that produce Luxar stores.
 
 Static import closures do not discover string-built imports or non-Python inputs;
 callers must include those separately in their provenance when they affect output.
+
+### `color_output.py`
+
+Decides whether arbol may print ANSI colour. `apply_arbol_color_policy()` runs at
+`import luxar` and at the start of every CLI command: `FORCE_COLOR` keeps colour
+on, `NO_COLOR` turns it off, and otherwise it goes off when stdout is a
+redirected text stream (a file or pipe), so logs stay plain. A notebook's output
+stream is not one, so Jupyter keeps its colours. `color_env_override()` reports
+the environment's verdict alone (`True` / `False` / `None`).
 
 ### `verbosity.py`
 

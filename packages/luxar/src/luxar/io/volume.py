@@ -11,6 +11,8 @@ pipeline) no longer imports upward into the CLI layer.
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
@@ -76,6 +78,15 @@ def decode_flat_channel_index(
     return tuple(coords)
 
 
+class VolumeSelectionError(ValueError):
+    """A channel / timepoint / axes request the input cannot satisfy.
+
+    A usage error rather than a bug: the CLI reports it as one (message, exit
+    code, no traceback). A ``ValueError`` subclass, so existing callers that
+    catch ``ValueError`` are unaffected.
+    """
+
+
 def _axis_kind(label: str, flag: str = "--axes") -> str:
     """Classify one axis label as time, channel or spatial.
 
@@ -89,7 +100,7 @@ def _axis_kind(label: str, flag: str = "--axes") -> str:
         return "c"
     if label in ("z", "y", "x", "depth", "height", "width"):
         return "s"
-    raise ValueError(
+    raise VolumeSelectionError(
         f"{flag} label {label!r} not recognised; use time/t, "
         "channel/c/ch/camera/cam, or z/y/x (depth/height/width)."
     )
@@ -194,7 +205,7 @@ def volume_axes_from_spec(
     """
     labels = [a.strip().lower() for a in axes.split(",") if a.strip() != ""]
     if len(labels) != ndim:
-        raise ValueError(
+        raise VolumeSelectionError(
             f"{flag} has {len(labels)} labels but the splats are {ndim}D; "
             "give one label per dimension."
         )
@@ -225,14 +236,14 @@ def _apply_axes_spec(
     """
     labels = [a.strip().lower() for a in axes.split(",") if a.strip() != ""]
     if len(labels) != arr.ndim:
-        raise ValueError(
+        raise VolumeSelectionError(
             f"--axes has {len(labels)} labels but the array is {arr.ndim}D "
             f"(shape {arr.shape}); give one label per dimension."
         )
 
     kinds = [_axis_kind(label) for label in labels]
     if sum(kind == "t" for kind in kinds) > 1:
-        raise ValueError(
+        raise VolumeSelectionError(
             f"--axes {axes!r} names more than one time axis; one --timepoint "
             "cannot index them independently."
         )
@@ -247,7 +258,7 @@ def _apply_axes_spec(
         )
     except ValueError as exc:
         channel_axes = ", ".join(f"{labels[i]}={arr.shape[i]}" for i in channel_indices)
-        raise ValueError(
+        raise VolumeSelectionError(
             f"--channel index {flat_channel} is invalid for channel-like axes "
             f"{channel_axes}: {exc}"
         ) from exc
@@ -273,7 +284,7 @@ def _apply_axes_spec(
             idx = 0 if idx is None else int(idx)
             size = arr.shape[i]
             if not (0 <= idx < size):
-                raise ValueError(
+                raise VolumeSelectionError(
                     f"{which} index {idx} is out of range for the '{labels[i]}' "
                     f"axis of size {size} (valid 0..{size - 1})."
                 )
@@ -374,6 +385,22 @@ def _squeezed_region_spans(
     return tuple(spans)
 
 
+def _selection_given(channel: Optional[int], timepoint: Optional[int]) -> str:
+    """``"channel=2, timepoint=0"`` for the indices that were passed."""
+    return ", ".join(
+        f"{name}={value}"
+        for name, value in (("channel", channel), ("timepoint", timepoint))
+        if value is not None
+    )
+
+
+#: The remedy every selection refusal ends with.
+_AXES_REMEDY = (
+    "Name every dimension with an axes spec (CLI: --axes, e.g. 'c,z,y,x' or "
+    "'t,z,y,x') to select by index, or drop the index to load the whole array."
+)
+
+
 def _reject_inapplicable_selection(
     path: Path,
     channel: Optional[int],
@@ -382,28 +409,175 @@ def _reject_inapplicable_selection(
 ) -> None:
     """Refuse a channel/timepoint index that a non-zarr input would silently drop.
 
-    Only a zarr store has discoverable axes (OME-NGFF metadata, or the
-    positional TCZYX heuristic over its rank). A TIFF / NumPy / imageio array is
-    loaded whole and squeezed, so without an explicit ``axes`` spec an index has
-    nothing to select: the old behaviour fitted (or scored) EVERY channel stacked
-    as an extra spatial axis, or the wrong timepoint, with no warning. With
-    ``axes`` the index is applied by :func:`_apply_axes_spec`, as for zarr.
+    A zarr store has discoverable axes (OME-NGFF metadata, or the positional
+    TCZYX heuristic over its rank), and so does an OME/ImageJ TIFF whose
+    declared axes are trusted (:func:`_resolve_declared_axes`, which runs first
+    and refuses the untrusted ones itself). Any other TIFF / NumPy / imageio
+    array is loaded whole and squeezed, so without an explicit ``axes`` spec an
+    index has nothing to select: the old behaviour fitted (or scored) EVERY
+    channel stacked as an extra spatial axis, or the wrong timepoint, with no
+    warning. With ``axes`` the index is applied by :func:`_apply_axes_spec`, as
+    for zarr.
     """
     if axes is not None or (channel is None and timepoint is None):
         return
     if is_zarr_path(path):
         return
-    given = ", ".join(
-        f"{name}={value}"
-        for name, value in (("channel", channel), ("timepoint", timepoint))
-        if value is not None
+    if path.suffix.lower() in _TIFF_SUFFIXES:
+        why = "the TIFF has no OME or ImageJ metadata declaring its axes"
+    else:
+        why = (
+            f"a {path.suffix or 'non-zarr'} file has no discoverable channel/time axes"
+        )
+    raise VolumeSelectionError(
+        f"Cannot apply {_selection_given(channel, timepoint)} to {path.name}: "
+        f"{why}, so the index would be ignored. {_AXES_REMEDY}"
     )
-    raise ValueError(
-        f"Cannot apply {given} to {path.name}: a {path.suffix or 'non-zarr'} file "
-        "has no discoverable channel/time axes, so the index would be ignored. "
-        "Name every dimension with an axes spec (CLI: --axes, e.g. 'c,z,y,x' or "
-        "'t,z,y,x') to select by index, or drop the index to load the whole array."
+
+
+_TIFF_SUFFIXES = (".tiff", ".tif")
+
+#: OME / ImageJ series axis letters that map onto an axes spec. Any other
+#: letter (``S`` samples, ``Q``/``I`` unknown, ...) means the declared order
+#: cannot be used and ``--axes`` stays required.
+_TIFF_AXIS_LABELS = {"T": "t", "C": "c", "Z": "z", "Y": "y", "X": "x"}
+
+#: OME ``Creator`` prefixes of Python writers that fill in DEFAULT axes when
+#: their caller names none (tifffile; bioio-ome-tiff / aicsimageio, whose
+#: ``OmeTiffWriter.save`` of a 4D array without ``dim_order`` writes CZYX).
+_PYTHON_OME_WRITERS = ("tifffile", "bioio", "aicsimageio")
+
+#: The ImageJ version tifffile writes into every ImageJ description it makes.
+#: Real ImageJ / Fiji writes its own version (``1.54f``, ...).
+_TIFFFILE_IMAGEJ_VERSION = "1.11a"
+
+_OME_CREATOR = re.compile(r"<OME\b[^>]*?\bCreator=([\"'])(.*?)\1")
+
+
+@dataclass(frozen=True)
+class _DeclaredAxes:
+    """What an OME / ImageJ TIFF says about its axes, and whether to believe it."""
+
+    #: Series axis letters, uppercase (``"ZCYX"``), aligned with ``shape``.
+    letters: str
+    shape: Tuple[int, ...]
+    #: ``"OME"`` or ``"ImageJ"``.
+    source: str
+    #: Why the declaration cannot be trusted, or None when it can.
+    distrust: Optional[str]
+
+    def sizes(self) -> str:
+        """``"z=65, c=7, y=624, x=924"``, for log lines and errors."""
+        return ", ".join(
+            f"{letter.lower()}={size}"
+            for letter, size in zip(self.letters, self.shape, strict=True)
+        )
+
+
+def _import_tifffile() -> Any:
+    try:
+        import tifffile
+    except ImportError as exc:
+        raise ImportError(
+            "Loading TIFF files requires tifffile: pip install luxar[io]"
+        ) from exc
+    return tifffile
+
+
+def _writer_distrust(tif: Any) -> Optional[str]:
+    """Which known Python writer signed ``tif``'s axes (maybe defaults), else None.
+
+    tifffile fills in axes the caller never named (a 4D array saved with
+    ``imagej=True`` or ``ome=True`` reads back as ZCYX, a 3D one as CYX), and a
+    file where the caller DID name them carries identical metadata; bioio /
+    aicsimageio writers do the same. So nothing they wrote is trusted: OME XML
+    with ``Creator="tifffile.py ..."`` / ``"bioio_ome_tiff ..."`` /
+    ``"aicsimageio ..."``, or an ImageJ description saying ``ImageJ=1.11a``.
+    Microscope software (Bio-Formats, Fiji, vendor exporters) signs its own name
+    and version.
+    """
+    # A tool may override tifffile's signature on purpose (its `Creator` or
+    # `ImageJ` metadata); that is the tool vouching for the axes, and accepted.
+    if tif.is_ome:
+        creator = _OME_CREATOR.search(tif.ome_metadata or "")
+        name = creator.group(2) if creator is not None else ""
+        if name.lower().startswith(_PYTHON_OME_WRITERS):
+            return f"{name!r} wrote it"
+        return None
+    version = str((tif.imagej_metadata or {}).get("ImageJ", ""))
+    if version == _TIFFFILE_IMAGEJ_VERSION:
+        return "tifffile wrote it (ImageJ=1.11a)"
+    return None
+
+
+def _declared_tiff_axes(path: Path) -> Optional[_DeclaredAxes]:
+    """The axes an OME or ImageJ TIFF declares, or None for a plain TIFF.
+
+    Read from the first series, whose (squeezed) shape is exactly what
+    :func:`_read_tiff` returns. An unreadable file raises (``OSError`` from
+    tifffile) rather than being reported as one that declares nothing.
+    """
+    tifffile = _import_tifffile()
+    with tifffile.TiffFile(str(path)) as tif:
+        if not (tif.is_ome or tif.is_imagej):
+            return None
+        series = tif.series[0]
+        return _DeclaredAxes(
+            letters=str(series.axes).upper(),
+            shape=tuple(int(n) for n in series.shape),
+            source="OME" if tif.is_ome else "ImageJ",
+            distrust=_writer_distrust(tif),
+        )
+
+
+def _resolve_declared_axes(
+    path: Path,
+    channel: Optional[int],
+    timepoint: Optional[int],
+    axes: Optional[str],
+) -> Optional[str]:
+    """``axes``, or a trusted TIFF axis declaration when an index needs one.
+
+    Only consulted when a channel/timepoint index was given without ``axes``,
+    so an index-free load keeps its squeeze-everything behaviour. A declaration
+    is refused, showing its order and sizes, when a known Python writer wrote it
+    (possibly writer defaults), when it uses a letter other than T/C/Z/Y/X, or
+    when it lacks the axis the index addresses.
+    """
+    if axes is not None or (channel is None and timepoint is None):
+        return axes
+    if path.suffix.lower() not in _TIFF_SUFFIXES:
+        return None
+    declared = _declared_tiff_axes(path)
+    if declared is None:
+        return None
+    problem = _declared_axes_problem(declared, channel, timepoint)
+    if problem is not None:
+        raise VolumeSelectionError(
+            f"Cannot apply {_selection_given(channel, timepoint)} to {path.name}: "
+            f"its {declared.source} metadata declares axes {declared.sizes()}, "
+            f"but {problem}. {_AXES_REMEDY}"
+        )
+    aprint(
+        f"  Using the axes declared in {path.name} ({declared.source}): "
+        f"{declared.sizes()}"
     )
+    return ",".join(_TIFF_AXIS_LABELS[letter] for letter in declared.letters)
+
+
+def _declared_axes_problem(
+    declared: _DeclaredAxes, channel: Optional[int], timepoint: Optional[int]
+) -> Optional[str]:
+    """Why ``declared`` cannot serve this index, or None when it can."""
+    if declared.distrust is not None:
+        return f"{declared.distrust}, so the axes may be writer defaults"
+    unknown = sorted({c for c in declared.letters if c not in _TIFF_AXIS_LABELS})
+    if not declared.letters or unknown:
+        return f"Luxar maps only t/c/z/y/x, not {', '.join(unknown).lower() or '?'}"
+    for value, letter, what in ((channel, "C", "channel"), (timepoint, "T", "time")):
+        if value is not None and letter not in declared.letters:
+            return f"there is no {what} axis"
+    return None
 
 
 def _read_tiff(tifffile: Any, path: Path) -> Any:
@@ -461,6 +635,13 @@ def load_volume(
             differs. The single time axis is sliced by ``timepoint``; the flat
             ``channel`` index is decoded across all channel-like axes. Those
             axes are dropped and spatial axes are kept in the given order.
+            When omitted, an OME or ImageJ TIFF given a ``channel`` or
+            ``timepoint`` index uses the axes the file declares, if microscope
+            metadata was NOT written by a known Python writer (tifffile,
+            bioio / aicsimageio, which fill in default axes) and uses only
+            T/C/Z/Y/X; the axis sizes are always logged (see
+            :func:`_resolve_declared_axes`). Other non-zarr inputs refuse the
+            index.
         info: Optional dict, populated with ``source_dtype`` — the element type
             of the array AS STORED, captured before the float32 cast below.
             With explicit ``axes``, it also receives the kept spatial labels in
@@ -486,10 +667,13 @@ def load_volume(
     Raises:
         ImportError: If an optional reader (tifffile/imageio) is required but
             not installed. Callers that want a clean CLI exit should catch this.
+        VolumeSelectionError: A ``ValueError`` for a channel/timepoint/axes
+            request the input cannot satisfy (a usage error).
         ValueError: On an invalid key or a sub-2D volume.
     """
     suffix = path.suffix.lower()
     tiff_meta = None
+    axes = _resolve_declared_axes(path, channel, timepoint, axes)
     _reject_inapplicable_selection(path, channel, timepoint, axes)
 
     if suffix == ".npy":
@@ -526,13 +710,8 @@ def load_volume(
             region=None if axes is not None else region,
         )
 
-    elif suffix in (".tiff", ".tif"):
-        try:
-            import tifffile
-        except ImportError as exc:
-            raise ImportError(
-                "Loading TIFF files requires tifffile: pip install luxar[io]"
-            ) from exc
+    elif suffix in _TIFF_SUFFIXES:
+        tifffile = _import_tifffile()
         aprint(f"Loading TIFF: {path.name}")
         volume = _read_tiff(tifffile, path)
         tiff_meta = _read_tiff_meta(path, info)
@@ -1192,6 +1371,30 @@ def _select_zarr_array(
     return _auto_zarr_array(node, path)
 
 
+def _require_in_range(flag: str, index: int, size: int, axis: str) -> int:
+    """``index``, or a :class:`VolumeSelectionError` naming the valid range."""
+    if not 0 <= index < size:
+        raise VolumeSelectionError(
+            f"{flag} index {index} is out of range for the positional {axis} "
+            f"axis of size {size} (valid 0..{size - 1})."
+        )
+    return index
+
+
+def _positional_channel_coords(
+    channel: Optional[int], channel_shape: Tuple[int, ...]
+) -> Tuple[int, ...]:
+    """Folded channel coordinates for the >5D positional path (0s when None)."""
+    if channel is None:
+        return tuple(0 for _ in channel_shape)
+    try:
+        return decode_flat_channel_index(channel, channel_shape)
+    except ValueError as exc:
+        raise VolumeSelectionError(
+            f"--channel index {channel} is invalid: {exc}"
+        ) from exc
+
+
 def _load_zarr_volume(
     path: Path,
     channel: Optional[int],
@@ -1248,20 +1451,17 @@ def _load_zarr_volume(
     if ndim >= 6:
         # Generic >5D: treat first dim as T, fold all leading non-spatial
         # dimensions before the final 3 spatial axes into one flat channel index.
-        t = timepoint if timepoint is not None else 0
+        t = _require_in_range("--timepoint", timepoint or 0, shape[0], "time")
         remaining_non_spatial = ndim - 4  # -1 for time, -3 for spatial
         channel_shape = tuple(shape[1 : 1 + remaining_non_spatial])
-        if channel is None:
-            channel_coords = tuple(0 for _ in channel_shape)
-        else:
-            channel_coords = decode_flat_channel_index(channel, channel_shape)
+        channel_coords = _positional_channel_coords(channel, channel_shape)
         idx = [t, *channel_coords]
         aprint(f"  Slicing {ndim}D: indices {idx} → 3D spatial")
         spans = _squeezed_region_spans(tuple(shape[-3:]), region)
         volume = np.array(arr[tuple([*idx, *spans])])
     elif ndim == 5:
-        t = timepoint if timepoint is not None else 0
-        c = channel if channel is not None else 0
+        t = _require_in_range("--timepoint", timepoint or 0, shape[0], "time")
+        c = _require_in_range("--channel", channel or 0, shape[1], "channel")
         aprint(f"  Slicing 5D (TCZYX): T={t}, C={c}")
         spans = _squeezed_region_spans(tuple(shape[-3:]), region)
         volume = np.array(arr[(t, c, *spans)])
@@ -1269,11 +1469,13 @@ def _load_zarr_volume(
         if channel is not None:
             aprint(f"  Slicing 4D (CZYX): C={channel}")
             spans = _squeezed_region_spans(tuple(shape[1:]), region)
-            volume = np.array(arr[(channel, *spans)])
+            c = _require_in_range("--channel", channel, shape[0], "channel")
+            volume = np.array(arr[(c, *spans)])
         elif timepoint is not None:
             aprint(f"  Slicing 4D (TZYX): T={timepoint}")
             spans = _squeezed_region_spans(tuple(shape[1:]), region)
-            volume = np.array(arr[(timepoint, *spans)])
+            t = _require_in_range("--timepoint", timepoint, shape[0], "time")
+            volume = np.array(arr[(t, *spans)])
         else:
             aprint("  4D array — using as-is (use --channel or --timepoint to slice)")
             spans = _squeezed_region_spans(tuple(shape), region)
