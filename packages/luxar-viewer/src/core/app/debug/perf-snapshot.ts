@@ -39,7 +39,7 @@ export interface PerfSnapshotContext {
   density?: () => unknown;
   /** Multi-level cache stats (`SceneLoader.getCacheStats()`; includes the L2 write queue). */
   cache?: () => unknown;
-  /** Blend-mode program warm-up counters (`rendering/webgl-blend-warmup.ts`). */
+  /** Blend-mode program warm-up counters (`rendering/blend-warmup.ts`). */
   blendWarmup?: () => unknown;
 }
 

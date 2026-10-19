@@ -260,6 +260,18 @@ export class PickingSystem {
   }
 
   /**
+   * Render picks with a NEW renderer (a WebGPU renderer rebuilt after device
+   * loss). The pick target and materials are renderer-agnostic three objects;
+   * the new renderer allocates its own GPU copies on first use. Callers re-register
+   * the scene nodes right after (`NodeFactory.rebuildAfterContextRestore`).
+   */
+  setRenderer(renderer: Renderer, capabilities: RendererCapabilities): void {
+    this.renderer = renderer;
+    this.capabilities = capabilities;
+    this.markDirty();
+  }
+
+  /**
    * Allocate the next pick ID (incrementing counter, starts at 1). 0 = background.
    *
    * The counter is checked against {@link MAX_PICK_NODE_ID}: past 2^24 the

@@ -266,6 +266,7 @@ vi.stubGlobal('document', {
 // future test calling them through `sceneManager.*` won't crash.
 vi.mock('../../../rendering/post-processing/post-processing-manager', () => ({
   PostProcessingManager: vi.fn().mockImplementation(() => ({
+    sceneRenderTarget: { name: 'HDR scene target' },
     // Resize / DPR / camera plumbing (resize-orchestrator + camera-mode)
     resize: vi.fn(),
     setDPRScale: vi.fn(),
@@ -277,6 +278,7 @@ vi.mock('../../../rendering/post-processing/post-processing-manager', () => ({
     // rebuildAfterContextRestore (webgl-context-recovery).
     dispose: vi.fn(),
     rebuildAfterContextRestore: vi.fn(),
+    adoptRenderer: vi.fn(),
     // EOG sliders (scene-manager getters/setters at ~line 956)
     updateExposure: vi.fn(),
     updateGlobalOffset: vi.fn(),
@@ -391,7 +393,7 @@ const mockShowLoading = notifierMocks.showLoading;
 const mockHideLoading = notifierMocks.hideLoading;
 const mockShowError = notifierMocks.error;
 
-vi.mock('../../../rendering/webgl-blend-warmup', () => ({
+vi.mock('../../../rendering/blend-warmup', () => ({
   configureBlendModeProgramWarmup: blendWarmupMocks.configure,
   clearBlendModeProgramWarmup: blendWarmupMocks.clear,
   warmSceneBlendModePrograms: blendWarmupMocks.warmScene,
@@ -529,7 +531,7 @@ describe('SceneManager', () => {
       expect(height).toBe(window.innerHeight);
     });
 
-    it('keeps WebGL blend warm-up disabled on the WebGPU backend', async () => {
+    it('warms one pipeline variant per blend mode on the WebGPU backend', async () => {
       const webgpuRenderer = Object.assign(new THREE.WebGLRenderer(), {
         isWebGLRenderer: false,
       });
@@ -538,6 +540,7 @@ describe('SceneManager', () => {
         renderer: webgpuRenderer as never,
         capabilities: {
           apiSurface: 'webgpu',
+          backendKind: 'webgpu-native',
           nativeWebGPUBackend: true,
           framebufferYDown: true,
           readbackYDown: true,
@@ -561,11 +564,130 @@ describe('SceneManager', () => {
       await sceneManager.init({ canvas: mockCanvas as any, renderer: 'webgpu' });
 
       expect(blendWarmupMocks.configure).toHaveBeenCalledWith({
-        enabled: false,
-        renderer: null,
+        enabled: true,
+        renderer: sceneManager.renderer,
         camera: sceneManager.camera,
         targetScene: sceneManager.scene,
+        pipelineVariants: true,
+        getRenderTarget: expect.any(Function),
       });
+      const warmupConfig = blendWarmupMocks.configure.mock.lastCall?.[0] as {
+        getRenderTarget: () => THREE.RenderTarget | null;
+      };
+      expect(warmupConfig.getRenderTarget()).toBe(sceneManager.postProcessing.sceneRenderTarget);
+    });
+  });
+
+  describe('WebGPU device-loss recovery', () => {
+    /** A WebGPU-shaped renderer (the WebGL mock with a device that never loses). */
+    function webgpuResult() {
+      const renderer = Object.assign(new THREE.WebGLRenderer(), {
+        isWebGLRenderer: false,
+        backend: { device: { lost: new Promise(() => {}) } },
+      });
+      return {
+        fallback: false as const,
+        renderer: renderer as never,
+        capabilities: {
+          apiSurface: 'webgpu' as const,
+          backendKind: 'webgpu-native' as const,
+          nativeWebGPUBackend: true,
+          framebufferYDown: true,
+          readbackYDown: true,
+          hdr: {
+            p3Gamut: false,
+            rec2020Gamut: false,
+            hdr: false,
+            deepColor: false,
+            floatTextures: false,
+            filterableFloatTextures: false,
+            colorDepth: { red: 8, green: 8, blue: 8 },
+            recommendedColorSpace: 'srgb' as const,
+          },
+          maxMSAASamples: 0,
+          maxTextureSize: 2048,
+          maxRenderbufferSize: 2048,
+          pointSizeRange: [1, 1024] as [number, number],
+        },
+      };
+    }
+
+    it('rebuilds the renderer on a native device and hands it to post-processing', async () => {
+      const first = webgpuResult();
+      const second = webgpuResult();
+      vi.mocked(mockedCreateWebGPURenderer)
+        .mockResolvedValueOnce(first)
+        .mockResolvedValueOnce(second);
+      await sceneManager.init({ canvas: mockCanvas as any, renderer: 'webgpu' });
+      const adopt = vi.spyOn(sceneManager.postProcessing, 'adoptRenderer');
+      const restored = vi.fn();
+      const lost = vi.fn();
+      sceneManager.addEventListener('webgpu-device-lost', lost);
+      sceneManager.addEventListener('webgpu-device-restored', restored);
+      const clearsBeforeLoss = blendWarmupMocks.clear.mock.calls.length;
+      const warmsBeforeLoss = blendWarmupMocks.warmScene.mock.calls.length;
+
+      expect(await sceneManager.simulateWebGPUDeviceLoss()).toBe(true);
+
+      expect(lost).toHaveBeenCalledTimes(1);
+      expect(blendWarmupMocks.clear).toHaveBeenCalledTimes(clearsBeforeLoss + 1);
+      expect(restored).toHaveBeenCalledTimes(1);
+      expect(blendWarmupMocks.configure).toHaveBeenLastCalledWith({
+        enabled: true,
+        renderer: second.renderer,
+        camera: sceneManager.camera,
+        targetScene: sceneManager.scene,
+        pipelineVariants: true,
+        getRenderTarget: expect.any(Function),
+      });
+      expect(blendWarmupMocks.warmScene).toHaveBeenCalledTimes(warmsBeforeLoss + 1);
+      expect(blendWarmupMocks.warmScene).toHaveBeenLastCalledWith(sceneManager.scene);
+      expect(sceneManager.renderer).toBe(second.renderer);
+      expect(adopt).toHaveBeenCalledWith(second.renderer, second.capabilities);
+      // A rebuilt renderer always needs a NATIVE device: TSL materials cannot
+      // move to the WebGL renderer mid-session.
+      expect(mockedCreateWebGPURenderer).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ requireNativeAdapter: true, rendererOverride: 'webgpu' })
+      );
+      expect(sceneManager.isGpuContextLost()).toBe(false);
+    });
+
+    it('disposes a renderer built after the scene manager was disposed', async () => {
+      const first = webgpuResult();
+      const late = webgpuResult();
+      const disposeLate = vi.spyOn(late.renderer, 'dispose');
+      let finish!: (result: typeof late) => void;
+      vi.mocked(mockedCreateWebGPURenderer)
+        .mockResolvedValueOnce(first)
+        .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+      await sceneManager.init({ canvas: mockCanvas as any, renderer: 'webgpu' });
+      const done = sceneManager.simulateWebGPUDeviceLoss();
+      sceneManager.dispose();
+      finish(late);
+      expect(await done).toBe(false);
+      expect(disposeLate).toHaveBeenCalledTimes(1);
+      expect(sceneManager.renderer).toBe(first.renderer);
+    });
+
+    it('stays lost and reports unrecoverable when no native device comes back', async () => {
+      vi.mocked(mockedCreateWebGPURenderer)
+        .mockResolvedValueOnce(webgpuResult())
+        .mockResolvedValue({ fallback: true });
+      await sceneManager.init({ canvas: mockCanvas as any, renderer: 'webgpu' });
+      vi.useFakeTimers();
+      try {
+        const unrecoverable = vi.fn();
+        sceneManager.addEventListener('webgpu-device-unrecoverable', unrecoverable);
+        const done = sceneManager.simulateWebGPUDeviceLoss();
+        await vi.runAllTimersAsync();
+        expect(await done).toBe(false);
+        expect(unrecoverable).toHaveBeenCalledTimes(1);
+        expect(sceneManager.isGpuContextLost()).toBe(true);
+      } finally {
+        vi.useRealTimers();
+        vi.mocked(mockedCreateWebGPURenderer).mockReset();
+      }
     });
   });
 
@@ -2241,6 +2363,30 @@ describe('SceneManager', () => {
       // And createWebGPURenderer was called exactly once before falling
       // through; setupWebGPURenderer doesn't re-attempt the WebGPU path.
       expect(mockedCreateWebGPURenderer).toHaveBeenCalledTimes(1);
+    });
+
+    it('an explicit renderer:webgpu may run on the WebGL2 bridge; an env-var selection may not', async () => {
+      vi.mocked(mockedCreateWebGPURenderer).mockResolvedValueOnce({ fallback: true });
+      await sceneManager.init({ canvas: mockCanvas as any, renderer: 'webgpu' });
+      expect(mockedCreateWebGPURenderer).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ requireNativeAdapter: false })
+      );
+
+      vi.stubEnv('VITE_LUXAR_USE_WEBGPU', '1');
+      try {
+        const envManager = new SceneManager();
+        vi.mocked(mockedCreateWebGPURenderer).mockResolvedValueOnce({ fallback: true });
+        await envManager.init({ canvas: mockCanvas as any });
+        expect(mockedCreateWebGPURenderer).toHaveBeenLastCalledWith(
+          expect.anything(),
+          expect.objectContaining({ requireNativeAdapter: true })
+        );
+        expect((envManager.renderer as { isWebGLRenderer?: boolean }).isWebGLRenderer).toBe(true);
+        envManager.dispose();
+      } finally {
+        vi.unstubAllEnvs();
+      }
     });
   });
 });

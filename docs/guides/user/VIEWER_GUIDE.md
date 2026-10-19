@@ -226,7 +226,7 @@ Append parameters to the viewer URL to control startup behavior.
 | `depthSort` | `0` \| `false` \| `off` | Disable gsplat depth sorting (on by default); `normal`-mode splats then keep storage order, which pins deterministic output for visual runs. |
 | `noDensityGuard` | flag | Disable the projected-density guard (per-node thinning + refinement rung cap on over-drawn nodes; on by default). |
 | `densityCap` | positive number | Session-only override of the density guard's blendable cap, in elements per drawing-buffer pixel (configured default 4). |
-| `noBlendWarmup` | flag | Disable the WebGL blend-variant program warm-up (on by default): the first Layers-panel blend switch then pays the shader link cost on the click. |
+| `noBlendWarmup` | flag | Disable the blend-variant warm-up (on by default, WebGL programs and WebGPU pipelines): the first Layers-panel blend switch then pays the shader compile cost on the click. |
 | `noLinks` | flag | Disable element-authored navigation and the link items of the right-click menu; `Copy` and the `element-click` / `element-contextmenu` events still work. The switch for embedding scenes you did not author. |
 | `bakeEnv` | flag | Capture the scene-derived environment cube map once the load settles and download it (driven by `luxar env bake`). |
 | `probe` | `auto` \| `node:<path>` \| `x,y,z` | Probe position for `bakeEnv`; defaults to the scene's configured probe or `auto`. |

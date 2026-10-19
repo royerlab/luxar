@@ -46,6 +46,7 @@ import {
 import { resolveHdrHeadroom } from '../../../utils/hdr/hdr-headroom';
 import { platformName } from '../../../utils/platform';
 import { log, Modules } from '../../../utils/log';
+import { loadTslMaterials } from '../../../rendering/tsl/load';
 import {
   clampHdrHeadroom,
   DEFAULT_HDR_HEADROOM,
@@ -117,30 +118,55 @@ export interface BackendSelection {
   backend: 'webgl' | 'webgpu';
   /** Where the selection came from, for logging. */
   source: 'url-param' | 'env-var' | 'default';
+  /**
+   * WebGPU only on a NATIVE adapter: without one, use `WebGLRenderer` rather
+   * than letting three run TSL on its internal WebGL2 backend. True for every
+   * selection except an explicit `?renderer=webgpu`, which keeps the WebGL2
+   * bridge reachable for diagnostics (and the render gate's `webgpu-gl` arm).
+   */
+  requireNativeAdapter: boolean;
 }
+
+/**
+ * The backend a session gets when nothing selects one. WebGL until native
+ * WebGPU meets the go/no-go criteria of issue #3146; a `'webgpu'` default
+ * still falls back to `WebGLRenderer` wherever no native adapter exists.
+ */
+const DEFAULT_BACKEND: BackendSelection['backend'] = 'webgl';
 
 /**
  * Select the rendering backend.
  *
  * Precedence (highest to lowest):
- *   1. Per-instance `rendererOverride` (URL `?renderer=webgl|webgpu`).
+ *   1. Per-instance `rendererOverride` (URL `?renderer=webgl|webgpu`, or the
+ *      Settings › Advanced › Renderer choice).
  *   2. `VITE_LUXAR_USE_WEBGPU=1` / `VITE_LUXAR_USE_WEBGPU_RENDERER=1` env vars.
- *   3. `VITE_LUXAR_USE_LEGACY_WEBGL=1` env var (no-op alias for the default).
- *   4. Default: WebGL.
+ *   3. `VITE_LUXAR_USE_LEGACY_WEBGL=1` env var (forces WebGL).
+ *   4. `defaultBackend` (`DEFAULT_BACKEND`, WebGL today).
+ *
+ * Only an explicit `'webgpu'` override may run on three's WebGL2 bridge; every
+ * other WebGPU selection requires a native adapter.
  */
-export function selectBackend(rendererOverride: 'webgl' | 'webgpu' | undefined): BackendSelection {
-  if (rendererOverride === 'webgl') return { backend: 'webgl', source: 'url-param' };
-  if (rendererOverride === 'webgpu') return { backend: 'webgpu', source: 'url-param' };
+export function selectBackend(
+  rendererOverride: 'webgl' | 'webgpu' | undefined,
+  defaultBackend: BackendSelection['backend'] = DEFAULT_BACKEND
+): BackendSelection {
+  if (rendererOverride === 'webgl') {
+    return { backend: 'webgl', source: 'url-param', requireNativeAdapter: true };
+  }
+  if (rendererOverride === 'webgpu') {
+    return { backend: 'webgpu', source: 'url-param', requireNativeAdapter: false };
+  }
   if (
     import.meta.env.VITE_LUXAR_USE_WEBGPU === '1' ||
     import.meta.env.VITE_LUXAR_USE_WEBGPU_RENDERER === '1'
   ) {
-    return { backend: 'webgpu', source: 'env-var' };
+    return { backend: 'webgpu', source: 'env-var', requireNativeAdapter: true };
   }
   if (import.meta.env.VITE_LUXAR_USE_LEGACY_WEBGL === '1') {
-    return { backend: 'webgl', source: 'env-var' };
+    return { backend: 'webgl', source: 'env-var', requireNativeAdapter: true };
   }
-  return { backend: 'webgl', source: 'default' };
+  return { backend: defaultBackend, source: 'default', requireNativeAdapter: true };
 }
 
 /**
@@ -260,7 +286,10 @@ export async function createWebGLRenderer(
   const capabilities = createRendererCapabilities(renderer);
   configureRendererBackend(renderer, capabilities);
 
-  log.info(Modules.RENDERER, `Rendering API: ${capabilities.apiSurface}`);
+  log.info(
+    Modules.RENDERER,
+    `Rendering API: ${capabilities.apiSurface} (${capabilities.backendKind})`
+  );
 
   const hdrCapabilities = capabilities.hdr;
   logHDRCapabilities(hdrCapabilities);
@@ -294,6 +323,13 @@ export interface CreateWebGPUOptions {
    * push through on a degenerate adapter.
    */
   rendererOverride?: 'webgl' | 'webgpu';
+  /**
+   * Return `{ fallback: true }` when no native WebGPU device can be obtained
+   * (no `navigator.gpu`, no adapter, or `requestDevice` failed) instead of
+   * constructing a `WebGPURenderer` that three would run on its WebGL2
+   * backend. Ignored with `webgpuForceWebGL`, which asks for that backend.
+   */
+  requireNativeAdapter?: boolean;
   /** PROTOTYPE: request extended-range (HDR) output (`?hdr`); gated by `planHdrOutput`. */
   hdr?: boolean;
   /** Pinned HDR headroom (`?hdr=<n>`); omitted = resolved per display. */
@@ -401,11 +437,39 @@ function confirmHdrOutput(
   return plan;
 }
 
+/** The `three/webgpu` module: the prefetch when one is in flight (retried if it failed). */
+function loadThreeWebGPU(
+  prefetch: Promise<typeof import('three/webgpu')> | undefined
+): Promise<typeof import('three/webgpu')> {
+  return prefetch?.catch(() => import('three/webgpu')) ?? import('three/webgpu');
+}
+
+/**
+ * True (and logged) when `requireNativeAdapter` asked for a native WebGPU
+ * device and none was obtained, so the caller falls back to WebGL.
+ */
+function lacksRequiredNativeDevice(
+  options: CreateWebGPUOptions,
+  hasGpu: boolean,
+  hasAdapter: boolean,
+  device: unknown
+): boolean {
+  if (device !== undefined || options.requireNativeAdapter !== true) return false;
+  if (options.webgpuForceWebGL === true) return false;
+  const why = !hasGpu
+    ? 'navigator.gpu is unavailable'
+    : hasAdapter
+      ? 'requestDevice failed'
+      : 'no adapter';
+  log.info(Modules.RENDERER, `No native WebGPU device (${why}); using WebGLRenderer.`);
+  return true;
+}
+
 /**
  * Result of `createWebGPURenderer`. Either a successful WebGPU
- * renderer + capabilities pair OR a signal that the WebGPU adapter
- * was below the spec minimum and the caller should fall back to
- * `createWebGLRenderer`.
+ * renderer + capabilities pair OR a signal that the caller should fall
+ * back to `createWebGLRenderer`: the adapter was below the spec minimum,
+ * or a native adapter was required and none was available.
  */
 export type CreateWebGPUResult = (CreatedRenderer & { fallback: false }) | { fallback: true };
 
@@ -416,9 +480,11 @@ export type CreateWebGPUResult = (CreatedRenderer & { fallback: false }) | { fal
  * {@link forwardedAdapterLimits}). Performs `await renderer.init()`
  * before returning.
  *
- * When the adapter advertises `maxVertexBuffers < 8` (WebGPU spec
- * minimum) and `rendererOverride !== 'webgpu'`, returns
- * `{ fallback: true }` so the caller can drop to WebGL instead.
+ * Returns `{ fallback: true }` so the caller can drop to WebGL when the
+ * adapter advertises `maxVertexBuffers < 8` (WebGPU spec minimum) and
+ * `rendererOverride !== 'webgpu'`, or when `requireNativeAdapter` is set and
+ * no native device was obtained. Both return before `three/webgpu` is
+ * imported, so a fallback session never downloads that chunk.
  */
 export async function createWebGPURenderer(
   canvas: HTMLCanvasElement,
@@ -480,6 +546,7 @@ export async function createWebGPURenderer(
 
   let device: unknown;
   let adapterMax: number | undefined;
+  let webgpuModule: Promise<typeof import('three/webgpu')> | undefined;
   if (adapter) {
     adapterMax = adapter.limits?.maxVertexBuffers;
 
@@ -519,23 +586,29 @@ export async function createWebGPURenderer(
         `maxStorageBufferBindingSize=${requiredLimits.maxStorageBufferBindingSize ?? 'default'}, ` +
         `maxTextureDimension2D=${requiredLimits.maxTextureDimension2D ?? 'default'}`
     );
+    // Fetch the renderer chunk and the TSL material cone WHILE the device is
+    // requested (~125 ms on an RTX 3070), not after it: a session that got an
+    // adapter is going WebGPU. Only a requestDevice failure under
+    // `requireNativeAdapter` (rare) pays for a download it then does not use.
+    // A failed prefetch is retried by the awaits below and in SceneManager.
+    void (webgpuModule = import('three/webgpu')).catch(() => undefined);
+    loadTslMaterials().catch(() => undefined);
     try {
       device = await adapter.requestDevice({ requiredFeatures, requiredLimits });
     } catch (err) {
-      log.warning(
-        Modules.RENDERER,
-        `WebGPU requestDevice failed (${err}); falling through to Three's internal compat-mode init.`
-      );
+      log.warning(Modules.RENDERER, `WebGPU requestDevice failed (${err}).`);
     }
   }
 
-  // Loaded HERE, not at module scope: a static `import { WebGPURenderer }`
+  if (lacksRequiredNativeDevice(options, gpu !== undefined, adapter !== null, device)) {
+    return { fallback: true };
+  }
+
+  // Loaded lazily, not at module scope: a static `import { WebGPURenderer }`
   // makes the ~182 kB gzipped `three-webgpu` chunk a dependency of the entry
   // bundle, which every WebGL session then downloads and never runs (issue
-  // #1679). `selectBackend()` is pure and synchronous and has already chosen
-  // WebGPU by the time we get here, so this await costs the WebGPU path one
-  // chunk fetch and the default path nothing.
-  const { WebGPURenderer } = await import('three/webgpu');
+  // #1679). Usually already in flight since the adapter answered (above).
+  const { WebGPURenderer } = await loadThreeWebGPU(webgpuModule);
   const hdrPlan = planHdrOutput(options, device);
 
   const gpuRenderer = new WebGPURenderer({
@@ -557,7 +630,10 @@ export async function createWebGPURenderer(
     ...(hdrOutput !== undefined ? { hdrOutput } : {}),
   };
   configureRendererBackend(gpuRenderer, capabilities);
-  log.info(Modules.RENDERER, `Rendering API: ${capabilities.apiSurface}`);
+  log.info(
+    Modules.RENDERER,
+    `Rendering API: ${capabilities.apiSurface} (${capabilities.backendKind})`
+  );
 
   const hdrCapabilities = capabilities.hdr;
   logHDRCapabilities(hdrCapabilities);

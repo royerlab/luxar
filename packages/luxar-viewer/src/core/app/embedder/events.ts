@@ -319,10 +319,14 @@ export interface LuxarEmbedderEventMap {
    */
   'waypoint-arrived': { index: number; completed: boolean };
   /**
-   * The WebGPU device was lost. Unrecoverable in this release: the canvas
-   * stays blank until the page reloads (the viewer shows a reload dialog, and
-   * a kiosk watchdog reloads on its own). WebGL context loss is recovered
-   * internally and emits nothing.
+   * The WebGPU device was lost. The viewer rebuilds its renderer on a fresh
+   * device right away and then emits `webgpu-device-restored`, or, when that
+   * fails, `webgpu-device-unrecoverable` (the canvas stays blank until the page
+   * reloads). WebGL context loss is recovered internally and emits nothing.
    */
   'webgpu-device-lost': { reason?: string; message?: string };
+  /** The viewer recovered from a WebGPU device loss; rendering resumed. */
+  'webgpu-device-restored': Record<string, never>;
+  /** Recovery from a WebGPU device loss failed; reload the page to continue. */
+  'webgpu-device-unrecoverable': { reason?: string; message?: string };
 }

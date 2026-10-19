@@ -81,6 +81,7 @@ describe('createRendererCapabilities', () => {
   it('captures api discriminator as webgl2', () => {
     const caps = createRendererCapabilities(fakeRenderer());
     expect(caps.apiSurface).toBe('webgl2');
+    expect(caps.backendKind).toBe('webgl');
     expect(caps.nativeWebGPUBackend).toBe(false);
   });
 
@@ -107,6 +108,7 @@ describe('detectFramebufferYDown', () => {
       backend: { isWebGPUBackend: true },
     } as unknown as Renderer;
     expect(detectFramebufferYDown(fake)).toBe(true);
+    expect(createRendererCapabilities(fake).backendKind).toBe('webgpu-native');
   });
 
   it('returns true for WebGPURenderer running on the WebGL2 compat backend', () => {
@@ -237,7 +239,13 @@ describe('createRendererCapabilities (WebGPU limits)', () => {
 
     expect(caps.framebufferYDown).toBe(true);
     expect(caps.readbackYDown).toBe(isNative);
+    expect(caps.backendKind).toBe(isNative ? 'webgpu-native' : 'webgpu-gl');
     expect(caps.nativeWebGPUBackend).toBe(isNative);
+  });
+
+  it('reports the WebGL2 bridge when backend introspection is unavailable', () => {
+    const renderer = { isWebGPURenderer: true } as unknown as Renderer;
+    expect(createRendererCapabilities(renderer).backendKind).toBe('webgpu-gl');
   });
 
   it('uses the WebGPU texture dimension for render attachments', () => {
