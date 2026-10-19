@@ -45,6 +45,10 @@ import { perfCounters } from '../profiling/perf-counters';
 import { prefetchRootDocument } from '../cache/root-document-prefetch';
 import { normalizeURL } from '../data/scene-loader/lifecycle/url-normalization';
 import { loadsDirectlyWithoutProbe } from './app/dataset/should-show-browser';
+import {
+  requestWebGPUDevice,
+  selectBackend,
+} from '../scene/scene-manager/render-pipeline/renderer-setup';
 
 /**
  * Options for {@link bootstrapStandalone}.
@@ -367,6 +371,18 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       ? { probe: urlParams.probe ?? undefined, resolution: urlParams.envResolution ?? undefined }
       : undefined,
   };
+
+  // Start native device acquisition before LuxarApp's renderer setup chain.
+  // The promise belongs to this initialization only; a recovered renderer
+  // calls createWebGPURenderer without it and gets a fresh device.
+  const backendSelection = selectBackend(appOptions.renderer);
+  if (backendSelection.backend === 'webgpu' && !appOptions.webgpuForceWebGL) {
+    appOptions.preRequestedWebGPUDevice = requestWebGPUDevice(
+      appOptions.renderer,
+      backendSelection.requireNativeAdapter
+    );
+    void appOptions.preRequestedWebGPUDevice.catch(() => undefined);
+  }
 
   // Put the dataset's root document on the wire NOW, in parallel with renderer
   // init (shader links, adapter negotiation), instead of after it: startup was

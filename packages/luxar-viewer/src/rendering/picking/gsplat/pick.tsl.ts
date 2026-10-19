@@ -55,6 +55,7 @@ import {
   perspectiveNearFadeTSL,
   invalidFloatTSL,
   type TSLNode,
+  loadTexel,
   sortedIndexNode,
   densityDroppedNode,
   sanitizeAlpha,
@@ -218,9 +219,9 @@ export function gsplatPickWebGPUFactory(
 
   const vertexBody = Fn(() => {
     // === Splat-texture fetch prologue (visual-factory parity) ===
-    // Picking needs texels 0-2 only (center/amplitude/cholesky); color
-    // is not fetched. Every value is a `.toVar()` STATEMENT (Fn house
-    // rule). Width is a multiple of 4 -> one row per splat.
+    // Picking loads all four texels for center, covariance, alpha, and label.
+    // Every value is a `.toVar()` STATEMENT (Fn house rule). Width is a
+    // multiple of 4 -> one row per splat.
     const splatBase: TSLNode = int(aSortedIndex).mul(int(4)).toVar();
     // The width is baked as a LITERAL, not read via textureSize(): a
     // compile-time constant lets the shader compiler strength-reduce
@@ -241,10 +242,10 @@ export function gsplatPickWebGPUFactory(
     ).toVar();
     const texelX: TSLNode = splatBase.mod(splatTexW).toVar();
     const texelY: TSLNode = splatBase.div(splatTexW).toVar();
-    const splatT0: TSLNode = uSplatTex.load(ivec2(texelX, texelY)).toVar();
-    const splatT1: TSLNode = uSplatTex.load(ivec2(texelX.add(int(1)), texelY)).toVar();
-    const splatT2: TSLNode = uSplatTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
-    const splatT3: TSLNode = uSplatTex.load(ivec2(texelX.add(int(3)), texelY)).toVar();
+    const splatT0: TSLNode = loadTexel(uSplatTex, ivec2(texelX, texelY)).toVar();
+    const splatT1: TSLNode = loadTexel(uSplatTex, ivec2(texelX.add(int(1)), texelY)).toVar();
+    const splatT2: TSLNode = loadTexel(uSplatTex, ivec2(texelX.add(int(2)), texelY)).toVar();
+    const splatT3: TSLNode = loadTexel(uSplatTex, ivec2(texelX.add(int(3)), texelY)).toVar();
     const aCenter: TSLNode = vec3(splatT0).toVar();
     const aAmplitude: TSLNode = splatT0.w.toVar();
     const aCholesky01: TSLNode = splatT1.xy.toVar();
