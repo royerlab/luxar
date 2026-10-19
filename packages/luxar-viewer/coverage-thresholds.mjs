@@ -148,7 +148,9 @@ export const COVERAGE_THRESHOLDS = {
   // rendering coverage, pushing the old 84/85 floor past the slack budget.
   // branches 78 -> 80 (2026-10): #3186 recorded 80.95 before its final rebase
   // onto #3196/#3128, and the merged tree measures 81.04, past the slack budget.
-  'src/rendering/**': { lines: 89, functions: 88, branches: 80 },
+  // lines 89 -> 91: the texel-load WGSL cases (#3194), together with those
+  // earlier tests, measure 92.58 on the merged tree, beyond the slack budget.
+  'src/rendering/**': { lines: 91, functions: 88, branches: 80 },
 
   // The last two measured top-level source directories without a sub-gate;
   // until 2026-10 their coverage could erode freely inside the global pool.
@@ -158,23 +160,23 @@ export const COVERAGE_THRESHOLDS = {
 
 /** Last accepted coverage measurements for each floor. */
 export const COVERAGE_RECORDED = {
-  lines: 93.79,
-  statements: 92.47,
-  functions: 91.03,
-  branches: 86.01,
+  lines: 94.18,
+  statements: 92.82,
+  functions: 91.06,
+  branches: 86.21,
   'src/types/**': { lines: 99.1, functions: 96.67, branches: 97.96 },
   'src/wasm/**': { lines: 98.61, functions: 100, branches: 96.64 },
   'src/config/**': { lines: 96.8, functions: 100, branches: 94.03 },
-  'src/utils/**': { lines: 99.49, functions: 99.38, branches: 95.15 },
-  'src/scene/**': { lines: 96.69, functions: 92.07, branches: 91.55 },
-  'src/cache/**': { lines: 95.92, functions: 95.38, branches: 87.34 },
+  'src/utils/**': { lines: 99.5, functions: 99.38, branches: 95.15 },
+  'src/scene/**': { lines: 96.81, functions: 92.38, branches: 91.61 },
+  'src/cache/**': { lines: 95.93, functions: 95.4, branches: 87.31 },
   'src/controls/**': { lines: 96.81, functions: 92.92, branches: 89.82 },
-  'src/data/**': { lines: 94.58, functions: 93.54, branches: 88.36 },
-  'src/workers/**': { lines: 95.07, functions: 95.65, branches: 90 },
-  'src/ui/**': { lines: 92.64, functions: 88.12, branches: 80.49 },
-  'src/core/**': { lines: 92.99, functions: 82.41, branches: 88.16 },
+  'src/data/**': { lines: 94.59, functions: 93.54, branches: 88.38 },
+  'src/workers/**': { lines: 95.07, functions: 95.65, branches: 90.04 },
+  'src/ui/**': { lines: 92.69, functions: 88.34, branches: 80.63 },
+  'src/core/**': { lines: 92.79, functions: 82.22, branches: 87.96 },
   'src/input/**': { lines: 92.96, functions: 89.41, branches: 86.11 },
-  'src/rendering/**': { lines: 91.96, functions: 90.14, branches: 81.04 },
+  'src/rendering/**': { lines: 92.58, functions: 90.72, branches: 81.9 },
   'src/audio/**': { lines: 96.5, functions: 95.48, branches: 84.11 },
   'src/profiling/**': { lines: 96.63, functions: 96.25, branches: 88.75 },
 };
