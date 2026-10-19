@@ -85,9 +85,9 @@ describe('mesh pick corner selection', () => {
       const capabilities = {
         ...makeStubCapabilities(),
         apiSurface,
-        nativeWebGPUBackend: webgpu,
+        backendKind: webgpu ? 'webgpu-native' : apiSurface === 'webgpu' ? 'webgpu-gl' : 'webgl',
         readbackYDown: !webgpu,
-      };
+      } satisfies import('../../../../rendering/renderer-capabilities').RendererCapabilities;
       const system = new PickingSystem(renderer, capabilities, makeCamera(), vi.fn());
       const geometry = new THREE.BufferGeometry();
       geometry.setIndex([0, 1, 2]);

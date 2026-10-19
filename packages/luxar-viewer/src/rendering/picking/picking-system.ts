@@ -254,7 +254,8 @@ export class PickingSystem {
     // triples so last-vertex sampling still returns the original first corner.
     // The renderer API surface can be WebGPU while its effective backend is GL.
     this.rotateMeshPickIndices =
-      !alignProvokingVertexWithWebGPU(this.renderer) && !this.capabilities.nativeWebGPUBackend;
+      !alignProvokingVertexWithWebGPU(this.renderer) &&
+      this.capabilities.backendKind !== 'webgpu-native';
 
     log.info(Modules.RENDERER, 'PickingSystem initialized (5x5 RGBA32F)');
   }
