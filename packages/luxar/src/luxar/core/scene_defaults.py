@@ -285,8 +285,7 @@ def fitted_scene_defaults(path: Union[str, Path], **options: Any) -> FittedScene
     is grafted as is, so ``attrs`` then carries no ``dim_order``.
 
     The store is read here and again by the adder: a second full load, which
-    costs as much as the first on a large store. (The adder's own fitted
-    default reads it twice too, once to resolve and once to write.)
+    costs as much as the first on a large store.
 
     Raises:
         ValueError: A malformed option, or a grafted tree with no splats.
