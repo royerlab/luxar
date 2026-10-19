@@ -67,6 +67,7 @@ import {
   perspectiveNearFadeTSL,
   isOrthoProjectionTSL,
   projectionSizeScaleTSL,
+  loadTexel,
   type TSLNode,
   sortedIndexNode,
   densityDroppedNode,
@@ -343,13 +344,13 @@ export function pointWebGPUFactory(
     ).toVar();
     const texelX: TSLNode = pointBase.mod(pointTexW).toVar();
     const texelY: TSLNode = pointBase.div(pointTexW).toVar();
-    const pointT0: TSLNode = uPointTex.load(ivec2(texelX, texelY)).toVar();
-    const pointT1: TSLNode = uPointTex.load(ivec2(texelX.add(int(1)), texelY)).toVar();
+    const pointT0: TSLNode = loadTexel(uPointTex, ivec2(texelX, texelY)).toVar();
+    const pointT1: TSLNode = loadTexel(uPointTex, ivec2(texelX.add(int(1)), texelY)).toVar();
     const aCenter: TSLNode = vec3(pointT0).toVar(); // world-space centre
     const aRadius: TSLNode = pointT0.w.toVar();
     const aColor: TSLNode = vec3(pointT1).toVar();
     const aSharpness: TSLNode = pointT1.w.toVar();
-    const pointT2: TSLNode = uPointTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
+    const pointT2: TSLNode = loadTexel(uPointTex, ivec2(texelX.add(int(2)), texelY)).toVar();
     const aScalar: TSLNode | null = config.useColormap ? pointT2.x.toVar() : null;
 
     // Sanitise per-point values (NaN/Inf-safe).
