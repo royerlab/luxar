@@ -759,9 +759,9 @@ export class BlendWarmupManager {
       }
 
       keeper.applyBlendingMode(mode);
-      // A transparent DoubleSide mesh is drawn twice (back, then front).
-      // compileAsync does not take the render() two-pass path, so a single
-      // DoubleSide keeper warms neither draw's node-builder cache key.
+      // compileAsync queues both draws by material reference, then builds after
+      // Three restores DoubleSide; neither back/front node-builder key is warmed.
+      // WebGL compile resolves each side synchronously, so it needs no split.
       for (const candidate of warmupKeepers(keeper, this.pipelineVariants)) {
         this.enqueueVariantKeeper(sourceMaterial, object, state, mode, candidate);
       }

@@ -39,7 +39,7 @@ rendering/
 ├── blending-state.ts                   # THREE blending state for every Luxar mode
 ├── material-colormap-helpers.ts        # Shared scalar-colormap guards and uniform helpers
 ├── material-sync-helpers.ts            # Geometry-commit material sync helpers
-├── blend-warmup.ts                     # pre-compile every reachable blend-mode program (WebGL, plus a tiny draw for non-transmissive variants) / pipeline (WebGPU) variant (`?noBlendWarmup`)
+├── blend-warmup.ts                     # pre-compile blend-mode programs (WebGL, plus a tiny draw for non-transmissive variants) and pipelines (WebGPU, with back/front side variants per transparent DoubleSide mesh mode); disable with `?noBlendWarmup`
 ├── tsl/                                # The lazy three/webgpu boundary — registry.ts (sole entry to the cone) + load.ts (sole `await import()`) + slot.ts (zero-runtime-import accessor). See tsl/README.md.
 ├── display-range.ts                    # Pure display-window ↔ shader intensity/offset math + resolveColormapWindow (shared by all 4 node factories)
 
