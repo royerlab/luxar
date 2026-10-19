@@ -17,7 +17,8 @@
  *
  * This manager pre-compiles every DISTINCT blend-variant program a live visual
  * material can reach, then draws one tiny primitive for non-transmissive
- * variants so first-use draw state is primed too. One variant runs per
+ * WebGL variants with an ordinary render target so first-use draw state is
+ * primed too. Canvas and XR variants are link-warmed only. One variant runs per
  * post-frame idle opportunity so visible rendering and input get a turn before
  * every link. Browsers without idle callbacks use a conservative 50 ms delay.
  * The warmed programs stay pinned by keeper materials until the source
@@ -160,7 +161,7 @@ export type CompileOne = (
 export interface CompileOptions {
   /** Aborted when the warm-up is cleared or the link times out. */
   signal: AbortSignal;
-  /** WebGPU: the target the scene renders into (its format is part of the pipeline key). */
+  /** The target the scene renders into (its format/colour space affects the pipeline/program key). */
   getRenderTarget?: () => THREE.RenderTarget | null;
 }
 
@@ -258,18 +259,40 @@ async function defaultCompileOne(
       await compile;
     } else {
       const webglRenderer = renderer as THREE.WebGLRenderer;
-      await compileWebGLAndAwaitLink(webglRenderer, compileScene, camera, targetScene, signal);
+      const liveTarget = await compileWebGLAndAwaitLink(
+        webglRenderer,
+        compileScene,
+        camera,
+        targetScene,
+        {
+          signal,
+          getRenderTarget,
+        }
+      );
       assertWarmupContext(webglRenderer, signal);
       const material = (compileObject as THREE.Mesh).material;
-      // Three allocates a transmission target per scene on render and does not
-      // release it when this temporary scene is discarded.
-      if (!(material instanceof THREE.MeshPhysicalMaterial && material.transmission > 0)) {
+      if (shouldDrawWebGLKeeper(liveTarget, material)) {
         drawKeeperOnce(webglRenderer, camera, compileScene, compileObject);
       }
     }
   } finally {
     compileScene.remove(compileObject);
   }
+}
+
+function shouldDrawWebGLKeeper(
+  target: THREE.RenderTarget | null,
+  material: THREE.Material | THREE.Material[]
+): boolean {
+  // The private target keys the working colour space and NoToneMapping. Canvas
+  // keys the renderer's output colour space and toneMapping; XR keys its texture's
+  // colour space and renderer.toneMapping. A draw could link another program.
+  if (target === null || ('isXRRenderTarget' in target && target.isXRRenderTarget === true)) {
+    return false;
+  }
+  // Three allocates a transmission target per scene on render and does not
+  // release it when this temporary scene is discarded.
+  return !(material instanceof THREE.MeshPhysicalMaterial && material.transmission > 0);
 }
 
 function limitKeeperInstances(object: THREE.Object3D, geometry: THREE.BufferGeometry): () => void {
@@ -360,10 +383,16 @@ async function compileWebGLAndAwaitLink(
   compileScene: THREE.Scene,
   camera: THREE.Camera,
   targetScene: THREE.Scene,
-  signal: AbortSignal
-): Promise<void> {
+  { signal, getRenderTarget }: CompileOptions
+): Promise<THREE.RenderTarget | null> {
   assertWarmupContext(renderer, signal);
-  const materials = renderer.compile(compileScene, camera, targetScene);
+  const { materials, target } = compileWebGLWithTarget(
+    renderer,
+    compileScene,
+    camera,
+    targetScene,
+    getRenderTarget
+  );
   while (materials.size > 0) {
     assertWarmupContext(renderer, signal);
     for (const material of materials) {
@@ -373,6 +402,27 @@ async function compileWebGLAndAwaitLink(
       if (properties.currentProgram?.isReady()) materials.delete(material);
     }
     if (materials.size > 0) await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return target;
+}
+
+function compileWebGLWithTarget(
+  renderer: THREE.WebGLRenderer,
+  compileScene: THREE.Scene,
+  camera: THREE.Camera,
+  targetScene: THREE.Scene,
+  getRenderTarget?: () => THREE.RenderTarget | null
+): { materials: Set<THREE.Material>; target: THREE.RenderTarget | null } {
+  const previous = renderer.getRenderTarget();
+  if (!getRenderTarget) {
+    return { materials: renderer.compile(compileScene, camera, targetScene), target: previous };
+  }
+  const target = getRenderTarget();
+  try {
+    renderer.setRenderTarget(target as THREE.WebGLRenderTarget | null);
+    return { materials: renderer.compile(compileScene, camera, targetScene), target };
+  } finally {
+    renderer.setRenderTarget(previous);
   }
 }
 
