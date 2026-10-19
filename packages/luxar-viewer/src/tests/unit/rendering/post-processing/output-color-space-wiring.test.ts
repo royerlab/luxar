@@ -36,7 +36,6 @@ function mockCaps(apiSurface: 'webgl2' | 'webgpu' = 'webgl2'): RendererCapabilit
   return {
     apiSurface,
     backendKind: apiSurface === 'webgl2' ? 'webgl' : 'webgpu-native',
-    nativeWebGPUBackend: false,
     framebufferYDown: apiSurface === 'webgpu',
     readbackYDown: false,
     hdr: {

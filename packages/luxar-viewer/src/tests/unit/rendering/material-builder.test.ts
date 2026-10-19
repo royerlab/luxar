@@ -28,7 +28,6 @@ function makeCaps(apiSurface: 'webgl2' | 'webgpu'): RendererCapabilities {
   return {
     apiSurface,
     backendKind: apiSurface === 'webgl2' ? 'webgl' : 'webgpu-native',
-    nativeWebGPUBackend: false,
     framebufferYDown: apiSurface === 'webgpu',
     readbackYDown: false,
     hdr: {
