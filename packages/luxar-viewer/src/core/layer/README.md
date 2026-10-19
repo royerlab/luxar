@@ -223,6 +223,8 @@ blending when exposure should produce smooth surface transparency.
   current target when each compile starts. WebGL includes the output colour space
   in its program key, so a canvas host should return `null` if other passes may
   leave a target bound; a host rendering through a target should return it.
+  Canvas output gets program-link warm-up only; ordinary render-target output
+  also gets a tiny draw for non-transmissive materials to prime first-use draw state.
 - **Draw order for the host's own geometry.** `renderOrder` defaults to 10 and is
   stamped onto every Group in the Luxar subtree, including groups that stream in
   later. Three.js compares that Group key before per-mesh `renderOrder`, so host
