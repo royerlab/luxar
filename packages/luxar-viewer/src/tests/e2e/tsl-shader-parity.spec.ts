@@ -100,10 +100,10 @@ async function runTSL(
 function comparableMeshPickPixels(glsl: number[], tsl: TSLResult): [number[], number[]] {
   if (!tsl.meshPickMembershipOnly) return [glsl, tsl.pixels];
   // This harness uses RGBA8: vertex 0 encodes as 0, and vertices 1–3
-  // saturate to 255. Check that the sampled ID is a fixture corner before
-  // excluding that channel from the pixel comparison on compatibility devices.
+  // saturate to 255. Reject intermediate ID bytes before excluding that
+  // channel; exact face-corner membership is not observable at 8 bits.
   for (let i = 1; i < tsl.pixels.length; i += 4) {
-    expect([0, 255], `mesh pick at pixel ${(i - 1) / 4} is not a fixture corner`).toContain(
+    expect([0, 255], `mesh pick at pixel ${(i - 1) / 4} has an intermediate ID byte`).toContain(
       tsl.pixels[i]
     );
   }

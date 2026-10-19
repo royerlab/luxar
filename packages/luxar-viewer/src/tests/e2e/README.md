@@ -646,8 +646,9 @@ the harness rotates its direct mesh-pick index buffers through the same fallback
 as `PickingSystem`. WebGL and core WebGPU then report the original first corner
 exactly, including on extension-less contexts (MESH_NODE_SPEC §6.5). On a
 compatibility-mode WebGPU device, the pick ID may be any corner of the hit face;
-the parity spec checks the fixture's quantized corner IDs and compares the other
-three readback channels.
+the RGBA8 parity spec rejects intermediate ID bytes (0 and 255 are the only
+fixture values), then compares the other three readback channels. Exact
+face-corner membership is not observable at 8 bits.
 
 ### Window API exposed by the harness
 
