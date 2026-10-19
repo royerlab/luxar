@@ -87,6 +87,8 @@ export const CONTROL_FORWARDED_EVENTS: readonly string[] = [
   'waypoint-arrived',
   'waypoint-departed',
   'webgpu-device-lost',
+  'webgpu-device-restored',
+  'webgpu-device-unrecoverable',
 ];
 
 /**

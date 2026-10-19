@@ -23,6 +23,8 @@ export interface RegisterNodeParams {
   centers3: Float32Array;
   /** Number of splats. */
   count: number;
+  /** Sorted-index attribute capacity; omitted on classic WebGL and mesh. */
+  orderingCapacity?: number;
 }
 
 export interface SortParams {
@@ -62,7 +64,7 @@ export interface SortResult {
  * registration wholesale.
  */
 export function registerNode(ctx: SortWorkerCtx, params: RegisterNodeParams): void {
-  const { nodeId, generation, centers3, count } = params;
+  const { nodeId, generation, centers3, count, orderingCapacity } = params;
   const safeCount = Math.min(count, Math.floor(centers3.length / 3));
   if (safeCount < count) {
     log.warning(
@@ -71,7 +73,7 @@ export function registerNode(ctx: SortWorkerCtx, params: RegisterNodeParams): vo
         `clamping to ${safeCount}`
     );
   }
-  ctx.nodes.set(nodeId, { generation, centers3, count: safeCount });
+  ctx.nodes.set(nodeId, { generation, centers3, count: safeCount, orderingCapacity });
 }
 
 /**
@@ -88,7 +90,8 @@ export function sortNode(ctx: SortWorkerCtx, params: SortParams): SortResult | n
     return null;
   }
 
-  const ordering = new Uint32Array(node.count);
+  const backing = new Uint32Array(Math.max(node.count, node.orderingCapacity ?? node.count));
+  const ordering = backing.subarray(0, node.count);
   // Timing wraps the backend call generically: `ctx.wasm` is either the
   // compiled WASM module or the TypeScript fallback, so both report.
   const kernelStart = performance.now();

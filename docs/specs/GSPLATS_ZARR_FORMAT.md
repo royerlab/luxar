@@ -709,7 +709,7 @@ it across each gsplat structure**.
 > clipping tone mapping), or lower when a side view or another timepoint would
 > exceed 4x that, recording `amplitude_normalization_mode="projected"` and the
 > prediction (§ "GSplats amplitude provenance" there). `--no-auto-exposure` makes
-> the gain the per-splat normalisation alone; `--scale-intensity S` makes it `S`.
+> the gain the per-splat normalisation alone; `--display-gain S` makes it `S`.
 >
 > **Every amplitude encoding holds data units losslessly relative to normalised
 > ones.** The scene encodings are anchored on each array's own range
@@ -1539,7 +1539,9 @@ was normalized, `floor` is the background level subtracted before fitting
 (`null` when floor suppression was disabled or refused), and `floor_strategy`
 records the specimen estimator branch. An intensity transform leaves the raw
 `image_min` / `image_max` intact, scales `intensity_range` with the amplitudes,
-and records their cumulative `intensity_scale`. **Semantic
+and records their cumulative `intensity_scale`; tools that score a store
+against its raw source (`compare`, `render`, `cull --target`, the LOD volume
+re-fit) take that factor back out. **Semantic
 contract:** the floor is NOT added back — stored amplitudes are
 background-relative (intensity above the subtracted pedestal), so renders
 reconstruct the floor-suppressed volume, not the raw one.

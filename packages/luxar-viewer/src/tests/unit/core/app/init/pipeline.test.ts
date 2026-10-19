@@ -41,6 +41,7 @@ function makeSceneStub(opts: { initThrows?: boolean } = {}) {
     controls: { kind: 'controls' },
     postProcessing: { kind: 'pp', isCaptureInProgress: false, setCaptureReleasedCallback: vi.fn() },
     isWebGLContextLost: vi.fn().mockReturnValue(false),
+    isGpuContextLost: vi.fn().mockReturnValue(false),
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
     scene: { kind: 'scene' },
@@ -1084,7 +1085,7 @@ describe('runInitPipeline', () => {
       expect(events).toContain('webgpu-device-lost');
     });
 
-    it('webgpu-device-lost latches the shared context-lost predicate and pauses the DPR manager', async () => {
+    it('the context-lost predicate follows the scene manager (WebGL loss or a lost WebGPU device)', async () => {
       const { factories, sceneStub } = makeFactoryOverrides();
       const ports = makePorts();
       ports.options.factories = factories as never;
@@ -1096,23 +1097,31 @@ describe('runInitPipeline', () => {
         setContextLostPredicate: ReturnType<typeof vi.fn>;
       };
       const predicate = animation.setContextLostPredicate.mock.calls[0][0] as () => boolean;
-      sceneStub.isWebGLContextLost = vi.fn(() => false);
+      sceneStub.isGpuContextLost = vi.fn(() => false);
       expect(predicate()).toBe(false);
+      sceneStub.isGpuContextLost = vi.fn(() => true);
+      expect(predicate()).toBe(true);
 
-      // Fire the registered webgpu-device-lost handler.
+      // A loss pauses the DPR manager, so cheap no-op frames can't drive scale-ups.
       const handler = sceneStub.addEventListener.mock.calls.find(
         (c: unknown[]) => c[0] === 'webgpu-device-lost'
       )![1] as (event: object) => void;
-      handler({ reason: 'destroyed' });
-
-      // The predicate is latched even though isWebGLContextLost stays
-      // false (it is hard-false under WebGPU), and the DPR manager is
-      // paused so cheap no-op frames can't drive scale-ups.
-      expect(predicate()).toBe(true);
+      handler({ reason: 'unknown' });
       const manager = partial.adaptiveDPRManager as unknown as {
         notifyPaused: ReturnType<typeof vi.fn>;
       };
       expect(manager.notifyPaused).toHaveBeenCalled();
+    });
+
+    it('registers the webgpu-device-restored + webgpu-device-unrecoverable listeners', async () => {
+      const { factories, sceneStub } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+      await runInitPipeline(ports, {});
+
+      const events = sceneStub.addEventListener.mock.calls.map((c) => c[0]);
+      expect(events).toContain('webgpu-device-restored');
+      expect(events).toContain('webgpu-device-unrecoverable');
     });
   });
 

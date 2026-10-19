@@ -117,9 +117,67 @@ class CalibrationResult:
     exponent_fit: Optional[Dict[str, Any]] = None
     """Multi-scale :class:`ExponentFit` (as dict) when ``cal --fit-exponent`` ran;
     its ``alpha`` is also written into ``splat_density.saturation_exponent``."""
+    sweep: Optional[Dict[str, Any]] = None
+    """What the sweep did beyond the grid it was handed (``SweepControl`` as a
+    dict): whether early stopping ended it and which K were skipped, the points
+    added below the grid when K* landed on its bottom edge, and where the grid
+    came from (explicit / bounds / data-derived ``auto``, with provenance).
+    ``None`` when the caller ran a plain fixed grid."""
+    status: str = "complete"
+    """``complete``, ``partial`` (a per-point checkpoint written while the sweep
+    runs — what a crash leaves behind) or ``interrupted`` (Ctrl-C; the points
+    measured so far)."""
+    held_out_psnr_robust_db: List[float] = field(default_factory=list)
+    """Held-out PSNR on the ROBUST peak (``p99.99 - min`` of the calibrated
+    volume) — the convention ``fit`` and ``compare`` headline. A constant offset
+    from ``held_out_psnr_db`` (the full-range ``max - min`` peak), so it selects
+    the same K*."""
+    held_out_psnr_fg_robust_db: List[float] = field(default_factory=list)
+    """Foreground held-out PSNR on the robust peak (offset of
+    ``held_out_psnr_fg_db``)."""
+    data_range: float = float("nan")
+    """Full-range peak (``max - min``) of the calibrated volume."""
+    robust_data_range: float = float("nan")
+    """Robust peak (``p99.99 - min``) of the calibrated volume."""
+    k_values_fitted: List[int] = field(default_factory=list)
+    """Splats each fit ended with, before any closing reduction."""
+    k_values_stored: List[int] = field(default_factory=list)
+    """Splats ``fit --seeds K`` would STORE for that fit: the default speck
+    pruning (``min_extent``) then the cumulative cull (``cull_retention``).
+    ``k_values_effective`` is after the cull only (the scored model)."""
+    k_star_stored: Optional[int] = None
+    """``k_values_stored`` at the selected K*: what ``fit --seeds K*`` keeps.
+    ``K*`` itself is a SEEDING budget, not a stored count."""
+    whole_volume_seeds: Optional[Dict[str, Any]] = None
+    """For a crop calibration (``cal --region`` / ``--auto-region``): the
+    whole-input ``fit --seeds`` budget — the content planner's per-box density
+    transfer summed over crop-sized boxes of the input — with its provenance
+    (``seeds``, ``n_boxes``, feature counts, ``rule``). ``None`` otherwise."""
+
+    def incomplete_warning(self) -> Optional[str]:
+        """A loud warning when this calibration did not finish, else ``None``.
+
+        A ``partial`` file is a per-point checkpoint (a crashed or still
+        running ``cal``); an ``interrupted`` one holds the points measured
+        before Ctrl-C. Either way K*, the density and its saturation cap come
+        from a truncated sweep, so a consumer must say so.
+        """
+        if self.status == "complete":
+            return None
+        what = (
+            "a per-point checkpoint of a calibration that crashed or is still running"
+            if self.status == "partial"
+            else "a calibration interrupted by Ctrl-C"
+        )
+        return (
+            f"⚠ cal.json status is {self.status!r}: {what}, measured at K = "
+            f"{self.k_values_requested}. Its K* and splat density come from that "
+            "truncated sweep; re-run `gsplat cal` to completion for a reliable "
+            "budget."
+        )
 
     def to_json(self, path: Path) -> None:
-        """Serialise to JSON. Non-finite floats become ``null``."""
+        """Serialise to JSON (atomically). Non-finite floats become ``null``."""
 
         def _safe(v: Any) -> Any:
             if isinstance(v, float):
@@ -135,7 +193,7 @@ class CalibrationResult:
 
         data = asdict(self)
         data = _safe(data)
-        Path(path).write_text(json.dumps(data, indent=2))
+        _atomic_write_text(Path(path), json.dumps(data, indent=2))
 
     @classmethod
     def from_json(cls, path: Path) -> "CalibrationResult":
@@ -238,7 +296,55 @@ class CalibrationResult:
             rd_model=_rehydrate_nan_dict(raw.get("rd_model")),
             not_converged=bool(raw.get("not_converged", False)),
             exponent_fit=_rehydrate_nan_dict(raw.get("exponent_fit")),
+            sweep=raw.get("sweep"),
+            status=str(raw.get("status", "complete")),
+            held_out_psnr_robust_db=_hydrate_float_list(
+                raw.get("held_out_psnr_robust_db", [])
+            ),
+            held_out_psnr_fg_robust_db=_hydrate_float_list(
+                raw.get("held_out_psnr_fg_robust_db", [])
+            ),
+            data_range=_opt_float(raw.get("data_range")),
+            robust_data_range=_opt_float(raw.get("robust_data_range")),
+            k_values_fitted=[int(x) for x in raw.get("k_values_fitted", [])],
+            k_values_stored=[int(x) for x in raw.get("k_values_stored", [])],
+            whole_volume_seeds=raw.get("whole_volume_seeds"),
+            k_star_stored=(
+                int(raw["k_star_stored"])
+                if raw.get("k_star_stored") is not None
+                else None
+            ),
         )
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` via a temp file in the same directory.
+
+    ``gsplat cal`` rewrites ``cal.json`` after every grid point; a crash or a
+    Ctrl-C mid-write must leave the previous complete file, never a truncated
+    one, so the bytes land in a sibling temp file that ``os.replace`` (atomic
+    on one filesystem) swaps in.
+    """
+    import os
+    import secrets
+    import stat
+
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(12)}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        if path.exists():
+            os.chmod(tmp, stat.S_IMODE(path.stat().st_mode))
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _opt_float(x: Any) -> float:
+    """``null`` (a non-finite float on write) back to ``nan``."""
+    return float("nan") if x is None else float(x)
 
 
 def _rehydrate_nan_dict(d: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

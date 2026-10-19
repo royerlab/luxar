@@ -126,4 +126,72 @@ describe('renderer-info-sampler', () => {
     eventBus.emit('frame-end', {});
     expect(getRendererInfoSnapshot()).toBeNull();
   });
+
+  describe('WebGPURenderer info (three common/Info)', () => {
+    // three ships this module without a type declaration; import it by a
+    // non-literal specifier and type it locally. The REAL class, so a three
+    // bump that renames a field fails here rather than zeroing the overlay.
+    const INFO_MODULE = 'three/src/renderers/common/Info.js';
+    interface WebGPUInfoLike {
+      autoReset: boolean;
+      render: { calls: number; frameCalls: number; drawCalls: number; triangles: number };
+      memory: { geometries: number; textures: number; programs: number };
+      reset(): void;
+      update(object: unknown, count: number, instanceCount: number): void;
+    }
+
+    async function webgpuRenderer(): Promise<{ info: WebGPUInfoLike }> {
+      const { default: Info } = (await import(/* @vite-ignore */ INFO_MODULE)) as {
+        default: new () => WebGPUInfoLike;
+      };
+      return { info: new Info() };
+    }
+
+    /** One `render()` pass with `draws` single-triangle mesh draws, as three counts it. */
+    function renderPass(info: WebGPUInfoLike, draws: number): void {
+      info.render.calls += 1;
+      info.render.frameCalls += 1;
+      for (let i = 0; i < draws; i++) info.update({ isMesh: true }, 3, 1);
+    }
+
+    it('reports draw calls, the pass counter and the program count', async () => {
+      const renderer = await webgpuRenderer();
+      renderer.info.memory.programs = 6;
+      renderer.info.memory.textures = 2;
+      installRendererInfoSampler(() => renderer);
+      eventBus.emit('frame-start', {});
+      renderPass(renderer.info, 4); // scene
+      renderPass(renderer.info, 1); // the mega-shader quad
+      eventBus.emit('frame-end', { rendered: true });
+      expect(getRendererInfoSnapshot()).toMatchObject({
+        calls: 5,
+        frame: 2,
+        triangles: 5,
+        textures: 2,
+        programs: 6,
+      });
+    });
+
+    it('a skipped tick restores the per-frame draw counters', async () => {
+      const renderer = await webgpuRenderer();
+      installRendererInfoSampler(() => renderer);
+      eventBus.emit('frame-start', {});
+      renderPass(renderer.info, 3);
+      eventBus.emit('frame-end', { rendered: true });
+
+      eventBus.emit('frame-start', {});
+      expect(renderer.info.render.drawCalls).toBe(0);
+      eventBus.emit('frame-end', { rendered: false });
+      expect(renderer.info.render).toMatchObject({ drawCalls: 3, frameCalls: 1, calls: 1 });
+      expect(getRendererInfoSnapshot()).toMatchObject({ calls: 3, samples: 1 });
+    });
+  });
+
+  it('never adds a WebGPU-only field to a WebGL info on restore', () => {
+    const renderer = { info: { ...fakeRenderer().info, reset: () => {} } };
+    installRendererInfoSampler(() => renderer);
+    eventBus.emit('frame-start', {});
+    eventBus.emit('frame-end', { rendered: false });
+    expect(renderer.info.render).not.toHaveProperty('drawCalls');
+  });
 });

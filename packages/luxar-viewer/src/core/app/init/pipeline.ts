@@ -207,19 +207,12 @@ export async function runInitPipeline(
     sceneManager.postProcessing
   );
   partial.animationController = animationController;
-  // Skip GPU rendering while the rendering context is dead.
-  // isWebGLContextLost covers WebGL2 (contextRecovery flips it in the
-  // webglcontextlost/restored handlers) but is hard-false under
-  // ?renderer=webgpu, where no contextRecovery is constructed — so a
-  // local latch, set by the webgpu-device-lost listener below, folds
-  // WebGPU device loss (unrecoverable in this release) into the same
-  // predicate. Everything keyed on it — render skips, adaptive-DPR
-  // frame recording, the idle-restore render — becomes WebGPU-aware
-  // through this one closure.
-  let gpuDeviceLost = false;
-  animationController.setContextLostPredicate(
-    () => gpuDeviceLost || sceneManager.isWebGLContextLost()
-  );
+  // Skip GPU rendering while the rendering context is dead: a lost WebGL
+  // context, or a lost WebGPU device whose renderer is not rebuilt yet (both
+  // recovery modules flip their flag on loss and clear it on restore).
+  // Everything keyed on it — render skips, adaptive-DPR frame recording, the
+  // idle-restore render — follows both backends through this one closure.
+  animationController.setContextLostPredicate(() => sceneManager.isGpuContextLost());
   wireRenderOnChange(animationController, sceneManager, ports.options, ports.events);
   // When the perf readout is shown, kick the loop once so it gets a live
   // reading if the scene had idled — but do NOT force continuous rendering
@@ -558,30 +551,46 @@ export async function runInitPipeline(
       sceneManager.removeEventListener('webgl-context-restored', onContextRestored)
     );
 
-    // WebGPU device-loss is unrecoverable in this release (see
-    // `scene-manager.setupContextLossHandling`). Surface it as a
-    // user-facing error dialog with reload guidance — the only
-    // remediation. Console diagnostics are already emitted by the
-    // scene-manager handler; this listener exists to make sure the
-    // user is told too.
-    const onWebGPUDeviceLost = (event: { reason?: string; message?: string }): void => {
-      // Latch the shared context-lost predicate (see its definition
-      // above): stops draw calls against the dead device AND stops the
-      // adaptive DPR manager from evaluating the artificially cheap
-      // no-op frames (which would drive bogus scale-ups / false probe
-      // verdicts). Unrecoverable in this release, so it never unlatches.
-      gpuDeviceLost = true;
+    // WebGPU device loss: the scene manager rebuilds the renderer on a fresh
+    // device (`render-pipeline/webgpu-device-recovery.ts`). While it does, the
+    // context-lost predicate above stops draws against the dead device and
+    // stops the adaptive DPR manager from judging the no-op frames.
+    const onWebGPUDeviceLost = (): void => {
       adaptiveDPRManager.notifyPaused();
+      notifier.error(
+        'Graphics device lost - attempting to restore. This can happen if your GPU driver ' +
+          'resets or the system runs out of video memory.'
+      );
+    };
+    // The new renderer is live: hand it to picking and re-upload the geometry
+    // from its CPU mirrors, as after a WebGL context restore.
+    const onWebGPUDeviceRestored = (): void => {
+      const sceneLoader = getSceneLoader();
+      if (sceneLoader && sceneManager.scene) {
+        sceneLoader.nodeFactory.rebuildAfterContextRestore(sceneManager.scene, {
+          renderer: sceneManager.renderer,
+          capabilities: sceneManager.capabilities,
+        });
+      }
+      notifier.clearError();
+      notifier.toast('Graphics device restored');
+    };
+    const onWebGPUDeviceUnrecoverable = (event: { reason?: string; message?: string }): void => {
       const reason = event.reason ? ` (${event.reason})` : '';
       const detail = event.message ? `: ${event.message}` : '';
       notifier.error(
-        `WebGPU device lost${reason}${detail}. ` + 'Please reload the page to continue.'
+        `WebGPU device lost${reason}${detail} and could not be restored. ` +
+          'Please reload the page to continue.'
       );
     };
     sceneManager.addEventListener('webgpu-device-lost', onWebGPUDeviceLost);
-    ports.events.add(() =>
-      sceneManager.removeEventListener('webgpu-device-lost', onWebGPUDeviceLost)
-    );
+    sceneManager.addEventListener('webgpu-device-restored', onWebGPUDeviceRestored);
+    sceneManager.addEventListener('webgpu-device-unrecoverable', onWebGPUDeviceUnrecoverable);
+    ports.events.add(() => {
+      sceneManager.removeEventListener('webgpu-device-lost', onWebGPUDeviceLost);
+      sceneManager.removeEventListener('webgpu-device-restored', onWebGPUDeviceRestored);
+      sceneManager.removeEventListener('webgpu-device-unrecoverable', onWebGPUDeviceUnrecoverable);
+    });
   }
 
   // Inject the monitor factory into SceneLoaderManager so each

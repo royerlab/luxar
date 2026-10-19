@@ -254,9 +254,22 @@ export class PickingSystem {
     // triples so last-vertex sampling still returns the original first corner.
     // The renderer API surface can be WebGPU while its effective backend is GL.
     this.rotateMeshPickIndices =
-      !alignProvokingVertexWithWebGPU(this.renderer) && !this.capabilities.nativeWebGPUBackend;
+      !alignProvokingVertexWithWebGPU(this.renderer) &&
+      this.capabilities.backendKind !== 'webgpu-native';
 
     log.info(Modules.RENDERER, 'PickingSystem initialized (5x5 RGBA32F)');
+  }
+
+  /**
+   * Render picks with a NEW renderer (a WebGPU renderer rebuilt after device
+   * loss). The pick target and materials are renderer-agnostic three objects;
+   * the new renderer allocates its own GPU copies on first use. Callers re-register
+   * the scene nodes right after (`NodeFactory.rebuildAfterContextRestore`).
+   */
+  setRenderer(renderer: Renderer, capabilities: RendererCapabilities): void {
+    this.renderer = renderer;
+    this.capabilities = capabilities;
+    this.markDirty();
   }
 
   /**

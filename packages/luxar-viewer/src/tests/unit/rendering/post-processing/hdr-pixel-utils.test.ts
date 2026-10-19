@@ -284,9 +284,9 @@ function makeCaps(
 ): RendererCapabilities {
   return {
     apiSurface,
-    nativeWebGPUBackend: false,
     framebufferYDown,
     readbackYDown,
+    backendKind: apiSurface === 'webgl2' ? 'webgl' : readbackYDown ? 'webgpu-native' : 'webgpu-gl',
     hdr: {
       p3Gamut: false,
       rec2020Gamut: false,

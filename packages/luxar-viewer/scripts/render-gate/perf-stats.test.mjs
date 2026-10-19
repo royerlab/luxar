@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest';
 import {
   anyMissing,
   familyFloor,
+  HIGH_LOAD_PER_CPU,
   judgeCounter,
   judgePerf,
+  loadSummary,
   median,
   noiseFloor,
   normalQuantile,
@@ -238,5 +240,39 @@ describe('judgeCounter relTol', () => {
     const base = [181, 181];
     expect(judgeCounter(base, [40, 41], base, { relTol: 0.05 }).verdict).toBe('win');
     expect(judgeCounter(base, [200, 201], base, { relTol: 0.05 }).verdict).toBe('fail');
+  });
+});
+
+describe('loadSummary', () => {
+  it('summarizes each arm and flags a busy host on the median', () => {
+    const rows = [
+      {
+        samples: {
+          base: [{ load1: 2 }, { load1: 3 }],
+          base2: [{ load1: 2 }],
+          cand: [{ load1: 4 }],
+        },
+      },
+      { status: 'error' },
+      { samples: { base: [{ load1: 3 }], base2: [{ load1: 20 }], cand: [{ load1: 2 }] } },
+    ];
+    const quiet = loadSummary(rows, 16);
+    expect(quiet.arms.base).toEqual({ median: 3, max: 3 });
+    expect(quiet.arms.base2).toEqual({ median: 11, max: 20 });
+    // One busy sample (20 on 16 CPUs) does not flag the run; the median does.
+    expect(quiet.maxPerCpu).toBeCloseTo(20 / 16);
+    expect(quiet.high).toBe(false);
+    const busy = loadSummary(
+      [{ samples: { base: [{ load1: 12 }], base2: [{ load1: 11 }], cand: [{ load1: 13 }] } }],
+      16
+    );
+    expect(busy.medianPerCpu).toBeCloseTo(12 / 16);
+    expect(HIGH_LOAD_PER_CPU).toBeLessThan(12 / 16);
+    expect(busy.high).toBe(true);
+  });
+
+  it('is null when no sample recorded the load', () => {
+    const rows = [{ status: 'error' }, { samples: { base: [{ gpuMs: 1 }] } }];
+    expect(loadSummary(rows, 8)).toBeNull();
   });
 });

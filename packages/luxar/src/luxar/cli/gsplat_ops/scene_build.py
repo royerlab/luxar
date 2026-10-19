@@ -65,10 +65,7 @@ def _validate_colormap(colormap: str) -> None:
     try:
         resolve_colormap(colormap)
     except Exception as e:
-        raise typer.BadParameter(
-            f"--colormap '{colormap}' is not a known builtin / "
-            f"matplotlib / colorcet colormap"
-        ) from e
+        raise typer.BadParameter(f"--colormap: {e}") from e
 
 
 def scene_appearance(opts: SceneBuildOptions) -> Dict[str, Any]:
@@ -151,7 +148,28 @@ def _exposure(
     )
     if exposure.line:
         aprint(exposure.line)
+    if opts.blending_mode == "volumetric":
+        _narrate_volumetric_depth(node, orientation, opts, exposure.gain)
     return exposure
+
+
+def _narrate_volumetric_depth(
+    node: Any, orientation: "ConvertOrientation", opts: SceneBuildOptions, gain: float
+) -> None:
+    """Print the brightest rays' optical depth under ``--absorption``.
+
+    Auto exposure does not run for ``volumetric`` (it only tames SUMMING modes),
+    so the per-ray density the absorption multiplies is whatever the fit's
+    overlap makes it — often tens of times the additive target. One predicted
+    number turns choosing kappa from guesswork into a division.
+    """
+    from .scene_exposure import predict_volumetric_ray_mass, volumetric_depth_line
+
+    ray_mass = predict_volumetric_ray_mass(
+        node, orientation, gain=gain, opacity=opts.opacity
+    )
+    if ray_mass is not None:
+        aprint(volumetric_depth_line(ray_mass, opts.absorption))
 
 
 def _windows_amplitude(node: Any, colormap: Optional[str]) -> bool:
@@ -225,6 +243,42 @@ def _graft_extent(node: Any, opts: SceneBuildOptions) -> Any:
     return np.array([bounds[0], bounds[1]], dtype=np.float32)
 
 
+def max_blending_seam_warning(
+    blending_mode: str, stats: Dict[str, Any], *, partition: bool
+) -> Optional[str]:
+    """The warning for ``max`` blending over a fit whose tiles were blended.
+
+    ``max`` keeps the brightest SINGLE splat on each ray; it is not a
+    maximum-intensity projection of the fitted volume. A uniform tiled fit
+    multiplies every tile by a Hann window, so where two tiles overlap each
+    one's splats carry a window-weighted share of the signal — about half at
+    the middle of the overlap. Additive blending sums the shares back to the
+    whole; ``max`` keeps only the larger one, so the tile overlaps render as a
+    dark seam cross. A content-tiled fit (``planned_fit``) keeps whole splats by
+    core box and has no shares to lose, and a partition cut from ONE fit
+    (``gsplat partition`` / ``lod --recipe tiles``) carries that fit's own
+    ``iterations`` stamp. A partition with no record of any of these is warned
+    about conditionally (a ``batch-fit`` merge of uniform tiles carries no root
+    marker).
+    """
+    if blending_mode != "max" or stats.get("planned_fit"):
+        return None
+    if stats.get("tiled_fitting"):
+        lead = "this is a uniform tiled fit"
+    elif partition and "iterations" not in stats:
+        lead = "if this partition came from uniform tiles (fit/batch-fit)"
+    else:
+        return None
+    return (
+        f"⚠ --blending-mode max: {lead}, expect dark seams where tiles "
+        "overlap. `max` shows the brightest single splat per ray, not a "
+        "maximum-intensity projection: the Hann-blended tiles split each "
+        "overlap's signal between their splats, which additive blending sums "
+        "back but max does not. For max-blend viewing refit with --tiling none "
+        "(whole volume), or use additive/volumetric blending."
+    )
+
+
 def build_gsplat_scene(
     input_path: Path, output_path: Path, opts: SceneBuildOptions
 ) -> None:
@@ -246,6 +300,11 @@ def build_gsplat_scene(
         amplitude_bits = resolve_amplitude_bits(
             "auto", source_dtype=stats.get("source_dtype")
         )
+    seam_warning = max_blending_seam_warning(
+        opts.blending_mode, stats, partition=not matrix
+    )
+    if seam_warning:
+        aprint(seam_warning)
     if matrix:
         data, extent = _matrix_source(node, opts)
     else:

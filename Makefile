@@ -7,7 +7,7 @@
 .PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-go format-all gen-contract gen-control-contract gen-data-manifest sync-demo-counts \
         lint-python lint-typescript type-check-python type-check-typescript security check-complexity check-lint-ratchet check-native \
         test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures ensure-viewer-fixtures test-wasm test-viewer test-viewer-fixtures \
-        test-e2e test-e2e-browsers test-e2e-mobile test-e2e-smoke test-e2e-smoke-strict test-perf-e2e \
+        test-e2e test-e2e-browsers test-e2e-mobile test-e2e-webgpu test-e2e-smoke test-e2e-smoke-strict test-perf-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
         check-all check-cold-fetch check-typescript check-rust check-knip check-gallery-staleness check-gallery-media check-wasm-deps setup-dev \
         check-docs check-docs-verbose check-docs-external-links check-demo-links check-zenodo-snapshots check-record-attribution check-zenodo-live check-external-references clean-docs build-docs build-typedoc serve-docs \
@@ -850,16 +850,19 @@ test-all:  ## Run all tests (Python+CUDA, Rust/WASM, TypeScript, Go)
 # NOT a gate — deselects `slow`, skips coverage thresholds, no E2E. Run
 # `make test-all` before pushing.
 #
-# Whole-suite: ~6-7 min (vs ~79 min for the old serial `hatch run test`).
-# It does NOT get much below that by adding workers: with `slow` deselected the
-# remaining Python suite is I/O-bound on zarr small-file writes, not CPU-bound
-# (measured `sys` ~1900 s against `user` ~1000 s; -n 12 buys only ~11% over
-# -n 6). For a real edit-run-edit loop, SCOPE it:
-#     make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'   # ~35 s
+# Whole-suite: long — on a fresh 20-core machine a tester measured ~22.5 min for
+# the Python half alone (~20k tests), before the ~18k-test vitest half. It does
+# NOT get much faster by adding workers: with `slow` deselected the remaining
+# Python suite is I/O-bound on zarr small-file writes, not CPU-bound (-n 12
+# measured only ~11% over -n 6). For a real edit-run-edit loop, SCOPE it:
+#     make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'
 #     make test-fast PYTEST_ARGS='-k colormap'
+#     make test-fast TS_ARGS='src/rendering'          # vitest only, scoped
+# Scoping ONE half skips the other: a PYTEST_ARGS run does not also run the
+# whole vitest suite (pass TS_ARGS too to run both, scoped). Unscoped, both run.
 # PYTEST_ARGS REPLACES the default paths rather than prepending to them —
-# appending would hand pytest the scope AND the whole tree, collecting all
-# 10286 tests and scoping nothing. Same semantics as hatch's `{args:...}`.
+# appending would hand pytest the scope AND the whole tree, collecting every
+# test and scoping nothing. Same semantics as hatch's `{args:...}`.
 # Options-only args (`-k colormap`) therefore pass no path at all, and pytest
 # falls back to `testpaths` in pyproject.toml — the same five directories.
 # Tune workers with LUXAR_PYTEST_JOBS=12 — the same variable `hatch run test`
@@ -875,26 +878,34 @@ test-all:  ## Run all tests (Python+CUDA, Rust/WASM, TypeScript, Go)
 # native lib) ABORT THE RUN at the first worker crash, instead of respawning it
 # and leaving the run hanging at 99%.
 test-fast:  ## Fast inner loop (no slow tests, no coverage, parallel)
-	@PY_RC=0; TS_RC=0; \
+	@PY_RC=0; TS_RC=0; RUN_PY=1; RUN_TS=1; \
+	if [ -n "$(PYTEST_ARGS)" ] && [ -z "$(TS_ARGS)" ]; then RUN_TS=0; fi; \
+	if [ -n "$(TS_ARGS)" ] && [ -z "$(PYTEST_ARGS)" ]; then RUN_PY=0; fi; \
 	trap 'echo ""; echo "Interrupted."; exit 130' INT; \
-	echo "🐍 Python (parallel, -m 'not slow')..."; \
-	$(HATCH) run pytest -n $(or $(LUXAR_PYTEST_JOBS),6) --dist loadfile --max-worker-restart=0 \
-		-m 'not slow' -q -p no:cacheprovider \
-		$(or $(PYTEST_ARGS),packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests) \
-		|| PY_RC=$$?; \
-	echo "📘 TypeScript unit tests..."; \
-	$(NVM_LOAD); \
-	if ! command -v pnpm >/dev/null 2>&1; then export PATH="$$PATH:$$HOME/.local/bin"; fi; \
-	if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
-		echo "📦 Installing TypeScript dependencies first..."; \
-		(cd packages/luxar-viewer && pnpm install) || TS_RC=$$?; \
+	if [ "$$RUN_PY" = "1" ]; then \
+		echo "🐍 Python (parallel, -m 'not slow')..."; \
+		$(HATCH) run pytest -n $(or $(LUXAR_PYTEST_JOBS),6) --dist loadfile --max-worker-restart=0 \
+			-m 'not slow' -q -p no:cacheprovider \
+			$(or $(PYTEST_ARGS),packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests) \
+			|| PY_RC=$$?; \
 	fi; \
-	if [ "$$TS_RC" = "0" ]; then \
-		(cd packages/luxar-viewer && pnpm test --run) || TS_RC=$$?; \
+	if [ "$$RUN_TS" = "1" ]; then \
+		echo "📘 TypeScript unit tests..."; \
+		$(NVM_LOAD); \
+		if ! command -v pnpm >/dev/null 2>&1; then export PATH="$$PATH:$$HOME/.local/bin"; fi; \
+		if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+			echo "📦 Installing TypeScript dependencies first..."; \
+			(cd packages/luxar-viewer && pnpm install) || TS_RC=$$?; \
+		fi; \
+		if [ "$$TS_RC" = "0" ]; then \
+			(cd packages/luxar-viewer && pnpm test --run $(TS_ARGS)) || TS_RC=$$?; \
+		fi; \
 	fi; \
 	echo ""; \
-	if [ "$$PY_RC" = "0" ]; then echo "✅ Python: passed"; else echo "❌ Python: FAILED (exit $$PY_RC)"; fi; \
-	if [ "$$TS_RC" = "0" ]; then echo "✅ TypeScript: passed"; else echo "❌ TypeScript: FAILED (exit $$TS_RC)"; fi; \
+	if [ "$$RUN_PY" = "0" ]; then echo "⏭️  Python: skipped (TS_ARGS scopes the run; add PYTEST_ARGS to run it too)"; \
+	elif [ "$$PY_RC" = "0" ]; then echo "✅ Python: passed"; else echo "❌ Python: FAILED (exit $$PY_RC)"; fi; \
+	if [ "$$RUN_TS" = "0" ]; then echo "⏭️  TypeScript: skipped (PYTEST_ARGS scopes the run; add TS_ARGS to run it too)"; \
+	elif [ "$$TS_RC" = "0" ]; then echo "✅ TypeScript: passed"; else echo "❌ TypeScript: FAILED (exit $$TS_RC)"; fi; \
 	[ "$$PY_RC" = "0" ] && [ "$$TS_RC" = "0" ]
 
 test-python:  ## Run Python tests only
@@ -2917,6 +2928,13 @@ test-e2e-browsers: run-examples ensure-viewer-fixtures  ## Run the cross-browser
 	fi
 	cd packages/luxar-viewer && pnpm test:e2e:browsers
 
+test-e2e-webgpu: run-examples ensure-viewer-fixtures  ## Run the Playwright suite on native WebGPU (system Chrome; needs a real GPU adapter)
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm test:e2e:webgpu
+
 test-e2e-mobile: run-examples ensure-viewer-fixtures  ## Run the mobile/touch Playwright suite used by PR CI
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
@@ -2947,16 +2965,16 @@ test-perf-e2e: run-examples  ## Run the opt-in Playwright performance suite
 
 # Render gate: exactness + performance of a candidate build against a baseline
 # build on THIS machine (docs/guides/developer/RENDER_GATE.md). Opt-in, not a CI
-# gate. Stores come from generate_gate_scenes.py on first use; REGEN=1 rebuilds them.
+# gate. generate_gate_scenes.py --missing writes any store not on disk yet (a scene
+# added after datasets/gate was first generated included); REGEN=1 rebuilds them all.
 BASE ?= origin/main
 CAND ?= HEAD
 SUITE ?= exact
 CLASS ?= IDENTICAL
 .PHONY: render-gate
 render-gate:  ## Render exactness/perf gate: BASE=<ref> CAND=<ref> [SUITE=exact|perf|all] [CLASS=IDENTICAL|ULP] [INTENDED=a,b] [ONLY=a,b]
-	@if [ -n "$(REGEN)" ] || [ ! -d datasets/gate/tiny_units_ortho.luxar.zarr ]; then \
-		$(HATCH) run python packages/luxar-viewer/scripts/render-gate/generate_gate_scenes.py --out datasets/gate; \
-	fi
+	$(HATCH) run python packages/luxar-viewer/scripts/render-gate/generate_gate_scenes.py \
+		--out datasets/gate $(if $(REGEN),,--missing)
 	cd packages/luxar-viewer && node scripts/render-gate/run-gate.mjs --base "$(BASE)" --cand "$(CAND)" \
 		--suite "$(SUITE)" --class "$(CLASS)" \
 		$(if $(INTENDED),--intended "$(INTENDED)") $(if $(ONLY),--only "$(ONLY)") $(GATE_ARGS)

@@ -564,7 +564,6 @@ export class LineTSLMaterial
       this.defines = {};
     }
 
-    const previousMode = this.userData.blendingMode as BlendingMode | undefined;
     const wantsContrib = state.shaderOutputMode === 'rgb-contribution';
     const hasContrib = 'LUXAR_MAX_RGB_CONTRIBUTION' in this.defines;
     const wantsOpaqueContrib = mode === 'opaque';
@@ -576,7 +575,7 @@ export class LineTSLMaterial
     // must not strand the branch.
     const wantsVolumetric = isVolumetricMode(mode);
     const hasVolumetric = 'LUXAR_VOLUMETRIC' in this.defines;
-    const stateChanged = applyBlendingStateToMaterial(this, state);
+    applyBlendingStateToMaterial(this, state);
     let definesChanged = false;
     if (wantsContrib && !hasContrib) {
       this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
@@ -610,8 +609,6 @@ export class LineTSLMaterial
     // up the right branch.
     if (definesChanged) {
       this.rebuildGraph();
-    } else if (previousMode !== mode && stateChanged) {
-      this.needsUpdate = true;
     }
   }
 

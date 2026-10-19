@@ -107,6 +107,18 @@ from luxar.gsplats.amplitude_reference import (
 from luxar.gsplats.amplitude_reference import (
     sample_reference as _sample_reference,
 )
+from luxar.gsplats.exposure_attrs import (
+    NORMALIZATION_MODE_ATTR as NORMALIZATION_MODE_ATTR,
+)
+from luxar.gsplats.exposure_attrs import (
+    PROJECTED_SUM_AXIS_ATTR as PROJECTED_SUM_AXIS_ATTR,
+)
+from luxar.gsplats.exposure_attrs import (
+    PROJECTED_SUM_P999_ATTR as PROJECTED_SUM_P999_ATTR,
+)
+from luxar.gsplats.exposure_attrs import (
+    PROJECTED_SUM_TARGET_ATTR as PROJECTED_SUM_TARGET_ATTR,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from luxar.gsplats.gsplat_data import GSplatData
@@ -116,15 +128,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: ``amplitude_mass`` stamp or a later refit can be reconciled with the values
 #: actually stored. Absent when nothing was scaled.
 NORMALIZATION_FACTOR_ATTR = "amplitude_normalization_factor"
-
-#: Provenance attrs stamped by ``gsplat convert``'s auto exposure (see
-#: :mod:`luxar.gsplats.exposure`): which rule produced the ``display_gain``
-#: (``projected`` / ``per_splat`` / ``manual``) and what the opening view was
-#: predicted to look like. Like the factor, the viewer does not read them.
-NORMALIZATION_MODE_ATTR = "amplitude_normalization_mode"
-PROJECTED_SUM_P999_ATTR = "projected_sum_p999"
-PROJECTED_SUM_TARGET_ATTR = "projected_sum_target"
-PROJECTED_SUM_AXIS_ATTR = "projected_sum_axis"
 
 #: Render attrs of the data-unit path (``LUXAR_ZARR_FORMAT.md``): the per-node
 #: brightness factor the viewer applies to the stored amplitudes, the label of

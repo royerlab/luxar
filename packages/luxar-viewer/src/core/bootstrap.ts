@@ -375,8 +375,12 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // Start native device acquisition before LuxarApp's renderer setup chain.
   // The promise belongs to this initialization only; a recovered renderer
   // calls createWebGPURenderer without it and gets a fresh device.
-  if (selectBackend(appOptions.renderer).backend === 'webgpu' && !appOptions.webgpuForceWebGL) {
-    appOptions.preRequestedWebGPUDevice = requestWebGPUDevice(appOptions.renderer);
+  const backendSelection = selectBackend(appOptions.renderer);
+  if (backendSelection.backend === 'webgpu' && !appOptions.webgpuForceWebGL) {
+    appOptions.preRequestedWebGPUDevice = requestWebGPUDevice(
+      appOptions.renderer,
+      backendSelection.requireNativeAdapter
+    );
     void appOptions.preRequestedWebGPUDevice.catch(() => undefined);
   }
 

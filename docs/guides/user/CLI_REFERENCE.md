@@ -321,12 +321,19 @@ luxar demo cache list    # Inventory the ~/.cache/luxar demo caches
 luxar demo cache clear   # Clear demo caches (--dry-run to preview)
 ```
 
-`luxar demo run <key> -- --help` prints the demo's details, its own notes and
-the shared demo flags without running it. Every serving demo accepts
-`--host HOST` (bind address, e.g. `0.0.0.0` to view it from another machine)
-and `--no-open`, after `--` or directly (`luxar demo run lorenz --host 0.0.0.0`).
+`luxar demo run <key> -- --help` (or `luxar demo run <key> --help`) prints the
+demo's details, its own notes and the shared demo flags without running it.
+Every serving demo accepts `--host HOST` (bind address, e.g. `0.0.0.0` to view
+it from another machine), `--port N` / `--viewer-port N` (fixed data and viewer
+ports instead of the stable per-demo pair, for a port forward or a firewall
+rule) and `--no-open`, after `--` or directly
+(`luxar demo run lorenz --host 0.0.0.0 --port 8001 --viewer-port 5200`). With a
+wildcard `--host`, the servers also print a `127.0.0.1` URL, which is the one a
+port forward into a container or VM reaches.
 A demo builds its scene under the demos output directory whether or not it
-serves, so `luxar demo` shows it as built afterwards, and a re-run rebuilds it.
+serves, so `luxar demo` shows it as built afterwards, and a re-run rebuilds it
+(the run first prints the `luxar serve` command that serves the existing build
+instead, with the same host and ports, for when only those changed).
 The rebuild happens in a hidden sibling that replaces the old scene only once
 complete, so an interrupted or failed run leaves the previous build intact.
 `demo run` refuses to start a demo that is already running (stop it with
@@ -335,7 +342,7 @@ complete, so an interrupted or failed run leaves the previous build intact.
 the scene (a demo's points count, say) build into `variants/custom-<hash>/` under the
 demos directory instead, so the catalogue's built mark keeps meaning "the
 default build is present"; flags that only change how it is served
-(the host, no-open and no-serve flags) do not count. `demo run <key> --canonical` opts out and replaces the default build with the
+(the host, port, no-open and no-serve flags) do not count. `demo run <key> --canonical` opts out and replaces the default build with the
 custom one. `demo cache clear <key> --outputs` removes those variants too.
 
 Report-only `demo deps` exits 1 for any missing or outdated row. Generic

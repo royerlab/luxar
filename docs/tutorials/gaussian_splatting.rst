@@ -322,8 +322,13 @@ sweeps :math:`K` and reports the principled optimum :math:`K^{\star}`
 
 .. code-block:: bash
 
-   # Default 10-point sweep matching the manuscript ({1K, 2K, ..., 512K})
+   # Default: 10 points with bounds sized from the foreground voxel count,
+   # stopping 2 points after the foreground held-out curve stops improving
    luxar gsplat cal kidney_dapi.tiff cal.json --device cuda
+
+   # The manuscript's grid ({1K, 2K, ..., 512K}, every point, min-max metric)
+   luxar gsplat cal kidney_dapi.tiff cal.json --k-min 1000 --k-max 512000 \
+       --no-early-stop --no-extend-below --k-star-metric psnr_minmax
 
    # Faster: 5-point sweep
    luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000

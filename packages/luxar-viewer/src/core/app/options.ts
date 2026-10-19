@@ -223,8 +223,9 @@ export interface LuxarAppOptions {
   bakeEnvironment?: { probe?: string; resolution?: number };
 
   /**
-   * WebGL-only blend warm-up (pre-compile each DISTINCT reachable
-   * blend-mode program variant, one compile per macrotask). Default:
+   * Blend warm-up (pre-compile each DISTINCT reachable blend-mode program
+   * variant on WebGL, or each mode's render pipeline on WebGPU, one compile
+   * per macrotask). Default:
    * true on laptops/desktops and false on phones/tablets. Mirrors
    * `UrlParams.blendWarmup` (`?noBlendWarmup` disables) — the
    * standalone bootstrap threads it here; embedders can disable it directly.

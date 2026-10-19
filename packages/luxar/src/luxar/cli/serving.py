@@ -336,6 +336,43 @@ def _build_viewer_url(
     return viewer_url
 
 
+def _loopback_viewer_url(
+    host: str,
+    port: int,
+    data_url: Optional[str] = None,
+    *,
+    title: Optional[str] = None,
+    control: bool = False,
+    control_token: Optional[str] = None,
+) -> Optional[str]:
+    """The viewer URL as seen from THIS machine, for a wildcard bind only.
+
+    A wildcard bind advertises the primary LAN address, which inside a
+    container or VM is an internal address nobody outside can dial. A port
+    forward (``docker -p``, ``ssh -L``) instead reaches the servers on
+    loopback, so print that spelling too. The data URL's host is swapped only
+    when it is our own advertised address — a remote ``src`` is left alone.
+    Returns ``None`` for a concrete bind, whose URL is already the answer.
+    """
+    from urllib.parse import urlsplit, urlunsplit
+
+    if host.strip().lower() not in ALL_INTERFACES_HOSTS:
+        return None
+    local_data = data_url
+    if data_url:
+        parts = urlsplit(data_url)
+        if parts.hostname == advertised_host(host) and parts.port is not None:
+            local_data = urlunsplit(parts._replace(netloc=f"127.0.0.1:{parts.port}"))
+    return _build_viewer_url(
+        "127.0.0.1",
+        port,
+        local_data,
+        title=title,
+        control=control,
+        control_token=control_token,
+    )
+
+
 def _build_control_panel_url(
     host: str, port: int, control_token: Optional[str] = None
 ) -> str:
@@ -646,6 +683,16 @@ def _serve_viewer(
     )
 
     aprint(f"🌐 Viewer available at: {viewer_url}")
+    local_url = _loopback_viewer_url(
+        host,
+        port,
+        data_url,
+        title=title,
+        control=control,
+        control_token=control_token,
+    )
+    if local_url and local_url != viewer_url:
+        aprint(f"💻 On this machine or through a port forward: {local_url}")
     if control:
         # Same resolution as the viewer URL: a tablet cannot dial 0.0.0.0.
         reachable = advertised_host(host)

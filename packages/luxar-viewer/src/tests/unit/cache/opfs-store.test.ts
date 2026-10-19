@@ -1464,6 +1464,73 @@ describe('OPFSStore', () => {
       await noOpfsStore.init();
       expect(noOpfsStore.getStats().available).toBe(false);
     });
+
+    // Plain http from another host is not a secure context, so the browser
+    // exposes no `navigator.storage` at all. That used to surface as a
+    // `TypeError: Cannot read properties of undefined (reading 'getDirectory')`
+    // warning with a full stack on every load.
+    it.each([
+      ['no navigator.storage (insecure context)', {}],
+      ['navigator.storage without getDirectory', { storage: { estimate: async () => ({}) } }],
+    ])('%s: one debug line, no warning, no stack', async (_label, nav) => {
+      vi.stubGlobal('navigator', nav);
+      vi.stubGlobal('isSecureContext', false);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+      try {
+        const insecure = new OPFSStore('insecure-id', 'http://192.168.1.5:8000', 1024 * 1024);
+        await insecure.init();
+        expect(insecure.getStats().available).toBe(false);
+        expect(warn).not.toHaveBeenCalled();
+        expect(debug).toHaveBeenCalledTimes(1);
+        const [line, ...rest] = debug.mock.calls[0] as unknown[];
+        expect(String(line)).toContain('secure context');
+        expect(rest).toEqual([]); // no Error object, so no stack
+      } finally {
+        warn.mockRestore();
+        debug.mockRestore();
+      }
+    });
+
+    it('a SecurityError from getDirectory() is quiet too', async () => {
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            throw new DOMException('Security error when calling GetDirectory', 'SecurityError');
+          },
+        },
+      });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+      try {
+        const refused = new OPFSStore('refused-id', 'http://192.168.1.5:8000', 1024 * 1024);
+        await refused.init();
+        expect(refused.getStats().available).toBe(false);
+        expect(warn).not.toHaveBeenCalled();
+        expect(debug).toHaveBeenCalledTimes(1);
+      } finally {
+        warn.mockRestore();
+        debug.mockRestore();
+      }
+    });
+
+    it('a genuine OPFS failure still warns', async () => {
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            throw new Error('disk on fire');
+          },
+        },
+      });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const broken = new OPFSStore('broken-id', 'https://example.com', 1024 * 1024);
+        await broken.init();
+        expect(warn).toHaveBeenCalledTimes(1);
+      } finally {
+        warn.mockRestore();
+      }
+    });
   });
 
   // R6e: partial metadata corruption recovery. The existing test

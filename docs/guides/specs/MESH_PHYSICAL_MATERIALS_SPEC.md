@@ -429,6 +429,24 @@ described last below.
   transmission pass, so Phase 2 glass in pass A keeps three's default and its
   pixels are untouched; WebGPU has no equivalent knob. SSAA is plain supersampling
   here (there is no camera jitter), so all passes render at the same size.
+- **WebGPU stays at full resolution, deliberately.** The two backends pay for the
+  transmission backdrop in different coin. WebGL's `renderTransmissionPass`
+  re-renders the opaque list into its own mip-mapped target, and that is what the
+  0.5 scale shrinks. Three's node transmission re-renders nothing: the first
+  transmissive draw of a `render()` copies the live framebuffer into a
+  `viewportMipTexture` (one `copyTextureToTexture` at drawing-buffer size, then the
+  mip chain), so the only thing a scale could save is that copy and its mips. In the
+  cost table below, the whole native WebGPU split already costs 1.5 ms against
+  WebGL's 4.2 ms at its 0.5 scale. A half-resolution backdrop cannot come out of the
+  copy itself (a texture copy does not scale), and the sampler it would replace
+  (`getTransmissionSample`, inside `getIBLVolumeRefraction`) is module-private to
+  three's `PhysicalLightingModel`. Reaching it means forking that code into
+  `LuxarPhysicalLightingModel`, which is the exact dependency the wrapper avoids by
+  shaping three's refraction only through its inputs (the edge apodization). That
+  fork, plus an extra downsample pass, would buy back at most one framebuffer copy
+  and its mips per frame (not measured separately). The visible consequence is that
+  the refracted image can be slightly sharper on WebGPU than on WebGL, inside the parity already recorded (the Phase 3 result below: SSIM 0.991
+  whole-frame).
 
 **The alpha finding — the one thing the spike changed about this design.** Luxar's
 `additive`, `luminous` and `normal` point and line shaders are alpha-weighted (RGB

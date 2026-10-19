@@ -61,7 +61,9 @@ export const COVERAGE_THRESHOLDS = {
   // floor as stale.
   // functions 86 -> 88 after the pick-depth camera-kind test started building
   // the five TSL pick graphs with a real WGSLNodeBuilder (measured 89.74).
-  functions: 88,
+  // functions 88 -> 90 (#3140): the gsplat WGSL codegen tests raised measured
+  // functions to 91.03, past the 3-point slack budget.
+  functions: 90,
   // branches 80 -> 82 (2026-09): the GPU-budget tests here and the SSAA
   // framebuffer-clamp tests in #2661 each moved measured branch coverage past
   // the slack budget. The picking tests in #3004 raised it again to 85.10.
@@ -144,7 +146,8 @@ export const COVERAGE_THRESHOLDS = {
   // mega-shader/tone-curve tests (#3173), the WebGPU DPR render-target tests
   // (#3171), and the flat-varying codegen tests here each raised measured
   // rendering coverage, pushing the old 84/85 floor past the slack budget.
-  // Branches reached 81.04 on this merged tree; the 78 floor exceeded the slack budget.
+  // branches 78 -> 80 (2026-10): #3186 recorded 80.95 before its final rebase
+  // onto #3196/#3128, and the merged tree measures 81.04, past the slack budget.
   'src/rendering/**': { lines: 89, functions: 88, branches: 80 },
 
   // The last two measured top-level source directories without a sub-gate;
@@ -157,7 +160,7 @@ export const COVERAGE_THRESHOLDS = {
 export const COVERAGE_RECORDED = {
   lines: 93.79,
   statements: 92.47,
-  functions: 90.92,
+  functions: 91.03,
   branches: 86.01,
   'src/types/**': { lines: 99.1, functions: 96.67, branches: 97.96 },
   'src/wasm/**': { lines: 98.61, functions: 100, branches: 96.64 },
@@ -171,7 +174,7 @@ export const COVERAGE_RECORDED = {
   'src/ui/**': { lines: 92.64, functions: 88.12, branches: 80.49 },
   'src/core/**': { lines: 92.99, functions: 82.41, branches: 88.16 },
   'src/input/**': { lines: 92.96, functions: 89.41, branches: 86.11 },
-  'src/rendering/**': { lines: 90.79, functions: 90.14, branches: 81.04 },
+  'src/rendering/**': { lines: 91.96, functions: 90.14, branches: 81.04 },
   'src/audio/**': { lines: 96.5, functions: 95.48, branches: 84.11 },
   'src/profiling/**': { lines: 96.63, functions: 96.25, branches: 88.75 },
 };
