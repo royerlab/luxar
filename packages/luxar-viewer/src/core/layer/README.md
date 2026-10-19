@@ -221,8 +221,8 @@ blending when exposure should produce smooth surface transparency.
   or WebGPU. The callback must return the current target (including after resize
   or MSAA changes). Without it, blend warm-up compiles against the renderer's
   current target when each compile starts. WebGL includes the output colour space
-  in its program key, so a canvas host using the default sRGB output should
-  leave the target null; a host rendering through a target should return it.
+  in its program key, so a canvas host should return `null` if other passes may
+  leave a target bound; a host rendering through a target should return it.
 - **Draw order for the host's own geometry.** `renderOrder` defaults to 10 and is
   stamped onto every Group in the Luxar subtree, including groups that stream in
   later. Three.js compares that Group key before per-mesh `renderOrder`, so host
