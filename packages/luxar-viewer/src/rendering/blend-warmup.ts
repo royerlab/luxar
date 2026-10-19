@@ -16,10 +16,12 @@
  * render uses.
  *
  * This manager pre-compiles every DISTINCT blend-variant program a live visual
- * material can reach, one compile per post-frame idle opportunity so visible
- * rendering and input get a turn before every link. Browsers without idle
- * callbacks use a conservative 50 ms delay. The warmed programs stay pinned
- * by keeper materials until the source material is replaced or disposed.
+ * material can reach, then draws one tiny primitive for non-transmissive
+ * variants so first-use draw state is primed too. One variant runs per
+ * post-frame idle opportunity so visible rendering and input get a turn before
+ * every link. Browsers without idle callbacks use a conservative 50 ms delay.
+ * The warmed programs stay pinned by keeper materials until the source
+ * material is replaced or disposed.
  *
  * @module rendering/blend-warmup
  */
@@ -216,6 +218,12 @@ function defaultDeferActivation(activate: () => void): void {
   setTimeout(activate, 0);
 }
 
+function assertWarmupContext(renderer: THREE.WebGLRenderer, signal: AbortSignal): void {
+  if (signal.aborted || renderer.getContext().isContextLost()) {
+    throw new Error('Blend warm-up context unavailable');
+  }
+}
+
 async function defaultCompileOne(
   renderer: WarmupRenderer,
   camera: THREE.Camera,
@@ -224,6 +232,10 @@ async function defaultCompileOne(
   { signal, getRenderTarget }: CompileOptions
 ): Promise<void> {
   const compileScene = new THREE.Scene();
+  compileScene.environment = targetScene.environment;
+  compileScene.environmentRotation.copy(targetScene.environmentRotation);
+  compileScene.environmentIntensity = targetScene.environmentIntensity;
+  compileScene.fog = targetScene.fog;
   compileScene.add(compileObject);
   try {
     if (
@@ -245,16 +257,82 @@ async function defaultCompileOne(
       }
       await compile;
     } else {
-      await compileWebGLAndAwaitLink(
-        renderer as THREE.WebGLRenderer,
-        compileScene,
-        camera,
-        targetScene,
-        signal
-      );
+      const webglRenderer = renderer as THREE.WebGLRenderer;
+      await compileWebGLAndAwaitLink(webglRenderer, compileScene, camera, targetScene, signal);
+      assertWarmupContext(webglRenderer, signal);
+      const material = (compileObject as THREE.Mesh).material;
+      // Three allocates a transmission target per scene on render and does not
+      // release it when this temporary scene is discarded.
+      if (!(material instanceof THREE.MeshPhysicalMaterial && material.transmission > 0)) {
+        drawKeeperOnce(webglRenderer, camera, compileScene, compileObject);
+      }
     }
   } finally {
     compileScene.remove(compileObject);
+  }
+}
+
+function limitKeeperInstances(object: THREE.Object3D, geometry: THREE.BufferGeometry): () => void {
+  const instancedGeometry = geometry instanceof THREE.InstancedBufferGeometry ? geometry : null;
+  const instancedMesh = object instanceof THREE.InstancedMesh ? object : null;
+  const instanceCount = instancedGeometry?.instanceCount;
+  const meshCount = instancedMesh?.count;
+  if (instancedGeometry)
+    instancedGeometry.instanceCount = Math.min(instancedGeometry.instanceCount, 1);
+  if (instancedMesh) instancedMesh.count = Math.min(instancedMesh.count, 1);
+  return () => {
+    if (instancedGeometry && instanceCount !== undefined)
+      instancedGeometry.instanceCount = instanceCount;
+    if (instancedMesh && meshCount !== undefined) instancedMesh.count = meshCount;
+  };
+}
+
+/** Submit one tiny draw so the driver's first-use blend/pipeline state is warm too. */
+function drawKeeperOnce(
+  renderer: THREE.WebGLRenderer,
+  camera: THREE.Camera,
+  scene: THREE.Scene,
+  object: THREE.Object3D
+): void {
+  const geometry = (object as THREE.Mesh).geometry as THREE.BufferGeometry;
+  const drawRange = { ...geometry.drawRange };
+  const previousTarget = renderer.getRenderTarget();
+  const viewport = renderer.getViewport(new THREE.Vector4());
+  const scissor = renderer.getScissor(new THREE.Vector4());
+  const scissorTest = renderer.getScissorTest();
+  // The debug sampler owns per-frame counts with autoReset=false. A hidden
+  // warm-up draw must not appear in the next visible frame's statistics.
+  const renderInfo = renderer.info.render;
+  const counts = {
+    calls: renderInfo.calls,
+    triangles: renderInfo.triangles,
+    points: renderInfo.points,
+    lines: renderInfo.lines,
+  };
+  const target = new THREE.WebGLRenderTarget(1, 1, {
+    type: THREE.HalfFloatType,
+    format: THREE.RGBAFormat,
+    depthBuffer: true,
+    stencilBuffer: false,
+  });
+
+  const restoreInstances = limitKeeperInstances(object, geometry);
+  try {
+    geometry.setDrawRange(drawRange.start, Math.min(drawRange.count, 3));
+    renderer.setRenderTarget(target);
+    renderer.render(scene, camera);
+  } finally {
+    geometry.setDrawRange(drawRange.start, drawRange.count);
+    restoreInstances();
+    Object.assign(renderInfo, counts);
+    try {
+      renderer.setRenderTarget(previousTarget);
+      renderer.setViewport(viewport);
+      renderer.setScissor(scissor);
+      renderer.setScissorTest(scissorTest);
+    } finally {
+      target.dispose();
+    }
   }
 }
 
@@ -284,14 +362,10 @@ async function compileWebGLAndAwaitLink(
   targetScene: THREE.Scene,
   signal: AbortSignal
 ): Promise<void> {
-  if (signal.aborted || renderer.getContext().isContextLost()) {
-    throw new Error('Blend warm-up context unavailable');
-  }
+  assertWarmupContext(renderer, signal);
   const materials = renderer.compile(compileScene, camera, targetScene);
   while (materials.size > 0) {
-    if (signal.aborted || renderer.getContext().isContextLost()) {
-      throw new Error('Blend warm-up context unavailable');
-    }
+    assertWarmupContext(renderer, signal);
     for (const material of materials) {
       const properties = renderer.properties.get(material) as {
         currentProgram?: { isReady(): boolean };
