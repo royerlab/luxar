@@ -20,7 +20,7 @@ lays the scene out by hand.
 
 Example:
     >>> from luxar import LuxarZarrCompiler
-    >>> from luxar.gsplats.scene_defaults import fitted_scene_defaults
+    >>> from luxar.core.scene_defaults import fitted_scene_defaults
     >>> fit = "fit.gsplats.zarr"
     >>> defaults = fitted_scene_defaults(fit, colormap="plasma", tone_mapping="ACES")
     >>> with LuxarZarrCompiler(
@@ -54,11 +54,11 @@ import numpy as np
 from ..typing_utils.constants import DEFAULT_BLENDING_MODE
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from ..core.dimensions import Dimensions
-    from ..core.viewer_config import ViewerConfig
+    from ..gsplats.tree import GSplatNode
+    from .dimensions import Dimensions
     from .scene_exposure import ConvertExposure
     from .scene_orientation import ConvertOrientation
-    from .tree import GSplatNode
+    from .viewer_config import ViewerConfig
 
 __all__ = [
     "FittedScene",
@@ -107,7 +107,7 @@ def _viewer_config(
     orientation: "ConvertOrientation", tone_mapping: Optional[str]
 ) -> "Optional[ViewerConfig]":
     """Tone mapping and/or the orientation's camera, else ``None``."""
-    from ..core.viewer_config import ViewerConfig
+    from .viewer_config import ViewerConfig
 
     if tone_mapping is None and orientation.camera is None:
         return None
@@ -164,7 +164,7 @@ def resolve_fitted_scene(
     Raises:
         ValueError: On a malformed ``dim_order`` or ``view``.
     """
-    from .io.save_gsplats import resolve_amplitude_bits
+    from ..gsplats.io.save_gsplats import resolve_amplitude_bits
     from .scene_exposure import resolve_convert_exposure
     from .scene_orientation import resolve_convert_orientation
 
@@ -240,8 +240,8 @@ def source_extent(
     Raises:
         ValueError: When a grafted node tree holds no splats.
     """
-    from .gsplat_data import GSplatData
-    from .tree import center_bounds, is_matrix_shaped
+    from ..gsplats.gsplat_data import GSplatData
+    from ..gsplats.tree import center_bounds, is_matrix_shaped
 
     if flatten:
         flat = GSplatData.from_default_selection(node, stats=dict(stats or {}))
@@ -262,7 +262,7 @@ def load_fitted_source(
     Raises:
         ValueError: When a grafted node tree holds no splats.
     """
-    from .io.load_gsplats import load_gsplat_node
+    from ..gsplats.io.load_gsplats import load_gsplat_node
 
     node, stats = load_gsplat_node(path, include_stats=True)
     try:

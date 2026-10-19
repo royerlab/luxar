@@ -2,7 +2,7 @@
 
 ``add_gsplats_from_file``'s fitted default (``fitted_defaults=None``) and
 ``fitted_scene_defaults`` both resolve through
-:func:`luxar.gsplats.scene_defaults.resolve_fitted_scene`, the function convert
+:func:`luxar.core.scene_defaults.resolve_fitted_scene`, the function convert
 calls, so the two scenes agree attribute for attribute (and, with no centering,
 byte for byte: the same ``content_hash``). A store that names no columns, an
 explicit argument, a specialized parent group and ``fitted_defaults=False`` all
@@ -23,8 +23,8 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler, ViewerConfig
 from luxar._zarr_compat import read_node_attrs
 from luxar.cli import app
 from luxar.cli.tests._testing import normalized_cli_output
+from luxar.core.scene_defaults import fitted_scene_defaults
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.gsplats.scene_defaults import fitted_scene_defaults
 from luxar.gsplats.tree import iter_leaves
 from luxar.io._compiler.gsplat_tree import read_gsplat_node
 

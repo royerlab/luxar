@@ -452,8 +452,21 @@ data units, `layer=True`, the 8-bit tier for a uint8 source, and, on a fresh
 (any other scene keeps its layout and the positional column mapping).
 Explicit arguments win; `fitted_defaults=False` gives the plain adder. See
 `gsplats_pipeline/fitted_defaults.py` and
-`luxar.gsplats.scene_defaults.fitted_scene_defaults(path)` (the same scene as
+`luxar.core.scene_defaults.fitted_scene_defaults(path)` (the same scene as
 values, for a scene you lay out yourself).
+
+The resolvers live in three core modules (core may read `luxar.gsplats`; the
+reverse is forbidden by the layering contract):
+
+- `scene_orientation.py`: `resolve_convert_orientation` names the fitted center
+  columns (`--dim-order` > stored `dimension_metadata` > array order), maps them
+  onto `x, y, z` scene dims, and builds the y-down XY camera;
+  `fitted_column_names` is the "is this store fitted" test.
+- `scene_exposure.py`: `resolve_convert_exposure` (convert's `display_gain`:
+  auto exposure / per-splat / manual, plus its narration) and
+  `auto_exposure_attrs`, the same exposure as adder kwargs.
+- `scene_defaults.py`: `resolve_fitted_scene` (the single source of truth convert
+  and the adder both call) and `fitted_scene_defaults(path)`.
 
 These methods automatically handle:
 - Extracting arrays from GSplatData objects

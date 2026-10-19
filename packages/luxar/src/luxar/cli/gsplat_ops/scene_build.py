@@ -4,10 +4,10 @@
 writes the same scene into a temporary directory and serves it. One code path,
 so the first look a user gets from ``view`` is exactly what ``convert`` would
 publish: the image-convention orientation and opening camera
-(:mod:`luxar.gsplats.scene_orientation`), auto exposure
-(:mod:`luxar.gsplats.scene_exposure`) and the same appearance defaults, resolved
-by :func:`luxar.gsplats.scene_defaults.resolve_fitted_scene`, which Python callers
-reach through :func:`~luxar.gsplats.scene_defaults.fitted_scene_defaults`.
+(:mod:`luxar.core.scene_orientation`), auto exposure
+(:mod:`luxar.core.scene_exposure`) and the same appearance defaults, resolved
+by :func:`luxar.core.scene_defaults.resolve_fitted_scene`, which Python callers
+reach through :func:`~luxar.core.scene_defaults.fitted_scene_defaults`.
 
 A matrix-shaped store round-trips through ``GSplatData`` (and supports
 ``center``); a partition / nested LOD store is grafted node for node by
@@ -29,8 +29,8 @@ from ...typing_utils.constants import DEFAULT_BLENDING_MODE
 from .encoding import _resolve_encoding_mode
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from ...gsplats.scene_defaults import FittedScene
-    from ...gsplats.scene_orientation import ConvertOrientation
+    from ...core.scene_defaults import FittedScene
+    from ...core.scene_orientation import ConvertOrientation
 
 __all__ = ["SceneBuildOptions", "build_gsplat_scene"]
 
@@ -108,7 +108,7 @@ def _resolve_scene(
 
     A bad ``--dim-order`` / ``--view`` becomes a usage error.
     """
-    from luxar.gsplats.scene_defaults import resolve_fitted_scene
+    from luxar.core.scene_defaults import resolve_fitted_scene
 
     try:
         scene = resolve_fitted_scene(
@@ -147,7 +147,7 @@ def _additive_gain(
     ``None`` when the gain was set by hand (``--display-gain``), auto exposure
     is off, or the opening view could not be predicted.
     """
-    from luxar.gsplats.scene_exposure import resolve_convert_exposure
+    from luxar.core.scene_exposure import resolve_convert_exposure
 
     if opts.scale_intensity is not None or not opts.auto_exposure:
         return None
@@ -182,7 +182,7 @@ def _narrate_volumetric_depth(
     the ``--display-gain`` additive auto exposure would use and the kappa that
     gives ~1 optical depth at that gain (the density scales with the gain).
     """
-    from luxar.gsplats.scene_exposure import (
+    from luxar.core.scene_exposure import (
         predict_volumetric_ray_mass,
         volumetric_depth_line,
         volumetric_gain_line,

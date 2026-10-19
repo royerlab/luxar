@@ -615,7 +615,7 @@ explicit or not, with no camera and no other geometry) it also maps the
 `z, y, x` columns onto `x, y, z` dimensions and opens the camera on the XY plane
 with y pointing down (Fiji/napari). On a scene you laid out yourself the scene
 and the column mapping are left alone (a log line names the `dim_order` to pass),
-and `luxar.gsplats.scene_defaults.fitted_scene_defaults(path)`
+and `luxar.core.scene_defaults.fitted_scene_defaults(path)`
 gives convert's `dimensions` / `viewer_config` to pass to `create_scene`. The
 result matches `luxar gsplat convert --no-center`; convert also centers the data
 on its centroid by default. An explicit argument always wins, and

@@ -2,14 +2,14 @@
 
 `scene.add_gsplats_from_file(name, path)` on a FITTED store applies what
 `luxar gsplat convert` applies, resolved by
-`luxar.gsplats.scene_defaults.resolve_fitted_scene`, the function convert itself
+`luxar.core.scene_defaults.resolve_fitted_scene`, the function convert itself
 calls, so the two cannot drift. On a fresh `Dimensions.default_3d()` scene the
 result matches `convert --no-center` byte for byte (same `content_hash`); convert
 also centers on the centroid by default (`--center`), the adder does not.
 
 **Fitted** = the store names its columns: a complete root `dimension_metadata`,
 or fitting provenance whose `source_shape` has the centers' rank
-(`luxar.gsplats.scene_orientation.fitted_column_names`). Classical imports
+(`luxar.core.scene_orientation.fitted_column_names`). Classical imports
 (`.ply` / `.splat` / `.spz`) and hand-built stores keep the plain adder.
 `fitted_defaults=None` (default) = fitted stores only, `True` = any store,
 `False` = never.
@@ -40,7 +40,7 @@ convert's scene as values: `dimensions` / `viewer_config` for `create_scene`,
 `amplitude_bits` for `LuxarZarrCompiler(gsplat_amplitude_bits=...)`, and the
 adder kwargs in `attrs` (options as convert's flags: `colormap`, `tone_mapping`,
 `blending_mode`, `opacity`, `absorption`, `dim_order`, `view`, `display_gain`,
-`auto_exposure`, `target_brightness`). `luxar.gsplats.exposure.auto_exposure_attrs(path,
+`auto_exposure`, `target_brightness`). `luxar.core.scene_exposure.auto_exposure_attrs(path,
 dimensions=..., dim_order=..., camera=...)` returns the exposure kwargs alone
 (convert's resolver; without `dimensions=` it uses convert's own layout).
 

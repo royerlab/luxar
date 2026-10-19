@@ -108,10 +108,10 @@ Two things trip up nearly everyone who views their own fitted volume:
   Outside the fitted default the Python adders do NOT auto-expose (they
   normalise each splat, not the sum along a ray), so a multichannel scene opens
   white. For a scene you laid out yourself use
-  `luxar.gsplats.exposure.auto_exposure_attrs(path, dimensions=scene.dimensions,
+  `luxar.core.scene_exposure.auto_exposure_attrs(path, dimensions=scene.dimensions,
   dim_order=..., camera=..., colormap=...)` (convert's resolver; without
   `dimensions=` it predicts for convert's own layout), or
-  `luxar.gsplats.scene_defaults.fitted_scene_defaults(path)` for the whole scene.
+  `luxar.core.scene_defaults.fitted_scene_defaults(path)` for the whole scene.
   Each channel is exposed on its own; where channels overlap their colours add.
 
   **`max` is not a MIP.** It keeps the brightest SINGLE splat per ray, and a structure

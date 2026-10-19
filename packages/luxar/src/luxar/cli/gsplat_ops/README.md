@@ -19,7 +19,7 @@ importers name the owning module directly, never a re-export root.
 
 - `scene_commands.py` — Typer command signatures + registration for convert/migrate-format/reencode
 - `scene_build.py` — `build_gsplat_scene` / `SceneBuildOptions`: the one scene-building path shared by `convert` and `view` (`view` writes it to a temp dir; `--raw` skips it). Under `--blending-mode volumetric` it also prints the `--display-gain` additive auto exposure would use and the matching `--absorption`
-- Convert's orientation and exposure resolvers live in the library, not here: `luxar.gsplats.scene_orientation`, `luxar.gsplats.scene_exposure`, and `luxar.gsplats.scene_defaults.resolve_fitted_scene`, which `scene_build.py` calls and Python callers reach through `fitted_scene_defaults`, so the CLI and Python scenes cannot drift
+- Convert's orientation and exposure resolvers live in the library, not here: `luxar.core.scene_orientation`, `luxar.core.scene_exposure`, and `luxar.core.scene_defaults.resolve_fitted_scene`, which `scene_build.py` calls and Python callers reach through `fitted_scene_defaults`, so the CLI and Python scenes cannot drift
 - `inspect_commands.py` — Typer command signatures + registration for inspect commands
 - `compare_ops.py` — `compare` implementation: scoring grid, basis, `--region` crop scoring (`--whole-volume`), foreground, noise ceiling + verdict, report/JSON
 - `interchange_commands.py` — Typer command signatures + registration for `import` / `export`

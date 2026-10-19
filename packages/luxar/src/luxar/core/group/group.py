@@ -1324,7 +1324,7 @@ class Group(Node):
         A FITTED store (one that names its columns: a root
         ``dimension_metadata``, or fitting provenance) added with defaults gets
         what ``luxar gsplat convert`` applies, resolved by the same function
-        (:func:`luxar.gsplats.scene_defaults.resolve_fitted_scene`):
+        (:func:`luxar.core.scene_defaults.resolve_fitted_scene`):
         data-unit amplitudes with an auto-exposed ``display_gain`` (predicted
         under the tone mapping the scene has at add time), ``layer=True``, the
         explicit compositing defaults and the 8-bit amplitude tier for a uint8
@@ -1419,7 +1419,7 @@ class Group(Node):
                 along a ray, which ``gsplat convert``'s auto exposure does: a
                 dense fit under ``additive`` opens white. The fitted default
                 applies convert's auto exposure; with ``fitted_defaults=False``
-                pass ``**luxar.gsplats.exposure.auto_exposure_attrs(path, ...)``
+                pass ``**luxar.core.scene_exposure.auto_exposure_attrs(path, ...)``
                 for it (it sets ``normalize_amplitudes=False``).
             partition: Spatial partition control applied to the loaded matrix,
                 or to each leaf of a retained nested tree.

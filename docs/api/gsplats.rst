@@ -349,13 +349,6 @@ conversion helpers).
    :undoc-members:
    :show-inheritance:
 
-The scene ``luxar gsplat convert`` builds for a fitted store, shared with
-``add_gsplats_from_file``'s fitted default.
-
-.. automodule:: luxar.gsplats.scene_defaults
-   :members:
-   :exclude-members: dimensions, viewer_config, attrs, orientation, exposure, amplitude_bits
-
 Preprocessing
 -------------
 

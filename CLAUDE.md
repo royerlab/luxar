@@ -782,7 +782,7 @@ luxar gsplat cal volume.tiff cal.json --floor none --k-star-metric psnr_minmax \
 # defaults (auto exposure in data units, layer, 8-bit tier for uint8, and on a fresh
 # default_3d scene the dims + dim_order + y-down XY camera), matching
 # `convert --no-center`; `fitted_defaults=False` = the plain adder, which opens a
-# fit edge-on and saturated. `luxar.gsplats.scene_defaults.fitted_scene_defaults`
+# fit edge-on and saturated. `luxar.core.scene_defaults.fitted_scene_defaults`
 # returns the same scene as values for a scene you lay out yourself.
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe flat
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6

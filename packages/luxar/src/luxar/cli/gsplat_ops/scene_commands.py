@@ -173,7 +173,7 @@ def convert_to_scene(
     flip). A store without axis names or fitting provenance (geometric x, y, z
     data) keeps the positional mapping.
 
-    From Python, ``luxar.gsplats.scene_defaults.fitted_scene_defaults(path)``
+    From Python, ``luxar.core.scene_defaults.fitted_scene_defaults(path)``
     returns this scene (without centering) as the ``dimensions`` and
     ``viewer_config`` for ``create_scene`` plus the ``add_gsplats_from_file``
     kwargs.

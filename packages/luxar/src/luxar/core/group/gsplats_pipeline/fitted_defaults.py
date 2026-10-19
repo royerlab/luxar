@@ -6,11 +6,11 @@ edge-on), normalise each splat (a dense fit opens saturated under ``additive``)
 and stay out of the Layers panel, while ``luxar gsplat convert`` on the same
 store looked right. With ``fitted_defaults=None`` (the default) a fitted store now
 gets convert's choices, resolved by
-:func:`luxar.gsplats.scene_defaults.resolve_fitted_scene`, the function convert
+:func:`luxar.core.scene_defaults.resolve_fitted_scene`, the function convert
 itself calls.
 
 **Which stores.** A store is fitted when it names its columns
-(:func:`luxar.gsplats.scene_orientation.fitted_column_names`): a complete root
+(:func:`luxar.core.scene_orientation.fitted_column_names`): a complete root
 ``dimension_metadata``, or fitting provenance whose ``source_shape`` has the
 centers' rank. A classical-splat import (``.ply`` / ``.splat`` / ``.spz``) or a
 hand-built store has neither and keeps the old behaviour. ``fitted_defaults=True``
@@ -173,7 +173,7 @@ def _existing_layout(
     out, and only when the store can be remapped and its names are exactly the
     scene's dimension names. Any other scene keeps the positional mapping.
     """
-    from ....gsplats.scene_orientation import ConvertOrientation
+    from ...scene_orientation import ConvertOrientation
 
     order = dim_order
     if (
@@ -248,8 +248,8 @@ def _resolve_for_store(
 ) -> Optional[FittedAdderDefaults]:
     """Load the store and resolve; ``None`` when it is not fitted (auto)."""
     from ....gsplats.io.load_gsplats import load_gsplat_node
-    from ....gsplats.scene_defaults import resolve_fitted_scene, source_extent
-    from ....gsplats.scene_orientation import (
+    from ...scene_defaults import resolve_fitted_scene, source_extent
+    from ...scene_orientation import (
         fitted_column_names,
         resolve_convert_orientation,
     )
@@ -403,5 +403,5 @@ def _narrate(
         aprint(
             "Scene dims/camera left as created; for convert's layout pass "
             "fitted_scene_defaults(path).dimensions / .viewer_config to "
-            "create_scene (luxar.gsplats.scene_defaults)."
+            "create_scene (luxar.core.scene_defaults)."
         )

@@ -47,10 +47,10 @@ from typing import Any, List, Optional
 
 import numpy as np
 
-from ..core.dimension_inference import build_dimensions_from_data, infer_discrete_step
-from ..core.dimensions import Dimension, Dimensions
-from ..core.viewer_config import VALID_VIEW_AXES, CameraConfig
-from .io.save_gsplats import fit_axis_dimension_metadata
+from ..gsplats.io.save_gsplats import fit_axis_dimension_metadata
+from .dimension_inference import build_dimensions_from_data, infer_discrete_step
+from .dimensions import Dimension, Dimensions
+from .viewer_config import VALID_VIEW_AXES, CameraConfig
 
 __all__ = [
     "ConvertOrientation",
