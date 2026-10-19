@@ -93,3 +93,6 @@ class GSplatsWriteCtx:
     apply_gsplat_group_attrs: (
         "Callable[[zarr.Group, Dict[str, Any], Dict[str, Any]], None]"
     )
+    #: False once the compiler has emitted its one ACES/colormap-LUT notice, so a
+    #: leaf-subtree write does not emit a second one.
+    warn_on_missing_tone_mapping: bool = True

@@ -766,10 +766,10 @@
   },
   "src/rendering/materials/gsplat/shader-tsl.ts": {
     "complexity": {
-      "count": 3
+      "count": 2
     },
     "max-lines-per-function": {
-      "count": 2
+      "count": 1
     }
   },
   "src/rendering/materials/line/material-glsl.ts": {
@@ -972,7 +972,7 @@
       "count": 1
     }
   },
-  "src/rendering/webgl-blend-warmup.ts": {
+  "src/rendering/blend-warmup.ts": {
     "complexity": {
       "count": 4
     }
@@ -1090,7 +1090,7 @@
   },
   "src/tests/unit/core/app/dataset/should-show-browser.test.ts": {
     "@typescript-eslint/no-base-to-string": {
-      "count": 5
+      "count": 4
     }
   },
   "src/tests/unit/data/gsplats-progressive-loader.test.ts": {
@@ -1148,7 +1148,7 @@
       "count": 23
     }
   },
-  "src/tests/unit/rendering/webgl-blend-warmup.test.ts": {
+  "src/tests/unit/rendering/blend-warmup.test.ts": {
     "@typescript-eslint/no-floating-promises": {
       "count": 7
     }

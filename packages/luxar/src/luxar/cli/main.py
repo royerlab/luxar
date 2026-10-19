@@ -9,10 +9,11 @@ IMPORTANT: URL Construction
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 from pathlib import Path
-from typing import Optional, cast
+from typing import Any, Optional, cast
 
 import typer
 import uvicorn
@@ -96,7 +97,46 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
-app = typer.Typer(help="luxar – build and serve Zarr-backed nD scenes")
+#: Help width when stdout is not a terminal and the environment names none.
+#: Rich falls back to 80 columns there, which wraps every long option line an
+#: agent or a piped log reads.
+PIPED_HELP_WIDTH = 120
+
+
+def _explicit_width_set() -> bool:
+    """Whether ``COLUMNS`` (rich's) or ``TERMINAL_WIDTH`` (Typer's) is positive."""
+    return any(
+        os.environ.get(name, "").strip().isdigit() and int(os.environ[name].strip()) > 0
+        for name in ("COLUMNS", "TERMINAL_WIDTH")
+    )
+
+
+def _widen_piped_help(argv: "list[str]") -> None:
+    """Render ``--help`` at :data:`PIPED_HELP_WIDTH` when stdout is not a TTY.
+
+    Called only from the console entry point, and only for a help request, so
+    importing ``luxar.cli`` changes nothing and usage-error panels (stderr) keep
+    their width. The environment is left untouched; an explicit width wins.
+    """
+    if "--help" not in argv or _explicit_width_set():
+        return
+    isatty = getattr(sys.stdout, "isatty", None)
+    if isatty is not None and isatty():
+        return
+    import typer.rich_utils as rich_utils
+
+    rich_utils.MAX_WIDTH = PIPED_HELP_WIDTH
+
+
+class _LuxarTyper(typer.Typer):
+    """The ``luxar`` app; its console entry point widens piped help first."""
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        _widen_piped_help(sys.argv[1:])
+        return super().__call__(*args, **kwargs)
+
+
+app = _LuxarTyper(help="luxar – build and serve Zarr-backed nD scenes")
 
 
 def _line_buffer_std_streams() -> None:

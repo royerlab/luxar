@@ -939,6 +939,9 @@ def _resolve_density(
 
     if cal is not None:
         result = CalibrationResult.from_json(cal)
+        incomplete = result.incomplete_warning()
+        if incomplete is not None:
+            aprint(incomplete)
         if result.splat_density is None:
             raise typer.BadParameter(
                 f"{cal} has no splat_density (re-run `gsplat cal` to emit it)."

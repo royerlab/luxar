@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "FRAME_STAMP_KEYS",
+    "amplitudes_in_source_units",
     "drop_frame_stamp",
     "linear_part_is_identity",
     "agreed_voxel_size",
@@ -41,6 +42,7 @@ __all__ = [
     "map_to_grid",
     "parse_voxel_size",
     "physical_voxel_size_stamp",
+    "source_region_bounds",
     "source_region_start",
     "stored_voxel_size",
 ]
@@ -223,6 +225,32 @@ def is_stacked_store(
     return isinstance(shape, (list, tuple)) and len(shape) != ndim
 
 
+def source_region_bounds(
+    stats: Optional[Mapping[str, Any]], ndim: int
+) -> Optional[tuple[tuple[int, int], ...]]:
+    """Per-axis ``(start, stop)`` of a ``--region`` crop fit, or ``None``.
+
+    Unlike :func:`source_region_start` an all-zero start still counts: a crop
+    of the FIRST planes (``--region 0:8,:,:``) is a crop too. ``None`` when the
+    store records no ``fitting/source_region`` or it is malformed (wrong rank,
+    a non-integer bound, ``stop <= start``, a negative start).
+    """
+    region = (stats or {}).get("source_region")
+    if not isinstance(region, (list, tuple)) or len(region) != ndim:
+        return None
+    bounds: list[tuple[int, int]] = []
+    for span in region:
+        if not isinstance(span, (list, tuple)) or len(span) != 2:
+            return None
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in span):
+            return None
+        start, stop = int(span[0]), int(span[1])
+        if start < 0 or stop <= start:
+            return None
+        bounds.append((start, stop))
+    return tuple(bounds)
+
+
 def source_region_start(
     stats: Optional[Mapping[str, Any]], ndim: int
 ) -> Optional[tuple[int, ...]]:
@@ -347,7 +375,29 @@ def map_to_grid(
     )
 
 
-def spatial_extent_fraction(centers: np.ndarray, shape: Sequence[int]) -> float:
+def amplitudes_in_source_units(data: "GSplatData", scale: float) -> "GSplatData":
+    """``data`` with its amplitudes divided by a recorded ``intensity_scale``.
+
+    Undoes ``transform --scale-intensity`` for scoring and rendering, so the
+    render is back in the source's own (background-relative) units: the units
+    ``image_min``, the reference, its peak and the foreground threshold are in.
+    Returns a flat render-only copy (centers, amplitudes, Cholesky, truncation
+    radius), like :func:`map_to_grid`; with ``scale == 1.0``, ``data`` itself.
+    """
+    if scale == 1.0:
+        return data
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    amplitudes = np.asarray(data.amplitudes, dtype=np.float64) / float(scale)
+    return GSplatData(
+        centers=np.asarray(data.centers, dtype=np.float32),
+        amplitudes=amplitudes.astype(np.float32),
+        cholesky_factors=np.asarray(data.cholesky_factors, dtype=np.float32),
+        truncation_radius=data.truncation_radius,
+    )
+
+
+def spatial_extent_fraction(centers: np.ndarray, shape: Sequence[float]) -> float:
     """The largest share of the grid extent the centers span on a spatial axis.
 
     Spatial = the first ``min(3, ndim)`` columns (stacked columns come last).

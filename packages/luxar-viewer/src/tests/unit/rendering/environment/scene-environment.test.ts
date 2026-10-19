@@ -270,6 +270,46 @@ describe('SceneEnvironment — lazy room (Phase 1 contract)', () => {
     expect(env.activeKind()).toBe('room');
   });
 
+  it('rebindRenderer rebuilds a ready environment with the NEW renderer factories', () => {
+    const oldTexture = new THREE.Texture();
+    const newTexture = new THREE.Texture();
+    const disposeOld = vi.fn();
+    const { env, scene } = makeEnv({
+      createGenerator: () => ({
+        fromScene: vi.fn(() => ({ texture: oldTexture, dispose: disposeOld })),
+        dispose: vi.fn(),
+      }),
+    });
+    env.ensure();
+    expect(scene.environment).toBe(oldTexture);
+
+    const newGenerator = vi.fn(() => ({
+      fromScene: vi.fn(() => ({ texture: newTexture, dispose: vi.fn() })),
+      dispose: vi.fn(),
+    }));
+    env.rebindRenderer({
+      renderer: {},
+      createGenerator: newGenerator,
+      createCubeTarget: () => ({}) as never,
+    });
+
+    expect(disposeOld).toHaveBeenCalledTimes(1);
+    expect(newGenerator).toHaveBeenCalledTimes(1);
+    expect(scene.environment).toBe(newTexture);
+  });
+
+  it('rebindRenderer keeps an unbuilt environment lazy', () => {
+    const newGenerator = vi.fn();
+    const { env, scene } = makeEnv();
+    env.rebindRenderer({
+      renderer: {},
+      createGenerator: newGenerator as never,
+      createCubeTarget: () => ({}) as never,
+    });
+    expect(newGenerator).not.toHaveBeenCalled();
+    expect(scene.environment).toBeNull();
+  });
+
   it('a throwing generator leaves the environment unbuilt and still disposes the scaffolding', () => {
     const disposeGenerator = vi.fn();
     const { env, scene } = makeEnv({

@@ -296,6 +296,7 @@ def write_gsplat_leaf_subtree(
         store=ctx.store,
         attrs=attrs,
         scene_tone_mapping=ctx.scene_tone_mapping,
+        warn_on_missing_tone_mapping=ctx.warn_on_missing_tone_mapping,
         # Preflighted just above (pre-group) — don't value-scan the leaf twice.
         preflighted=True,
         # Scene-embedded GSplatData (flat leaf / additive ladder) uses the same

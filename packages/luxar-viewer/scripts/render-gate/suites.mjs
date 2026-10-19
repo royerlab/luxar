@@ -16,6 +16,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
+import { loadavg } from 'node:os';
 import { join } from 'node:path';
 
 import { selectBackends } from './browser.mjs';
@@ -408,6 +409,8 @@ async function measureArm(browser, server, c, backend, { defaults, profile, open
       })
     );
     if (c.staleFrameCheck) metrics.staleFrame = (await staleFrameCheck(page)) ? 0 : 1;
+    // Reported, not judged: the host load this arm ran under (`loadSummary`).
+    metrics.load1 = loadavg()[0];
     return metrics;
   } finally {
     await context.close();
@@ -429,6 +432,21 @@ function applyExpectations(row, c, expected) {
       );
     }
   }
+}
+
+/**
+ * The error of a case whose store is not on disk, naming the command that
+ * writes it when the store is a render-gate scene.
+ *
+ * @param {string} store Path under `datasets/`.
+ * @returns {string}
+ */
+export function missingStoreMessage(store) {
+  const m = /^gate\/(.+?)\.luxar\.zarr(\.zip)?$/.exec(store);
+  const fix = m
+    ? `; write it with \`hatch run python packages/luxar-viewer/scripts/render-gate/generate_gate_scenes.py --out datasets/gate --only ${m[1]}\` from the repository root`
+    : '';
+  return `store missing: datasets/${store}${fix}`;
 }
 
 /** Backends selected for one manifest case. */
@@ -523,7 +541,7 @@ export async function runSuite({
         reasons: [],
       };
       if (c.store && !existsSync(join(dataRoot, c.store))) {
-        rows.push({ ...row, status: 'error', failures: [`store missing: datasets/${c.store}`] });
+        rows.push({ ...row, status: 'error', failures: [missingStoreMessage(c.store)] });
         continue;
       }
       const samples = { base: [], base2: [], cand: [] };

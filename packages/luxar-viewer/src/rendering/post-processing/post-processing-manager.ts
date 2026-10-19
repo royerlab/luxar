@@ -97,6 +97,10 @@ export class PostProcessingManager {
   // Transient GPU resources (recreated on context loss)
   // ----------------------------------------------------------------
   private hdrTarget!: THREE.WebGLRenderTarget;
+  /** Current scene-pass target; replaced when size or MSAA changes. */
+  get sceneRenderTarget(): THREE.WebGLRenderTarget {
+    return this.hdrTarget;
+  }
   private ldrTarget!: THREE.WebGLRenderTarget;
   private bloomChain: BloomChain | null = null;
   private megaShader!: LuxarMegaShaderMaterial;
@@ -1026,8 +1030,28 @@ export class PostProcessingManager {
   // ================================================================
 
   /**
+   * Adopt a NEW renderer (a WebGPU renderer rebuilt on a fresh device after
+   * device loss; see `webgpu-device-recovery.ts`) and rebuild every GPU
+   * resource against it, keeping user state exactly as a context restore does.
+   * The identity of this manager survives, so the references PickingSystem,
+   * AnimationController and RenderingControls hold stay valid.
+   */
+  adoptRenderer(renderer: Renderer, capabilities: RendererCapabilities): void {
+    if (this.disposed) return;
+    this.renderer = renderer;
+    this.capabilities = capabilities;
+    // Same output pinning as the constructor (see the comment there).
+    this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+    this.renderer.toneMapping = THREE.NoToneMapping;
+    // A new canvas configuration may have lost HDR output; keep the user's
+    // headroom only when it still applies.
+    if (capabilities.hdrOutput === undefined) this.hdrHeadroom = 1;
+    this.rebuildAfterContextRestore();
+  }
+
+  /**
    * Capture every uniform / define state then rebuild from scratch.
-   * Used after a WebGL context-restore event.
+   * Used after a WebGL context-restore event, and by `adoptRenderer`.
    */
   rebuildAfterContextRestore(): void {
     if (this.disposed) return;

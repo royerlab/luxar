@@ -760,12 +760,15 @@ def _finalize_part_node(
 
     import dataclasses
 
-    from luxar.gsplats.fit_basis import fit_image_min
-    from luxar.gsplats.lod.recipes import RecipeParams, build_part_lod
+    from luxar.gsplats.lod.recipes import (
+        RecipeParams,
+        build_part_lod,
+        with_input_basis,
+    )
 
-    params = recipe_params if recipe_params is not None else RecipeParams()
-    if params.image_min is None:
-        params = dataclasses.replace(params, image_min=fit_image_min(part.stats))
+    params = with_input_basis(
+        recipe_params if recipe_params is not None else RecipeParams(), part.stats
+    )
     if recipe == "levels" and params.coarsen_dims is None:
         params = dataclasses.replace(
             params, coarsen_dims=_default_part_coarsen_dims(part.ndim, n_timepoints)

@@ -906,9 +906,13 @@ class TestFitCommand:
         assert result.exit_code == 0, f"fit failed: {result.stdout}"
         assert out.exists()
 
+    @pytest.mark.parametrize("backend", ["torch", "native"])
     def test_cpu_fit_warns_once_in_cli_output(
-        self, small_volume_npy: Path, tmp_path: Path
+        self, small_volume_npy: Path, tmp_path: Path, backend: str
     ) -> None:
+        """The PyTorch CPU path warns exactly once; the native kernels never."""
+        if backend == "native":
+            pytest.importorskip("numba")
         out = tmp_path / "cpu.gsplats.zarr"
         result = subprocess.run(
             [
@@ -932,13 +936,20 @@ class TestFitCommand:
             capture_output=True,
             text=True,
             check=False,
+            env={**os.environ, "LUXAR_CPU_BACKEND": backend},
         )
 
         output = result.stdout + result.stderr
         assert result.returncode == 0, f"fit failed: {output}"
-        assert output.count("Gaussian splat fitting is running on CPU") == 1
+        expected = 1 if backend == "torch" else 0
+        assert output.count("Gaussian splat fitting is running on CPU") == expected
 
-    def test_tiled_cpu_fit_warns_once_in_cli_output(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("backend", ["torch", "native"])
+    def test_tiled_cpu_fit_warns_once_in_cli_output(
+        self, tmp_path: Path, backend: str
+    ) -> None:
+        if backend == "native":
+            pytest.importorskip("numba")
         volume_path = tmp_path / "tiled-volume.npy"
         np.save(volume_path, np.ones((40, 40, 40), dtype=np.float32))
         out = tmp_path / "tiled-cpu.gsplats.zarr"
@@ -968,12 +979,14 @@ class TestFitCommand:
             capture_output=True,
             text=True,
             check=False,
+            env={**os.environ, "LUXAR_CPU_BACKEND": backend},
         )
 
         output = result.stdout + result.stderr
         assert result.returncode == 0, f"fit failed: {output}"
         assert (out / "part_7").is_dir()
-        assert output.count("Gaussian splat fitting is running on CPU") == 1
+        expected = 1 if backend == "torch" else 0
+        assert output.count("Gaussian splat fitting is running on CPU") == expected
 
     def test_fit_accepts_auto_device(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
@@ -3015,16 +3028,31 @@ class TestViewCommand:
             os.kill(os.getpid(), signal.SIGHUP)
             time.sleep(1)
 
-        with (
-            patch("luxar.cli.utils.check_viewer_built", return_value=True),
-            patch(
-                "luxar.cli.gsplat_ops.scene_build.build_gsplat_scene",
-                side_effect=_hangup,
-            ),
-            patch("luxar.cli.serving._serve_data"),
-            patch("luxar.cli.serving._serve_viewer"),
-        ):
-            result = runner.invoke(app, ["gsplat", "view", str(src), "--no-open"])
+        # `view` deliberately leaves an INHERITED ignore alone (`nohup`, and
+        # agent shells / CI runners that start children with SIGHUP ignored),
+        # so the kill above would be a no-op there and the build would "finish"
+        # — then fall through to real port picking on 8000/5173. Pin the
+        # default disposition the scenario is about, and never touch a real
+        # port: the build is all this test is about.
+        previous = signal.signal(signal.SIGHUP, signal.SIG_DFL)
+        try:
+            with (
+                patch("luxar.cli.utils.check_viewer_built", return_value=True),
+                patch(
+                    "luxar.cli.utils.find_available_port",
+                    side_effect=lambda p, **_kw: p,
+                ),
+                patch("luxar.cli.utils.wait_for_server", return_value=True),
+                patch(
+                    "luxar.cli.gsplat_ops.scene_build.build_gsplat_scene",
+                    side_effect=_hangup,
+                ),
+                patch("luxar.cli.serving._serve_data"),
+                patch("luxar.cli.serving._serve_viewer"),
+            ):
+                result = runner.invoke(app, ["gsplat", "view", str(src), "--no-open"])
+        finally:
+            signal.signal(signal.SIGHUP, previous)
         assert result.exit_code == 128 + signal.SIGHUP, _plain(result.stdout)
         assert list(tmp_path.glob("luxar_gsplat_view_*")) == []
 
@@ -4756,12 +4784,54 @@ class TestCalibrateCommand:
         assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
 
         with open(out_json) as f:
-            region = json.load(f)["calibration_region"]
+            cal = json.load(f)
+        region = cal["calibration_region"]
         assert region is not None and region["strategy"] != "whole"
 
         assert "region-scoped" in result.stdout
         assert "--seeds" in result.stdout
         assert "--tiling content" in result.stdout
+        # ...and it restates the crop K* as a whole-volume --seeds budget, by
+        # the content planner's per-box density transfer.
+        whole = cal["whole_volume_seeds"]
+        assert whole is not None and whole["n_boxes"] > 1
+        assert whole["seeds"] > 0
+        assert f"fit --seeds {whole['seeds']:,}" in " ".join(result.stdout.split())
+
+    def test_cal_region_prints_a_whole_volume_seeds_budget(
+        self,
+        runner: CliRunner,
+        multiblob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """``cal --region``: the crop K* comes with a whole-input --seeds budget."""
+        import json
+
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cal",
+                str(multiblob_volume),
+                str(out_json),
+                "--k-grid",
+                "30,90",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+                "--region",
+                ":20,:20,:",
+            ],
+        )
+        assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
+        whole = json.loads(out_json.read_text())["whole_volume_seeds"]
+        assert whole is not None and whole["n_boxes"] == 4
+        assert "region-scoped" in result.stdout
 
     def test_cal_default_k_star_is_not_flagged(
         self,
@@ -11439,3 +11509,35 @@ class TestSingleCompressionRatio:
         assert f"compression: {format_compression_ratio(expected)} vs raw voxels" in (
             _plain(info.stdout)
         )
+
+
+def _cli_fit(tmp_path: Path) -> str:
+    rng = np.random.default_rng(1)
+    zz, yy, xx = np.mgrid[:16, :20, :24].astype(np.float32)
+    vol = np.exp(-((zz - 8) ** 2 + (yy - 9) ** 2 + (xx - 12) ** 2) / 18.0)
+    vol += 0.02 * rng.random(vol.shape)
+    src = tmp_path / "vol.npy"
+    np.save(src, vol.astype(np.float32))
+    out = tmp_path / "out.gsplats.zarr"
+    result = CliRunner().invoke(
+        app,
+        ["gsplat", "fit", str(src), str(out), "--device", "cpu", "--preset", "draft"]
+        + ["--iters", "15", "--seeds", "40"],
+    )
+    assert result.exit_code == 0, result.output
+    assert out.exists()
+    return result.output
+
+
+def test_cli_fit_on_cpu_runs_on_the_native_kernels(tmp_path: Path) -> None:
+    pytest.importorskip("numba")
+    assert "GaussianSplatModelCPUNative" in _cli_fit(tmp_path)
+
+
+def test_cli_fit_falls_back_cleanly_when_forced_to_torch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LUXAR_CPU_BACKEND", "torch")
+    output = _cli_fit(tmp_path)
+    assert "GaussianSplatModelCPUNative" not in output
+    assert "GaussianSplatModel" in output

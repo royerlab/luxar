@@ -497,7 +497,8 @@ def test_flatten_preserves_single_leaf_part_provenance(tmp_path: Path) -> None:
         ("filter", "filter"),
         ("slice", "slice"),
         ("decimate", "decimate"),
-        ("merge", "merge"),
+        # `merge` is absent on purpose: it flattens a partition input itself
+        # (test_cli_input_output_guards.py::TestMergeFlattensPartitions).
         ("partition", "partition"),
     ],
 )
@@ -550,14 +551,6 @@ def test_matrix_rewrite_commands_reject_partition_without_traceback(
             "2",
             "--device",
             "cpu",
-        ],
-        "merge": [
-            "gsplat",
-            "merge",
-            str(partition_path),
-            str(flat_path),
-            "--output",
-            str(output_path),
         ],
         "partition": [
             "gsplat",

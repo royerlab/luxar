@@ -38,6 +38,7 @@ luxar demo run-all          # generate demo datasets (--no-serve; skips GPU/larg
 luxar demo run lorenz -- --help             # describe a demo without running it
 luxar demo run lorenz -- --host 0.0.0.0     # serve on the LAN (any serving demo)
 luxar demo run lorenz -- --no-open          # don't open a browser
+luxar demo run lorenz --port 8001 --viewer-port 5200  # fixed ports (port forward / firewall)
 luxar demo stop             # stop demos left running (frees their ports); --dry-run to list
 luxar demo cache list       # inventory demo caches under ~/.cache/luxar/
 luxar demo deps                    # which optional dependencies are missing?

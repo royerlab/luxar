@@ -26,6 +26,8 @@ import type { Renderer, RendererCapabilities } from '../../../../rendering/rende
 import { SHADER_REGISTRY } from './index';
 import type { RegistryEntry } from './types';
 import { loadTslMaterials } from '../../../../rendering/tsl/load';
+import { compactWebGPUReadbackRows } from '../../../../rendering/post-processing/hdr/pixel-utils';
+import { alignProvokingVertexWithWebGPU } from '../../../../rendering/picking/mesh/provoking-vertex';
 
 /** Edge length (px) of the square offscreen render target the parity harness draws into. */
 export const HARNESS_SIZE = 64;
@@ -53,10 +55,10 @@ function copyReadback(readback: ArrayBufferView): Uint8Array {
 /**
  * Reverse the row order of an RGBA8 readback in place.
  *
- * Only the real-WebGPU (`native`) single-pass path needs this: its raw
- * readback is Y-flipped relative to the WebGL paths'. The composed bloom
- * executor no longer normalises rows at all — it stages its fixture into a
- * render target so both backends agree outright (see
+ * Only the real-WebGPU (`native`) paths need this: their raw readback is
+ * Y-flipped relative to the WebGL paths'. The composed bloom executor's
+ * WebGL-fallback arm needs no normalisation at all — it stages its fixture
+ * into a render target so both WebGL backends agree outright (see
  * {@link stageFixtureIntoTarget}).
  */
 function flipRowsInPlace(pixels: Uint8Array, width: number, height: number): void {
@@ -222,7 +224,8 @@ function stageFixtureIntoTarget(
 async function renderBloomChain(
   renderer: Renderer,
   caps: RendererCapabilities,
-  fixture: BloomChainFixture
+  fixture: BloomChainFixture,
+  nativeReadback = false
 ): Promise<BloomChainRenderResult> {
   const spec = BLOOM_FIXTURES[fixture];
   // Every GPU resource is released in the `finally` below: a throw out of
@@ -288,7 +291,15 @@ async function renderBloomChain(
       // same bottom-up order as `gl.readPixels`, and the staged render-target
       // input (see `stageFixtureIntoTarget`) puts both backends on the same
       // screen orientation, so the two buffers are directly comparable.
+      // That holds for three's WebGL2 backend. A NATIVE WebGPU readback also
+      // pads every row to 256 bytes (the bloom output is narrower than the
+      // 64-px single-pass target, whose rows are exactly 256 bytes) and is
+      // top-down, so it is compacted and then takes renderTSL's row flip.
       pixels = copyReadback(readback);
+      if (nativeReadback) {
+        pixels = compactWebGPUReadbackRows(pixels, outputSize.width, outputSize.height, 4);
+        flipRowsInPlace(pixels, outputSize.width, outputSize.height);
+      }
     }
     return { pixels, mipCount: chain.mipCount };
   } finally {
@@ -319,25 +330,81 @@ export async function renderBloomChainGLSL(
   }
 }
 
-/** Render the production bloom pyramid through NodeMaterials on WebGL fallback. */
+/**
+ * Render the production bloom pyramid through NodeMaterials — on the WebGL
+ * fallback backend by default, on real WebGPU (WGSL) with `{ native: true }`.
+ */
 export async function renderBloomChainTSL(
-  fixture: BloomChainFixture = 'radial'
+  fixture: BloomChainFixture = 'radial',
+  opts: { native?: boolean } = {}
 ): Promise<BloomChainRenderResult> {
   await loadTslMaterials();
-  const { WebGPURenderer } = await import('three/webgpu');
-  const renderer = new WebGPURenderer({ antialias: false, alpha: false, forceWebGL: true });
-  renderer.setPixelRatio(1);
-  renderer.setSize(HARNESS_SIZE, HARNESS_SIZE);
-  await renderer.init();
+  const renderer = await createHarnessWebGPURenderer(opts.native === true);
   const caps = {
     apiSurface: 'webgpu',
     framebufferYDown: true,
   } as RendererCapabilities;
   try {
-    return await renderBloomChain(renderer, caps, fixture);
+    return await renderBloomChain(renderer, caps, fixture, opts.native === true);
   } finally {
     renderer.dispose();
   }
+}
+
+/**
+ * A `WebGPURenderer` for the harness: three's WebGL2 backend by default, the
+ * real WebGPU backend when `native`.
+ *
+ * `native` must FAIL CLOSED: `navigator.gpu` exists even in Playwright's
+ * bundled Chromium with no usable adapter, and WebGPURenderer does NOT reject
+ * there — its `getFallback` swaps in the WebGL backend with only a console
+ * warning, which would silently hand back a WebGL image (with a spurious row
+ * flip on top) labelled as WGSL. So the guard is the backend identity AFTER
+ * `init()` (#1449), plus a refusal of a software (SwiftShader) adapter, which
+ * runs WGSL but is not the GPU path this arm exists to cover. Set
+ * `?allowFallbackAdapter` on the harness URL to accept one.
+ */
+async function createHarnessWebGPURenderer(
+  native: boolean
+): Promise<import('three/webgpu').WebGPURenderer> {
+  if (native && !('gpu' in navigator)) {
+    throw new Error('native WebGPU requested but navigator.gpu is unavailable');
+  }
+  const { WebGPURenderer } = await import('three/webgpu');
+  const renderer = new WebGPURenderer({ antialias: false, alpha: false, forceWebGL: !native });
+  renderer.setPixelRatio(1);
+  renderer.setSize(HARNESS_SIZE, HARNESS_SIZE);
+  await renderer.init();
+  if (!native) {
+    // Same production alignment as renderGLSL, on three's WebGL2 backend
+    // (a no-op on the native one, whose convention it copies).
+    alignProvokingVertexWithWebGPU(renderer);
+    return renderer;
+  }
+
+  const backend = (
+    renderer as unknown as {
+      backend?: {
+        isWebGPUBackend?: boolean;
+        device?: { adapterInfo?: { isFallbackAdapter?: boolean; description?: string } };
+      };
+    }
+  ).backend;
+  if (!backend?.isWebGPUBackend) {
+    renderer.dispose();
+    throw new Error(
+      'native WebGPU requested but the renderer fell back to WebGL (no usable adapter)'
+    );
+  }
+  const info = backend.device?.adapterInfo;
+  const allowFallback = new URLSearchParams(location.search).has('allowFallbackAdapter');
+  if (info?.isFallbackAdapter === true && !allowFallback) {
+    renderer.dispose();
+    throw new Error(
+      `native WebGPU requested but the adapter is a software fallback (${info.description ?? '?'})`
+    );
+  }
+  return renderer;
 }
 
 /**
@@ -421,6 +488,11 @@ export function renderGLSL(
   const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
   renderer.setPixelRatio(1);
   renderer.setSize(HARNESS_SIZE, HARNESS_SIZE);
+  // Mirror production: `PickingSystem` switches every WebGL context to
+  // WebGPU's first-vertex `flat` convention (MESH_NODE_SPEC §6.5). Without it
+  // the mesh pick's per-vertex id comes from a different triangle corner here
+  // than on native WebGPU, and the pick parity cases compare two conventions.
+  alignProvokingVertexWithWebGPU(renderer);
 
   const target = new THREE.WebGLRenderTarget(HARNESS_SIZE, HARNESS_SIZE, {
     type: THREE.UnsignedByteType,
@@ -488,43 +560,17 @@ export async function renderTSL(
     ? entry.buildTSLMaterial(uniforms)
     : (entry.source.webgpu(uniforms) as THREE.Material);
 
-  // `native: true` runs the graph on REAL WebGPU (WGSL codegen + Dawn/Metal
-  // execution) instead of the WebGL backend — the pixel-equivalence probe
-  // for browsers with a working adapter (system Chrome). The mode must
-  // FAIL CLOSED: `navigator.gpu` exists even in Playwright's bundled
-  // Chromium with WebGPU off (its requestAdapter() just yields nothing),
-  // and WebGPURenderer does NOT reject there — its `getFallback` swaps in
-  // the WebGL backend with only a console warning, which would silently
-  // hand back a WebGL image with a spurious row flip on top. So the real
-  // guard is the backend-identity assertion AFTER init() below (#1449);
-  // the navigator.gpu check just gives a clearer error where the API is
-  // absent outright. The raw native readback is Y-FLIPPED relative to the
-  // WebGL paths', so the flip is applied before returning — both modes
-  // hand back the same bottom-up row convention and compare directly
-  // against renderGLSL (verified 2026-08 on Apple Metal 3, where every
-  // line-primitive fixture matched its GLSL render EXACTLY — mean-covered
-  // diff 0.000).
-  if (opts.native && !('gpu' in navigator)) {
-    throw new Error('native WebGPU requested but navigator.gpu is unavailable');
-  }
-  const { WebGPURenderer } = await import('three/webgpu');
-  const renderer = new WebGPURenderer({
-    antialias: false,
-    alpha: false,
-    forceWebGL: !opts.native,
-  });
-  renderer.setPixelRatio(1);
-  renderer.setSize(HARNESS_SIZE, HARNESS_SIZE);
-  await renderer.init();
-  if (opts.native) {
-    const backend = (renderer as unknown as { backend?: { isWebGPUBackend?: boolean } }).backend;
-    if (!backend?.isWebGPUBackend) {
-      renderer.dispose();
-      throw new Error(
-        'native WebGPU requested but the renderer fell back to WebGL (no usable adapter)'
-      );
-    }
-  }
+  // `native: true` runs the graph on REAL WebGPU (WGSL codegen + Dawn/Metal/
+  // Vulkan execution) instead of the WebGL backend — the pixel-equivalence
+  // probe for browsers with a working adapter (system Chrome; the
+  // `chromium-webgpu` Playwright project). `createHarnessWebGPURenderer`
+  // fails closed when that backend is not what came up. The raw native
+  // readback is Y-FLIPPED relative to the WebGL paths', so the flip is
+  // applied before returning — both modes hand back the same bottom-up row
+  // convention and compare directly against renderGLSL (verified 2026-08 on
+  // Apple Metal 3, where every line-primitive fixture matched its GLSL
+  // render EXACTLY — mean-covered diff 0.000).
+  const renderer = await createHarnessWebGPURenderer(opts.native === true);
 
   // Capture the generated GLSL / WGSL strings by patching the renderer's
   // NodeManager. `_createNodeBuilderState(nodeBuilder)` is called by

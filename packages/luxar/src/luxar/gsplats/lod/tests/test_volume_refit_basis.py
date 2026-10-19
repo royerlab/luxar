@@ -211,3 +211,143 @@ def test_the_never_worse_guard_compares_on_one_basis(monkeypatch) -> None:
     # `never_worse=True`, so gating on `key in stats` only weakened the check.
     for key in ("mse_seed", "mse_refit"):
         assert float(stats[key]) < 500.0**2
+
+
+# ---------------------------------------------------------------------------
+# A `transform --scale-intensity` edit (stats["intensity_scale"])
+# ---------------------------------------------------------------------------
+
+
+def test_a_recorded_intensity_scale_moves_the_target_into_amplitude_units(
+    monkeypatch,
+) -> None:
+    """The seed carries the edit and the raw volume does not, so the volume is
+    multiplied by it AFTER the background shift (the level is in source units)."""
+    captured: dict = {}
+
+    def fake_fit(volume, **kwargs):
+        captured["volume"] = np.asarray(volume).copy()
+        return _seed()
+
+    monkeypatch.setattr("luxar.gsplats.fit_gsplats.fit_gaussian_splats", fake_fit)
+    cfg = vr.VolumeRefitConfig(
+        image_min=500.0,
+        intensity_scale=2.0,
+        iters=1,
+        never_worse=False,
+        conserve_mass=False,
+    )
+    vr.volume_refine_splats(_seed(), _volume(500.0), config=cfg, device="cpu")
+
+    assert float(captured["volume"].min()) == pytest.approx(0.0)
+    assert float(captured["volume"].max()) == pytest.approx(3000.0)
+
+
+def test_the_guard_scores_a_scaled_seed_in_its_own_units(monkeypatch) -> None:
+    """A seed scaled x2 against an unscaled volume would carry an MSE of
+    roughly the volume's own energy; on matching units the exact seed is ~0."""
+    exact = _seed()
+    volume = exact.render_to_volume(shape=(16, 16, 16), device="cpu") + 500.0
+    scaled = exact.scale_intensity(2.0)
+    monkeypatch.setattr(
+        "luxar.gsplats.fit_gsplats.fit_gaussian_splats",
+        lambda volume, **k: scaled,
+    )
+    cfg = vr.VolumeRefitConfig(
+        image_min=500.0,
+        intensity_scale=2.0,
+        iters=1,
+        never_worse=True,
+        conserve_mass=False,
+    )
+    _out, stats = vr.volume_refine_splats(scaled, volume, config=cfg, device="cpu")
+    assert float(stats["mse_seed"]) < 1e-6
+
+
+def test_substitutive_lod_reads_the_scale_from_the_input_stats(monkeypatch) -> None:
+    captured = []
+
+    def fake_refine(seed, volume, *, config, device=None):
+        captured.append(config.intensity_scale)
+        return seed, {}
+
+    monkeypatch.setattr(vr, "volume_refine_splats", fake_refine)
+    from luxar.gsplats.lod.substitutive import make_substitutive_lod
+
+    data = _seed_with_basis(8)
+    data.stats["intensity_scale"] = 3.0
+    make_substitutive_lod(
+        data,
+        compression_factor=2,
+        levels=1,
+        refine="volume",
+        refine_iters=1,
+        volume=_volume(500.0),
+        device="cpu",
+        quality_stamps=False,
+    )
+    assert captured and set(captured) == {3.0}
+
+
+def test_per_part_levels_forward_the_owning_fits_intensity_scale(
+    monkeypatch,
+) -> None:
+    captured = []
+
+    def fake_refine(seed, volume, *, config, device=None):
+        captured.append(config.intensity_scale)
+        return seed, {}
+
+    monkeypatch.setattr(vr, "volume_refine_splats", fake_refine)
+    params = RecipeParams(
+        compression_factor=2,
+        levels=1,
+        refine="volume",
+        refine_iters=1,
+        volume=_volume(500.0),
+        image_min=500.0,
+        intensity_scale=2.5,
+        additive_ladders=False,
+        quality_stamps=False,
+        device="cpu",
+    )
+    build_part_lod(
+        _seed(8).tree,
+        "levels",
+        params,
+        cell=[(0.0, 16.0), (0.0, 16.0), (0.0, 16.0)],
+    )
+    assert captured and set(captured) == {2.5}
+
+
+def test_adaptive_recipe_carries_the_input_intensity_scale(monkeypatch) -> None:
+    import luxar.gsplats.lod.recipes as recipes
+
+    captured = []
+
+    def fake_part(part, params, *, coverage, cell=None):
+        captured.append(params.intensity_scale)
+        return part
+
+    monkeypatch.setattr(recipes, "_substitutive_for_part", fake_part)
+    data = _seed_with_basis()
+    data.stats["intensity_scale"] = 0.5
+    recipes.build_adaptive(data, RecipeParams(max_elements=4, quality_stamps=False))
+    assert captured and set(captured) == {0.5}
+
+
+def test_fit_time_partition_carries_region_intensity_scale(monkeypatch) -> None:
+    import luxar.gsplats.lod.recipes as recipes
+
+    captured = []
+
+    def fake_build(part, recipe, params, *, cell=None):
+        captured.append(params.intensity_scale)
+        return part
+
+    monkeypatch.setattr(recipes, "build_part_lod", fake_build)
+    GSplatData.partition_from_regions(
+        [_seed_with_basis()], recipe="levels", recipe_params=RecipeParams()
+    )
+    # An unedited fit records no scale: identity, resolved rather than None.
+    assert captured == [1.0]

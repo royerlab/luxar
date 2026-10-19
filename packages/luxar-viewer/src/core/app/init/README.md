@@ -74,8 +74,10 @@ runInitPipeline(ports, partial)
 │                              dpr/nativeDPR — percent of native)
 ├── 16. WebGL/WebGPU loss     webgl-context-restored → NodeFactory
 │      listeners              .rebuildAfterContextRestore on loaded scene;
-│                              webgpu-device-lost → notifier.error
-│                              ("reload to continue"). Both tracked via
+│                              webgpu-device-lost → DPR pause + toast;
+│                              webgpu-device-restored → the same rebuild
+│                              with the new renderer; -unrecoverable →
+│                              "reload to continue". Tracked via
 │                              ports.events for dispose.
 ├── 17. SceneLoaderManager    setMonitorFactory(monitorId → DataMonitor
 │      monitor injection      Manager.getInstance() lookup/create) so

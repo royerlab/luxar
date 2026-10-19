@@ -9,8 +9,7 @@ measure the density exponent ``alpha``.
 from __future__ import annotations
 
 import math
-import time
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -30,7 +29,6 @@ from .curve_analysis import (
     HeldOutPeak,
     RDModel,
     SplatDensity,
-    find_k_star,
     fit_rd_model,
     fit_saturation_exponent,
 )
@@ -38,9 +36,15 @@ from .masking import cv_mask, donut_median_fill
 from .metrics import _psnr_db, held_out_gain_db, predict_zero_baseline_mse
 from .noise_floor import estimate_noise_floor
 from .result import CalibrationResult, _json_safe
-
-ProgressCallback = Callable[[int, int, str], None]
-"""``(index, total, message)`` callback emitted before/after each fit."""
+from .sweep import (
+    PointContext,
+    ProgressCallback,
+    curves,
+    extend_below,
+    peaks,
+    run_sweep,
+)
+from .sweep_control import SweepControl
 
 _K_STAR_METRICS = frozenset(
     {"psnr_minmax", "psnr_foreground", "psnr_fg_weighted", "gain"}
@@ -106,6 +110,7 @@ def _per_k_metrics(
     data_range: float,
     baseline_mse: float,
     compute_ssim: Callable[..., float],
+    robust_range: Optional[float] = None,
 ) -> Dict[str, float]:
     """Score one rendered fit against the reference, at bounded peak memory.
 
@@ -132,11 +137,8 @@ def _per_k_metrics(
     train_mse = max(total_sse - held_sse, 0.0) / n_train if n_train else nan
 
     fg_err = held_err[held_fg_sel]
-    held_psnr_fg = (
-        _psnr_db(_sum_float(fg_err) / fg_err.numel(), data_range)
-        if fg_err.numel()
-        else nan
-    )
+    held_mse_fg = _sum_float(fg_err) / fg_err.numel() if fg_err.numel() else nan
+    held_psnr_fg = _psnr_db(held_mse_fg, data_range) if fg_err.numel() else nan
     del fg_err
     fg_sel, bg_sel, n_fg, n_bg, bg_weight = weighting
     held_psnr_fg_weighted = _foreground_weighted_psnr(
@@ -146,9 +148,14 @@ def _per_k_metrics(
     # Same convention as metrics.compute_psnr (inf at zero error), without
     # another full-volume pass.
     full_psnr = _psnr_db(total_sse / numel, data_range)
+    peak = data_range if robust_range is None else robust_range
     return {
         "held_mse": held_mse,
         "held_psnr": _psnr_db(held_mse, data_range),
+        "held_psnr_robust": _psnr_db(held_mse, peak),
+        "held_psnr_fg_robust": (
+            _psnr_db(held_mse_fg, peak) if math.isfinite(held_mse_fg) else nan
+        ),
         "held_psnr_fg": held_psnr_fg,
         "held_gain": held_out_gain_db(held_mse, baseline_mse),
         "held_psnr_fg_weighted": held_psnr_fg_weighted,
@@ -156,6 +163,276 @@ def _per_k_metrics(
         "full_psnr": full_psnr,
         "full_ssim": full_ssim,
     }
+
+
+class CalibrationInterrupted(KeyboardInterrupt):
+    """Raised by :func:`calibrate` on Ctrl-C after at least one finished point.
+
+    ``result`` is the calibration of the points measured so far
+    (``status="interrupted"``), so a caller can write it out and report the
+    best-so-far K* instead of losing the whole sweep. It subclasses
+    ``KeyboardInterrupt`` so code that does not know about it still stops.
+    """
+
+    def __init__(self, result: CalibrationResult) -> None:
+        super().__init__("calibration interrupted")
+        self.result = result
+
+
+def _resolve_cal_floor(
+    V: np.ndarray, floor_spec: Any
+) -> Tuple[np.ndarray, Optional[float], Optional[str]]:
+    """Subtract the background floor ONCE: ``(V, applied_floor, floor_strategy)``.
+
+    The fit target, the render reference AND the held-out truth must share one
+    floor-suppressed scale (a per-fit floor would subtract only inside each fit,
+    mismatching the raw held-out reference and tanking the PSNR). A floor at or
+    above the brightest voxel would clip the whole volume to 0, so it is refused
+    with a warning, mirroring the single-pass guard in ``_normalize_data``.
+    """
+    from luxar.gsplats.fitting.preprocessing import _resolve_floor_result
+    from luxar.gsplats.fitting.validation import _validate_floor
+
+    _validate_floor(floor_spec)  # cal bypasses prepare_fit_config's validation
+    floor_result = _resolve_floor_result(V, floor_spec)
+    applied_floor = None if floor_result is None else float(floor_result.level)
+    if applied_floor is not None and applied_floor >= float(V.max()):
+        import warnings
+
+        warnings.warn(
+            f"floor {applied_floor:.6g} >= volume max {float(V.max()):.6g}; "
+            "ignoring (would erase all signal).",
+            stacklevel=3,
+        )
+        applied_floor = None
+    floor_strategy = (
+        floor_result.strategy
+        if floor_result is not None
+        and applied_floor is not None
+        and isinstance(floor_spec, str)
+        and floor_spec.strip().lower() == "specimen"
+        else None
+    )
+    if applied_floor is not None:
+        V = np.clip(V.astype(np.float32, copy=False) - applied_floor, 0.0, None)
+    return V, applied_floor, floor_strategy
+
+
+def _noise_floor_of(V: np.ndarray) -> Any:
+    """Noise floor of the calibrated (floor-subtracted) volume, on ``[0, 1]``.
+
+    The PSNR ceiling is only meaningful in the range the manuscript and
+    ``fit_gaussian_splats`` work in, so the volume is pre-normalised.
+    """
+    Vn = V.astype(np.float32, copy=False)
+    vmin, vmax = float(Vn.min()), float(Vn.max())
+    Vn_norm = (Vn - vmin) / (vmax - vmin) if vmax > vmin else Vn - vmin
+    return estimate_noise_floor(Vn_norm)
+
+
+@dataclass
+class _ResultParts:
+    """Everything a :class:`CalibrationResult` needs besides the per-K records.
+
+    Measured once before the sweep, so a result can be assembled after every
+    point (checkpoint), on interrupt, or at the end.
+    """
+
+    V: np.ndarray
+    noise_floor: Any
+    n_features: int
+    feature_threshold: float
+    fit_config: Dict[str, Any]
+    mask_seed: int
+    mask_fraction: float
+    donut_radius: int
+    keep_fits: bool
+    foreground_mask_fraction: float
+    foreground_otsu_threshold: float
+    fg_bg_ratio: float
+    baseline_mse: float
+    data_range: float
+    robust_data_range: float
+    k_star_metric: str
+    feature_method: str
+    saturation_exponent: float
+    compute_rd_model: bool
+    control: SweepControl
+    record_sweep: bool
+
+
+def _density(
+    parts: _ResultParts, selected: HeldOutPeak, curve: Dict[str, List[Any]]
+) -> SplatDensity:
+    """Transferable splat density: feature count + K* as an effective count."""
+    ks, eff = list(curve["k"]), list(curve["eff"])
+    k_star_eff = (
+        int(eff[ks.index(selected.k_star)])
+        if selected.k_star in ks
+        else int(selected.k_star)
+    )
+    saturation_cap, measured = _saturation_cap(parts, ks, eff, k_star_eff)
+    n_features = parts.n_features
+    return SplatDensity(
+        feature_method=parts.feature_method,
+        n_features_reference=int(n_features),
+        k_star_reference=k_star_eff,
+        saturation_exponent=float(parts.saturation_exponent),
+        saturation_cap=int(max(saturation_cap, k_star_eff)),
+        splats_per_feature=(
+            float(k_star_eff) / n_features if n_features > 0 else float("nan")
+        ),
+        # Exact absolute level the detector counted at, recorded so the
+        # planner's scan_content counts on the identical scale.
+        feature_threshold=parts.feature_threshold,
+        saturation_cap_measured=measured,
+    )
+
+
+def _saturation_cap(
+    parts: _ResultParts, ks: List[Any], eff: List[Any], k_star_eff: int
+) -> Tuple[int, bool]:
+    """``(cap, measured)``: the per-box budget ceiling for the density transfer.
+
+    The effective count at the TOP of the planned grid (the empirical ceiling),
+    regardless of convergence — collapsing it to ``k_star_eff`` would truncate
+    denser-than-reference tiles to the reference budget (M3). When early
+    stopping skipped the grid's top, that count was never measured: it is
+    estimated from the largest measured point's kept/requested ratio (on A549
+    the measured top would have been 2972 instead of the full grid's 48371,
+    under-seeding every busy box).
+    """
+    if not eff:
+        return k_star_eff, True
+    cap = int(eff[-1])
+    skipped = [int(k) for k in parts.control.k_values_skipped]
+    if not skipped or not ks or int(ks[-1]) <= 0:
+        return cap, True
+    ratio = float(eff[-1]) / float(ks[-1])
+    return max(cap, int(round(max(skipped) * ratio))), False
+
+
+def _rd(
+    parts: _ResultParts, curve: Dict[str, List[Any]]
+) -> Tuple[Optional[RDModel], bool]:
+    """Parametric R-D model on held-out MSE vs effective K + convergence flag."""
+    if not parts.compute_rd_model or len(curve["k"]) < 3:
+        return None, False
+    rd = fit_rd_model([float(k) for k in curve["eff"]], list(curve["held_mse"]))
+    # converged_fraction is structurally < 1 for any power law (a clean beta~0.5
+    # sweep lands ~0.9); only flag genuinely splat-starved curves that are still
+    # steeply climbing at K_max.
+    return rd, bool(rd is not None and rd.converged_fraction < 0.85)
+
+
+def _assemble(
+    parts: _ResultParts, records: Sequence[Dict[str, Any]], status: str
+) -> CalibrationResult:
+    """A :class:`CalibrationResult` from the records measured so far."""
+    curve = curves(records)
+    peak, peak_selected = peaks(curve, parts.k_star_metric)
+    selected = peak_selected or peak
+    rd, not_converged = _rd(parts, curve)
+    ks = [int(k) for k in curve["k"]]
+    stored = [int(x) for x in curve["n_stored"]]
+    return CalibrationResult(
+        k_values_requested=ks,
+        k_values_effective=[int(x) for x in curve["eff"]],
+        held_out_psnr_db=list(curve["held_psnr"]),
+        train_psnr_db=list(curve["train_psnr"]),
+        held_out_mse=list(curve["held_mse"]),
+        full_psnr_db=list(curve["full_psnr"]),
+        full_ssim=list(curve["full_ssim"]),
+        held_out_peak=peak,
+        noise_floor=parts.noise_floor,
+        fit_times_seconds=list(curve["fit_s"]),
+        splat_paths=(
+            [
+                str(r["path"])
+                for r in sorted(records, key=lambda r: r["k"])
+                if r.get("path")
+            ]
+            if parts.keep_fits
+            else None
+        ),
+        mask_seed=parts.mask_seed,
+        mask_fraction=parts.mask_fraction,
+        donut_radius=parts.donut_radius,
+        fit_config=parts.fit_config,
+        volume_shape=list(parts.V.shape),
+        volume_dtype=str(parts.V.dtype),
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        held_out_psnr_fg_db=list(curve["held_psnr_fg"]),
+        held_out_psnr_fg_weighted_db=list(curve["held_psnr_fg_weighted"]),
+        foreground_mask_fraction=parts.foreground_mask_fraction,
+        foreground_otsu_threshold=parts.foreground_otsu_threshold,
+        fg_bg_ratio=parts.fg_bg_ratio,
+        held_out_gain_db=list(curve["held_gain"]),
+        predict_zero_baseline_mse=parts.baseline_mse,
+        k_star_metric=parts.k_star_metric,
+        held_out_peak_selected=peak_selected,
+        splat_density=asdict(_density(parts, selected, curve)),
+        rd_model=asdict(rd) if rd is not None else None,
+        not_converged=not_converged,
+        sweep=parts.control.to_dict() if parts.record_sweep else None,
+        status=status,
+        held_out_psnr_robust_db=list(curve["held_psnr_robust"]),
+        held_out_psnr_fg_robust_db=list(curve["held_psnr_fg_robust"]),
+        data_range=parts.data_range,
+        robust_data_range=parts.robust_data_range,
+        k_values_fitted=[int(x) for x in curve["n_fitted"]],
+        k_values_stored=stored,
+        k_star_stored=stored[ks.index(selected.k_star)]
+        if selected.k_star in ks
+        else None,
+    )
+
+
+def _prepare_fit_kwargs(
+    fit_kwargs: Optional[Dict[str, Any]],
+) -> Tuple[Dict[str, Any], Any, Optional[float], Optional[float], float]:
+    """``(fit_kwargs, floor_spec, cull_retention, stored_min_extent, share)``.
+
+    The per-K fits run with ``floor="none"`` (cal subtracts the floor once),
+    ``min_extent=0`` — measure the UNPRUNED K, since a content fit sized from
+    post-prune counts would prune again (~K*(1-p)^2) — and with the cumulative
+    cull applied by the sweep itself (see :class:`~.sweep.PointContext`). The
+    configured speck-pruning settings are kept to report what ``fit`` would
+    store.
+    """
+    from luxar.gsplats.fitting.splat_hygiene import (
+        DEFAULT_MIN_EXTENT_MAX_MASS_SHARE,
+        DEFAULT_MIN_EXTENT_VOX,
+    )
+
+    fit_kwargs = dict(fit_kwargs or {})
+    fit_kwargs.pop("seeds", None)
+    # cv runs many fits — keep their internal logging quiet by default
+    fit_kwargs.setdefault("verbose", False)
+    floor_spec = fit_kwargs.pop("floor", "auto")
+    cull_retention = fit_kwargs.pop("cull_retention", 0.999)
+    stored_min_extent = fit_kwargs.get("min_extent", DEFAULT_MIN_EXTENT_VOX)
+    share = float(
+        fit_kwargs.get("min_extent_max_mass_share", DEFAULT_MIN_EXTENT_MAX_MASS_SHARE)
+    )
+    fit_kwargs["floor"] = "none"
+    fit_kwargs["min_extent"] = 0.0
+    return fit_kwargs, floor_spec, cull_retention, stored_min_extent, share
+
+
+def _validate_calibrate_args(
+    V: np.ndarray, k_grid: Sequence[int], fg_bg_ratio: float, k_star_metric: str
+) -> None:
+    if V.ndim < 2:
+        raise ValueError(f"V must be at least 2D, got shape {V.shape}")
+    if len(k_grid) < 1:
+        raise ValueError("k_grid must contain at least one K value")
+    _validate_fg_bg_ratio(fg_bg_ratio)
+    if k_star_metric not in _K_STAR_METRICS:
+        raise ValueError(
+            f"unknown k_star_metric {k_star_metric!r}; use "
+            "'psnr_minmax', 'psnr_foreground', 'psnr_fg_weighted', or 'gain'"
+        )
 
 
 def calibrate(
@@ -173,20 +450,27 @@ def calibrate(
     feature_method: str = "peaks",
     saturation_exponent: float = 0.44,
     compute_rd_model: bool = True,
+    sweep_control: Optional[SweepControl] = None,
+    checkpoint: Optional[Callable[[CalibrationResult], None]] = None,
 ) -> CalibrationResult:
     """Run a blind-spot CV sweep over ``k_grid`` on volume ``V``.
 
     Pipeline (one execution per call):
 
     1. Generate a deterministic CV mask, donut-fill ``V`` to make
-       ``V_filled``.
+       ``V_filled``; estimate the noise floor and feature count of ``V``.
     2. Fit a Gaussian-splat model with ``fit_gaussian_splats`` at each
        ``K`` in ``k_grid``, using ``V_filled`` as the target. ``fit_kwargs``
        are forwarded verbatim except ``seeds`` (overridden per-K).
     3. Render each fit back to volume; compute held-out / train / full
        PSNR (and full SSIM) against the original ``V``.
-    4. Estimate the noise floor on ``V``.
-    5. Detect K* via :func:`find_k_star`.
+    4. Detect K* via :func:`find_k_star`.
+
+    Held-out PSNR is reported on two peaks: the full range ``max - min`` (the
+    historical ``held_out_psnr_db``) and the ROBUST peak ``p99.99 - min`` that
+    ``fit`` and ``compare`` headline (``held_out_psnr_robust_db``). The peak is
+    one constant per volume, so the two curves differ by a constant offset and
+    every K* rule (which compares dB differences) picks the same K.
 
     Parameters
     ----------
@@ -206,78 +490,42 @@ def calibrate(
         ``None``, the fitted splats are not saved (memory only during
         the run).
     progress_callback : callable, optional
-        Invoked as ``(i, n, msg)`` before each fit and after metrics.
+        Invoked as ``(i, n, msg)`` before each fit and after metrics; the
+        after-metrics line carries the elapsed time and an ETA for the rest
+        of the grid (an estimate; early stopping may also end the sweep sooner).
+    sweep_control : SweepControl, optional
+        Early stopping (end the sweep once the K*-metric has not improved by
+        ``early_stop_min_gain_db`` for ``early_stop_patience`` consecutive
+        points) and the one-shot downward extension when K* lands on the
+        smallest grid point. ``None`` (the default) runs exactly ``k_grid``;
+        when given, it is updated with what the sweep did and recorded in
+        ``CalibrationResult.sweep``.
+    checkpoint : callable, optional
+        Called with a ``status="partial"`` result after every finished point
+        (``gsplat cal`` writes it to ``cal.json``), so a crash keeps the
+        measured points.
 
     Returns
     -------
     CalibrationResult
+
+    Raises
+    ------
+    CalibrationInterrupted
+        On Ctrl-C once at least one point finished; carries the partial result.
     """
     # Lazy imports — keep module-load cheap for tests that only touch utilities
     import torch
 
-    from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-    from luxar.gsplats.metrics import compute_ssim
-    from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+    from luxar.gsplats.metrics import robust_peak
     from luxar.gsplats.utils.device import resolve_torch_device
 
-    if V.ndim < 2:
-        raise ValueError(f"V must be at least 2D, got shape {V.shape}")
-    if len(k_grid) < 1:
-        raise ValueError("k_grid must contain at least one K value")
-    _validate_fg_bg_ratio(fg_bg_ratio)
-    if k_star_metric not in _K_STAR_METRICS:
-        raise ValueError(
-            f"unknown k_star_metric {k_star_metric!r}; use "
-            "'psnr_minmax', 'psnr_foreground', 'psnr_fg_weighted', or 'gain'"
-        )
-
-    fit_kwargs = dict(fit_kwargs or {})
-    fit_kwargs.pop("seeds", None)
-    # cv runs many fits — keep their internal logging quiet by default
-    fit_kwargs.setdefault("verbose", False)
-
-    # Background floor / DC-offset suppression: subtract ONCE from V so the fit
-    # target, the render reference, AND the held-out truth are all on the same
-    # floor-suppressed scale. (A per-fit floor would subtract only inside each
-    # fit, mismatching the raw held-out reference and tanking the PSNR.) Default
-    # is on ("auto"); K* is thus measured the same way you will fit.
-    from luxar.gsplats.fitting.preprocessing import _resolve_floor_result
-    from luxar.gsplats.fitting.validation import _validate_floor
-
-    floor_spec = fit_kwargs.pop("floor", "auto")
-    _validate_floor(floor_spec)  # cal bypasses prepare_fit_config's validation
-    floor_result = _resolve_floor_result(V, floor_spec)
-    applied_floor = None if floor_result is None else float(floor_result.level)
-    # A floor at/above the brightest voxel would clip the whole volume to 0
-    # (empty signal → non-finite held-out PSNR). Refuse it, mirroring the
-    # single-pass guard in _normalize_data. `auto` can't trigger this (mode is
-    # capped at the median); only an explicit too-high float/percentile can.
-    if applied_floor is not None and applied_floor >= float(V.max()):
-        import warnings
-
-        warnings.warn(
-            f"floor {applied_floor:.6g} >= volume max {float(V.max()):.6g}; "
-            "ignoring (would erase all signal).",
-            stacklevel=2,
-        )
-        applied_floor = None
-    floor_strategy = (
-        floor_result.strategy
-        if floor_result is not None
-        and applied_floor is not None
-        and isinstance(floor_spec, str)
-        and floor_spec.strip().lower() == "specimen"
-        else None
+    _validate_calibrate_args(V, k_grid, fg_bg_ratio, k_star_metric)
+    fit_kwargs, floor_spec, cull_retention, stored_min_extent, share = (
+        _prepare_fit_kwargs(fit_kwargs)
     )
-    if applied_floor is not None:
-        V = np.clip(V.astype(np.float32, copy=False) - applied_floor, 0.0, None)
-    # V is already floor-subtracted; the per-K fits must not subtract again.
-    fit_kwargs["floor"] = "none"
-    # Measure the UNPRUNED K: speck pruning (`min_extent`, default on in the fit
-    # config cal inherits) would make K* / `k_values_effective` /
-    # `saturation_cap` post-prune counts, and a content fit sized from them
-    # would then prune again (~K*(1-p)^2).
-    fit_kwargs["min_extent"] = 0.0
+    # Floor subtracted ONCE (default "auto"), so K* is measured the way you fit.
+    V, applied_floor, floor_strategy = _resolve_cal_floor(V, floor_spec)
 
     if keep_fits is not None:
         keep_fits = Path(keep_fits)
@@ -287,42 +535,24 @@ def calibrate(
     mask = cv_mask(V.shape, fraction=mask_fraction, seed=mask_seed)
     V_filled = donut_median_fill(V, mask, radius=donut_radius)
 
-    # Pre-compute originals on torch for in-loop PSNR/SSIM (kept on CPU to
-    # avoid VRAM contention with the fitter; the metric calls are O(volume)
-    # and dominated by the rendered tensor's location, not this one).
     V_orig_t = torch.from_numpy(V.astype(np.float32, copy=False))
-    data_range = float(V.max() - V.min())
-    if data_range == 0.0:
-        data_range = 1.0
-    mask_t = torch.from_numpy(mask)
+    data_range = float(V.max() - V.min()) or 1.0
+    # The robust peak `fit` / `compare` headline: p99.99 of the reference minus
+    # its minimum (the floor, on this floor-subtracted basis).
+    robust_range = float(robust_peak(V_orig_t)) - float(V.min())
+    if not robust_range > 0.0:
+        robust_range = data_range
 
     # Regime-robust extras: predict-zero baseline (the "free" error floor) and a
     # foreground mask so we can strip background-domination from the held-out
-    # metric. Both kept on the same device as the rendered tensor in-loop.
+    # metric.
     baseline_mse = predict_zero_baseline_mse(V, mask)
-    fg_mask = foreground_mask_otsu(V)
     fg_weighted_mask, fg_otsu_threshold = foreground_mask_otsu_smoothed(V)
-    fg_t = torch.from_numpy(fg_mask)
-    fg_weighted_t = torch.from_numpy(fg_weighted_mask)
-
-    k_values_eff: List[int] = []
-    held_psnr: List[float] = []
-    held_psnr_fg: List[float] = []
-    held_psnr_fg_weighted: List[float] = []
-    held_gain: List[float] = []
-    train_psnr: List[float] = []
-    held_mse: List[float] = []
-    full_psnr: List[float] = []
-    full_ssim: List[float] = []
-    fit_times: List[float] = []
-    splat_paths: List[str] = []
 
     # Resolve the render device ONCE and hoist the loop-invariant device copies
-    # (original volume + masks) out of the per-K loop — they were re-copied to the
-    # GPU and never freed every iteration (M9). Only the held-out mask stays a
-    # full-volume selector; the foreground strata are reduced to HELD-OUT-sized
-    # selectors (5 % of the volume) up front so the full-volume foreground masks
-    # can be released before the first fit.
+    # (original volume + masks) out of the per-K loop (M9). Only the held-out
+    # mask stays a full-volume selector; the foreground strata are reduced to
+    # HELD-OUT-sized selectors (5 % of the volume) up front.
     render_device = str(
         resolve_torch_device(
             fit_kwargs.get("device"),
@@ -330,193 +560,90 @@ def calibrate(
             use_metal=fit_kwargs.get("use_metal", True),
         )
     )
-    ref_dev = V_orig_t.to(render_device)
-    mask_dev = mask_t.to(render_device)
-    held_fg_sel = fg_t.to(render_device)[mask_dev]
-    weighting = _foreground_weighting(
-        mask_dev,
-        fg_weighted_t.to(render_device),
-        fg_bg_ratio,
-    )
-    foreground_mask_fraction = float(np.mean(fg_weighted_mask))
-    del fg_t, fg_weighted_t, fg_mask, fg_weighted_mask
-
-    # 2-3. Fit at each K
-    sweep_t0 = time.perf_counter()
-    for i, K in enumerate(k_grid):
-        if progress_callback is not None:
-            progress_callback(i, len(k_grid), f"fit K={K}")
-        t0 = time.perf_counter()
-        splats = fit_gaussian_splats(V_filled, seeds=int(K), **fit_kwargs)
-        elapsed = time.perf_counter() - t0
-        fit_times.append(elapsed)
-
-        with torch.no_grad():
-            rendered = render_to_volume_tensor(
-                splats, shape=V.shape, device=render_device
-            )
-            m = _per_k_metrics(
-                rendered,
-                ref_dev,
-                mask_dev,
-                held_fg_sel,
-                weighting,
-                data_range=data_range,
-                baseline_mse=baseline_mse,
-                compute_ssim=compute_ssim,
-            )
-            del rendered  # now the squared-error volume (reused in place)
-        held_mse.append(m["held_mse"])
-        held_psnr.append(m["held_psnr"])
-        held_psnr_fg.append(m["held_psnr_fg"])
-        held_gain.append(m["held_gain"])
-        held_psnr_fg_weighted.append(m["held_psnr_fg_weighted"])
-        train_psnr.append(m["train_psnr"])
-        full_psnr.append(m["full_psnr"])
-        full_ssim.append(m["full_ssim"])
-
-        eff_k = int(splats.n_splats)
-        k_values_eff.append(eff_k)
-
-        if keep_fits is not None:
-            out_path = keep_fits / f"k{int(K):08d}.gsplats.zarr"
-            # The fitter's own metrics (psnr_db, ssim, time_seconds, ...) ride
-            # along via splats.stats; calibration-specific fields would be
-            # dropped by GSplatData.save()'s fitting-info whitelist anyway, so
-            # we keep them only in the global cal.json (which references this
-            # file via splat_paths).
-            splats.save(out_path, include_fitting_info=True)
-            splat_paths.append(str(out_path))
-
-        if progress_callback is not None:
-            # One line per grid point, emitted even though the fits run quiet:
-            # K, wall-clock for this fit and for the sweep so far, and the
-            # held-out PSNR that K* is chosen on.
-            progress_callback(
-                i,
-                len(k_grid),
-                f"K={K} eff={eff_k} held={m['held_psnr']:.2f}dB "
-                f"train={m['train_psnr']:.2f}dB fit={elapsed:.1f}s "
-                f"total={time.perf_counter() - sweep_t0:.0f}s",
-            )
-
-        del splats
-        if str(render_device).startswith("cuda"):
-            torch.cuda.empty_cache()
-
-    # release the hoisted device copies
-    del ref_dev, mask_dev, held_fg_sel, weighting
-    if str(render_device).startswith("cuda"):
-        torch.cuda.empty_cache()
-
-    # 4. Noise floor (on the calibrated volume — floor-subtracted above if a
-    # floor was applied, i.e. the same scale the fits and K* use; needs [0, 1]
-    # for the PSNR ceiling to be meaningful — the manuscript and
-    # fit_gaussian_splats both work in that range, so we pre-normalise)
-    Vn = V.astype(np.float32, copy=False)
-    vmin = float(Vn.min())
-    vmax = float(Vn.max())
-    if vmax > vmin:
-        Vn_norm = (Vn - vmin) / (vmax - vmin)
-    else:
-        Vn_norm = Vn - vmin
-    noise_floor = estimate_noise_floor(Vn_norm)
-
-    # 5. Peak detection — default metric is min--max PSNR (manuscript behaviour,
-    #    and the report/back-compat depend on `peak`). NEVER replaced.
-    peak = find_k_star(list(k_grid), held_psnr)
-
-    # 5b. Optional regime-robust K* under a different metric (purely additive).
-    _metric_curves: Dict[str, List[float]] = {
-        "psnr_minmax": held_psnr,
-        "psnr_foreground": held_psnr_fg,
-        "psnr_fg_weighted": held_psnr_fg_weighted,
-        "gain": held_gain,
-    }
-    peak_selected: Optional[HeldOutPeak] = None
-    if k_star_metric != "psnr_minmax":
-        curve = _metric_curves[k_star_metric]
-        if bool(np.isfinite(np.asarray(curve, dtype=float)).any()):
-            peak_selected = find_k_star(list(k_grid), curve)
-
-    # 5c. Parametric R-D model on held-out MSE vs effective K + convergence flag.
-    rd: Optional[RDModel] = None
-    not_converged = False
-    if compute_rd_model:
-        rd = fit_rd_model([float(k) for k in k_values_eff], held_mse)
-        if rd is not None:
-            # converged_fraction is structurally < 1 for any power law (a clean
-            # beta~0.5 sweep lands ~0.9); only flag genuinely splat-starved curves
-            # that are still steeply climbing at K_max.
-            not_converged = rd.converged_fraction < 0.85
-
-    # 5d. Transferable splat density: feature count of the calibrated volume +
-    #     the (regime-appropriate) K* mapped to its effective splat count.
-    selected_peak = peak_selected if peak_selected is not None else peak
-    n_features = count_features(V, method=feature_method)
-    try:
-        star_idx = list(k_grid).index(selected_peak.k_star)
-        k_star_eff = int(k_values_eff[star_idx])
-    except (ValueError, IndexError):
-        k_star_eff = int(selected_peak.k_star)
-    # Cap per-box budgets at the largest *measured* effective K (the empirical
-    # ceiling), regardless of convergence — collapsing it to k_star_eff would
-    # truncate denser-than-reference tiles to the reference budget (M3).
-    saturation_cap = int(k_values_eff[-1]) if k_values_eff else k_star_eff
-    # Exact absolute level the detector counted at (method-aware: blurred-max for
-    # peaks, Otsu for intensity, sobel-max for edges) — recorded so the planner's
-    # scan_content counts on the identical scale (a naive 0.1*raw_max drifts).
-    feat_thr = feature_threshold(V, feature_method)
-    density = SplatDensity(
-        feature_method=feature_method,
-        n_features_reference=int(n_features),
-        k_star_reference=k_star_eff,
-        saturation_exponent=float(saturation_exponent),
-        saturation_cap=int(max(saturation_cap, k_star_eff)),
-        splats_per_feature=(
-            float(k_star_eff) / n_features if n_features > 0 else float("nan")
+    mask_dev = torch.from_numpy(mask).to(render_device)
+    ctx = PointContext(
+        V_filled=V_filled,
+        fit_kwargs=fit_kwargs,
+        render_device=render_device,
+        ref_dev=V_orig_t.to(render_device),
+        mask_dev=mask_dev,
+        held_fg_sel=torch.from_numpy(foreground_mask_otsu(V)).to(render_device)[
+            mask_dev
+        ],
+        weighting=_foreground_weighting(
+            mask_dev, torch.from_numpy(fg_weighted_mask).to(render_device), fg_bg_ratio
         ),
-        feature_threshold=feat_thr,
+        data_range=data_range,
+        robust_range=robust_range,
+        baseline_mse=baseline_mse,
+        keep_fits=keep_fits,
+        cull_retention=cull_retention,
+        stored_min_extent=stored_min_extent,
+        stored_min_extent_max_mass_share=share,
     )
-
-    return CalibrationResult(
-        k_values_requested=[int(k) for k in k_grid],
-        k_values_effective=k_values_eff,
-        held_out_psnr_db=held_psnr,
-        train_psnr_db=train_psnr,
-        held_out_mse=held_mse,
-        full_psnr_db=full_psnr,
-        full_ssim=full_ssim,
-        held_out_peak=peak,
-        noise_floor=noise_floor,
-        fit_times_seconds=fit_times,
-        splat_paths=splat_paths if keep_fits is not None else None,
-        mask_seed=mask_seed,
-        mask_fraction=mask_fraction,
-        donut_radius=donut_radius,
+    control = sweep_control or SweepControl(early_stop=False, extend_below=False)
+    parts = _ResultParts(
+        V=V,
+        noise_floor=_noise_floor_of(V),
+        n_features=int(count_features(V, method=feature_method)),
+        feature_threshold=feature_threshold(V, feature_method),
         fit_config={
             **{k: v for k, v in fit_kwargs.items() if _json_safe(v)},
+            "cull_retention": cull_retention,
             "floor_subtracted": applied_floor,
             **(
                 {"floor_strategy": floor_strategy} if floor_strategy is not None else {}
             ),
         },
-        volume_shape=list(V.shape),
-        volume_dtype=str(V.dtype),
-        timestamp=datetime.now(timezone.utc).isoformat(),
-        held_out_psnr_fg_db=held_psnr_fg,
-        held_out_psnr_fg_weighted_db=held_psnr_fg_weighted,
-        foreground_mask_fraction=foreground_mask_fraction,
+        mask_seed=mask_seed,
+        mask_fraction=mask_fraction,
+        donut_radius=donut_radius,
+        keep_fits=keep_fits is not None,
+        foreground_mask_fraction=float(np.mean(fg_weighted_mask)),
         foreground_otsu_threshold=float(fg_otsu_threshold),
         fg_bg_ratio=float(fg_bg_ratio),
-        held_out_gain_db=held_gain,
-        predict_zero_baseline_mse=baseline_mse,
+        baseline_mse=baseline_mse,
+        data_range=data_range,
+        robust_data_range=robust_range,
         k_star_metric=k_star_metric,
-        held_out_peak_selected=peak_selected,
-        splat_density=asdict(density),
-        rd_model=asdict(rd) if rd is not None else None,
-        not_converged=not_converged,
+        feature_method=feature_method,
+        saturation_exponent=saturation_exponent,
+        compute_rd_model=compute_rd_model,
+        control=control,
+        record_sweep=sweep_control is not None,
     )
+    del fg_weighted_mask
+
+    def on_point(records: List[Dict[str, Any]]) -> None:
+        if checkpoint is not None:
+            checkpoint(_assemble(parts, records, "partial"))
+
+    # 2-3. Fit at each K (stopping early on a plateau), then extend below the
+    # grid once if K* landed on its smallest point.
+    records: List[Dict[str, Any]] = []
+    try:
+        run_sweep(
+            ctx,
+            list(k_grid),
+            control,
+            k_star_metric,
+            progress_callback,
+            records=records,
+            on_point=on_point,
+        )
+        extend_below(ctx, records, control, k_star_metric, progress_callback, on_point)
+    except KeyboardInterrupt:
+        control.interrupted = True
+        if records:
+            raise CalibrationInterrupted(
+                _assemble(parts, records, "interrupted")
+            ) from None
+        raise
+    finally:
+        del ctx
+        if render_device.startswith("cuda"):
+            torch.cuda.empty_cache()
+    return _assemble(parts, records, "complete")
 
 
 def calibrate_saturation_exponent(

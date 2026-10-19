@@ -22,6 +22,7 @@ function harness(graceS = 10) {
   const reload = vi.fn();
   const onRecovered = vi.fn();
   const lossListeners = new Set<() => void>();
+  const restoreListeners = new Set<() => void>();
   let nextHandle = 1;
   const timers = new Map<number, () => void>();
   const watchdog = startKioskWatchdog({
@@ -29,9 +30,13 @@ function harness(graceS = 10) {
     graceS,
     reload,
     onRecovered,
-    onUnrecoverableLoss: (listener) => {
+    onDeviceLost: (listener) => {
       lossListeners.add(listener);
       return () => lossListeners.delete(listener);
+    },
+    onDeviceRestored: (listener) => {
+      restoreListeners.add(listener);
+      return () => restoreListeners.delete(listener);
     },
     setTimer: (handler) => {
       const handle = nextHandle++;
@@ -51,7 +56,10 @@ function harness(graceS = 10) {
     loseDevice: () => {
       for (const listener of [...lossListeners]) listener();
     },
-    lossListenerCount: () => lossListeners.size,
+    restoreDevice: () => {
+      for (const listener of [...restoreListeners]) listener();
+    },
+    lossListenerCount: () => lossListeners.size + restoreListeners.size,
     fireTimers: () => {
       for (const handler of [...timers.values()]) handler();
       timers.clear();
@@ -61,7 +69,7 @@ function harness(graceS = 10) {
 
 describe('startKioskWatchdog', () => {
   it('reloads after the grace period when the GPU device is lost for good (WebGPU)', () => {
-    // WebGPU device loss has no restore event: without this the kiosk stays
+    // A WebGPU recovery that never succeeds: without this the kiosk stays
     // blank until someone walks up to it.
     const h = harness();
     h.loseDevice();
@@ -71,9 +79,20 @@ describe('startKioskWatchdog', () => {
     expect(h.reload).toHaveBeenCalledTimes(1);
   });
 
+  it('does NOT reload when the WebGPU device is restored in time', () => {
+    const h = harness();
+    h.loseDevice();
+    expect(h.pending()).toBe(1);
+    h.restoreDevice();
+    expect(h.pending()).toBe(0);
+    expect(h.onRecovered).toHaveBeenCalledTimes(1);
+    h.fireTimers();
+    expect(h.reload).not.toHaveBeenCalled();
+  });
+
   it('stops listening for device loss on dispose', () => {
     const h = harness();
-    expect(h.lossListenerCount()).toBe(1);
+    expect(h.lossListenerCount()).toBe(2);
     h.watchdog.dispose();
     expect(h.lossListenerCount()).toBe(0);
   });
