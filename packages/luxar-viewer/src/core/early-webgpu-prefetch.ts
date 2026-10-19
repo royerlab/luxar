@@ -19,12 +19,19 @@ function storedRenderer(): 'webgl' | 'webgpu' | undefined {
   }
 }
 
-const urlRenderer = new URLSearchParams(location.search).get('renderer');
+const urlRenderer = new URLSearchParams(location.search).get('renderer')?.trim().toLowerCase();
 const override =
-  urlRenderer === 'webgl' || urlRenderer === 'webgpu' ? urlRenderer : storedRenderer();
+  urlRenderer === 'webgl' || urlRenderer === 'webgl2'
+    ? 'webgl'
+    : urlRenderer === 'webgpu'
+      ? 'webgpu'
+      : storedRenderer();
 const selection = selectBackend(override);
-if (selection.backend === 'webgpu' && ('gpu' in navigator || !selection.requireNativeAdapter)) {
-  // The normal load in SceneManager still installs the registry and handles
-  // failures. The browser shares this in-flight module fetch with that load.
-  void import('../rendering/tsl/registry').catch(() => undefined);
+if (selection.backend === 'webgpu') {
+  const hasGpu = (navigator as Navigator & { gpu?: unknown }).gpu !== undefined;
+  if (hasGpu || !selection.requireNativeAdapter) {
+    // The normal load in SceneManager still installs the registry and handles
+    // failures. The browser shares this in-flight module fetch with that load.
+    void import('../rendering/tsl/registry').catch(() => undefined);
+  }
 }

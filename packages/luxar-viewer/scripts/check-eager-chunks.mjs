@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Assert that the WebGPU/TSL cone stays OFF the app's critical path.
+ * Assert that the WebGPU/TSL cone stays lazy for WebGL sessions.
  *
  * The production default backend is WebGL (`selectBackend()` in
  * renderer-setup.ts), so the ~182 kB gzipped `three-webgpu` chunk must be
@@ -168,8 +168,14 @@ function auditEntry({ html: htmlName, forbid }) {
     fail(`Could not find the entry <script type="module"> in dist/${htmlName}.`);
     return;
   }
-  if (htmlName === 'index.html' && !scripts[0][0].includes('data-webgpu-prefetch')) {
-    fail('dist/index.html must start the WebGPU prefetch before the viewer entry script.');
+  if (htmlName === 'index.html') {
+    if (scripts.length !== 2 || !scripts[0][0].includes('data-webgpu-prefetch')) {
+      fail('dist/index.html must start the WebGPU prefetch before the viewer entry script.');
+    }
+    for (const script of scripts) {
+      const name = script[1].split('/').pop();
+      if (!assetFiles.includes(name)) fail(`dist/index.html references missing script '${name}'.`);
+    }
   }
 
   // ── 3. …and nothing they reach statically may import one either ──────────

@@ -1,7 +1,7 @@
 # The lazy TSL / WebGPU boundary
 
-Three tiny modules whose only job is to keep the three.js node system off the
-initial payload.
+Three small modules keep the three.js node system off WebGL's initial payload.
+The standalone HTML entry starts an additional dynamic prefetch for WebGPU.
 
 The production default backend is WebGL (`selectBackend()` in
 `scene/scene-manager/render-pipeline/renderer-setup.ts`); WebGPU is opt-in per
@@ -18,7 +18,7 @@ that never ran.
 | File          | Role                                                                                                                                                                                                                                                                                                                  |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `registry.ts` | The designated entry to the lazy cone: the `*-tsl` / `*.tsl` modules that name `three/webgpu` / `three/tsl` as values are reachable only through it in production (the e2e TSL harness imports a few of them directly). Gathers the 9 TSL material classes and every TSL graph factory into one `TSL_REGISTRY` value. |
-| `load.ts`     | The **only** module that imports `registry.ts` at runtime, via `await import()` (`slot.ts`'s import is type-only and erased). That single dynamic edge is what makes the chunk lazy. Memoized and concurrency-safe; re-loadable after a transient failure.                                                            |
+| `load.ts`     | The normal dynamic import of `registry.ts`. It installs the registry, memoizes concurrent calls, and retries after a transient failure. The separate standalone prefetch entry imports the same module early but never installs it.                                                                                   |
 | `slot.ts`     | Zero-runtime-import leaf holding the loaded registry. `requireTslMaterials()` for synchronous consumers.                                                                                                                                                                                                              |
 
 ## Why `slot.ts` is separate from `load.ts`
@@ -36,8 +36,9 @@ So the accessor sits in a leaf that imports nothing at runtime.
 ## The ordering contract
 
 `loadTslMaterials()` must resolve before the first material is constructed on
-the WebGPU path. Standalone bootstrap starts adapter/device acquisition and
-prefetches this registry before awaiting the adapter. `SceneManager.init` still
+the WebGPU path. The standalone HTML entry prefetches the registry before the
+main viewer bundle runs; bootstrap also starts adapter/device acquisition and
+requests the registry before awaiting the adapter. `SceneManager.init` still
 awaits it before constructing a material:
 
 ```
