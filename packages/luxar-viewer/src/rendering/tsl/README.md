@@ -2,9 +2,10 @@
 
 Three small modules keep the three.js node system off WebGL's initial payload.
 The standalone HTML entry starts an additional dynamic prefetch for WebGPU.
+The bootstrap prefetch remains for library and embedded mounts without the HTML entry.
 
 The production default backend is WebGL (`selectBackend()` in
-`scene/scene-manager/render-pipeline/renderer-setup.ts`); WebGPU is opt-in per
+`scene/scene-manager/render-pipeline/backend-selection.ts`); WebGPU is opt-in per
 session via `?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`. But the TSL
 material classes all `extend NodeMaterial` from `three/webgpu`, and until
 issue #1679 twenty-three production modules imported that subpath as a value.

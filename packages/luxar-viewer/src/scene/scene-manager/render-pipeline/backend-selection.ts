@@ -6,10 +6,18 @@ export interface BackendSelection {
   requireNativeAdapter: boolean;
 }
 
-/** WebGL remains the default until the go/no-go checks in #3146 pass. */
+/**
+ * WebGL remains the default until the go/no-go checks in #3146 pass. A
+ * WebGPU default still falls back to WebGL without a native adapter.
+ */
 const DEFAULT_BACKEND: BackendSelection['backend'] = 'webgl';
 
-/** URL/Settings override, then build environment, then the default. */
+/**
+ * Select the backend in order: URL/Settings override, VITE_LUXAR_USE_WEBGPU
+ * or VITE_LUXAR_USE_WEBGPU_RENDERER, VITE_LUXAR_USE_LEGACY_WEBGL, then
+ * defaultBackend. Only an explicit WebGPU override may use three's WebGL2
+ * bridge; the webgpu-gl render gate arm relies on that exception.
+ */
 export function selectBackend(
   rendererOverride: 'webgl' | 'webgpu' | undefined,
   defaultBackend: BackendSelection['backend'] = DEFAULT_BACKEND
@@ -30,4 +38,9 @@ export function selectBackend(
     return { backend: 'webgl', source: 'env-var', requireNativeAdapter: true };
   }
   return { backend: defaultBackend, source: 'default', requireNativeAdapter: true };
+}
+
+/** A native adapter is required except for an explicit WebGPU override. */
+export function shouldPrefetchTsl(hasGpu: boolean, requireNativeAdapter?: boolean): boolean {
+  return hasGpu || !requireNativeAdapter;
 }

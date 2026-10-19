@@ -27,7 +27,13 @@ import { ENVIRONMENT_RESOLUTION_MAX, ENVIRONMENT_RESOLUTION_MIN } from '../types
 import { parseViewAxis, type ViewAxis } from '../types/view-axis';
 import { clampHdrHeadroom } from '../types/hdr-output';
 import type { InputProfileOverride } from '../utils/input-capabilities';
+import {
+  getParam as readParamValue,
+  hasParam as readParamFlag,
+  URL_PARAM_ALIASES,
+} from './url-param-access';
 import { log, Modules } from '../utils/log';
+import { normalizeRendererParam } from './renderer-preference';
 
 /**
  * Wire spellings of every query parameter the viewer recognizes.
@@ -98,56 +104,36 @@ export const URL_PARAM_KEYS = {
 /** A recognized URL query parameter, spelled as it appears on the wire. */
 export type UrlParamKey = (typeof URL_PARAM_KEYS)[keyof typeof URL_PARAM_KEYS];
 
-/**
- * Deprecated spellings still accepted for a parameter, mapped to the current
- * key. Empty today: the 2026-09 camelCase rename was a pre-release hard cut.
- * This table is the mechanism a POST-release rename uses — add
- * `'old-spelling': URL_PARAM_KEYS.newSpelling`, and {@link readUrlParams}
- * keeps honoring the old URL while warning once per page load, for the
- * deprecation window the compatibility policy sets (two releases or six
- * months, whichever is longer).
- */
-export const URL_PARAM_ALIASES: Readonly<Record<string, UrlParamKey>> = {};
+/** @internal Preserve the alias table export for URL tooling. */
+export { URL_PARAM_ALIASES } from './url-param-access';
 
-/** Aliases already warned about in this page load, so each warns once. */
+/** Warn once when a deprecated query spelling is used. */
 const warnedAliases = new Set<string>();
-
-/**
- * Resolve the spelling under which `key` is present in `params`: the key
- * itself, else a deprecated alias of it (warning once per alias), else null.
- * `aliases` is injectable so the mechanism stays testable while the shipped
- * table is empty.
- */
-function resolveParamKey(
-  params: URLSearchParams,
-  key: UrlParamKey,
-  aliases: Readonly<Record<string, UrlParamKey>>
-): string | null {
-  if (params.has(key)) return key;
-  for (const [alias, canonical] of Object.entries(aliases)) {
-    if (canonical !== key || !params.has(alias)) continue;
-    if (!warnedAliases.has(alias)) {
-      warnedAliases.add(alias);
-      log.warning(
-        Modules.CONFIG,
-        `URL parameter "${alias}" is deprecated; use "${canonical}" instead.`
-      );
-    }
-    return alias;
-  }
-  return null;
+function warnDeprecatedAlias(alias: string, canonical: UrlParamKey): void {
+  if (warnedAliases.has(alias)) return;
+  warnedAliases.add(alias);
+  log.warning(
+    Modules.CONFIG,
+    `URL parameter "${alias}" is deprecated; use "${canonical}" instead.`
+  );
 }
 
-/**
- * Whether flag `key` (or a deprecated alias of it) is present in `params`.
- * The alias-aware replacement for `params.has(key)`.
- */
+/** Whether the key or one of its deprecated aliases is present. */
 export function hasParam(
   params: URLSearchParams,
   key: UrlParamKey,
   aliases: Readonly<Record<string, UrlParamKey>> = URL_PARAM_ALIASES
 ): boolean {
-  return resolveParamKey(params, key, aliases) !== null;
+  return readParamFlag(params, key, aliases, warnDeprecatedAlias);
+}
+
+/** Read the key or one of its deprecated aliases. */
+export function getParam(
+  params: URLSearchParams,
+  key: UrlParamKey,
+  aliases: Readonly<Record<string, UrlParamKey>> = URL_PARAM_ALIASES
+): string | null {
+  return readParamValue(params, key, aliases, warnDeprecatedAlias);
 }
 
 /**
@@ -160,19 +146,6 @@ export function hasParam(
 export function hasUrlFlag(key: UrlParamKey, search?: string): boolean {
   const raw = search ?? (typeof window !== 'undefined' ? window.location?.search : '') ?? '';
   return hasParam(new URLSearchParams(raw), key);
-}
-
-/**
- * The value of `key` (or of a deprecated alias of it) in `params`, or null
- * when absent. The alias-aware replacement for `params.get(key)`.
- */
-export function getParam(
-  params: URLSearchParams,
-  key: UrlParamKey,
-  aliases: Readonly<Record<string, UrlParamKey>> = URL_PARAM_ALIASES
-): string | null {
-  const present = resolveParamKey(params, key, aliases);
-  return present === null ? null : params.get(present);
 }
 
 const MAX_SRC_LENGTH = 4096;
@@ -891,19 +864,6 @@ function parsePositiveInt(raw: string | null): number | null {
   if (raw === null) return null;
   const value = Number(raw);
   return Number.isInteger(value) && value > 0 ? value : null;
-}
-
-/**
- * Validate the `?renderer=` query value. Accept `webgl` and `webgpu`
- * case-insensitively; everything else (including the empty
- * `?renderer` flag-only form) is treated as "no override".
- */
-function normalizeRendererParam(raw: string | null): 'webgl' | 'webgpu' | null {
-  if (raw === null) return null;
-  const v = raw.trim().toLowerCase();
-  if (v === 'webgl' || v === 'webgl2') return 'webgl';
-  if (v === 'webgpu') return 'webgpu';
-  return null;
 }
 
 /**

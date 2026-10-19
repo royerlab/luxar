@@ -32,30 +32,44 @@ for (const renderer of ['webgpu', 'WEBGPU']) {
   });
 }
 
-test('does not request the WebGPU chunk for WebGL', async ({ page }) => {
-  await page.addInitScript(() => {
-    Object.defineProperty(navigator, 'gpu', {
-      configurable: true,
-      get: () => {
-        (window as Window & { gpuReads?: number }).gpuReads =
-          ((window as Window & { gpuReads?: number }).gpuReads ?? 0) + 1;
-        return undefined;
-      },
-    });
+for (const scenario of [
+  { name: 'WebGL URL', path: '/?renderer=webgl', stored: null },
+  { name: 'default WebGL', path: '/', stored: null },
+  { name: 'stored WebGL', path: '/', stored: 'webgl' },
+]) {
+  test(`does not request the WebGPU chunk for ${scenario.name}`, async ({ page }) => {
+    await page.addInitScript((stored) => {
+      if (stored) {
+        localStorage.setItem(
+          'luxar.settings',
+          JSON.stringify({ version: 1, advanced: { renderer: stored } })
+        );
+      } else {
+        localStorage.removeItem('luxar.settings');
+      }
+      Object.defineProperty(navigator, 'gpu', {
+        configurable: true,
+        get: () => {
+          (window as Window & { gpuReads?: number }).gpuReads =
+            ((window as Window & { gpuReads?: number }).gpuReads ?? 0) + 1;
+          return undefined;
+        },
+      });
+    }, scenario.stored);
+    const { requested, release } = await blockViewerEntry(page);
+    try {
+      await page.goto(scenario.path, { waitUntil: 'commit' });
+      release();
+      await page.waitForLoadState('domcontentloaded');
+      expect(requested.some((url) => url.includes('/rendering/tsl/registry.ts'))).toBe(false);
+      expect(
+        await page.evaluate(() => (window as Window & { gpuReads?: number }).gpuReads ?? 0)
+      ).toBe(0);
+    } finally {
+      release();
+    }
   });
-  const { requested, release } = await blockViewerEntry(page);
-  try {
-    await page.goto('/?renderer=webgl', { waitUntil: 'commit' });
-    release();
-    await page.waitForLoadState('domcontentloaded');
-    expect(requested.some((url) => url.includes('/rendering/tsl/registry.ts'))).toBe(false);
-    expect(
-      await page.evaluate(() => (window as Window & { gpuReads?: number }).gpuReads ?? 0)
-    ).toBe(0);
-  } finally {
-    release();
-  }
-});
+}
 
 test('uses stored renderer preference before the viewer starts', async ({ page }) => {
   await page.addInitScript(() => {

@@ -27,6 +27,8 @@ function earlyWebgpuPrefetchHtmlPlugin(): Plugin {
           (asset) => asset.type === 'chunk' && asset.facadeModuleId === entry
         );
         const src = chunk ? `./${chunk.fileName}` : '/src/core/early-webgpu-prefetch.ts';
+        // Keep the prefetch first: check-eager-chunks.mjs asserts this two-script
+        // layout. A static modulepreload would also fetch WebGPU for WebGL sessions.
         return html.replace(
           '<script type="module"',
           `<script type="module" src="${src}" data-webgpu-prefetch></script>\n    <script type="module"`

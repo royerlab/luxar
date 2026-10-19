@@ -55,7 +55,7 @@ import {
 } from '../../../types/hdr-output';
 import { notifier } from '../../../utils/cross-layer/notifier';
 export { selectBackend } from './backend-selection';
-export type { BackendSelection } from './backend-selection';
+import { shouldPrefetchTsl } from './backend-selection';
 
 /**
  * Point the backend-dependent rendering paths at `renderer`. Every renderer
@@ -328,7 +328,8 @@ async function requestCoreAdapter(): Promise<GPUAdapterLike | null> {
 }
 
 function prefetchTslMaterialsWhenUsable(hasGpu: boolean, requireNativeAdapter?: boolean): void {
-  if (hasGpu || !requireNativeAdapter) void loadTslMaterials().catch(() => undefined);
+  if (shouldPrefetchTsl(hasGpu, requireNativeAdapter))
+    void loadTslMaterials().catch(() => undefined);
 }
 
 /**

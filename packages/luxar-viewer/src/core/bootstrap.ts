@@ -24,6 +24,7 @@ import { archiveFaultFrom } from '../cache/chunk-source';
 import { unsupportedFormatVersionFrom } from '../data/format-version';
 import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
+import { resolveRendererOverride } from '../config/renderer-preference';
 import { buildInfo, buildInfoLine } from '../config/build-info';
 import { VIEWER_VERSION } from '../version';
 import { applyUrlPerformanceOverrides, initUserSettings } from '../config/user-settings';
@@ -323,9 +324,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     // build-time env, then the stored Settings preference, then undefined →
     // SceneManager falls back to the env var, then the WebGL default. See
     // `setupRenderer` for the precedence chain.
-    renderer:
-      urlParams.renderer ??
-      (userSettings.advanced.renderer !== 'auto' ? userSettings.advanced.renderer : undefined),
+    renderer: resolveRendererOverride(urlParams.renderer, userSettings.advanced.renderer),
     webgpuForceWebGL: urlParams.webgpuForceWebGL,
     perfTimestamp: urlParams.perfTimestamp,
     // HDR output: on by default (it still needs WebGPU + an HDR display and
