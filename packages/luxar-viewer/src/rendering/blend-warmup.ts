@@ -158,7 +158,7 @@ export type CompileOne = (
 export interface CompileOptions {
   /** Aborted when the warm-up is cleared or the link times out. */
   signal: AbortSignal;
-  /** WebGPU: the target the scene renders into (its format is part of the pipeline key). */
+  /** The target the scene renders into (its format/colour space is part of the program key). */
   getRenderTarget?: () => THREE.RenderTarget | null;
 }
 
@@ -250,7 +250,7 @@ async function defaultCompileOne(
         compileScene,
         camera,
         targetScene,
-        signal
+        { signal, getRenderTarget }
       );
     }
   } finally {
@@ -282,12 +282,18 @@ async function compileWebGLAndAwaitLink(
   compileScene: THREE.Scene,
   camera: THREE.Camera,
   targetScene: THREE.Scene,
-  signal: AbortSignal
+  { signal, getRenderTarget }: CompileOptions
 ): Promise<void> {
   if (signal.aborted || renderer.getContext().isContextLost()) {
     throw new Error('Blend warm-up context unavailable');
   }
-  const materials = renderer.compile(compileScene, camera, targetScene);
+  const materials = compileWebGLWithTarget(
+    renderer,
+    compileScene,
+    camera,
+    targetScene,
+    getRenderTarget
+  );
   while (materials.size > 0) {
     if (signal.aborted || renderer.getContext().isContextLost()) {
       throw new Error('Blend warm-up context unavailable');
@@ -299,6 +305,23 @@ async function compileWebGLAndAwaitLink(
       if (properties.currentProgram?.isReady()) materials.delete(material);
     }
     if (materials.size > 0) await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+function compileWebGLWithTarget(
+  renderer: THREE.WebGLRenderer,
+  compileScene: THREE.Scene,
+  camera: THREE.Camera,
+  targetScene: THREE.Scene,
+  getRenderTarget?: () => THREE.RenderTarget | null
+): Set<THREE.Material> {
+  if (!getRenderTarget) return renderer.compile(compileScene, camera, targetScene);
+  const previous = renderer.getRenderTarget();
+  try {
+    renderer.setRenderTarget(getRenderTarget() as THREE.WebGLRenderTarget | null);
+    return renderer.compile(compileScene, camera, targetScene);
+  } finally {
+    renderer.setRenderTarget(previous);
   }
 }
 

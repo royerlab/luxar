@@ -190,6 +190,38 @@ describe('BlendWarmupManager', () => {
     expect(rejecting.compileAsync).toHaveBeenCalled();
     expect(compileScene.children).toHaveLength(0);
   });
+
+  it('compiles WebGL keepers against the live target and restores the host target', async () => {
+    const previous = new THREE.WebGLRenderTarget(1, 1);
+    const live = new THREE.WebGLRenderTarget(2, 2);
+    let current: THREE.RenderTarget | null = previous;
+    const compiledTargets: Array<THREE.RenderTarget | null> = [];
+    const renderer = {
+      isWebGLRenderer: true,
+      getRenderTarget: () => current,
+      setRenderTarget: (target: THREE.RenderTarget | null) => {
+        current = target;
+      },
+      getContext: () => ({ isContextLost: () => false }),
+      compile: () => {
+        compiledTargets.push(current);
+        return new Set<THREE.Material>();
+      },
+    } as unknown as WarmupRenderer;
+    const manager = new BlendWarmupManager(() => Promise.resolve(), undefined, activateImmediately);
+    manager.configure({
+      enabled: true,
+      renderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+      getRenderTarget: () => live,
+    });
+
+    await manager.warmScene(makeRenderableMesh('points'));
+    expect(compiledTargets).toEqual([live, live, live]);
+    expect(current).toBe(previous);
+  });
+
   it('pipelineVariants (WebGPU) queues every blend mode, not only define-distinct ones', async () => {
     const run = async (pipelineVariants: boolean) => {
       const compileOne = vi.fn();
