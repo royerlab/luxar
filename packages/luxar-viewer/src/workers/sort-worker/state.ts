@@ -28,6 +28,8 @@ export interface RegisteredNode {
   centers3: Float32Array;
   /** Number of splats. */
   count: number;
+  /** Sorted-index attribute capacity; omitted on classic WebGL and mesh. */
+  orderingCapacity?: number;
 }
 
 export interface SortWorkerCtx {
