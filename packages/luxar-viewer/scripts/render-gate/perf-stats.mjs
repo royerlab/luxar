@@ -243,3 +243,45 @@ export const ROTATIONS = [
   ['cand', 'base2', 'base'],
   ['base2', 'base', 'cand'],
 ];
+
+/**
+ * Host load (1-minute load average per logical CPU) above which a report
+ * warns that its timings shared the machine. The gate's own Chrome keeps two
+ * or three threads runnable; half the cores busy is other work.
+ */
+export const HIGH_LOAD_PER_CPU = 0.5;
+
+/**
+ * Summarize the host load each arm ran under, from the `load1` every measured
+ * sample records (`row.samples[arm][i].load1`). Rows without samples (exact
+ * rows, error rows) are skipped.
+ *
+ * @param {Array<{ samples?: Record<string, Array<{ load1?: number }>> }>} rows
+ * @param {number} cpus Logical CPUs of the host.
+ * @returns {{ cpus: number, arms: Record<string, { median: number, max: number }>,
+ *   medianPerCpu: number, maxPerCpu: number, high: boolean } | null} Null when
+ *   no arm was sampled. `high` is judged on the median, so one busy minute
+ *   does not flag a long run.
+ */
+export function loadSummary(rows, cpus) {
+  const arms = {};
+  let all = [];
+  for (const arm of ['base', 'base2', 'cand']) {
+    const xs = rows
+      .flatMap((r) => (r.samples?.[arm] ?? []).map((x) => x?.load1))
+      .filter((v) => Number.isFinite(v));
+    if (xs.length === 0) continue;
+    arms[arm] = { median: median(xs), max: Math.max(...xs) };
+    all = all.concat(xs);
+  }
+  if (all.length === 0) return null;
+  const n = Math.max(1, cpus);
+  const medianPerCpu = median(all) / n;
+  return {
+    cpus,
+    arms,
+    medianPerCpu,
+    maxPerCpu: Math.max(...all) / n,
+    high: medianPerCpu > HIGH_LOAD_PER_CPU,
+  };
+}
