@@ -5,7 +5,7 @@ import type { UrlParamKey } from './url-params';
  * Deprecated spellings still accepted for a parameter, mapped to the current
  * key. Empty today: the 2026-09 camelCase rename was a pre-release hard cut.
  * This table is the mechanism a POST-release rename uses — add
- * `'old-spelling': URL_PARAM_KEYS.newSpelling`, and {@link readUrlParams}
+ * `'old-spelling': URL_PARAM_KEYS.newSpelling`, and `readUrlParams` (`url-params.ts`)
  * keeps honoring the old URL while warning once per page load, for the
  * deprecation window the compatibility policy sets (two releases or six
  * months, whichever is longer).
