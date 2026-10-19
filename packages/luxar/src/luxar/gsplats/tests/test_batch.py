@@ -2146,6 +2146,38 @@ class TestMergeOrchestrator:
             assert total_splats(child) == 8  # 2 timepoints * 4 splats
         assert total_splats(node) == total  # = 2*1*2 tiles * 4 = 16
 
+    @pytest.mark.parametrize("flat", [False, True])
+    def test_physical_timelapse_merge_carries_the_spatial_voxel_size(
+        self, tmp_path: Path, flat: bool
+    ) -> None:
+        """Tiles fitted in physical units stamp a 3-value spacing; the 4-D merge
+        must carry it to the root (readers pad the stacked t column with 1.0)."""
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.scoring_grid import stored_voxel_size
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        self._write_tiles(tiles_dir, n_t=2, n_c=1, n_k=2)
+        for t in range(2):
+            for k in range(2):
+                path = tiles_dir / output_filename(t, 0, k, 2, 1, 2)
+                tile = GSplatData.load(path, include_stats=True)
+                tile.stats["voxel_size"] = [2.0, 0.5, 0.5]
+                tile.save(path)
+
+        final = merge_batch_results(
+            BatchManifest(n_timepoints=2, n_channels=1, n_tiles=2),
+            out_dir,
+            verbose=False,
+            flat=flat,
+        )
+        _, stats = load_gsplat_node(final, include_stats=True)
+        assert stats.get("voxel_size") == [2.0, 0.5, 0.5]
+        assert stored_voxel_size(stats, 4) == (2.0, 0.5, 0.5, 1.0)
+
     def test_partition_merge_collects_nested_tile_fit_provenance(
         self, tmp_path: Path
     ) -> None:

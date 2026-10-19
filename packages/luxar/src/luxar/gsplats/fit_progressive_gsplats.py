@@ -158,27 +158,33 @@ def _compute_foreground_psnr_chunked(
     rendered_gpu: torch.Tensor,
     original_np: np.ndarray,
     chunk_voxels: int = 50_000_000,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, float, float]:
     """Foreground PSNR, chunked like :func:`_compute_psnr_chunked`.
 
     The progressive fitter works on volumes too large to hold several copies of,
     so it cannot call :func:`~luxar.gsplats.metrics.compute_foreground_psnr`
     directly: that one masks the whole volume at once (a full-size mask plus two
     boolean-indexed copies), on top of the target and the render already
-    resident. Chunking bounds those to ``chunk_voxels``. Same definition: error
-    averaged over ``original > otsu`` only, ``data_range`` from the whole volume.
+    resident. Chunking bounds those to ``chunk_voxels``. The foreground field
+    and threshold use the same smoothed, capped Otsu rule as ``compare``.
 
     ``rendered_gpu`` follows :func:`_compute_psnr_chunked`'s signature, but the
     fitter calls this one with its CPU-cached render (the GPU copy is already
     freed by then), so in practice the work happens on the host.
 
-    Returns ``(psnr_db, threshold, foreground_fraction)``.
+    Returns ``(full_psnr, robust_psnr, threshold, fraction, robust_range)``.
     """
-    from .metrics import otsu_threshold
+    from .metrics import default_foreground, robust_peak
 
     flat_original = original_np.ravel()
-    # A view when already float32, so this does not double peak RAM.
-    threshold = otsu_threshold(torch.from_numpy(flat_original))
+    target = torch.from_numpy(original_np)
+    peak = robust_peak(target)
+    field, threshold = default_foreground(target, peak)
+    flat_field = field.reshape(-1)
+    full_range = float(original_np.max()) - float(original_np.min())
+    robust_range = peak - float(original_np.min())
+    if not robust_range > 0.0:
+        robust_range = full_range
 
     n = flat_original.size
     flat_rendered = rendered_gpu.reshape(-1)
@@ -187,7 +193,7 @@ def _compute_foreground_psnr_chunked(
     for i in range(0, n, chunk_voxels):
         end = min(i + chunk_voxels, n)
         chunk_orig = torch.from_numpy(flat_original[i:end]).to(rendered_gpu.device)
-        mask = chunk_orig > threshold
+        mask = (flat_field[i:end] > threshold).to(rendered_gpu.device)
         count = int(mask.sum().item())
         if count:
             sse += (
@@ -198,23 +204,24 @@ def _compute_foreground_psnr_chunked(
 
     fraction = n_fg / max(n, 1)
     if n_fg == 0:
-        return float("nan"), threshold, fraction
+        return float("nan"), float("nan"), threshold, fraction, robust_range
 
     mse = sse / n_fg
-    if mse == 0.0:
-        return float("inf"), threshold, fraction
+    from .metrics import _psnr_from
 
-    data_range = float(original_np.max()) - float(original_np.min())
-    if data_range == 0.0:
-        return float("inf"), threshold, fraction
-
-    return 10.0 * math.log10(data_range**2 / mse), threshold, fraction
+    return (
+        _psnr_from(full_range, mse),
+        _psnr_from(robust_range, mse),
+        threshold,
+        fraction,
+        robust_range,
+    )
 
 
 def _final_foreground_score(
     cached_rendered_np: Optional[np.ndarray],
     V_original: np.ndarray,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, float, float]:
     """Foreground score for the last completed pass, or ``nan`` if there was none.
 
     Taken once at the end rather than per pass: only the final value is
@@ -223,10 +230,18 @@ def _final_foreground_score(
     on which pass they describe.
     """
     if cached_rendered_np is None:  # no pass completed — nothing was rendered
-        return float("nan"), float("nan"), 0.0
+        return float("nan"), float("nan"), float("nan"), 0.0, float("nan")
     return _compute_foreground_psnr_chunked(
         torch.from_numpy(cached_rendered_np), V_original
     )
+
+
+def _robust_psnr(psnr: float, V_original: np.ndarray, robust_range: float) -> float:
+    """Re-reference a full-range PSNR to the robust peak (same MSE, other peak)."""
+    full_range = float(V_original.max()) - float(V_original.min())
+    if full_range > 0.0 and robust_range > 0.0:
+        return psnr + 20.0 * math.log10(robust_range / full_range)
+    return psnr
 
 
 def _closing_cull(
@@ -342,10 +357,14 @@ def _rescore_progressive_after_cull(
 
     def score(rendered: torch.Tensor) -> dict[str, float]:
         psnr = _compute_psnr_chunked(rendered, V_original)
-        fg, threshold, fraction = _compute_foreground_psnr_chunked(rendered, V_original)
+        fg, fg_robust, threshold, fraction, robust_range = (
+            _compute_foreground_psnr_chunked(rendered, V_original)
+        )
         return {
             "psnr_db": psnr,
+            "psnr_robust_db": _robust_psnr(psnr, V_original, robust_range),
             "foreground_psnr_db": fg,
+            "foreground_psnr_robust_db": fg_robust,
             "foreground_threshold": threshold,
             "foreground_fraction": fraction,
         }
@@ -769,9 +788,10 @@ def fit_progressive_gaussian_splats(
         pass_i += 1
 
     # Score the foreground before the last pass's render is freed.
-    fg_psnr, fg_threshold, fg_fraction = _final_foreground_score(
-        cached_rendered_np, V_original
+    fg_psnr, fg_psnr_robust, fg_threshold, fg_fraction, robust_range = (
+        _final_foreground_score(cached_rendered_np, V_original)
     )
+    psnr_robust = _robust_psnr(prev_psnr, V_original, robust_range)
 
     # Free cached render (CPU numpy) from the last pass
     del cached_rendered_np
@@ -792,7 +812,9 @@ def fit_progressive_gaussian_splats(
         "n_splats": total_splats,
         "time_seconds": total_time,
         "psnr_db": prev_psnr,
+        "psnr_robust_db": psnr_robust,
         "foreground_psnr_db": fg_psnr,
+        "foreground_psnr_robust_db": fg_psnr_robust,
         "foreground_threshold": fg_threshold,
         "foreground_fraction": fg_fraction,
         "stop_reason": stop_reason,
@@ -891,6 +913,9 @@ def fit_progressive_gaussian_splats(
             aprint(
                 f"Converted output to physical coordinates (voxel_size={vs.tolist()})"
             )
+        from luxar.gsplats.scoring_grid import physical_voxel_size_stamp
+
+        final_result.stats.update(physical_voxel_size_stamp(vs, "real", d))
 
     # Closing reductions on the full accumulated result: speck pruning, then
     # the cumulative cull, then ONE re-score of the saved set.

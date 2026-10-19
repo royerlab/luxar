@@ -21,7 +21,7 @@
     "packages/luxar/src/luxar/cli/gsplat_ops/fitting/fit_utils.py::B905": 1,
     "packages/luxar/src/luxar/cli/gsplat_ops/fitting/fit_utils.py::BLE001": 2,
     "packages/luxar/src/luxar/cli/gsplat_ops/inspect_commands.py::B904": 2,
-    "packages/luxar/src/luxar/cli/gsplat_ops/inspect_commands.py::BLE001": 7,
+    "packages/luxar/src/luxar/cli/gsplat_ops/inspect_commands.py::BLE001": 6,
     "packages/luxar/src/luxar/cli/gsplat_ops/interchange_commands.py::B904": 5,
     "packages/luxar/src/luxar/cli/gsplat_ops/interchange_commands.py::BLE001": 3,
     "packages/luxar/src/luxar/cli/gsplat_ops/planner.py::B904": 1,

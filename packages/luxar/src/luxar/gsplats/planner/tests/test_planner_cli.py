@@ -7,6 +7,7 @@ The standalone `gsplat plan` command was folded into `fit --tiling content`
 from __future__ import annotations
 
 import importlib
+import inspect
 
 import numpy as np
 import pytest
@@ -388,8 +389,18 @@ def test_content_fit_threads_iters_into_fit_config(tmp_path, monkeypatch):
     class _Stop(Exception):
         pass
 
-    def _spy(**kwargs):
-        captured.update(kwargs)
+    real_load = cfg.load_fit_config
+    signature = inspect.signature(real_load)
+
+    def _spy(*args, **kwargs):
+        # Bind to the real signature: callers pass the overrides positionally
+        # too. The voxel-frame resolver and the CPU-thread setup read the config
+        # with no (or device-only) overrides; only the content fit's own call
+        # carries the fit knobs, so that is the one captured.
+        bound = signature.bind(*args, **kwargs).arguments
+        if "n_iters" not in (bound.get("cli_overrides") or {}):
+            return real_load(*args, **kwargs)
+        captured.update(bound)
         raise _Stop()
 
     monkeypatch.setattr(cfg, "load_fit_config", _spy)

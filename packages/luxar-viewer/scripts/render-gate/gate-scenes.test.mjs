@@ -20,6 +20,9 @@ const HARNESS_METRICS = [
   'commitsDuringDrag',
   'dragFrames',
   'firstFrameMs',
+  'idleRenders',
+  'idleUploadBytesBuffer',
+  'idleUploadBytesTexture',
   'lastTimepointShown',
   'levelFlips',
   'maxInflight',
@@ -29,6 +32,10 @@ const HARNESS_METRICS = [
   'serverRequests',
   'settledMs',
   'stepMs',
+  'tailRenders',
+  'tailSettled',
+  'tailUploadBytesBuffer',
+  'tailUploadBytesTexture',
   'ticks',
 ];
 
@@ -98,6 +105,34 @@ describe('render-gate scene manifest', () => {
       cand: arm(63, 62, 64),
     });
     expect(judged.verdict).toBe('win');
+  });
+
+  it('gates LOD playback uploads, swaps, and cache misses after warm-up', () => {
+    const c = manifest.suites.playback.cases.find((x) => x.id === 'playback_lod_timelapse');
+    expect(c.workload.settleLodTimepoints).toBe(true);
+    for (const name of [
+      'gpu.uploadBytes/tick',
+      'gpu.uploadBytes.texture/tick',
+      'render.count/tick',
+      'lod.levelSwaps',
+    ]) {
+      const metric = c.metrics.find((m) => m.name === name);
+      expect(metric.report).toBeFalsy();
+    }
+    for (const name of ['fetch.data.requests', 'decode.count']) {
+      const metric = c.metrics.find((m) => m.name === name);
+      expect(metric).toMatchObject({ better: 'lower', kind: 'counter' });
+      expect(metric.report).toBeFalsy();
+      const arm = (count) => [{ [name]: count }];
+      expect(judgeMetric(metric, { base: arm(0), base2: arm(0), cand: arm(1) }).verdict).toBe(
+        'fail'
+      );
+    }
+    const upload = c.metrics.find((m) => m.name === 'gpu.uploadBytes/tick');
+    const arm = (bytes) => [{ 'gpu.uploadBytes': bytes, ticks: 10 }];
+    expect(judgeMetric(upload, { base: arm(100), base2: arm(100), cand: arm(200) }).verdict).toBe(
+      'fail'
+    );
   });
 
   it('declares every suite metric in its known direction', () => {

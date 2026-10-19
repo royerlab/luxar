@@ -7,6 +7,8 @@
  *   effective_absorption = max(0, ∏ absorption_i)   (volumetric κ; identity 1)
  *   effective_gamma      = clamp(∏ gamma_i,    0.1, 10)
  *   effective_intensity  = max(0, ∏ intensity_i)
+ *   effective_display_gain = max(0, ∏ display_gain_i)  (gsplats brightness
+ *                          relative to data-unit amplitudes; identity 1)
  *   effective_offset     = Σ offset_i
  *   effective_blending   = nearest ancestor (root-to-leaf) that sets blending_mode,
  *                          else undefined (each consumer applies its own per-type
@@ -45,6 +47,12 @@ export interface ComposableAttrs {
   gamma?: number;
   intensity?: number;
   offset?: number;
+  /**
+   * Gsplats display gain (`display_gain`): brightness relative to the stored
+   * data-unit amplitudes. Multiplicative, identity 1 — like `intensity`, so ONE
+   * gain on a kind=partition / kind=lod wrapper scales every part and level.
+   */
+  display_gain?: number;
   /** Raw (unvalidated) mode string as authored; normalized at compose time. */
   blending_mode?: string;
   /**
@@ -100,6 +108,8 @@ export interface EffectiveAttrs {
   gamma: number;
   intensity: number;
   offset: number;
+  /** Composed gsplats display gain (≥ 0; identity 1 when no level sets one). */
+  display_gain: number;
   /**
    * `undefined` when no level of the chain set a mode (each consumer applies
    * its own per-type default); otherwise canonical — a set value (even a
@@ -157,6 +167,7 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
   let gamma = 1.0;
   let intensity = 1.0;
   let offset = 0.0;
+  let display_gain = 1.0;
   let blending_mode: string | undefined;
   let join: string | undefined;
   let colormap: string | undefined;
@@ -169,6 +180,7 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
     if (a.gamma !== undefined) gamma *= a.gamma;
     if (a.intensity !== undefined) intensity *= a.intensity;
     if (a.offset !== undefined) offset += a.offset;
+    if (a.display_gain !== undefined) display_gain *= a.display_gain;
     if (a.blending_mode !== undefined) blending_mode = a.blending_mode;
     if (a.join !== undefined) join = a.join;
     // Name and LUT move together, always from the SAME record: a node that
@@ -186,6 +198,9 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
   absorption = Math.max(0, absorption); // κ is unbounded above
   gamma = clamp(gamma, 0.1, 10);
   intensity = Math.max(0, intensity);
+  // A non-finite gain (hand-edited store) would NaN every amplitude: fall back
+  // to the identity rather than blanking the node.
+  display_gain = Number.isFinite(display_gain) ? Math.max(0, display_gain) : 1.0;
 
   return {
     opacity,
@@ -193,6 +208,7 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
     gamma,
     intensity,
     offset,
+    display_gain,
     // Preserve the unset state: only a truly-unset chain yields `undefined`
     // (consumers apply their per-type default). A set-but-malformed value
     // (e.g. '') is NOT undefined, so it still normalizes → 'normal'.
@@ -329,6 +345,7 @@ function toComposable(attrs: SceneNode['attrs']): ComposableAttrs {
     gamma: attrs.gamma as number | undefined,
     intensity: attrs.intensity as number | undefined,
     offset: attrs.offset as number | undefined,
+    display_gain: attrs.display_gain as number | undefined,
     blending_mode: attrs.blending_mode as string | undefined,
     join: attrs.join as string | undefined,
     colormap: attrs.colormap as string | undefined,

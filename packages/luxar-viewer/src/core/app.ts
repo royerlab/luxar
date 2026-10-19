@@ -1424,6 +1424,7 @@ export class LuxarApp {
       layers: this.getLayers(),
       audio: this.getAudioState(),
       controlPanel: this.session.controlPanelConfig,
+      contentHash: this.sceneManager.getSceneContentHash(),
     };
   }
 

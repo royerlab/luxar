@@ -83,6 +83,10 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     // differs between the two by the ray-integral boost.
     uniform int uProjectionMode;
     uniform float uRayIntegralFactor; // the visual node's (its own T), not the pick's
+    // The visual node's display gain (data-unit amplitude → rendered amplitude),
+    // synced per pick render: a splat the gain dims below visibility must not
+    // stay pickable.
+    uniform highp float uDisplayGain;
     // Fragment-discard inputs, read here to size the quad to the visible
     // footprint (visual-shader parity). Same precision as the fragment
     // declarations (GLSL ES link rule).
@@ -217,9 +221,9 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
             vec3 rayDir = (isOrtho == 1) ? vec3(0.0, 0.0, -1.0) : normalize(centerCam);
             float sigmaRay = gsplatRaySigma(Sigma_cam, rayDir);
             float rayIntegrationBoost = sigmaRay * uRayIntegralFactor;
-            vAmplitude2D = aAmplitude * rayIntegrationBoost * nearFade * dilationCompensation;
+            vAmplitude2D = aAmplitude * uDisplayGain * rayIntegrationBoost * nearFade * dilationCompensation;
         } else {
-            vAmplitude2D = aAmplitude * nearFade;
+            vAmplitude2D = aAmplitude * uDisplayGain * nearFade;
         }
 
         vL2D = cholesky2x2(Sigma2D);

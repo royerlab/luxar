@@ -79,8 +79,8 @@ def _validate_parallel_content_frame(
         return
     if physical_coordinates and n_jobs > 1:
         raise typer.BadParameter(
-            "--physical-coordinates is not supported with parallel content fitting "
-            "(-j/--jobs > 1); use -j 1."
+            "physical coordinates (--voxel-size / --physical) are not supported "
+            "with parallel content fitting (-j/--jobs > 1); use -j 1."
         )
 
 
@@ -264,6 +264,7 @@ def _save_fit_result(
     output: Path,
     *,
     compress: "Optional[Literal['zip', 'tar.gz']]" = None,
+    frame: Any = None,
     dimension_metadata: "Optional[list[dict[str, str]]]" = None,
 ) -> None:
     """Save either a flat ``GSplatData`` leaf or a ``kind=partition`` tree node."""
@@ -272,6 +273,7 @@ def _save_fit_result(
         output,
         compress=compress,
         verbose=False,
+        frame=frame,
         dimension_metadata=dimension_metadata,
     )
 
@@ -330,6 +332,34 @@ def _stamp_content_floor(
         target.pop("intensity_range", None)
 
 
+def _stamp_content_source_dtype(
+    result: Any, source_dtype: "Optional[str]", vol: Any = None
+) -> None:
+    """Record the source element type on a content fit's root stats.
+
+    Every box records it, but the merged result is built from fresh nodes and
+    ``GSplatData.concatenate`` only carries what its inputs agree on, so a
+    content fit used to save NONE — and ``gsplat convert`` then labelled an
+    integer detector stack "data units" instead of "counts", and picked the
+    16-bit amplitude tier for an 8-bit source. The loader's dtype wins; without
+    one, the volume's own dtype. A dtype the result already carries is kept.
+    """
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    target = result.stats if isinstance(result, GSplatData) else result.meta
+    if target.get("source_dtype"):
+        return
+    dtype = source_dtype
+    if not dtype and vol is not None and getattr(vol, "dtype", None) is not None:
+        dtype = str(np.dtype(vol.dtype))
+    if dtype:
+        target["source_dtype"] = str(dtype)
+        if not isinstance(result, GSplatData):
+            fit_stats = result.meta.get("fit_stats")
+            if isinstance(fit_stats, dict):
+                fit_stats.setdefault("source_dtype", str(dtype))
+
+
 def run_content_fit(
     input_path: Path,
     output: Optional[Path],
@@ -381,8 +411,14 @@ def run_content_fit(
     axes: Optional[str] = None,
     source_dtype: Optional[str] = None,
     verbose: bool = True,
+    region: Optional[str] = None,
+    frame: Any = None,
 ) -> None:
     """Content-aware tiled fit: scan → BSP plan → budgeted fit → save.
+
+    ``region`` is the ``--region`` crop spec, forwarded to ``-j`` box workers
+    (which re-read the input); ``frame`` is the output frame applied at the
+    merged save (:class:`~luxar.cli.gsplat_ops.voxel_frame.FitFrame`).
 
     Modes (selected by the flags ``fit_volume`` forwards):
 
@@ -737,6 +773,7 @@ def run_content_fit(
                 timepoint=timepoint,
                 array_key=array_key,
                 axes=axes,
+                region=region,
             ),
             keep_boxes=keep_boxes,
             partition=partition,
@@ -747,10 +784,15 @@ def run_content_fit(
         )
 
         _stamp_content_floor(result, floor_level, floor_forward, floor_strategy)
+        _stamp_content_source_dtype(result, source_dtype, vol)
 
         output.parent.mkdir(parents=True, exist_ok=True)
         _save_fit_result(
-            result, output, compress=compress, dimension_metadata=dimension_metadata
+            result,
+            output,
+            compress=compress,
+            frame=frame,
+            dimension_metadata=dimension_metadata,
         )
         if keep_boxes:
             if verbose:
@@ -897,6 +939,9 @@ def _resolve_density(
 
     if cal is not None:
         result = CalibrationResult.from_json(cal)
+        incomplete = result.incomplete_warning()
+        if incomplete is not None:
+            aprint(incomplete)
         if result.splat_density is None:
             raise typer.BadParameter(
                 f"{cal} has no splat_density (re-run `gsplat cal` to emit it)."

@@ -11,15 +11,15 @@ Per-geometry picking sources for meshes. Self-contained — no cross-geometry im
 | `pick.tsl.ts`         | TSL node factory (`meshPickWebGPUFactory` + `buildMeshPickTSLNodesFromUniforms`). Used by the WebGPU material above and by the GLSL/TSL parity harness |
 | `shaders.ts`          | GLSL3 vertex/fragment source + `MESH_PICK_SOURCE: ShaderSource`. Element id from `gl_VertexID`; the same alpha cutout as the visual shader             |
 | `pick-mode.ts`        | `MeshPickAwareMaterial` + `resolveMeshPickModeState` — the blending mode's two pick-pass consequences, derived in one place for both backends          |
-| `provoking-vertex.ts` | Aligns the WebGL `flat` provoking vertex with WebGPU's, so a pick reports the same triangle corner on both backends where the platform allows          |
+| `provoking-vertex.ts` | Aligns the WebGL `flat` provoking vertex with WebGPU's when the extension exists; otherwise mesh index triples rotate cyclically                       |
 
 ## What makes this the odd one out
 
 Three differences from the point/line/gsplat pick materials, all from
 `docs/specs/MESH_NODE_SPEC.md` §6.5:
 
-- **The element id is a built-in, not an attribute.** Mesh has no per-triangle depth sort, so
-  there is no `aSortedIndex` indirection and no `luxarElementIdParts()` call — the id is
+- **The element id is a built-in, not an attribute.** Mesh depth sorting permutes whole index
+  triples, so there is no `aSortedIndex` indirection or `luxarElementIdParts()` call — the id is
   `gl_VertexID` (a stable per-**vertex** ordinal under an indexed draw), split by the shared
   `luxarElementIdSplit()`. A face ordinal would be renumbered on every slice change, since only
   the index buffer is rewritten; a vertex ordinal is invariant, and it indexes the per-vertex
@@ -49,13 +49,13 @@ Both are pushed by `PickingSystem.renderPickBuffer` from the visual material's
 Keeping them uniforms is what makes a layers-panel mode switch a uniform write instead of a
 recompile — and it is why `mesh-pick` is ONE codegen snapshot variant covering every mode.
 
-## Known divergences, both deliberate
+## Pick corner and depth
 
-- **Which triangle corner a pick reports.** A `flat` varying comes from one corner, and GL fixes
-  it to the _last_ vertex where WGSL samples the _first_. `provoking-vertex.ts` aligns them when
-  `WEBGL_provoking_vertex` exists; where it does not, the contract stands as "_a_ corner vertex of
-  the front-most triangle under the cursor" — the cursor is over the face, so every corner is an
-  equally valid answer and no consumer may assume one.
+- **Which triangle corner a pick reports.** WebGL and core WebGPU report the original _first_
+  vertex. Compatibility-mode WebGPU samples `flat, either`, so its id is only guaranteed to be a
+  corner of the hit triangle (§6.5).
+  `provoking-vertex.ts` aligns GL when `WEBGL_provoking_vertex` exists. Otherwise the shared
+  mesh index triples rotate cyclically, preserving winding while putting that corner last for GL.
 - **The surface-depth VALUE.** GLSL writes `gl_FragCoord.z`; the TSL twin writes
   `pickFragmentDepthTSL()` (three's perspective or orthographic depth of the reconstructed
   view-space z, chosen per draw from the projection matrix — the same choice for every pick

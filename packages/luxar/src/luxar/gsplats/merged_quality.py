@@ -569,16 +569,19 @@ def stamp_merged_quality(
             {
                 "mse": quality["mse"],
                 "psnr_db": quality["psnr_db"],
+                "psnr_robust_db": quality["psnr_robust_db"],
                 "ssim": quality["ssim"],
                 "foreground_psnr_db": quality["foreground_psnr_db"],
+                "foreground_psnr_robust_db": quality["foreground_psnr_robust_db"],
                 "foreground_threshold": quality["foreground_threshold"],
                 "foreground_fraction": quality["foreground_fraction"],
             }
         )
         if verbose:
             aprint(
-                f"Merged quality: PSNR={quality['psnr_db']:.1f} dB, "
-                f"foreground PSNR={quality['foreground_psnr_db']:.1f} dB "
+                f"Merged quality: PSNR={quality['psnr_robust_db']:.1f} dB robust "
+                f"peak ({quality['psnr_db']:.1f} dB full range), foreground PSNR="
+                f"{quality['foreground_psnr_robust_db']:.1f} dB "
                 f"(over {quality['foreground_fraction'] * 100:.2f}% of voxels), "
                 f"SSIM={quality['ssim']:.4f}"
             )

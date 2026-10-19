@@ -20,8 +20,8 @@
  *
  * ## The flat-interpolation requirement is not optional here
  *
- * `vElementId` and `vNodeId` are declared `.setInterpolation('flat')`, following
- * the LINE pick precedent rather than the point pick. The point pick omits `flat`
+ * `vElementId` and `vNodeId` use flat interpolation, following the LINE pick
+ * precedent rather than the point pick. The point pick omits `flat`
  * and gets away with it only because a single-instance quad's four corners all
  * carry the same id, making interpolation the identity. A mesh is an indexed,
  * shared-vertex draw where `vertexIndex` differs at every corner: interpolated, the
@@ -29,10 +29,14 @@
  * arbitrary unrelated vertices.
  *
  * WGSL's `@interpolate(flat)` samples the FIRST vertex of the primitive where
- * OpenGL ES fixes it to the LAST, so the exact corner reported differs by backend
- * unless `WEBGL_provoking_vertex` is available to align them (see `./material.ts`).
- * That is a documented §6.5 exception: at vertex granularity the contract is
- * "a corner of the front-most triangle", since the cursor is over the face.
+ * OpenGL ES fixes it to the LAST, so the exact corner would differ by backend
+ * unless aligned: `WEBGL_provoking_vertex` aligns them where available (see
+ * `./material.ts`), and where it is absent PickingSystem instead rotates GL's
+ * indexed triples so the last vertex is the original first corner — WebGL and
+ * core WebGPU therefore always agree exactly. Compatibility-mode WebGPU
+ * disallows `first` sampling altogether, so it samples `either` corner
+ * instead; the id reported there satisfies only §6.5's weaker "a corner of
+ * the front-most triangle" contract, not an exact match.
  *
  * @module rendering/picking/mesh/pick.tsl
  */
@@ -44,6 +48,7 @@ import {
   uniform,
   attribute,
   varying,
+  nodeObject,
   vec2 as _vec2,
   vec4 as _vec4,
   float,
@@ -57,7 +62,7 @@ import {
   positionGeometry,
   Discard,
 } from 'three/tsl';
-import { NodeMaterial } from 'three/webgpu';
+import { Node, NodeMaterial, type NodeBuilder } from 'three/webgpu';
 import { applyPickMaterialState } from '../_shared/shared-pick-graph-tsl';
 import { pickFragmentDepthTSL } from '../_shared/pick-depth-tsl';
 import {
@@ -76,6 +81,27 @@ const vec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _vec2 as TSLNode;
 const vec4: (a?: TSLNode, b?: TSLNode, c?: TSLNode, d?: TSLNode) => TSLNode = _vec4 as TSLNode;
 const clamp: (v: TSLNode, lo: TSLNode, hi: TSLNode) => TSLNode = _clamp as TSLNode;
 const max: (a: TSLNode, b: TSLNode) => TSLNode = _max as TSLNode;
+
+/**
+ * Keep core WebGPU's first-corner result; compatibility mode cannot use first.
+ * An unknown mode (null before WebGPUBackend.init, or absent on a bridge backend)
+ * must use either so a compatibility device can still build the shader.
+ * #3164 aligns WebGL with core; compatibility still needs fragment-stage corner
+ * selection to make its result deterministic.
+ */
+class MeshElementIdNode extends Node {
+  constructor(private readonly elementId: TSLNode) {
+    super('vec2');
+  }
+
+  override setup(builder: NodeBuilder): TSLNode {
+    const backend = builder.renderer.backend as { compatibilityMode?: boolean | null };
+    return varying(this.elementId).setInterpolation(
+      'flat',
+      backend.compatibilityMode === false ? 'first' : 'either'
+    );
+  }
+}
 
 /**
  * Pre-created TSL leaf nodes supplied by the wrapper class. Same pattern as
@@ -146,16 +172,18 @@ export function meshPickWebGPUFactory(
   // Flat for the two ids (see the module doc — mandatory, not stylistic); smooth
   // for the coverage, exactly as in the visual pair, so the cutout hole in the
   // pick pass has the same shape as the one on screen.
-  const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat');
+  const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat', 'either');
   // Vertex ordinal split into two 16-bit halves — the TSL twin of
   // `luxarElementIdSplit` in glsl-lib.ts. Integer div/sub rather than bit ops so
   // the graph lowers the same way on both backends (line-pick precedent).
   const elementIdInt: TSLNode = int(vertexIndex);
   const elementIdHi: TSLNode = elementIdInt.div(int(65536));
   const elementIdLo: TSLNode = elementIdInt.sub(elementIdHi.mul(int(65536)));
-  const vElementId: TSLNode = varying(
-    vec2(float(elementIdLo), float(elementIdHi))
-  ).setInterpolation('flat');
+  // Sampling is selected when three builds this shared graph for a renderer:
+  // compat devices reject `first`, while core devices keep their stable corner.
+  const vElementId: TSLNode = nodeObject(
+    new MeshElementIdNode(vec2(float(elementIdLo), float(elementIdHi)))
+  );
   const vAlpha: TSLNode = varying(float(1.0));
   // View-space depth for the fragment-stage near fade. Just the z, not the whole
   // view position the visual factory carries — that one is differentiated for the

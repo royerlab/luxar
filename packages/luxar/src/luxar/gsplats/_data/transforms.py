@@ -306,6 +306,22 @@ class TransformsMixin(_GSplatDataOps):
     def transform(self, matrix: np.ndarray) -> "GSplatData":
         """Apply affine transformation to all splats.
 
+        A pure translation keeps the fit's ``voxel_size`` frame stamp (the
+        spacing is unchanged — tiled fitting places its tiles this way); any
+        other linear part drops it, with ``voxel_unit``, ``voxel_size_source``
+        and ``physical_coordinates``, since the stamp no longer describes how
+        the centers map to voxels. See :func:`_transform_geometry` for the rest.
+        """
+        from luxar.gsplats.scoring_grid import drop_frame_stamp, linear_part_is_identity
+
+        result = self._transform_geometry(matrix)
+        if not linear_part_is_identity(matrix, self.ndim):
+            result.stats = drop_frame_stamp(result.stats)
+        return result
+
+    def _transform_geometry(self, matrix: np.ndarray) -> "GSplatData":
+        """Apply affine transformation to all splats.
+
         Transforms centers and covariance matrices. Amplitudes and colors
         are unchanged.
 
@@ -459,8 +475,11 @@ class TransformsMixin(_GSplatDataOps):
         # Empty data: nothing to center. Return a structure-preserving copy
         # (translate by zero) rather than computing mean() of an empty array,
         # which would emit a spurious "Mean of empty slice" RuntimeWarning.
+        # Keep float32 centers at storage precision; integer centers need a
+        # floating shift to retain fractional centroids.
+        center_dtype = np.result_type(self.centers.dtype, np.float32)
         if self.n_splats == 0:
-            return self.translate(np.zeros(self.ndim, dtype=np.float64))
+            return self.translate(np.zeros(self.ndim, dtype=center_dtype))
 
         # Compute amplitude-weighted centroid
         total_amplitude = self.amplitudes.sum()
@@ -473,4 +492,4 @@ class TransformsMixin(_GSplatDataOps):
         # (zero covariance extent — e.g. a stacked-time axis) at their
         # coordinates. Mirrors scale()/eccentricities()/isolation grouping.
         shift = spatial_only_shift(centroid, self._nondegenerate_axes())
-        return self.translate(-shift)
+        return self.translate(-shift.astype(center_dtype))

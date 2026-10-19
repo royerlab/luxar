@@ -69,9 +69,11 @@ export interface RendererCapabilities {
    *
    * Treat this as "which method-signature contract should I follow?",
    * not as "which physical GPU backend is running?". Probing the
-   * physical backend is captured separately in `readbackYDown`.
+   * physical backend is captured separately in `nativeWebGPUBackend`.
    */
   readonly apiSurface: 'webgl2' | 'webgpu';
+  /** True only when the active backend is native WebGPU, not WebGL fallback. */
+  readonly nativeWebGPUBackend: boolean;
   /**
    * Which GPU API actually runs, which `apiSurface` deliberately does not say:
    *
@@ -275,6 +277,7 @@ export function createRendererCapabilities(
     return {
       apiSurface: 'webgl2',
       backendKind: 'webgl',
+      nativeWebGPUBackend: false,
       framebufferYDown,
       readbackYDown: false,
       hdr,
@@ -344,6 +347,7 @@ export function createRendererCapabilities(
   return {
     apiSurface: 'webgpu',
     backendKind: backend?.isWebGPUBackend === true ? 'webgpu-native' : 'webgpu-gl',
+    nativeWebGPUBackend: backend?.isWebGPUBackend === true,
     framebufferYDown,
     readbackYDown: backend?.isWebGPUBackend === true,
     hdr,

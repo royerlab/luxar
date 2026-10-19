@@ -171,6 +171,21 @@ def validate_dimension_count(
         )
 
 
+def _float32_slack(bound: float, scale: float = 0.0) -> float:
+    """Float32 rounding allowance at one dimension-range bound.
+
+    A range derived from the data (``gsplat convert``'s, say) can sit an ulp
+    inside values that are the "same" number computed another way: a coarse LOD
+    level's merged centre, or a column re-cast between float32 and float64. Those
+    are equal at the stored float32 precision, so they are not outside the range.
+    Four float32 ulps at the bound itself, or at ``scale`` (the range's largest
+    magnitude) when that is bigger: rounding in a shift such as ``--center``
+    grows with the coordinates' size before the shift, so a bound near 0 can
+    carry the error of the far end.
+    """
+    return 4.0 * float(np.spacing(np.float32(max(abs(bound), abs(scale)))))
+
+
 def validate_data_dimensions(
     scene: "Scene",
     positions: np.ndarray,
@@ -199,7 +214,10 @@ def validate_data_dimensions(
             min_val, max_val = float(col.min()), float(col.max())
             range_min, range_max = dim.range
 
-            if min_val < range_min or max_val > range_max:
+            scale = max(abs(range_min), abs(range_max))
+            if min_val < range_min - _float32_slack(
+                range_min, scale
+            ) or max_val > range_max + _float32_slack(range_max, scale):
                 warnings.warn(
                     f"'{node_name}' {data_type}: dimension '{dim.name}' has values "
                     f"[{min_val:.4g}, {max_val:.4g}] outside declared range "

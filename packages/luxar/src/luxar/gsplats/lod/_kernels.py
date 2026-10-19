@@ -109,6 +109,55 @@ def gaussian_pair_inner_product_numpy(
     return K_ij
 
 
+def gaussian_pair_inner_products_numpy(
+    mu_i: np.ndarray,
+    Sigma_i: np.ndarray,
+    a_i: np.ndarray,
+    mu_j: np.ndarray,
+    Sigma_j: np.ndarray,
+    a_j: np.ndarray,
+    *,
+    sqrt_det_Sigma_i: np.ndarray,
+    sqrt_det_Sigma_j: np.ndarray,
+) -> np.ndarray:
+    """:func:`gaussian_pair_inner_product_numpy` over ``P`` aligned pairs at once.
+
+    ``mu_*`` are ``(P, D)``, ``Sigma_*`` ``(P, D, D)``, the rest ``(P,)``. The
+    same closed form through the same LAPACK routines (``slogdet``, ``solve``),
+    batched, so each entry matches the single-pair kernel to rounding. Entries
+    the single-pair kernel returns 0.0 for (a covariance sum that is not
+    positive-definite, a non-finite or non-positive result) are 0.0 here too.
+    """
+    P, D = mu_i.shape
+    if P == 0:
+        return np.empty(0, dtype=np.float64)
+    diff = mu_i - mu_j
+    S = Sigma_i + Sigma_j
+    sign_S, logdet_S = np.linalg.slogdet(S)
+    bad = sign_S <= 0
+    if bad.any():
+        # One singular sum would make the batched solve raise for EVERY pair:
+        # solve the degenerate ones against the identity and zero them below.
+        S = S.copy()
+        S[bad] = np.eye(D)
+        logdet_S = np.where(bad, 0.0, logdet_S)
+    sol = np.linalg.solve(S, diff[..., None])[..., 0]
+    quad = np.einsum("pd,pd->p", diff, sol)
+    two_pi_half_D = (2.0 * np.pi) ** (D / 2.0)
+    with np.errstate(over="ignore", invalid="ignore"):
+        K = (
+            np.asarray(a_i, dtype=np.float64)
+            * np.asarray(a_j, dtype=np.float64)
+            * two_pi_half_D
+            * np.asarray(sqrt_det_Sigma_i, dtype=np.float64)
+            * np.asarray(sqrt_det_Sigma_j, dtype=np.float64)
+            * np.exp(-0.5 * logdet_S)
+            * np.exp(-0.5 * quad)
+        )
+    out: np.ndarray = np.where(bad | ~np.isfinite(K) | (K <= 0.0), 0.0, K)
+    return out
+
+
 def gaussian_self_energy_numpy(
     amps: np.ndarray,
     sqrt_det_Sigma: np.ndarray,
