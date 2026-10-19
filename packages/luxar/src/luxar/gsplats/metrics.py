@@ -837,6 +837,42 @@ def _resolve_foreground(
     return field, float(threshold)
 
 
+def _ssim_on_both_peaks(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    window_size: int,
+    peaks: Tuple[float, float],
+    fg_field: torch.Tensor,
+    fg_threshold: float,
+) -> Tuple[float, float, float, float]:
+    """``(ssim, fg_ssim, ssim_robust, fg_ssim_robust)`` on the full and robust peak.
+
+    Two SSIM passes when the peaks differ (the constants change every map
+    voxel), one when they coincide.
+    """
+    full_range, robust_range = peaks
+    full = compute_ssim_with_foreground(
+        pred,
+        target,
+        window_size=window_size,
+        data_range=full_range,
+        fg_field=fg_field,
+        fg_threshold=fg_threshold,
+    )
+    robust = full
+    if robust_range != full_range:
+        robust = compute_ssim_with_foreground(
+            pred,
+            target,
+            window_size=window_size,
+            data_range=robust_range,
+            fg_field=fg_field,
+            fg_threshold=fg_threshold,
+        )
+    return full[0], full[1], robust[0], robust[1]
+
+
 # ---------------------------------------------------------------------------
 # Aggregate
 # ---------------------------------------------------------------------------
@@ -865,7 +901,12 @@ def compute_quality_metrics(
     figure stamped into every store so far, so it is kept for comparability and
     reported beside the headline, labelled. A robust range of zero (more than
     99.99% of voxels at the minimum) falls back to the full range. The same pair
-    exists for the foreground PSNR. On a fit's basis the target minimum is the
+    exists for the foreground PSNR, and for SSIM: its stabilising constants
+    ``C1 = (0.01 L)^2`` and ``C2 = (0.03 L)^2`` scale with the data range ``L``,
+    so a full range stretched by one hot pixel swamps the real local variance
+    and pushes SSIM towards 1 for almost any reconstruction. ``ssim_robust`` /
+    ``foreground_ssim_robust`` (the headline) use the robust range;
+    ``ssim`` / ``foreground_ssim`` keep the full range. On a fit's basis the target minimum is the
     fit's floor (the background-relative reference is clipped at 0), so the
     robust peak is "reference p99.99 minus the floor".
 
@@ -874,8 +915,8 @@ def compute_quality_metrics(
     pred, target : torch.Tensor
         Predicted and reference tensors (same shape, >= 2-D).
     data_range : float, optional
-        Full dynamic range for ``psnr_db`` and SSIM. If *None*, ``max - min`` of
-        *target*.
+        Full dynamic range for ``psnr_db`` and ``ssim``. If *None*, ``max - min``
+        of *target*.
     ssim_window_size : int
         SSIM window size.
     foreground_field, foreground_threshold : optional
@@ -893,10 +934,12 @@ def compute_quality_metrics(
     -------
     dict
         ``mse``, ``psnr_db`` (full range), ``psnr_robust_db`` (headline),
-        ``ssim``, ``foreground_ssim``, ``rel_l2``, ``max_abs_error``,
-        ``foreground_psnr_db`` (full range), ``foreground_psnr_robust_db``,
-        ``foreground_threshold``, ``foreground_fraction``, ``data_range`` and
-        ``robust_data_range`` (the two peaks). SSIM uses the full range.
+        ``ssim`` (full range), ``ssim_robust`` (headline), ``foreground_ssim``
+        (full range), ``foreground_ssim_robust`` (headline), ``rel_l2``,
+        ``max_abs_error``, ``foreground_psnr_db`` (full range),
+        ``foreground_psnr_robust_db``, ``foreground_threshold``,
+        ``foreground_fraction``, ``data_range`` and ``robust_data_range`` (the
+        two peaks).
     """
     if pred.shape != target.shape:
         raise ValueError(f"Shape mismatch: pred {pred.shape} vs target {target.shape}")
@@ -922,16 +965,16 @@ def compute_quality_metrics(
     else:
         fg_psnr = fg_psnr_robust = float("nan")
 
-    ssim, fg_ssim = compute_ssim_with_foreground(
+    ssim, fg_ssim, ssim_robust, fg_ssim_robust = _ssim_on_both_peaks(
         pred,
         target,
         window_size=ssim_window_size,
-        data_range=full_range,
+        peaks=(full_range, robust_range),
         fg_field=field,
         fg_threshold=threshold,
     )
     if not fg_voxels:
-        fg_ssim = float("nan")
+        fg_ssim = fg_ssim_robust = float("nan")
     rel_l2 = float(math.sqrt(sums["sse"]) / (math.sqrt(sums["target_sq"]) + 1e-12))
 
     return {
@@ -939,7 +982,9 @@ def compute_quality_metrics(
         "psnr_db": _psnr_from(full_range, mse),
         "psnr_robust_db": _psnr_from(robust_range, mse),
         "ssim": ssim,
+        "ssim_robust": ssim_robust,
         "foreground_ssim": fg_ssim,
+        "foreground_ssim_robust": fg_ssim_robust,
         "rel_l2": rel_l2,
         "max_abs_error": sums["max_abs"],
         "foreground_psnr_db": fg_psnr,

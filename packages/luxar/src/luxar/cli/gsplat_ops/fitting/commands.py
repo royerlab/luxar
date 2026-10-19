@@ -118,8 +118,8 @@ def render_to_file(
     back. So this is not directly comparable to the original volume — differencing
     the two scores the fit for a pedestal it deliberately did not represent. To
     compare, either subtract the same level from the reference
-    (``clip(V - image_min, 0, None)``, where ``image_min`` is reported by
-    ``luxar gsplat info``), or use ``luxar gsplat compare``, which does it for you.
+    (``clip(V - image_min, 0, None)``, where ``image_min`` is printed by this
+    command and by ``luxar gsplat info``), or use ``luxar gsplat compare``, which does it for you.
     It is also in the SOURCE's units: a ``transform --scale-intensity`` edit
     (the store's ``intensity_scale``) is divided back out of the amplitudes.
 

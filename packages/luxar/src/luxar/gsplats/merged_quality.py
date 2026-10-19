@@ -571,6 +571,7 @@ def stamp_merged_quality(
                 "psnr_db": quality["psnr_db"],
                 "psnr_robust_db": quality["psnr_robust_db"],
                 "ssim": quality["ssim"],
+                "ssim_robust": quality["ssim_robust"],
                 "foreground_psnr_db": quality["foreground_psnr_db"],
                 "foreground_psnr_robust_db": quality["foreground_psnr_robust_db"],
                 "foreground_threshold": quality["foreground_threshold"],
@@ -583,7 +584,8 @@ def stamp_merged_quality(
                 f"peak ({quality['psnr_db']:.1f} dB full range), foreground PSNR="
                 f"{quality['foreground_psnr_robust_db']:.1f} dB "
                 f"(over {quality['foreground_fraction'] * 100:.2f}% of voxels), "
-                f"SSIM={quality['ssim']:.4f}"
+                f"SSIM={quality['ssim_robust']:.4f} robust peak "
+                f"({quality['ssim']:.4f} full range)"
             )
     except Exception as exc:  # pragma: no cover - device/memory dependent
         aprint(f"⚠️  Merged quality metrics failed ({exc}) — archive carries no PSNR")

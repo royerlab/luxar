@@ -1047,6 +1047,7 @@ and relative-L2 denominator are derived from that shifted reference too:
   "foreground_threshold": 0.1274,
   "foreground_fraction": 0.00098,
   "ssim": 0.9912,
+  "ssim_robust": 0.9615,
   "mse": 0.000199
 }
 ```
@@ -1072,7 +1073,10 @@ reference as the peak. `psnr_robust_db` / `foreground_psnr_robust_db` (same
 error, same voxels) use the robust peak `p99.99 - min` instead, which one hot
 pixel cannot move; tools present the robust figure as the headline and the
 full-range one beside it. Both are optional; older stores carry only the
-full-range pair.
+full-range pair. `ssim` / `ssim_robust` are the same pair for SSIM, whose
+stabilising constants scale with the peak: a full range set by one hot pixel
+pushes `ssim` towards 1 for almost any fit, so tools headline `ssim_robust`.
+Older stores carry only `ssim`.
 
 The score is always taken on the fitter's own **voxel grid**, whatever frame the
 centers were handed back in. A dataset fitted with `output_space: real` and a

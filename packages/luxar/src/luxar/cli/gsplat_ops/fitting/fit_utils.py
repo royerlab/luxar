@@ -449,6 +449,32 @@ def maybe_denoise_full_volume(
     return volume
 
 
+def announce_denoised_quality_basis(ctx: FitPipelineCtx, is_tiled: bool) -> None:
+    """Say which reference the quality lines above were scored against.
+
+    The fit scores itself against the volume it was handed. Under ``--denoise``
+    that is the DENOISED volume (whole, or per tile on the tiled paths), so its
+    PSNR/SSIM say how well the splats reproduce the filtered data, which can
+    read several dB better while the fit is worse against the raw data. A no-op
+    without ``--denoise``.
+    """
+    if ctx.denoise_effective_h is None:
+        return
+    h = f"NLM h={ctx.denoise_effective_h:.4g}"
+    if is_tiled:
+        aprint(
+            f"Note: --denoise ({h}) ran per tile, so a tile's own quality line is "
+            "scored vs its denoised tile; if a merged (whole-volume) quality line "
+            "is printed, it is scored vs the raw input."
+        )
+        return
+    aprint(
+        f"Note: the quality above is scored vs the denoised input ({h}), not the "
+        "raw volume. To score against the raw data, run `luxar gsplat compare "
+        "<output> <input>` with the same --axes/--channel/--timepoint."
+    )
+
+
 def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any, Any]":
     """Build the merged fit config and parse the seed / downscale options.
 

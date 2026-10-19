@@ -22,6 +22,7 @@ from ..voxel_frame import (
 from .fit_utils import (
     CONTENT_UNSUPPORTED_FIT_FLAGS,
     FitPipelineCtx,
+    announce_denoised_quality_basis,
     assemble_fit_config,
     dispatch_parallel_tiled,
     fit_progressive,
@@ -1188,6 +1189,9 @@ def run_fit_volume(
             if dispatch_parallel_tiled(
                 ctx, volume, fit_config, effective_downscale, recipe_params
             ):
+                # The parent's merged line (scored vs the raw input) gets the
+                # same --denoise note as the in-process paths below.
+                announce_denoised_quality_basis(ctx, is_tiled=True)
                 raise typer.Exit(0)
 
             # For tiled modes, downscale the volume before tiling
@@ -1257,6 +1261,8 @@ def run_fit_volume(
                         downscale=effective_downscale,
                         **fit_config,
                     )
+
+            announce_denoised_quality_basis(ctx, is_tiled)
 
             # 7. Rescale (if downscaled tiled) + save
             result, n_splats, is_leaf = rescale_and_save(

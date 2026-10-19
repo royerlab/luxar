@@ -225,13 +225,17 @@ def test_json_carries_both_peaks_with_clear_keys(tmp_path, blob_reference) -> No
     _save(_voxel_model(), tmp_path / "vox.gsplats.zarr")
     payload = _json_compare(tmp_path / "vox.gsplats.zarr", ref, tmp_path / "m.json")
     assert payload["psnr_headline"] == "psnr_robust_db"
+    assert payload["ssim_headline"] == "ssim_robust"
     assert payload["robust_peak_quantile"] == 0.9999
     for key in (
         "psnr_robust_db",
         "psnr_db",
         "foreground_psnr_robust_db",
         "foreground_psnr_db",
+        "ssim",
+        "ssim_robust",
         "foreground_ssim",
+        "foreground_ssim_robust",
         "robust_data_range",
         "data_range",
     ):

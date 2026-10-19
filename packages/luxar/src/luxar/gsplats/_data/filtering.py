@@ -206,6 +206,7 @@ _CONTENT_SCOPED_STATS_KEYS = (
     "psnr_db",
     "psnr_robust_db",
     "ssim",
+    "ssim_robust",
     "rel_l2",
     "max_abs_error",
     "foreground_psnr_db",

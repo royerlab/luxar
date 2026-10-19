@@ -43,7 +43,8 @@ class CalibrationResult:
     """PSNR over the whole volume against the original — for cross-run comparison."""
 
     full_ssim: List[float]
-    """SSIM over the whole volume against the original."""
+    """SSIM over the whole volume against the original, on the full range
+    (``max - min``); see ``full_ssim_robust`` for the robust-peak figure."""
 
     held_out_peak: HeldOutPeak
     """The recommended K* and curve type."""
@@ -139,6 +140,10 @@ class CalibrationResult:
     """Full-range peak (``max - min``) of the calibrated volume."""
     robust_data_range: float = float("nan")
     """Robust peak (``p99.99 - min``) of the calibrated volume."""
+    full_ssim_robust: List[float] = field(default_factory=list)
+    """Whole-volume SSIM on the ROBUST peak, the SSIM ``fit`` / ``compare``
+    headline. ``full_ssim`` keeps the full range, which one hot pixel inflates
+    (SSIM's constants scale with the range). Empty in older files."""
     k_values_fitted: List[int] = field(default_factory=list)
     """Splats each fit ended with, before any closing reduction."""
     k_values_stored: List[int] = field(default_factory=list)
@@ -306,6 +311,7 @@ class CalibrationResult:
             ),
             data_range=_opt_float(raw.get("data_range")),
             robust_data_range=_opt_float(raw.get("robust_data_range")),
+            full_ssim_robust=_hydrate_float_list(raw.get("full_ssim_robust", [])),
             k_values_fitted=[int(x) for x in raw.get("k_values_fitted", [])],
             k_values_stored=[int(x) for x in raw.get("k_values_stored", [])],
             whole_volume_seeds=raw.get("whole_volume_seeds"),

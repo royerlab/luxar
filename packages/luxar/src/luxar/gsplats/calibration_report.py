@@ -97,7 +97,8 @@ def _plot_rate_distortion(
     selected, selected_label, selected_peak, resolved_metric = _selected_metric(result)
     train = np.asarray(result.train_psnr_db, dtype=float)
     full = np.asarray(result.full_psnr_db, dtype=float)
-    ssim = np.asarray(result.full_ssim, dtype=float)
+    # Robust-peak SSIM (what `fit` / `compare` headline) when recorded.
+    ssim = np.asarray(result.full_ssim_robust or result.full_ssim, dtype=float)
     fit_t = np.asarray(result.fit_times_seconds, dtype=float)
     k_star = selected_peak.k_star
     psnr_ceiling = result.noise_floor.psnr_max_db
@@ -154,7 +155,7 @@ def _plot_rate_distortion(
     )
     _safe_log_x(ax_ssim)
     ax_ssim.set_xlabel("Effective splat count K")
-    ax_ssim.set_ylabel("SSIM")
+    ax_ssim.set_ylabel("SSIM (robust peak)" if result.full_ssim_robust else "SSIM")
     ax_ssim.set_title("Reconstruction SSIM vs K")
     ax_ssim.set_ylim(min(0.0, ssim.min() - 0.05), 1.01)
 

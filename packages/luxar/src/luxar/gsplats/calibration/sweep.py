@@ -57,6 +57,7 @@ _CURVE_KEYS = (
     "held_mse",
     "full_psnr",
     "full_ssim",
+    "full_ssim_robust",
 )
 
 

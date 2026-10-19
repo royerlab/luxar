@@ -543,6 +543,18 @@ def _fmt_db(x: float) -> str:
     return f"{x:6.2f}"
 
 
+def _ssim_column(result: "CalibrationResult") -> "tuple[list[float], str]":
+    """The table's SSIM column and what the robust-peak header line covers.
+
+    SSIM on the robust peak like PSNR; a ``cal.json`` from before
+    ``full_ssim_robust`` was recorded falls back to the full-range SSIM, and
+    the header then claims the robust peak for PSNR only.
+    """
+    if result.full_ssim_robust:
+        return result.full_ssim_robust, "PSNR and SSIM"
+    return result.full_ssim, "PSNR (SSIM on the full range)"
+
+
 def _print_cal_table(result: "CalibrationResult") -> "tuple[HeldOutPeak, str]":
     """The per-K table on the robust peak; returns ``(selected peak, metric)``.
 
@@ -555,13 +567,15 @@ def _print_cal_table(result: "CalibrationResult") -> "tuple[HeldOutPeak, str]":
     metric_off = 0.0 if result.k_star_metric == "gain" else off
     fg = result.held_out_psnr_fg_db or [float("nan")] * len(selected_curve)
     stored = result.k_values_stored or [0] * len(selected_curve)
+    ssim, measures = _ssim_column(result)
     gap = (
-        f"the full-range (max - floor) figures in cal.json are {-off:.2f} dB higher"
+        f"the full-range (max - floor) PSNR figures in cal.json are {-off:.2f} dB higher"
         if abs(off) >= 0.01
         else "here the full-range (max - floor) peak coincides with it"
     )
     aprint(
-        f"  PSNR on the robust peak (p99.99 - floor), as `fit` / `compare` report it; {gap}."
+        f"  {measures} on the robust peak (p99.99 - floor), as `fit` / `compare` "
+        f"report them; {gap}."
     )
     aprint(
         "    K_req     kept   stored   held-out  fg held-out  K*-metric    train"
@@ -575,7 +589,7 @@ def _print_cal_table(result: "CalibrationResult") -> "tuple[HeldOutPeak, str]":
             f"{stored[i]:7d}   {_fmt_db(result.held_out_psnr_db[i] + off)}   "
             f"{_fmt_db(fg[i] + off)}     {_fmt_db(selected_curve[i] + metric_off)}"
             f"   {_fmt_db(result.train_psnr_db[i] + off)}  "
-            f"{result.full_ssim[i]:5.3f}  {result.fit_times_seconds[i]:7.1f}"
+            f"{ssim[i]:5.3f}  {result.fit_times_seconds[i]:7.1f}"
         )
     aprint(
         "    kept = after the cumulative cull (the scored model); stored = what "
