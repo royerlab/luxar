@@ -584,12 +584,14 @@ describe('runInitPipeline', () => {
     it('forwards canvas + renderer flags from options to sceneManager.init', async () => {
       const { factories, sceneStub } = makeFactoryOverrides();
       const canvas = document.createElement('canvas');
+      const preRequestedWebGPUDevice = Promise.resolve({ fallback: false as const, device: {} });
       const ports: InitPipelinePorts = {
         options: {
           canvas,
           src: 'http://example.com/scene.zarr',
           debug: true,
           renderer: 'webgpu',
+          preRequestedWebGPUDevice,
           webgpuForceWebGL: false,
           perfTimestamp: true,
           blendWarmup: false,
@@ -607,6 +609,7 @@ describe('runInitPipeline', () => {
         canvas,
         debug: true,
         renderer: 'webgpu',
+        preRequestedWebGPUDevice,
         webgpuForceWebGL: false,
         perfTimestamp: true,
         // HDR output is on by default (it falls back to SDR where unavailable).

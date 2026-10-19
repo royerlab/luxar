@@ -36,7 +36,9 @@ So the accessor sits in a leaf that imports nothing at runtime.
 ## The ordering contract
 
 `loadTslMaterials()` must resolve before the first material is constructed on
-the WebGPU path. `SceneManager.init` already guarantees this:
+the WebGPU path. Standalone bootstrap starts adapter/device acquisition and
+prefetches this registry before awaiting the adapter. `SceneManager.init` still
+awaits it before constructing a material:
 
 ```
 init()

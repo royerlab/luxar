@@ -68,6 +68,7 @@ import {
   forwardedAdapterLimits,
   GPU_ERROR_DISTINCT_LIMIT,
   GPU_ERROR_REPEAT_LIMIT,
+  requestWebGPUDevice,
   selectBackend,
 } from '../../../../../scene/scene-manager/render-pipeline/renderer-setup';
 import { log, Modules } from '../../../../../utils/log';
@@ -181,6 +182,7 @@ describe('createWebGPURenderer', () => {
   beforeEach(() => {
     originalNavigator = globalThis.navigator;
     webgpuConstructorArgs.length = 0;
+    vi.mocked(loadTslMaterials).mockClear();
   });
 
   afterEach(() => {
@@ -306,6 +308,40 @@ describe('createWebGPURenderer', () => {
     });
   });
 
+  it('uses a pre-requested device once without negotiating a second adapter', async () => {
+    const device = { label: 'early device' };
+    let resolveDevice!: (device: unknown) => void;
+    const requestDevice = vi.fn(() => new Promise<unknown>((resolve) => (resolveDevice = resolve)));
+    const adapter = makeAdapter({ maxVertexBuffers: 16, requestDevice });
+    const requestAdapter = vi.fn().mockResolvedValue(adapter);
+    stubNavigatorGpu(requestAdapter);
+
+    const early = requestWebGPUDevice('webgpu');
+    await vi.waitFor(() => expect(requestDevice).toHaveBeenCalledTimes(1));
+    expect(loadTslMaterials).toHaveBeenCalledTimes(1);
+    const creating = createWebGPURenderer(makeCanvas(), { preRequestedWebGPUDevice: early });
+    expect(webgpuConstructorArgs).toHaveLength(0);
+    resolveDevice(device);
+    expect(await creating).toMatchObject({ fallback: false });
+    expect(webgpuConstructorArgs[0]).toMatchObject({ device });
+    expect(requestAdapter).toHaveBeenCalledTimes(1);
+    expect(requestDevice).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves early adapter fallback without constructing a WebGPU renderer', async () => {
+    const adapter = makeAdapter({ maxVertexBuffers: 4 });
+    let resolveAdapter!: (adapter: ReturnType<typeof makeAdapter>) => void;
+    stubNavigatorGpu(vi.fn(() => new Promise((resolve) => (resolveAdapter = resolve))));
+
+    const early = requestWebGPUDevice();
+    expect(loadTslMaterials).toHaveBeenCalledTimes(1);
+    resolveAdapter(adapter);
+    const result = await createWebGPURenderer(makeCanvas(), { preRequestedWebGPUDevice: early });
+    expect(result).toEqual({ fallback: true });
+    expect(adapter.requestDevice).not.toHaveBeenCalled();
+    expect(webgpuConstructorArgs).toHaveLength(0);
+  });
+
   it('routes uncaptured GPU errors through log.error', async () => {
     const adapter = makeAdapter({ maxVertexBuffers: 16 });
     stubNavigatorGpu(vi.fn().mockResolvedValue(adapter));
@@ -348,6 +384,21 @@ describe('createWebGPURenderer', () => {
   });
 
   describe('requireNativeAdapter', () => {
+    it('skips the TSL prefetch when native WebGPU is unavailable', async () => {
+      stubNavigatorGpu(undefined);
+      expect(await requestWebGPUDevice(undefined, true)).toEqual({ fallback: true });
+      expect(loadTslMaterials).not.toHaveBeenCalled();
+    });
+
+    it('prefetches TSL for the explicit WebGPU bridge without navigator.gpu', async () => {
+      stubNavigatorGpu(undefined);
+      expect(await requestWebGPUDevice('webgpu', false)).toEqual({
+        fallback: false,
+        device: undefined,
+      });
+      expect(loadTslMaterials).toHaveBeenCalledOnce();
+    });
+
     it('falls back to WebGL without navigator.gpu, before importing three/webgpu', async () => {
       stubNavigatorGpu(undefined);
       const result = await createWebGPURenderer(makeCanvas(), { requireNativeAdapter: true });
