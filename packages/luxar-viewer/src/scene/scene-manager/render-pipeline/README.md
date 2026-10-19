@@ -36,8 +36,9 @@ SceneManager body stays an orchestrator instead of a megaclass.
   pass `?renderer=webgpu`, or `requireNativeAdapter` was set (every
   selection except an explicit `?renderer=webgpu`) and no native device
   was obtained. The caller must drop to `createWebGLRenderer` — no
-  partial WebGPU state is left behind, and `three/webgpu` was never
-  imported. When `rendererOverride === 'webgpu'`, the function pushes
+  partial WebGPU state is left behind. A browser without `navigator.gpu`
+  skips the TSL chunk prefetch; a later adapter or device failure may
+  leave the prefetch unused. When `rendererOverride === 'webgpu'`, the function pushes
   through on the degenerate adapter so debug sessions can still inspect it.
 - **Why `getPostProcessing()` / `getScene()` are functions, not
   references.** `setupContextLossHandling()` runs BEFORE `setupScene()`

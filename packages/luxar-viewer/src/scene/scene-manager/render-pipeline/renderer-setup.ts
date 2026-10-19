@@ -388,6 +388,10 @@ async function requestCoreAdapter(): Promise<GPUAdapterLike | null> {
   return adapter ?? gpu.requestAdapter().catch(() => null);
 }
 
+function prefetchTslMaterialsWhenUsable(hasGpu: boolean, requireNativeAdapter?: boolean): void {
+  if (hasGpu || !requireNativeAdapter) void loadTslMaterials().catch(() => undefined);
+}
+
 /**
  * Start adapter/device acquisition, the lazy TSL and `three/webgpu` chunk
  * fetches, and — when `requireNativeAdapter` is set — the fallback decision
@@ -402,7 +406,7 @@ export async function requestWebGPUDevice(
   const hasGpu = (navigator as NavigatorWithGPU).gpu !== undefined;
   // Start the TSL chunk before waiting for the adapter when this session can
   // still use WebGPU. The awaited setup load retries if the prefetch fails.
-  if (hasGpu || !requireNativeAdapter) void loadTslMaterials().catch(() => undefined);
+  prefetchTslMaterialsWhenUsable(hasGpu, requireNativeAdapter);
   const adapter = await requestCoreAdapter();
   if (!adapter) {
     if (lacksRequiredNativeDevice(requireNativeAdapter, hasGpu, false, undefined)) {
@@ -694,8 +698,8 @@ function resolveWebGPUDeviceRequest(options: CreateWebGPUOptions): Promise<WebGP
  * Returns `{ fallback: true }` so the caller can drop to WebGL when the
  * adapter advertises `maxVertexBuffers < 8` (WebGPU spec minimum) and
  * `rendererOverride !== 'webgpu'`, or when `requireNativeAdapter` is set and
- * no native device was obtained. Both return before `three/webgpu` is
- * imported, so a fallback session never downloads that chunk.
+ * no native device was obtained. A browser without `navigator.gpu` skips
+ * the chunk prefetch; a later adapter or device failure may not.
  */
 export async function createWebGPURenderer(
   canvas: HTMLCanvasElement,
