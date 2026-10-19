@@ -227,39 +227,6 @@ describe('createRendererCapabilities (GL probes)', () => {
   });
 });
 
-describe('createRendererCapabilities (WebGPU MSAA)', () => {
-  it('uses the core limit before a backend is available', () => {
-    expect(createRendererCapabilities({} as Renderer).maxMSAASamples).toBe(4);
-  });
-
-  it('reports 4 for native core and 0 for native compatibility mode', () => {
-    const backend = { isWebGPUBackend: true, compatibilityMode: false };
-    const renderer = { backend } as unknown as Renderer;
-    expect(createRendererCapabilities(renderer).maxMSAASamples).toBe(4);
-    backend.compatibilityMode = true;
-    expect(createRendererCapabilities(renderer).maxMSAASamples).toBe(0);
-  });
-
-  it('uses the WebGL2 bridge context limit', () => {
-    const gl = { MAX_SAMPLES, getParameter: (param: number) => (param === MAX_SAMPLES ? 8 : 0) };
-    const renderer = { backend: { isWebGLBackend: true, gl } } as unknown as Renderer;
-    expect(createRendererCapabilities(renderer).maxMSAASamples).toBe(8);
-  });
-
-  it.each([NaN, -1, 0, 2.5])('rejects invalid bridge MAX_SAMPLES %s', (samples) => {
-    const gl = { MAX_SAMPLES, getParameter: () => samples };
-    const renderer = { backend: { isWebGLBackend: true, gl } } as unknown as Renderer;
-    expect(createRendererCapabilities(renderer).maxMSAASamples).toBe(0);
-  });
-
-  it('handles a bridge context without a parameter probe', () => {
-    const renderer = {
-      backend: { isWebGLBackend: true, gl: { MAX_SAMPLES } },
-    } as unknown as Renderer;
-    expect(createRendererCapabilities(renderer).maxMSAASamples).toBe(4);
-  });
-});
-
 describe('createRendererCapabilities (WebGPU limits)', () => {
   it.each([false, true])('reads native backend=%s for readback Y', (isNative) => {
     const renderer = {
@@ -338,6 +305,10 @@ describe('createRendererCapabilities (WebGPU MSAA + colour depth)', () => {
   const webgpu = (backend: unknown): Renderer =>
     ({ isWebGPURenderer: true, backend }) as unknown as Renderer;
 
+  it('uses the core limit before a backend is available', () => {
+    expect(createRendererCapabilities(webgpu(undefined)).maxMSAASamples).toBe(4);
+  });
+
   it('reports 4 MSAA samples on a native core device (WebGPU allows only 1 and 4)', () => {
     const caps = createRendererCapabilities(webgpu({ isWebGPUBackend: true }), true);
     expect(caps.maxMSAASamples).toBe(4);
@@ -356,9 +327,16 @@ describe('createRendererCapabilities (WebGPU MSAA + colour depth)', () => {
     expect(createRendererCapabilities(webgpu({ gl }), true).maxMSAASamples).toBe(8);
   });
 
-  it('reports 0 MSAA samples when the bridge MAX_SAMPLES probe returns junk', () => {
-    const gl = { MAX_SAMPLES, getParameter: () => null };
-    expect(createRendererCapabilities(webgpu({ gl }), true).maxMSAASamples).toBe(0);
+  it.each([null, NaN, -1, 0, 2.5])(
+    'reports 0 MSAA samples when the bridge MAX_SAMPLES probe returns %s',
+    (samples) => {
+      const gl = { MAX_SAMPLES, getParameter: () => samples };
+      expect(createRendererCapabilities(webgpu({ gl }), true).maxMSAASamples).toBe(0);
+    }
+  );
+
+  it('uses the core limit when the bridge context has no parameter probe', () => {
+    expect(createRendererCapabilities(webgpu({ gl: { MAX_SAMPLES } })).maxMSAASamples).toBe(4);
   });
 
   it('reports 16-bit colour depth for an rgba16float (HalfFloatType) canvas', () => {
