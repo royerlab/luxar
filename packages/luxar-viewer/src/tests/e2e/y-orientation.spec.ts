@@ -36,6 +36,32 @@ const N_BUCKETS = 32;
  */
 const PROFILE_RMSE_TOL = 8;
 
+/**
+ * Labelled bounds for the parity tests (#3127). Each load and each readback
+ * runs as its own `test.step` with its own timeout, so a stall fails as a step
+ * timeout on the named step ("load ?renderer=webgpu&webgpuForceWebgl",
+ * "readback …") instead of a bare test timeout that says nothing about which
+ * backend got stuck. A load's bound is the sum of `waitForLuxarReady` and
+ * `waitForPointsLoaded`'s nominal 45 s caps, so their more specific errors
+ * usually win; not always, since `goto`'s own navigation timeout is outside
+ * that sum and `waitForPointsLoaded` can overrun its cap. Measured on a
+ * hardware-WebGL box, a load takes 6-9 s and a readback 2-6 s (the first
+ * capture pays its pipeline compile).
+ */
+const LOAD_STEP_TIMEOUT = 90_000;
+/**
+ * Deliberately tighter than the viewer's own 60 s capture guard
+ * (`PostProcessingManager.CAPTURE_TIMEOUT_MS`): the labelled step fires
+ * first, so don't raise this to 60 s.
+ */
+const READBACK_STEP_TIMEOUT = 30_000;
+/**
+ * Above the steps' worst case (the two loads run in parallel, then two
+ * sequential readbacks: 90 + 30 + 30 s), so a step bound always fires before
+ * the test timeout does. Same budget as the pick tests below.
+ */
+const PARITY_TEST_TIMEOUT = 180_000;
+
 type Pixels = { width: number; height: number; data: Uint8ClampedArray };
 
 async function exportPixels(page: Page): Promise<Pixels> {
@@ -89,14 +115,27 @@ async function load(page: Page, url: string): Promise<void> {
   await waitForPointsLoaded(page);
 }
 
+/** Load both parity pages in parallel (separate contexts share no state). */
+async function loadPair(...sides: { page: Page; url: string; label: string }[]): Promise<void> {
+  await Promise.all(
+    sides.map(({ page, url, label }) =>
+      test.step(`load ${label}`, () => load(page, url), { timeout: LOAD_STEP_TIMEOUT })
+    )
+  );
+}
+
 async function assertOrientationParity(
   pageA: Page,
   pageB: Page,
   labelA: string,
   labelB: string
 ): Promise<void> {
-  const a = await exportPixels(pageA);
-  const b = await exportPixels(pageB);
+  const a = await test.step(`readback ${labelA}`, () => exportPixels(pageA), {
+    timeout: READBACK_STEP_TIMEOUT,
+  });
+  const b = await test.step(`readback ${labelB}`, () => exportPixels(pageB), {
+    timeout: READBACK_STEP_TIMEOUT,
+  });
 
   const pa = verticalLuminanceProfile(a);
   const pb = verticalLuminanceProfile(b);
@@ -114,13 +153,20 @@ async function assertOrientationParity(
 
 test.describe('Y-orientation contract — renderToImageData cross-backend parity', () => {
   test('WebGL2 vs WebGPURenderer (forceWebGL) match in orientation', async ({ browser }) => {
+    test.setTimeout(PARITY_TEST_TIMEOUT);
     const ctxA = await browser.newContext({ viewport: { width: 512, height: 384 } });
     const ctxB = await browser.newContext({ viewport: { width: 512, height: 384 } });
     const pageA = await ctxA.newPage();
     const pageB = await ctxB.newPage();
     try {
-      await load(pageA, `/?renderer=webgl&src=${DATASET}&debug`);
-      await load(pageB, `/?renderer=webgpu&webgpuForceWebgl&src=${DATASET}&debug`);
+      await loadPair(
+        { page: pageA, url: `/?renderer=webgl&src=${DATASET}&debug`, label: '?renderer=webgl' },
+        {
+          page: pageB,
+          url: `/?renderer=webgpu&webgpuForceWebgl&src=${DATASET}&debug`,
+          label: '?renderer=webgpu&webgpuForceWebgl',
+        }
+      );
       await assertOrientationParity(
         pageA,
         pageB,
@@ -136,13 +182,16 @@ test.describe('Y-orientation contract — renderToImageData cross-backend parity
   test('WebGL2 vs WebGPURenderer (native if available) match in orientation', async ({
     browser,
   }) => {
+    test.setTimeout(PARITY_TEST_TIMEOUT);
     const ctxA = await browser.newContext({ viewport: { width: 512, height: 384 } });
     const ctxB = await browser.newContext({ viewport: { width: 512, height: 384 } });
     const pageA = await ctxA.newPage();
     const pageB = await ctxB.newPage();
     try {
-      await load(pageA, `/?renderer=webgl&src=${DATASET}&debug`);
-      await load(pageB, `/?renderer=webgpu&src=${DATASET}&debug`);
+      await loadPair(
+        { page: pageA, url: `/?renderer=webgl&src=${DATASET}&debug`, label: '?renderer=webgl' },
+        { page: pageB, url: `/?renderer=webgpu&src=${DATASET}&debug`, label: '?renderer=webgpu' }
+      );
       // Without a real WebGPU adapter (the headless-CI norm),
       // ?renderer=webgpu silently runs the WebGL2 fallback and this
       // test becomes a vacuous duplicate of the forceWebGL one above —
