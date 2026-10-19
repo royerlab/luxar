@@ -284,8 +284,9 @@ function shouldDrawWebGLKeeper(
   target: THREE.RenderTarget | null,
   material: THREE.Material | THREE.Material[]
 ): boolean {
-  // The private target uses the working colour space. Canvas and XR targets
-  // may use a different one, so drawing would synchronously link another program.
+  // The private target keys the working colour space and NoToneMapping. Canvas
+  // keys the renderer's output colour space and toneMapping; XR keys its texture's
+  // colour space and renderer.toneMapping. A draw could link another program.
   if (target === null || ('isXRRenderTarget' in target && target.isXRRenderTarget === true)) {
     return false;
   }
