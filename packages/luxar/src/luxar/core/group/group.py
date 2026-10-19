@@ -1419,7 +1419,7 @@ class Group(Node):
                 along a ray, which ``gsplat convert``'s auto exposure does: a
                 dense fit under ``additive`` opens white. The fitted default
                 applies convert's auto exposure; with ``fitted_defaults=False``
-                pass ``**luxar.core.scene_exposure.auto_exposure_attrs(path, ...)``
+                pass ``**luxar.core.scene_exposure.auto_exposure_attrs(path, dimensions=scene.dimensions, ...)``
                 for it (it sets ``normalize_amplitudes=False``).
             partition: Spatial partition control applied to the loaded matrix,
                 or to each leaf of a retained nested tree.
