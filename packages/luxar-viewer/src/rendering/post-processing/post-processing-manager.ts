@@ -652,7 +652,7 @@ export class PostProcessingManager {
   getSupportedMSAASamples(): number[] {
     return supportedMSAASamples(
       this.capabilities.maxMSAASamples,
-      this.capabilities.nativeWebGPUBackend
+      this.capabilities.backendKind === 'webgpu-native'
     );
   }
 
@@ -660,7 +660,7 @@ export class PostProcessingManager {
     return validateMSAASamples(
       samples,
       this.capabilities.maxMSAASamples,
-      this.capabilities.nativeWebGPUBackend
+      this.capabilities.backendKind === 'webgpu-native'
     );
   }
 

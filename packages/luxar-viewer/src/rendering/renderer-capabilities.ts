@@ -336,7 +336,7 @@ function webgpuBackendOf(renderer: Renderer): WebGPUBackendLike | undefined {
 /** A positive integer `gl.getParameter` result, or null when the probe misbehaves. */
 function glPositiveParameter(gl: WebGL2RenderingContext, pname: number): number | null {
   const value = gl.getParameter(pname) as unknown;
-  return typeof value === 'number' && value > 0 ? value : null;
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
 }
 
 function hasGlParameterProbe(

@@ -727,7 +727,7 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
 
   it('allocates 4 samples for a native WebGPU 2x request and reports that count', async () => {
     await loadTslMaterials();
-    const capabilities = mockCaps('webgpu', { nativeWebGPUBackend: true });
+    const capabilities = mockCaps('webgpu');
     materialManager.setCaps(capabilities);
     const mgr = new PostProcessingManager(
       makeMockRenderer(),
@@ -744,7 +744,7 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
 
   it('retains bridge sample counts on a WebGPU surface', async () => {
     await loadTslMaterials();
-    const capabilities = mockCaps('webgpu', { maxMSAASamples: 8 });
+    const capabilities = mockCaps('webgpu', { backendKind: 'webgpu-gl', maxMSAASamples: 8 });
     materialManager.setCaps(capabilities);
     const renderer = makeMockRenderer() as Renderer & {
       backend: { isWebGLBackend: boolean };
