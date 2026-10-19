@@ -216,6 +216,7 @@ describe('bootstrapStandalone', () => {
     localStorage.clear();
     resetRootDocumentPrefetchForTests();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   describe('root-document prefetch', () => {
@@ -250,6 +251,21 @@ describe('bootstrapStandalone', () => {
   });
 
   describe('WebGPU startup', () => {
+    it('passes native-adapter fallback through the bootstrap device request', async () => {
+      vi.stubEnv('VITE_LUXAR_USE_WEBGPU', '1');
+      const requestAdapter = vi.fn().mockResolvedValue(null);
+      vi.stubGlobal('navigator', { ...navigator, gpu: { requestAdapter } });
+
+      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+
+      expect(requestAdapter).toHaveBeenCalled();
+      const options = mocks.init.mock.calls[0]?.[0] as {
+        preRequestedWebGPUDevice?: Promise<unknown>;
+      };
+      expect(options.preRequestedWebGPUDevice).toBeDefined();
+      expect(await options.preRequestedWebGPUDevice).toEqual({ fallback: true });
+    });
+
     it('starts device acquisition before app init', async () => {
       const requestDevice = vi.fn().mockResolvedValue({});
       const requestAdapter = vi.fn().mockResolvedValue({
