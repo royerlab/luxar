@@ -261,58 +261,70 @@ describe('BlendWarmupManager', () => {
     expect(manager.getStats().compiled).toBe(0);
   });
 
-  it('keeps the sRGB canvas program without drawing into a linear render target', async () => {
-    const previous = new THREE.WebGLRenderTarget(1, 1);
-    let current: THREE.RenderTarget | null = previous;
-    const programs = new Map<THREE.Material, { currentProgram: { isReady(): boolean } }>();
-    const compiled: Array<{ material: THREE.Material; program: { isReady(): boolean } }> = [];
-    const render = vi.fn((scene: THREE.Scene) => {
-      const material = (scene.children[0] as THREE.Mesh).material as THREE.Material;
-      programs.get(material)!.currentProgram = { isReady: () => true };
-    });
-    const renderer = {
-      isWebGLRenderer: true,
-      outputColorSpace: THREE.SRGBColorSpace,
-      getRenderTarget: () => current,
-      setRenderTarget: (target: THREE.RenderTarget | null) => {
-        current = target;
-      },
-      getContext: () => ({ isContextLost: () => false }),
-      compile: (scene: THREE.Scene) => {
-        expect(current).toBeNull();
+  it.each(['canvas', 'XR target'] as const)(
+    'keeps the %s program without drawing into a differently keyed target',
+    async (output) => {
+      const liveOutput =
+        output === 'canvas'
+          ? null
+          : Object.assign(new THREE.WebGLRenderTarget(2, 2), { isXRRenderTarget: true });
+      if (liveOutput) liveOutput.texture.colorSpace = THREE.SRGBColorSpace;
+      const previous = new THREE.WebGLRenderTarget(1, 1);
+      let current: THREE.RenderTarget | null = previous;
+      const programs = new Map<THREE.Material, { currentProgram: { isReady(): boolean } }>();
+      const compiled: Array<{ material: THREE.Material; program: { isReady(): boolean } }> = [];
+      const render = vi.fn((scene: THREE.Scene) => {
         const material = (scene.children[0] as THREE.Mesh).material as THREE.Material;
-        const program = { isReady: () => true };
-        programs.set(material, { currentProgram: program });
-        compiled.push({ material, program });
-        return new Set([material]);
-      },
-      properties: { get: (material: THREE.Material) => programs.get(material) },
-      getViewport: () => new THREE.Vector4(),
-      getScissor: () => new THREE.Vector4(),
-      getScissorTest: () => false,
-      setViewport: () => undefined,
-      setScissor: () => undefined,
-      setScissorTest: () => undefined,
-      info: { render: { calls: 0, triangles: 0, points: 0, lines: 0 } },
-      render,
-    } as unknown as WarmupRenderer;
-    const manager = new BlendWarmupManager(() => Promise.resolve(), undefined, activateImmediately);
-    manager.configure({
-      enabled: true,
-      renderer,
-      camera: new THREE.PerspectiveCamera(),
-      targetScene: new THREE.Scene(),
-      getRenderTarget: () => null,
-    });
+        programs.get(material)!.currentProgram = { isReady: () => true };
+      });
+      const renderer = {
+        isWebGLRenderer: true,
+        outputColorSpace: THREE.SRGBColorSpace,
+        getRenderTarget: () => current,
+        setRenderTarget: (target: THREE.RenderTarget | null) => {
+          current = target;
+        },
+        getContext: () => ({ isContextLost: () => false }),
+        compile: (scene: THREE.Scene) => {
+          expect(current).toBe(liveOutput);
+          const material = (scene.children[0] as THREE.Mesh).material as THREE.Material;
+          const program = { isReady: () => true };
+          programs.set(material, { currentProgram: program });
+          compiled.push({ material, program });
+          return new Set([material]);
+        },
+        properties: { get: (material: THREE.Material) => programs.get(material) },
+        getViewport: () => new THREE.Vector4(),
+        getScissor: () => new THREE.Vector4(),
+        getScissorTest: () => false,
+        setViewport: () => undefined,
+        setScissor: () => undefined,
+        setScissorTest: () => undefined,
+        info: { render: { calls: 0, triangles: 0, points: 0, lines: 0 } },
+        render,
+      } as unknown as WarmupRenderer;
+      const manager = new BlendWarmupManager(
+        () => Promise.resolve(),
+        undefined,
+        activateImmediately
+      );
+      manager.configure({
+        enabled: true,
+        renderer,
+        camera: new THREE.PerspectiveCamera(),
+        targetScene: new THREE.Scene(),
+        getRenderTarget: () => liveOutput,
+      });
 
-    await manager.warmScene(makeRenderableMesh('points'));
-    expect(compiled).toHaveLength(3);
-    for (const { material, program } of compiled) {
-      expect(programs.get(material)?.currentProgram).toBe(program);
+      await manager.warmScene(makeRenderableMesh('points'));
+      expect(compiled).toHaveLength(3);
+      for (const { material, program } of compiled) {
+        expect(programs.get(material)?.currentProgram).toBe(program);
+      }
+      expect(render).not.toHaveBeenCalled();
+      expect(current).toBe(previous);
     }
-    expect(render).not.toHaveBeenCalled();
-    expect(current).toBe(previous);
-  });
+  );
 
   it('pipelineVariants (WebGPU) queues every blend mode, not only define-distinct ones', async () => {
     const run = async (pipelineVariants: boolean) => {
