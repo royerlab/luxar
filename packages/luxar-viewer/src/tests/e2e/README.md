@@ -641,12 +641,13 @@ readbacks are row-flipped to the WebGL bottom-up order before they are returned,
 so both arms compare against `renderGLSL` directly.
 
 Both WebGL arms call `alignProvokingVertexWithWebGPU` on their renderer, as
-`PickingSystem` does in production, so a mesh pick's `flat` per-vertex id comes
-from the same triangle corner as on WebGPU wherever `WEBGL_provoking_vertex`
-exists. Where it does not (obsidian's ANGLE-on-Vulkan, Chrome 146), the two
-conventions legitimately disagree (MESH_NODE_SPEC §6.5), and in the native arm
-the parity spec drops the element-id byte of `mesh-pick*` readbacks from both
-sides; `provokingVertexAlignable()` is how it decides.
+`PickingSystem` does in production. Where `WEBGL_provoking_vertex` is absent,
+the harness rotates its direct mesh-pick index buffers through the same fallback
+as `PickingSystem`. WebGL and core WebGPU then report the original first corner
+exactly, including on extension-less contexts (MESH_NODE_SPEC §6.5). On a
+compatibility-mode WebGPU device, the pick ID may be any corner of the hit face;
+the parity spec checks the fixture's quantized corner IDs and compares the other
+three readback channels.
 
 ### Window API exposed by the harness
 
@@ -658,6 +659,7 @@ window.__tslHarness = {
     pixels: Uint8Array;
     vertexShader: string;
     fragmentShader: string;
+    compatibilityMode: boolean;
   }>,
   renderBloomChainGLSL: (fixture?: 'radial' | 'ramp-y') => Promise<{
     pixels: Uint8Array;
@@ -668,7 +670,6 @@ window.__tslHarness = {
     mipCount: number;
   }>,
   listShaders: () => string[],
-  provokingVertexAlignable: () => boolean,
 };
 ```
 
