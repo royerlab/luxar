@@ -25,6 +25,19 @@ __all__ = [
 ]
 
 
+class RegionRankError(ValueError):
+    """A ``region`` whose span count does not match the axes it would crop.
+
+    A ``ValueError`` (so existing callers keep catching it), distinct so a CLI
+    can report it as a usage error naming the volume's rank.
+    """
+
+    def __init__(self, n_spans: int, n_axes: int, what: str) -> None:
+        self.n_spans = n_spans
+        self.n_axes = n_axes
+        super().__init__(f"region has {n_spans} axes but {what} {n_axes}")
+
+
 def decode_flat_channel_index(
     channel: int, channel_shape: Tuple[int, ...]
 ) -> Tuple[int, ...]:
@@ -243,9 +256,10 @@ def _apply_axes_spec(
     spatial_indices = [i for i, kind in enumerate(kinds) if kind == "s"]
     if region is not None:
         if len(region) != len(spatial_indices):
-            raise ValueError(
-                f"region has {len(region)} axes but --axes {axes!r} names "
-                f"{len(spatial_indices)} spatial axes"
+            raise RegionRankError(
+                len(region),
+                len(spatial_indices),
+                f"--axes {axes!r} names this many spatial axes:",
             )
         for axis, span in zip(spatial_indices, region, strict=True):
             index[axis] = span
@@ -334,6 +348,10 @@ def _slice_eager_region(
     """Apply ``region`` only when the reader could not do it lazily."""
     if region is None or is_zarr_path(path):
         return volume
+    if len(region) != volume.ndim:
+        # numpy would silently crop only the leading axes (too few spans) or
+        # raise a bare IndexError (too many).
+        raise RegionRankError(len(region), volume.ndim, "the volume's rank is")
     return np.asarray(volume[region], dtype=np.float32)
 
 
@@ -345,14 +363,69 @@ def _squeezed_region_spans(
         return (slice(None),) * len(shape)
     surviving_axes = [axis for axis, size in enumerate(shape) if size != 1]
     if len(region) != len(surviving_axes):
-        raise ValueError(
-            f"region has {len(region)} axes but positional loading keeps "
-            f"{len(surviving_axes)} axes after squeezing shape {shape}"
+        raise RegionRankError(
+            len(region),
+            len(surviving_axes),
+            f"after squeezing, positional loading of shape {shape} keeps",
         )
     spans = [slice(None)] * len(shape)
     for axis, span in zip(surviving_axes, region, strict=True):
         spans[axis] = span
     return tuple(spans)
+
+
+def _reject_inapplicable_selection(
+    path: Path,
+    channel: Optional[int],
+    timepoint: Optional[int],
+    axes: Optional[str],
+) -> None:
+    """Refuse a channel/timepoint index that a non-zarr input would silently drop.
+
+    Only a zarr store has discoverable axes (OME-NGFF metadata, or the
+    positional TCZYX heuristic over its rank). A TIFF / NumPy / imageio array is
+    loaded whole and squeezed, so without an explicit ``axes`` spec an index has
+    nothing to select: the old behaviour fitted (or scored) EVERY channel stacked
+    as an extra spatial axis, or the wrong timepoint, with no warning. With
+    ``axes`` the index is applied by :func:`_apply_axes_spec`, as for zarr.
+    """
+    if axes is not None or (channel is None and timepoint is None):
+        return
+    if is_zarr_path(path):
+        return
+    given = ", ".join(
+        f"{name}={value}"
+        for name, value in (("channel", channel), ("timepoint", timepoint))
+        if value is not None
+    )
+    raise ValueError(
+        f"Cannot apply {given} to {path.name}: a {path.suffix or 'non-zarr'} file "
+        "has no discoverable channel/time axes, so the index would be ignored. "
+        "Name every dimension with an axes spec (CLI: --axes, e.g. 'c,z,y,x' or "
+        "'t,z,y,x') to select by index, or drop the index to load the whole array."
+    )
+
+
+def _read_tiff(tifffile: Any, path: Path) -> Any:
+    """Read a TIFF, turning tifffile's missing-codec error into an install hint.
+
+    LZW/JPEG/zstd TIFFs (common microscope and OME-TIFF exports) may need
+    imagecodecs. tifffile raises a ``ValueError`` for LZW, or an ``ImportError``
+    for its zstd fallback on Python < 3.14; neither names Luxar's extra.
+    """
+    try:
+        return tifffile.imread(str(path))
+    except (ValueError, ImportError) as exc:
+        missing_codec = "imagecodecs" in str(exc) or (
+            isinstance(exc, ImportError) and "compression" in str(exc)
+        )
+        if not missing_codec:
+            raise
+        raise ImportError(
+            f"'{path.name}' is a compressed TIFF and decoding it needs the "
+            f"imagecodecs package ({exc}). Install it with "
+            "`pip install 'luxar[io]'` or `pip install imagecodecs`."
+        ) from exc
 
 
 def load_volume(
@@ -417,6 +490,7 @@ def load_volume(
     """
     suffix = path.suffix.lower()
     tiff_meta = None
+    _reject_inapplicable_selection(path, channel, timepoint, axes)
 
     if suffix == ".npy":
         aprint(f"Loading NumPy array: {path.name}")
@@ -460,7 +534,7 @@ def load_volume(
                 "Loading TIFF files requires tifffile: pip install luxar[io]"
             ) from exc
         aprint(f"Loading TIFF: {path.name}")
-        volume = tifffile.imread(str(path))
+        volume = _read_tiff(tifffile, path)
         tiff_meta = _read_tiff_meta(path, info)
 
     else:

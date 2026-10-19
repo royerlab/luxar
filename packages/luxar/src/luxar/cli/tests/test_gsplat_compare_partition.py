@@ -127,3 +127,43 @@ def test_nested_lod_selection_and_whole_store_ratio_are_reported(
     assert "Materialized 2 default-rendered leaf/leaves" in result.output
     assert "Skipped 12 splats in coarse LOD levels" in result.output
     assert "compression ratio covers the whole store" in result.output
+
+
+def test_a_physical_partition_scores_like_its_voxel_flat_twin(tmp_path: Path) -> None:
+    """The root voxel_size stamp maps every part, not only a flat leaf."""
+    vs = np.array([2.0, 0.5, 0.25], dtype=np.float32)
+    vox = _data(40, seed=3)
+    tril = np.concatenate([[vs[i]] * (i + 1) for i in range(3)])
+    phys = GSplatData(
+        centers=vox.centers * vs,
+        amplitudes=vox.amplitudes,
+        cholesky_factors=vox.cholesky_factors * tril,
+        stats={"image_min": 0.0},
+    )
+    flat_path = tmp_path / "flat.gsplats.zarr"
+    partition_path = tmp_path / "partition.gsplats.zarr"
+    vox.save(flat_path, encoding_mode=EncodingMode.PRECISION, include_fitting_info=True)
+    write_gsplats_tree(
+        partition_path,
+        phys.to_spatial_partition(max_elements=10),
+        ordering="none",
+        encoding_mode=EncodingMode.PRECISION,
+        pipeline_info=phys.stats,
+        fitting_info={"voxel_size": vs.tolist()},
+    )
+    reference_path = tmp_path / "reference.npy"
+    np.save(
+        reference_path,
+        np.random.default_rng(1).random((16, 16, 16), dtype=np.float32),
+    )
+    flat_json, partition_json = tmp_path / "flat.json", tmp_path / "part.json"
+    assert _compare(flat_path, reference_path, flat_json).exit_code == 0
+    result = _compare(partition_path, reference_path, partition_json)
+    assert result.exit_code == 0, result.output
+
+    skip = {"gsplats", "reference", "compression_ratio", "voxel_size"}
+    flat = {k: v for k, v in json.loads(flat_json.read_text()).items() if k not in skip}
+    part = json.loads(partition_json.read_text())
+    assert part["voxel_size"] == pytest.approx(vs.tolist())
+    part = {k: v for k, v in part.items() if k not in skip}
+    assert part == pytest.approx(flat, rel=1e-4, abs=1e-6)

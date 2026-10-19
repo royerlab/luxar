@@ -85,12 +85,34 @@ def test_gpu_worker_env_maps_visible_index_to_parent_token(
     }
 
 
-def test_cpu_worker_env_carries_same_host_concurrency() -> None:
+def test_cpu_worker_env_carries_same_host_concurrency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from luxar.gsplats.utils import device
+
+    monkeypatch.delenv("LUXAR_CPU_THREADS", raising=False)
+    monkeypatch.setattr(device, "physical_core_count", lambda: 16)
     assert _worker_env(-1, {-1: 8}, 8) == {
         "CUDA_VISIBLE_DEVICES": "",
         QUALITY_WORKERS_PER_DEVICE_ENV: "8",
         QUALITY_WORKERS_PER_HOST_ENV: "8",
+        "LUXAR_CPU_THREADS": "2",  # 16 physical cores / 8 workers
     }
+
+
+def test_cpu_worker_env_keeps_a_user_set_thread_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LUXAR_CPU_THREADS", "3")
+    env = _worker_env(-1, {-1: 8}, 8)
+    assert "LUXAR_CPU_THREADS" not in env  # inherited from the parent as-is
+
+
+def test_gpu_worker_env_sets_no_cpu_thread_share(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("LUXAR_CPU_THREADS", raising=False)
+    assert "LUXAR_CPU_THREADS" not in _worker_env(0, {0: 4}, 4)
 
 
 def test_active_worker_counts_checks_each_task_once() -> None:

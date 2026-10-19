@@ -1090,7 +1090,7 @@
   },
   "src/tests/unit/core/app/dataset/should-show-browser.test.ts": {
     "@typescript-eslint/no-base-to-string": {
-      "count": 5
+      "count": 4
     }
   },
   "src/tests/unit/data/gsplats-progressive-loader.test.ts": {

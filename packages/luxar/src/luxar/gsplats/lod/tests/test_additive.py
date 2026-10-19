@@ -1772,3 +1772,86 @@ def test_equi_energy_invalid_payloads_raise(bad: str) -> None:
     data = _make_random_gsplat(64)
     with pytest.raises(ValueError, match="equi-energy"):
         make_additive_lod(data, breakpoints=bad)
+
+
+# ── vectorized sparse Gram ─────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(("ndim", "seed"), [(2, 11), (3, 12)])
+def test_vectorized_gram_matches_the_per_pair_closed_form(ndim: int, seed: int) -> None:
+    """The batched pair scoring reproduces the single-pair kernel, pair by pair.
+
+    The reference is a brute-force O(N^2) scan with the single-pair kernel over
+    every pair whose truncation spheres overlap — the definition the batched
+    build replaced (it used to loop over those pairs in Python, minutes on a few
+    thousand dense splats).
+    """
+    from luxar.gsplats.lod._kernels import gaussian_pair_inner_product_numpy
+    from luxar.gsplats.lod.additive import _det_L, _truncation_radii
+    from luxar.gsplats.utils.trils import unpack_tril
+
+    data = _make_random_gsplat(n=60, ndim=ndim, seed=seed)
+    gram = _build_sparse_gram(data, sigmas=3.0).toarray()
+
+    centers = np.asarray(data.centers, dtype=np.float64)
+    amps = np.asarray(data.amplitudes, dtype=np.float64)
+    L = unpack_tril(np.asarray(data.cholesky_factors, dtype=np.float64), ndim)
+    sigma = L @ L.transpose(0, 2, 1)
+    sqrt_det = _det_L(data)
+    radii = _truncation_radii(data, sigmas=3.0)
+    expected = np.zeros_like(gram)
+    for i in range(data.n_splats):
+        for j in range(i + 1, data.n_splats):
+            if np.linalg.norm(centers[i] - centers[j]) > radii[i] + radii[j]:
+                continue
+            k = gaussian_pair_inner_product_numpy(
+                centers[i],
+                sigma[i],
+                float(amps[i]),
+                centers[j],
+                sigma[j],
+                float(amps[j]),
+                sqrt_det_Sigma_i=float(sqrt_det[i]),
+                sqrt_det_Sigma_j=float(sqrt_det[j]),
+            )
+            expected[i, j] = expected[j, i] = k
+    np.testing.assert_allclose(gram - np.diag(np.diag(gram)), expected, rtol=1e-12)
+    assert np.count_nonzero(expected) > 2 * data.n_splats  # the fixture overlaps
+
+
+def test_batched_pair_kernel_zeroes_a_degenerate_pair_only() -> None:
+    """One singular covariance sum must not poison the rest of the batch."""
+    from luxar.gsplats.lod._kernels import (
+        gaussian_pair_inner_product_numpy,
+        gaussian_pair_inner_products_numpy,
+    )
+
+    mu_i = np.array([[0.0, 0.0], [0.0, 0.0]])
+    mu_j = np.array([[0.5, 0.0], [0.5, 0.0]])
+    good = np.eye(2)
+    flat = np.array([[1.0, 0.0], [0.0, 0.0]])  # rank 1: S = 2 * flat is singular
+    sigma_i = np.stack([good, flat])
+    sigma_j = np.stack([good, flat])
+    ones = np.ones(2)
+    out = gaussian_pair_inner_products_numpy(
+        mu_i,
+        sigma_i,
+        ones,
+        mu_j,
+        sigma_j,
+        ones,
+        sqrt_det_Sigma_i=ones,
+        sqrt_det_Sigma_j=ones,
+    )
+    single = gaussian_pair_inner_product_numpy(
+        mu_i[0],
+        good,
+        1.0,
+        mu_j[0],
+        good,
+        1.0,
+        sqrt_det_Sigma_i=1.0,
+        sqrt_det_Sigma_j=1.0,
+    )
+    assert out[0] == pytest.approx(single, rel=1e-12)
+    assert out[1] == 0.0

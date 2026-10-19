@@ -585,6 +585,23 @@ def _source_grid_stats(
     return out
 
 
+def _frame_stats(config: FitConfig) -> dict[str, Any]:
+    """The spacing a fit used and whether its output is in physical units.
+
+    Absent for a plain voxel-space fit (no ``voxel_size``). ``voxel_size`` is
+    recorded even with ``output_space="voxel"``: it still shaped the fit (the
+    anisotropic initial sigma, the physical-space sigma bounds), and the stored
+    coordinates are then voxel indices, which ``physical_coordinates: false``
+    says. The CLI adds the unit and where the spacing came from.
+    """
+    if config.voxel_size is None:
+        return {}
+    return {
+        "voxel_size": [float(v) for v in np.atleast_1d(config.voxel_size)],
+        "physical_coordinates": config.output_space == "real",
+    }
+
+
 def finalize_results(
     optimization_results: OptimizationResults,
     config: FitConfig,
@@ -737,6 +754,7 @@ def finalize_results(
         # purpose -- `source_*` is the array handed to the fitter, `fitted_*` is
         # what it actually optimised against after any downscaling.
         **_source_grid_stats(config, preprocessed_data, len(amps_np)),
+        **_frame_stats(config),
     }
 
     # Store movie frames in stats for later display (don't show here to avoid timing issues)
@@ -816,17 +834,22 @@ def finalize_results(
             torch.cuda.empty_cache()
         stats["mse"] = quality["mse"]
         stats["psnr_db"] = quality["psnr_db"]
+        stats["psnr_robust_db"] = quality["psnr_robust_db"]
         stats["ssim"] = quality["ssim"]
         # Foreground PSNR is the honest score on sparse volumes, where the
         # global figure is mostly a report on reconstructed emptiness.
         stats["foreground_psnr_db"] = quality["foreground_psnr_db"]
+        stats["foreground_psnr_robust_db"] = quality["foreground_psnr_robust_db"]
         stats["foreground_threshold"] = quality["foreground_threshold"]
         stats["foreground_fraction"] = quality["foreground_fraction"]
         if config.verbose:
+            # Headline = robust peak (reference p99.99 - floor), which one hot
+            # pixel cannot move; the classical full-range figure rides along.
             aprint(
                 f"Quality (fitted, before post-fit pruning/cull): "
-                f"PSNR={quality['psnr_db']:.1f} dB, "
-                f"foreground PSNR={quality['foreground_psnr_db']:.1f} dB "
+                f"PSNR={quality['psnr_robust_db']:.1f} dB robust peak "
+                f"({quality['psnr_db']:.1f} dB full range), foreground PSNR="
+                f"{quality['foreground_psnr_robust_db']:.1f} dB "
                 f"(over {quality['foreground_fraction'] * 100:.2f}% of voxels), "
                 f"SSIM={quality['ssim']:.4f}, MSE={quality['mse']:.2e}"
             )

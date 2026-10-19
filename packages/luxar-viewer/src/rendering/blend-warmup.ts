@@ -145,17 +145,26 @@ export type WaitForWarmupTurn = () => Promise<void>;
 /** Defers scene activation past the caller's own turn. */
 export type DeferActivation = (activate: () => void) => void;
 type IdleCallbackScheduler = (callback: () => void, options?: { timeout: number }) => number;
-/** Links one keeper material by compiling `compileObject` against the live scene. */
+/** Links one keeper material against the live scene and waits for driver completion. */
 export type CompileOne = (
   renderer: WarmupRenderer,
   camera: THREE.Camera,
   targetScene: THREE.Scene,
   compileObject: THREE.Object3D,
-  getRenderTarget?: () => THREE.RenderTarget | null
+  options: CompileOptions
 ) => void | Promise<void>;
+
+/** Per-compile context for {@link CompileOne}. */
+export interface CompileOptions {
+  /** Aborted when the warm-up is cleared or the link times out. */
+  signal: AbortSignal;
+  /** WebGPU: the target the scene renders into (its format is part of the pipeline key). */
+  getRenderTarget?: () => THREE.RenderTarget | null;
+}
 
 const WARMUP_IDLE_TIMEOUT_MS = 250;
 const WARMUP_FALLBACK_DELAY_MS = 50;
+const WARMUP_LINK_TIMEOUT_MS = 5000;
 
 /**
  * How long dataset readiness may wait on a warm-up before giving up on it.
@@ -212,7 +221,7 @@ async function defaultCompileOne(
   camera: THREE.Camera,
   targetScene: THREE.Scene,
   compileObject: THREE.Object3D,
-  getRenderTarget?: () => THREE.RenderTarget | null
+  { signal, getRenderTarget }: CompileOptions
 ): Promise<void> {
   const compileScene = new THREE.Scene();
   compileScene.add(compileObject);
@@ -221,6 +230,7 @@ async function defaultCompileOne(
       'compileAsync' in renderer &&
       !(renderer as { isWebGLRenderer?: boolean }).isWebGLRenderer
     ) {
+      if (signal.aborted) throw new Error('Blend warm-up cancelled');
       const targetRenderer = renderer as {
         getRenderTarget(): THREE.RenderTarget | null;
         setRenderTarget(target: THREE.RenderTarget | null): void;
@@ -235,10 +245,60 @@ async function defaultCompileOne(
       }
       await compile;
     } else {
-      (renderer as THREE.WebGLRenderer).compile(compileScene, camera, targetScene);
+      await compileWebGLAndAwaitLink(
+        renderer as THREE.WebGLRenderer,
+        compileScene,
+        camera,
+        targetScene,
+        signal
+      );
     }
   } finally {
     compileScene.remove(compileObject);
+  }
+}
+
+function awaitCompile(compile: Promise<void>, abort: AbortController): Promise<void> {
+  const signal = abort.signal;
+  let timeout: ReturnType<typeof setTimeout>;
+  let onAbort: () => void;
+  return new Promise<void>((resolve, reject) => {
+    onAbort = () => reject(new Error('Blend warm-up link cancelled'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    timeout = setTimeout(() => {
+      reject(new Error('Blend warm-up link timed out'));
+      abort.abort();
+    }, WARMUP_LINK_TIMEOUT_MS);
+    void compile.then(resolve, reject);
+  }).finally(() => {
+    clearTimeout(timeout);
+    signal.removeEventListener('abort', onAbort);
+  });
+}
+
+/** WebGL: compile, then poll until the driver reports every program linked (#3165). */
+async function compileWebGLAndAwaitLink(
+  renderer: THREE.WebGLRenderer,
+  compileScene: THREE.Scene,
+  camera: THREE.Camera,
+  targetScene: THREE.Scene,
+  signal: AbortSignal
+): Promise<void> {
+  if (signal.aborted || renderer.getContext().isContextLost()) {
+    throw new Error('Blend warm-up context unavailable');
+  }
+  const materials = renderer.compile(compileScene, camera, targetScene);
+  while (materials.size > 0) {
+    if (signal.aborted || renderer.getContext().isContextLost()) {
+      throw new Error('Blend warm-up context unavailable');
+    }
+    for (const material of materials) {
+      const properties = renderer.properties.get(material) as {
+        currentProgram?: { isReady(): boolean };
+      };
+      if (properties.currentProgram?.isReady()) materials.delete(material);
+    }
+    if (materials.size > 0) await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
 
@@ -424,6 +484,8 @@ export class BlendWarmupManager {
   private sourceStates = new Map<THREE.Material, SourceWarmupState>();
   private warmCompletions = new Set<WarmCompletion>();
   private drainPromise: Promise<void> | null = null;
+  private inFlight = new Set<THREE.Material>();
+  private inFlightAbort = new Map<THREE.Material, AbortController>();
   // Cross-node dedupe. A program variant is keyed by its FULL fingerprint
   // (material lineage + blend defines + geometry layout); every source material
   // that uses it is a "user", and exactly one user — the "owner" — holds the
@@ -706,6 +768,10 @@ export class BlendWarmupManager {
     this.armed = false;
     this.activationToken++;
     this.generation++;
+    // A link from the old renderer may still be pending. Cancel its readiness
+    // check so it does not hold up the next scene.
+    this.drainPromise = null;
+    for (const abort of this.inFlightAbort.values()) abort.abort();
     this.queue = [];
     for (const completion of Array.from(this.warmCompletions)) {
       this.settleWarmCompletion(completion);
@@ -758,7 +824,7 @@ export class BlendWarmupManager {
     state.objects.clear();
 
     for (const keeper of state.keepers) {
-      keeper.dispose();
+      if (!this.inFlight.has(keeper)) keeper.dispose();
     }
     state.keepers.clear();
     this.releaseVariants(sourceMaterial, state);
@@ -802,7 +868,8 @@ export class BlendWarmupManager {
   private startDrain(): void {
     if (this.drainPromise || !this.enabled) return;
     const generation = this.generation;
-    this.drainPromise = this.drain(generation).finally(() => {
+    const drainPromise: Promise<void> = this.drain(generation).finally(() => {
+      if (this.drainPromise !== drainPromise) return;
       this.drainPromise = null;
       if (this.enabled && this.armed && this.queue.length > 0) {
         this.startDrain();
@@ -810,6 +877,7 @@ export class BlendWarmupManager {
         this.resolveWarmCompletionsIfIdle(generation);
       }
     });
+    this.drainPromise = drainPromise;
   }
 
   private async drain(generation: number): Promise<void> {
@@ -833,16 +901,37 @@ export class BlendWarmupManager {
         continue;
       }
 
+      const renderer = this.renderer;
+      const camera = this.camera;
+      const targetScene = this.targetScene;
       try {
-        await this.compileOne(
-          this.renderer,
-          this.camera,
-          this.targetScene,
-          task.compileObject,
-          this.getRenderTarget
-        );
-        this.stats.compiled += 1;
+        const abort = new AbortController();
+        this.inFlight.add(task.keeperMaterial);
+        this.inFlightAbort.set(task.keeperMaterial, abort);
+        const compile = Promise.resolve().then(() => {
+          if (!abort.signal.aborted) {
+            return this.compileOne(renderer, camera, targetScene, task.compileObject, {
+              signal: abort.signal,
+              getRenderTarget: this.getRenderTarget,
+            });
+          }
+        });
+        void compile
+          .finally(() => {
+            this.inFlight.delete(task.keeperMaterial);
+            this.inFlightAbort.delete(task.keeperMaterial);
+            if (!this.sourceStates.get(task.sourceMaterial)?.keepers.has(task.keeperMaterial)) {
+              task.keeperMaterial.dispose();
+            }
+          })
+          .catch(() => undefined);
+        await awaitCompile(compile, abort);
+        if (generation !== this.generation) return;
+        if (this.sourceStates.get(task.sourceMaterial)?.keepers.has(task.keeperMaterial)) {
+          this.stats.compiled += 1;
+        }
       } catch (error) {
+        if (generation !== this.generation) return;
         log.warning(
           Modules.RENDERER,
           `Blend warm-up compile skipped after a compile failure: ${String(error)}`

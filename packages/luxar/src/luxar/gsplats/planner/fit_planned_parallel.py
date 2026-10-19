@@ -53,13 +53,19 @@ WorkerCmdBuilder = Callable[[int, Path], "list[str]"]
 _SKIP_CONTENT_BOX_STAMP_ENV = "LUXAR_INTERNAL_SKIP_CONTENT_BOX_STAMP"
 
 
-def _worker_env(keep_boxes: bool) -> "dict[str, str]":
+def _worker_env(keep_boxes: bool, jobs: int = 1) -> "dict[str, str]":
     """Build the internal parent-to-child environment for box scoring.
 
     Disposable boxes skip stamps that the merge scrubs anyway; ``keep_boxes``
-    opts retained box artifacts back into scoring.
+    opts retained box artifacts back into scoring. ``jobs`` concurrent workers
+    split the physical cores for native kernels and CLI torch setup
+    (``LUXAR_CPU_THREADS``, unless the user set a nonzero value).
     """
+    from luxar.gsplats.utils.device import cpu_worker_threads_env
+
     env = os.environ.copy()
+    if jobs > 1:
+        env.update(cpu_worker_threads_env(jobs))
     if keep_boxes:
         env.pop(_SKIP_CONTENT_BOX_STAMP_ENV, None)
     else:
@@ -86,6 +92,7 @@ def _default_worker_cmd_builder(
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
     axes: Optional[str] = None,
+    region: Optional[str] = None,
 ) -> WorkerCmdBuilder:
     """Build a ``luxar gsplat fit <in> <out> --tiling content --plan <plan>
     --plan-box i ...`` argv.
@@ -147,6 +154,10 @@ def _default_worker_cmd_builder(
         ("--timepoint", None if timepoint is None else str(timepoint)),
         ("--array-key", array_key or None),
         ("--axes", axes or None),
+        # The parent's `--region` crop: the plan's boxes are laid over it, so
+        # every worker must read the same crop (its offset is applied once, by
+        # the parent, at the merged save).
+        ("--worker-region", region),
     ]
     extra = [
         part for flag, value in optional if value is not None for part in (flag, value)
@@ -424,7 +435,9 @@ def fit_planned_parallel(
     budgeted = [i for i, b in enumerate(plan.boxes) if b.budget > 0]
     box_paths = {i: checkpoint.box_path(i) for i in budgeted}
     to_fit, preloaded = _boxes_to_fit(checkpoint, budgeted, verbose)
-    workers = _BoxWorkers(checkpoint, _worker_env(keep_boxes))
+    workers = _BoxWorkers(
+        checkpoint, _worker_env(keep_boxes, min(max(1, jobs), max(1, len(to_fit))))
+    )
 
     def _run(i: int) -> tuple[int, int, str]:
         # A worker that dequeued this box after a Ctrl-C must not spawn a new

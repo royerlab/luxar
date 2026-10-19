@@ -43,6 +43,25 @@ def _agreed_source_dtype(stats_list: Sequence[Dict[str, Any]]) -> Dict[str, str]
     return {}
 
 
+def _agreed_frame_stats(stats_list: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Carry a shared physical frame without reviving provenance-only spacing."""
+    from luxar.gsplats.scoring_grid import agreed_voxel_size
+
+    flags = [
+        stats["physical_coordinates"]
+        for stats in stats_list
+        if "physical_coordinates" in stats
+    ]
+    result: Dict[str, Any] = {}
+    if flags and all(flag == flags[0] for flag in flags):
+        result["physical_coordinates"] = flags[0]
+    if False not in flags and len(set(flags)) <= 1:
+        voxel_size = agreed_voxel_size(stats_list)
+        if voxel_size is not None:
+            result["voxel_size"] = voxel_size
+    return result
+
+
 def _concatenate_label_channel(items: Sequence[Any]) -> tuple[Any, Any]:
     """Concatenate compatible categorical channels, or fail loudly."""
     presence = {item.label_ids is not None for item in items}
@@ -225,7 +244,12 @@ class CompositionMixin(_GSplatDataOps):
                 "concatenated_from": len(datasets),
                 "splats_per_source": [0 for _ in datasets],
             }
-            empty_stats.update(agreed_normalization_stats([x.stats for x in datasets]))
+            empty_stats.update(
+                agreed_normalization_stats(
+                    [x.stats for x in datasets], [x.n_splats for x in datasets]
+                )
+            )
+            empty_stats.update(_agreed_frame_stats([x.stats for x in datasets]))
             empty_stats.update(_agreed_source_dtype([x.stats for x in datasets]))
             label_ids, label_vocabulary = _concatenate_label_channel(datasets)
             return make(
@@ -277,7 +301,12 @@ class CompositionMixin(_GSplatDataOps):
         # result then says nothing rather than claiming the first input's.
         from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
 
-        merged_stats.update(agreed_normalization_stats([d.stats for d in datasets]))
+        merged_stats.update(
+            agreed_normalization_stats(
+                [d.stats for d in datasets], [d.n_splats for d in datasets]
+            )
+        )
+        merged_stats.update(_agreed_frame_stats([d.stats for d in datasets]))
         merged_stats.update(_agreed_source_dtype([d.stats for d in datasets]))
         total_time = sum(d.stats.get("time_seconds", 0) for d in non_empty)
         if total_time > 0:
@@ -581,14 +610,16 @@ class CompositionMixin(_GSplatDataOps):
         def _part_node(label: int, region: "GSplatData") -> "GSplatNode":
             if recipe is None:
                 return region.tree
-            from dataclasses import replace
+            from luxar.gsplats.lod.recipes import (
+                RecipeParams,
+                build_part_lod,
+                with_input_basis,
+            )
 
-            from luxar.gsplats.fit_basis import fit_image_min
-            from luxar.gsplats.lod.recipes import RecipeParams, build_part_lod
-
-            params = recipe_params if recipe_params is not None else RecipeParams()
-            if params.image_min is None:
-                params = replace(params, image_min=fit_image_min(region.stats))
+            params = with_input_basis(
+                recipe_params if recipe_params is not None else RecipeParams(),
+                region.stats,
+            )
             return build_part_lod(
                 region.tree, recipe, params, cell=cells.get(int(label))
             )
@@ -766,6 +797,7 @@ class CompositionMixin(_GSplatDataOps):
         merged_stats.update(
             _agreed_source_dtype([g.stats for g in gsplats_per_channel])
         )
+        merged_stats.update(_agreed_frame_stats([g.stats for g in gsplats_per_channel]))
         total_time = sum(g.stats.get("time_seconds", 0) for g in gsplats_per_channel)
         if total_time > 0:
             merged_stats["time_seconds"] = total_time

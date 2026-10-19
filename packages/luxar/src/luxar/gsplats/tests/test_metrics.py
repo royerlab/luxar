@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
 import torch
 
@@ -155,6 +156,11 @@ class TestQualityMetrics:
             "foreground_psnr_db",
             "foreground_threshold",
             "foreground_fraction",
+            "psnr_robust_db",
+            "foreground_psnr_robust_db",
+            "foreground_ssim",
+            "data_range",
+            "robust_data_range",
         }
         assert set(m.keys()) == expected_keys
 
@@ -603,7 +609,7 @@ class TestForegroundPSNR:
 
 
 class TestChunkedForegroundPSNRParity:
-    """The progressive fitter has its own chunked copy; the two must agree.
+    """The progressive fitter has its own chunked copy; it must agree with quality.
 
     ``fit_progressive_gsplats`` cannot hold two copies of a large volume on the
     GPU, so it reimplements the metric chunk-wise. Two implementations of one
@@ -624,19 +630,20 @@ class TestChunkedForegroundPSNRParity:
         target[4:10, 4:10, 4:10] = rng.uniform(0.5, 1.0, (6, 6, 6)).astype(np.float32)
         pred = (target + rng.normal(0, 0.05, target.shape)).astype(np.float32)
 
-        direct, thr_d, frac_d = compute_foreground_psnr(
+        direct = compute_quality_metrics(
             torch.from_numpy(pred), torch.from_numpy(target)
         )
-        chunked, thr_c, frac_c = _compute_foreground_psnr_chunked(
+        chunked, robust, thr_c, frac_c, _ = _compute_foreground_psnr_chunked(
             torch.from_numpy(pred), target, chunk_voxels=chunk_voxels
         )
 
         # A chunk size of 7 forces many partial batches, so this also covers the
         # accumulation being over the right denominator (foreground count, not
         # total voxels) in every chunk.
-        assert chunked == pytest.approx(direct, abs=1e-4)
-        assert thr_c == pytest.approx(thr_d)
-        assert frac_c == pytest.approx(frac_d)
+        assert chunked == pytest.approx(direct["foreground_psnr_db"], abs=1e-4)
+        assert robust == pytest.approx(direct["foreground_psnr_robust_db"], abs=1e-4)
+        assert thr_c == pytest.approx(direct["foreground_threshold"])
+        assert frac_c == pytest.approx(direct["foreground_fraction"])
 
     def test_empty_foreground_is_nan_not_zero(self) -> None:
         import numpy as np
@@ -646,11 +653,12 @@ class TestChunkedForegroundPSNRParity:
         )
 
         flat = np.full((8, 8, 8), 2.0, np.float32)
-        psnr, _, fraction = _compute_foreground_psnr_chunked(
+        psnr, robust, _, fraction, _ = _compute_foreground_psnr_chunked(
             torch.from_numpy(flat), flat
         )
         assert fraction == 0.0
         assert psnr != psnr  # nan
+        assert robust != robust
 
 
 class TestSeparableSSIM:
@@ -703,6 +711,24 @@ class TestSeparableSSIM:
             sum(refs) / 3, abs=1e-6
         )
 
+    @pytest.mark.parametrize("shape", [(53, 70), (37, 45, 29)])
+    def test_tiled_ragged_edges_match_dense_kernel(
+        self, shape: tuple[int, ...]
+    ) -> None:
+        """The tiled path agrees with the dense n-D kernel at the volume edges.
+
+        Tile 16 / overlap 10 leaves a trailing strip on every axis that
+        ``_compute_tile_slices`` folds into the previous tile, so the last
+        tiles are ragged; their valid maps must still abut the interior ones
+        exactly at the border the dense VALID convolution trims.
+        """
+        g = torch.Generator().manual_seed(3)
+        a = torch.rand(shape, generator=g, dtype=torch.float64)
+        b = (a + 0.1 * torch.randn(shape, generator=g, dtype=torch.float64)).clamp(0, 1)
+        s, n = _ssim_nd_tiled(a, b, window_size=11, data_range=1.0, tile_size=16)
+        assert n == math.prod(d - 10 for d in shape)
+        assert s / n == pytest.approx(self._dense_reference(a, b, 11, 1.0), abs=1e-6)
+
     def test_no_im2col_blowup_on_cpu(self) -> None:
         """A 96^3 CPU SSIM stays near a few volumes of memory and is fast.
 
@@ -725,3 +751,225 @@ class TestSeparableSSIM:
         grown = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit - before
         assert elapsed < 10.0
         assert grown < 500 * 1024**2
+
+
+# ---------------------------------------------------------------------------
+# Robust peak, streamed sums, foreground SSIM
+# ---------------------------------------------------------------------------
+
+
+def _blobs(shape=(24, 32, 32), seed: int = 3) -> torch.Tensor:
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    v = np.zeros(shape, np.float32)
+    for _ in range(12):
+        z, y, x = (rng.integers(3, s - 3) for s in shape)
+        v[z - 2 : z + 3, y - 2 : y + 3, x - 2 : x + 3] += rng.uniform(50, 100)
+    return torch.from_numpy(v)
+
+
+class TestRobustPeak:
+    def test_matches_numpy_nearest_rank_quantile(self) -> None:
+        import numpy as np
+
+        from luxar.gsplats.metrics import robust_peak
+
+        values = torch.from_numpy(
+            np.random.default_rng(0).gamma(2.0, 3.0, 50_000).astype(np.float32)
+        )
+        expected = np.quantile(values.numpy(), 0.9999, method="inverted_cdf")
+        assert robust_peak(values) == pytest.approx(float(expected))
+        assert robust_peak(values, 0.5) == pytest.approx(
+            float(np.quantile(values.numpy(), 0.5, method="inverted_cdf"))
+        )
+
+    def test_streams_across_chunks_exactly(self, monkeypatch) -> None:
+        """A running top-k over chunks must give the one-shot answer."""
+        import luxar.gsplats.metrics as metrics_mod
+
+        target = _blobs()
+        one_shot = metrics_mod.robust_peak(target, 0.999)
+        monkeypatch.setattr(metrics_mod, "_STREAM_CHUNK_VOXELS", 997)
+        assert metrics_mod.robust_peak(target, 0.999) == one_shot
+
+
+class TestRobustPSNR:
+    def test_a_hot_pixel_moves_full_range_psnr_but_not_the_robust_one(self) -> None:
+        """The headline must not be decided by one cosmic ray."""
+        target = _blobs()
+        rng = torch.Generator().manual_seed(0)
+        pred = target + torch.randn(target.shape, generator=rng) * 2.0
+        clean = compute_quality_metrics(pred, target)
+
+        hot_target = target.clone()
+        hot_target[0, 0, 0] = 50_000.0
+        hot_pred = pred.clone()
+        hot_pred[0, 0, 0] = 50_000.0  # reproduced exactly: the error is unchanged
+        hot = compute_quality_metrics(hot_pred, hot_target)
+
+        # One voxel's noise of 24,576 left the error sum: ~4e-5 relative.
+        assert hot["mse"] == pytest.approx(clean["mse"], rel=1e-3)
+        assert hot["robust_data_range"] == pytest.approx(clean["robust_data_range"])
+        assert hot["psnr_robust_db"] == pytest.approx(clean["psnr_robust_db"], abs=1e-2)
+        # Full range jumps by ~20 log10(50000 / 300): the hot pixel IS the peak.
+        assert hot["psnr_db"] - clean["psnr_db"] > 40.0
+
+    def test_robust_peak_is_quantile_minus_minimum(self) -> None:
+        from luxar.gsplats.metrics import robust_peak
+
+        target = _blobs() + 7.0  # a floor the peak is measured from
+        m = compute_quality_metrics(target * 0.98, target)
+        assert m["robust_data_range"] == pytest.approx(robust_peak(target) - 7.0)
+        assert m["data_range"] == pytest.approx(float(target.max() - 7.0))
+        mse = float(((target * 0.98 - target) ** 2).mean())
+        assert m["psnr_robust_db"] == pytest.approx(
+            10 * math.log10(m["robust_data_range"] ** 2 / mse), abs=1e-4
+        )
+
+    def test_degenerate_robust_range_falls_back_to_full(self) -> None:
+        """>99.99% of voxels at the minimum: no robust peak to speak of."""
+        target = torch.zeros(40, 40, 40)
+        target[5, 5, 5] = 10.0
+        m = compute_quality_metrics(target * 0.5, target)
+        assert m["robust_data_range"] == m["data_range"] == 10.0
+
+
+class TestStreamedSums:
+    def test_chunked_reductions_match_whole_volume_ones(self, monkeypatch) -> None:
+        import luxar.gsplats.metrics as metrics_mod
+
+        target = _blobs()
+        pred = target * 0.9 + 1.5
+        monkeypatch.setattr(metrics_mod, "_STREAM_CHUNK_VOXELS", 1013)
+        # Plain Otsu on the target, so the foreground trio is comparable with
+        # the direct `compute_foreground_psnr`.
+        m = metrics_mod.compute_quality_metrics(
+            pred,
+            target,
+            foreground_field=target,
+            foreground_threshold=otsu_threshold(target),
+        )
+        diff = (pred - target).double()
+        assert m["mse"] == pytest.approx(float((diff**2).mean()), rel=1e-5)
+        assert m["max_abs_error"] == pytest.approx(float(diff.abs().max()), rel=1e-6)
+        rel = float(diff.norm() / target.double().norm())
+        assert m["rel_l2"] == pytest.approx(rel, rel=1e-5)
+        fg_psnr, thr, frac = compute_foreground_psnr(pred, target)
+        assert m["foreground_psnr_db"] == pytest.approx(fg_psnr, abs=1e-3)
+        assert m["foreground_threshold"] == pytest.approx(thr)
+        assert m["foreground_fraction"] == pytest.approx(frac)
+
+
+class TestForegroundSSIM:
+    def test_identical_volumes_score_one_everywhere(self) -> None:
+        target = _blobs()
+        m = compute_quality_metrics(target.clone(), target)
+        assert m["foreground_ssim"] == pytest.approx(1.0, abs=1e-5)
+
+    def test_foreground_ssim_is_not_diluted_by_matching_background(self) -> None:
+        """Noise on the signal only: the empty majority flatters global SSIM."""
+        target = _blobs()
+        noise = torch.randn(target.shape, generator=torch.Generator().manual_seed(1))
+        pred = target + (target > 0).float() * noise * 15.0
+        m = compute_quality_metrics(pred, target)
+        assert m["foreground_ssim"] < m["ssim"] - 0.01
+
+    def test_explicit_field_and_threshold_define_the_foreground(self) -> None:
+        target = _blobs()
+        mask = torch.zeros_like(target)
+        mask[:, :16, :] = 1.0
+        m = compute_quality_metrics(
+            target * 0.9, target, foreground_field=mask, foreground_threshold=0.0
+        )
+        assert m["foreground_fraction"] == pytest.approx(0.5)
+        assert m["foreground_threshold"] == 0.0
+
+    def test_tiled_foreground_ssim_matches_untiled(self) -> None:
+        from luxar.gsplats.metrics import _ssim_sums, _ssim_sums_tiled
+
+        target = _blobs((40, 44, 36))
+        pred = target * 0.8 + 3.0
+        dr = float(target.max() - target.min())
+        thr = 10.0
+        direct = _ssim_sums(pred, target, 11, dr, target, thr)
+        tiled = _ssim_sums_tiled(pred, target, 11, dr, 20, target, thr)
+        assert tiled[1] == direct[1] and tiled[3] == direct[3]
+        assert tiled[0] == pytest.approx(direct[0], rel=1e-5)
+        assert tiled[2] == pytest.approx(direct[2], rel=1e-5)
+
+    def test_field_shape_mismatch_rejected(self) -> None:
+        target = _blobs()
+        with pytest.raises(ValueError, match="foreground field"):
+            compute_quality_metrics(
+                target, target, foreground_field=torch.zeros(3, 3, 3)
+            )
+
+
+class TestSharedForegroundDefinition:
+    def test_torch_tent_blur_matches_the_scipy_one(self) -> None:
+        import numpy as np
+
+        from luxar.gsplats.metrics import _tent_blur
+        from luxar.gsplats.seeds.utils import soft_blur_nd
+
+        v = np.random.default_rng(0).random((7, 1, 9, 5)).astype(np.float32)
+        t = torch.from_numpy(v)
+        np.testing.assert_allclose(
+            _tent_blur(t).numpy(), soft_blur_nd(v), rtol=1e-6, atol=1e-6
+        )
+        assert torch.equal(t, torch.from_numpy(v))  # input untouched
+
+    def test_a_hot_pixel_does_not_empty_the_default_foreground(self) -> None:
+        """Uncapped Otsu put every blob below the threshold (0.00% foreground)."""
+        target = _blobs()
+        clean = compute_quality_metrics(target * 0.9, target)
+        hot = target.clone()
+        hot[0, 0, 0] = 1e6
+        spiked = compute_quality_metrics(hot * 0.9, hot)
+        assert clean["foreground_fraction"] > 0.01
+        # Within a few percent: the spike's own blurred footprint is foreground,
+        # and the capped histogram shifts by one order statistic.
+        assert spiked["foreground_fraction"] == pytest.approx(
+            clean["foreground_fraction"], rel=0.05
+        )
+
+    def test_empty_foreground_has_nan_ssim(self) -> None:
+        target = _blobs()
+        m = compute_quality_metrics(
+            target,
+            target,
+            foreground_field=torch.zeros_like(target),
+            foreground_threshold=0.5,
+        )
+        assert m["foreground_fraction"] == 0.0
+        assert math.isnan(m["foreground_ssim"])
+        flat = torch.full((12, 12, 12), 3.0)
+        assert math.isnan(compute_quality_metrics(flat, flat)["foreground_ssim"])
+
+    def test_integer_targets_are_scored_as_float(self) -> None:
+        target = (_blobs() * 10).to(torch.int32)
+        pred = target.to(torch.float32) + 0.5
+        m = compute_quality_metrics(pred, target)
+        assert m["mse"] == pytest.approx(0.25)
+        assert m["max_abs_error"] == pytest.approx(0.5)
+
+
+def test_progressive_foreground_matches_shared_hot_pixel_rule() -> None:
+    from luxar.gsplats.fit_progressive_gsplats import _compute_foreground_psnr_chunked
+    from luxar.gsplats.metrics import compute_quality_metrics
+
+    rng = np.random.default_rng(5)
+    target = rng.normal(0.0, 0.02, (24, 32, 32)).astype(np.float32)
+    target[4:12, 4:12, 4:12] += 0.8
+    target[0, 0, 0] = 1000.0
+    rendered = torch.from_numpy(target * 0.95)
+    expected = compute_quality_metrics(rendered, torch.from_numpy(target))
+    actual = _compute_foreground_psnr_chunked(rendered, target, chunk_voxels=1000)
+
+    assert actual[0] == pytest.approx(expected["foreground_psnr_db"], rel=1e-5)
+    assert actual[1] == pytest.approx(expected["foreground_psnr_robust_db"], rel=1e-5)
+    assert actual[2] == pytest.approx(expected["foreground_threshold"], rel=1e-5)
+    assert actual[3] == pytest.approx(
+        expected["foreground_fraction"], abs=1 / target.size
+    )

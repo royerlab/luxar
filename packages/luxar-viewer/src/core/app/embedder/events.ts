@@ -175,6 +175,22 @@ export interface LayerSummary {
   blendingMode: BlendingMode;
   /** Volumetric absorption κ (meaningful in `volumetric` blending only). */
   absorption: number;
+  /**
+   * Gsplats display gain (the panel's Brightness, `display_gain`): rendered
+   * brightness per data unit. `1` (and inert) on every other layer type.
+   */
+  brightness: number;
+  /**
+   * The authored `display_gain` (the opening exposure; `1` when absent). The
+   * panel's Brightness readout is `brightness / authoredBrightness`.
+   */
+  authoredBrightness: number;
+  /** Unit of the gsplats amplitudes / display window, when the scene labels it. */
+  amplitudeUnit?: string;
+  /** The level subtracted before fitting (`amplitude_offset`), when recorded. */
+  amplitudeOffset?: number;
+  /** The source's own intensity span above that level (`source_data_range`). */
+  sourceDataRange?: [number, number];
   /** Explicit compositing order, or `null` when inherited/automatic. */
   layerOrder: number | null;
   /** Live linear gain — present on `type === 'sound'` layers only. */
@@ -195,6 +211,13 @@ export interface LayerPatch {
   colormap?: string | null;
   blendingMode?: BlendingMode;
   absorption?: number;
+  /**
+   * Gsplats display gain, ABSOLUTE (the stored `display_gain`; > 0, a
+   * non-positive value is ignored). NOT the panel's relative Brightness
+   * readout, which is `brightness / authoredBrightness` — to apply "×2", send
+   * `2 * summary.authoredBrightness`. Inert on other layer types.
+   */
+  brightness?: number;
   layerOrder?: number | null;
   /** Sound layers only: live linear gain, clamped to `[0, 2]`. Ignored elsewhere. */
   gain?: number;
@@ -233,6 +256,12 @@ export interface ViewerState {
    * display and has no other way to read the store's attributes.
    */
   controlPanel: ControlPanelSettings | null;
+  /**
+   * The loaded scene's `content_hash`, or `undefined` for a store that records
+   * none. A view bookmark stamps it, so a window saved against one build of a
+   * scene is not applied to a re-converted build in other units.
+   */
+  contentHash?: string;
 }
 
 /**

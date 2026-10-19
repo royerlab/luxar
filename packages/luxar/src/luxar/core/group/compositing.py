@@ -327,6 +327,13 @@ COMPOSITING_ATTRS = frozenset(
         "layer",
         "visible",
         "nd_transform",
+        # The gsplats data-unit brightness (``LUXAR_ZARR_FORMAT.md``). Compositing
+        # for the same reason ``intensity`` is: it multiplies along the ancestry,
+        # so ONE gain on a kind=partition / kind=lod wrapper scales every part and
+        # level by the same factor (a per-part copy would be a per-part exposure).
+        # Deliberately NOT in :data:`IDENTITY_COMPOSITING_ATTRS`: it is never
+        # stamped by default, so a scene that does not use it stays byte-identical.
+        "display_gain",
     }
 )
 
@@ -579,6 +586,29 @@ def reject_layer_order_inside_specialized_group(
         f"layer_order={attrs['layer_order']!r} inside a kind={kind} group. "
         + layer_order_inside_specialized_group_reason(kind)
     )
+
+
+#: The gsplats-only data-unit display attrs (``LUXAR_ZARR_FORMAT.md``,
+#: "Amplitude units and display gain"). They describe — and scale — a splat
+#: AMPLITUDE, which no other geometry type has, so the viewer reads them on
+#: gsplats leaves (``display_gain`` also composes through Groups above them).
+GSPLATS_ONLY_AMPLITUDE_ATTRS = frozenset(
+    {"display_gain", "amplitude_unit", "amplitude_offset", "source_data_range"}
+)
+
+
+def reject_gsplats_only_amplitude_attrs(
+    node_type: str, name: str, attrs: Dict[str, Any]
+) -> None:
+    """Refuse the gsplats-only amplitude attrs on a points / lines / mesh leaf."""
+    invalid = sorted(GSPLATS_ONLY_AMPLITUDE_ATTRS & attrs.keys())
+    if invalid:
+        raise ValueError(
+            f"Cannot add {node_type} '{name}' with gsplats-only attribute(s) "
+            f"{invalid}. They describe and scale a splat AMPLITUDE, which a "
+            f"{node_type} node does not have, so the viewer would ignore them. "
+            "Use 'intensity' for a brightness gain on this node instead."
+        )
 
 
 def reject_mesh_only_appearance(

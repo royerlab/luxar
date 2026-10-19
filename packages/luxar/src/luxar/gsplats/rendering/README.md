@@ -15,7 +15,7 @@ GPU-accelerated volume rendering of Gaussian splats, with automatic backend sele
 
 ## Backend Selection
 
-1. **CUDA splatting backend** (fastest) — Used when `device="cuda"`, the compiled CUDA extension is available, and the volume dimensionality is within the extension's `MIN_DIM` / `MAX_SUPPORTED_DIM` range (currently 2–8D). Uses tiled, memory-efficient rendering.
+1. **CUDA splatting backend** (fastest) — Used when `device="cuda"`, `get_splatting_backend()` resolves CUDA kernels (the compiled extension when it imports, else NVRTC runtime compilation; honours `LUXAR_CUDA_BACKEND`, so `torch` keeps the PyTorch path), and the volume dimensionality is within the extension's `MIN_DIM` / `MAX_SUPPORTED_DIM` range (currently 2–8D). Uses tiled, memory-efficient rendering.
 2. **Metal splatting kernels** — Used for 3D volumes when `device="mps"` and `get_metal_backend()` resolves a backend (AOT extension or runtime-compiled; honours `LUXAR_METAL_BACKEND`, so `torch` keeps the PyTorch path). The same kernel `GaussianSplatModelMetal` trains with, so a post-fit score on MPS measures the renderer the fit optimised against.
 3. **Pure PyTorch** (fallback) — Works on any device (CUDA, MPS, CPU). Supports nD rendering with automatic chunking to prevent OOM.
 

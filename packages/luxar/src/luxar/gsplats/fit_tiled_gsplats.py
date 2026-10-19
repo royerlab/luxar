@@ -389,19 +389,51 @@ def _cull_keeping_measured_scores(data: GSplatData, retention: float) -> GSplatD
     :func:`luxar.gsplats._data.filtering.content_scoped_stats` for why a later
     ``gsplat cull`` gets no such exemption.
     """
+    kept: list[np.ndarray] = []
+    out = data.cull(method="cumulative", retention=retention, keep_mask_out=kept)
+    return _carry_measured_scores(data, out, kept[0])
+
+
+def _carry_measured_scores(
+    data: GSplatData, out: GSplatData, keep: np.ndarray
+) -> GSplatData:
     from luxar.gsplats._data.filtering import (
         measured_stats_snapshot,
         restore_measured_stats,
     )
     from luxar.gsplats.fitting.scale_population import reduce_population_stats
 
-    measured = measured_stats_snapshot(data)
-    kept: list[np.ndarray] = []
-    out = data.cull(method="cumulative", retention=retention, keep_mask_out=kept)
-    restore_measured_stats(out, measured)
-    reduce_population_stats(data.stats, out.stats, kept[0])
+    restore_measured_stats(out, measured_stats_snapshot(data))
+    reduce_population_stats(data.stats, out.stats, keep)
     out.stats["n_splats"] = out.n_splats
     return out
+
+
+def _floor_tile_amplitudes(data: GSplatData, floor: float) -> GSplatData:
+    """Discard negligible splats while one tile is still the only live result."""
+    if data.n_splats == 0 or floor == 0:
+        return data
+    keep = data.amplitudes >= floor * float(data.stats["intensity_range"])
+    if np.all(keep):
+        return data
+
+    out = data.filter(keep)
+    return _carry_measured_scores(data, out, keep)
+
+
+def _validate_tile_amplitude_floor(floor: float | None) -> None:
+    if floor is not None and (not np.isfinite(floor) or floor < 0):
+        raise ValueError("tile_amplitude_floor must be finite and non-negative")
+
+
+def _stamp_tile_amplitude_floor(merged: Any, floor: float | None, pruned: int) -> None:
+    if floor is None:
+        return
+    fit_stats = (
+        merged.stats if isinstance(merged, GSplatData) else merged.meta["fit_stats"]
+    )
+    fit_stats["tile_amplitude_floor"] = floor
+    fit_stats["tile_amplitude_pruned"] = pruned
 
 
 def _merge_flat_population_stats(
@@ -870,7 +902,11 @@ def _stamp_merge_normalization(
     # __init__, which is still executing when this module is first imported.
     from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
 
-    target.update(agreed_normalization_stats([r.stats for r in sources]))
+    target.update(
+        agreed_normalization_stats(
+            [r.stats for r in sources], [r.n_splats for r in sources]
+        )
+    )
     if applied_floor is not None:
         target["floor"] = applied_floor
     if floor_strategy is not None:
@@ -1032,6 +1068,22 @@ def _aggregate_relocation_diagnostics(
                 break
 
 
+def _carry_agreed_voxel_size(
+    stats: dict[str, Any], results: Sequence[GSplatData]
+) -> None:
+    """Carry the tiles' physical ``voxel_size`` stamp onto the merged root.
+
+    Every tile of one fit emits the same frame, so the stamp is carried only when
+    every tile that recorded one agrees; empty tiles (no stats) abstain. Without
+    it ``compare``/``render`` could not map a physical tiled fit back to voxels.
+    """
+    from luxar.gsplats.scoring_grid import agreed_voxel_size
+
+    agreed = agreed_voxel_size([getattr(r, "stats", None) for r in results])
+    if agreed is not None:
+        stats["voxel_size"] = agreed
+
+
 def _merged_fit_stats(
     results: Sequence[GSplatData],
     *,
@@ -1070,6 +1122,7 @@ def _merged_fit_stats(
     )
     stamp_voxels_per_splat(stats, delivered_splats)
     _aggregate_relocation_diagnostics(stats, results)
+    _carry_agreed_voxel_size(stats, results)
     aggregate_min_extent_stats([result.stats or {} for result in results], stats)
     return stats
 
@@ -1109,6 +1162,7 @@ def fit_tiled(
     source_shape: Optional[Sequence[int]] = None,
     source_dtype: Optional[str] = None,
     source_stored_bytes: Optional[int] = None,
+    tile_amplitude_floor: float | None = None,
     **fit_kwargs: Any,
 ) -> "Any":
     """Fit Gaussian splats to a large volume using tiled decomposition.
@@ -1186,6 +1240,13 @@ def fit_tiled(
         this fraction of total amplitude (0--1). Per-tile fitting disables
         culling; the merged result is culled once, or each tile is culled
         separately when ``partition=True``. Set to ``None`` to disable.
+    tile_amplitude_floor : float or None, optional
+        Fraction of each tile's fitted normalization span below which splats are
+        removed before the next tile is fitted and before merging. A value of
+        ``1e-5`` also applies to input images scaled into different intensity
+        units; ``None`` keeps the previous behavior.
+        Unlike cumulative culling, this removes no fixed fraction of the Hann
+        overlap's amplitude.
     source_shape : sequence of int, optional
         Grid of the ACQUISITION, when ``volume`` is already a preprocessed copy
         of it — a caller that decimated before tiling must declare it, or the
@@ -1316,8 +1377,10 @@ def fit_tiled(
     )
     _validate_tile_seed_counts(tile_seed_counts, len(specs))
     _reject_nonpositive_shared_seed_budget(fit_kwargs.get("seeds"), tile_seed_counts)
+    _validate_tile_amplitude_floor(tile_amplitude_floor)
 
     results: list[GSplatData] = []
+    amplitude_pruned = 0
     t0 = time.perf_counter()
 
     with asection(
@@ -1356,6 +1419,12 @@ def fit_tiled(
                 )
                 if floor_strategy is not None:
                     tile_result.stats["floor_strategy"] = floor_strategy
+                if tile_amplitude_floor is not None:
+                    n_before_floor = tile_result.n_splats
+                    tile_result = _floor_tile_amplitudes(
+                        tile_result, tile_amplitude_floor
+                    )
+                    amplitude_pruned += n_before_floor - tile_result.n_splats
                 n = tile_result.n_splats
                 if verbose:
                     t_tile = tile_result.stats.get("time_seconds", 0)
@@ -1401,6 +1470,7 @@ def fit_tiled(
         device=fit_kwargs.get("device"),
         fold_tile_slivers=fold_tile_slivers,
     )
+    _stamp_tile_amplitude_floor(merged, tile_amplitude_floor, amplitude_pruned)
     return merged
 
 

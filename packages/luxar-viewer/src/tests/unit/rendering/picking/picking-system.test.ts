@@ -67,6 +67,44 @@ function makeCamera(): THREE.PerspectiveCamera {
   return new THREE.PerspectiveCamera(60, 1.0, 0.1, 1000);
 }
 
+describe('mesh pick corner selection', () => {
+  it.each([
+    ['WebGL without extension', false, false, 'webgl2', [1, 2, 0]],
+    ['WebGL with extension', true, false, 'webgl2', [0, 1, 2]],
+    ['WebGPU renderer with GL fallback', false, false, 'webgpu', [1, 2, 0]],
+    ['native WebGPU', false, true, 'webgpu', [0, 1, 2]],
+  ] as const)(
+    '%s reports the original first corner',
+    (_name, extension, webgpu, apiSurface, expected) => {
+      const renderer = {
+        getContext: () => ({
+          getExtension: () =>
+            extension ? { FIRST_VERTEX_CONVENTION_WEBGL: 1, provokingVertexWEBGL: vi.fn() } : null,
+        }),
+      } as unknown as THREE.WebGLRenderer;
+      const capabilities = {
+        ...makeStubCapabilities(),
+        apiSurface,
+        nativeWebGPUBackend: webgpu,
+        readbackYDown: !webgpu,
+      };
+      const system = new PickingSystem(renderer, capabilities, makeCamera(), vi.fn());
+      const geometry = new THREE.BufferGeometry();
+      geometry.setIndex([0, 1, 2]);
+      geometry.setDrawRange(0, 3);
+      const main = new THREE.Mesh(geometry);
+      main.userData.nodeType = 'mesh';
+      system.registerNode(main, new THREE.Mesh(geometry), system.allocatePickId());
+      expect(Array.from(geometry.index!.array.slice(0, 3))).toEqual(expected);
+      // WebGL samples the last vertex unless the extension sets FIRST;
+      // WebGPU samples the first vertex. All three must resolve vertex 0.
+      const selected = webgpu || extension ? geometry.index!.array[0] : geometry.index!.array[2];
+      expect(selected).toBe(0);
+      system.dispose();
+    }
+  );
+});
+
 describe('computePickBufferSize', () => {
   it('returns half the drawing-buffer size', () => {
     expect(computePickBufferSize(1920, 1080)).toEqual({ w: 960, h: 540 });

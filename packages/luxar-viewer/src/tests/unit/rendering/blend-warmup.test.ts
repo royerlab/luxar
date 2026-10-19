@@ -75,8 +75,7 @@ function makeWarmupTurnController() {
     async releaseNext(): Promise<void> {
       const resolve = waiters.shift();
       resolve?.();
-      await Promise.resolve();
-      await Promise.resolve();
+      for (let i = 0; i < 8; i++) await Promise.resolve();
     },
   };
 }
@@ -153,8 +152,12 @@ describe('BlendWarmupManager', () => {
   });
 
   it('uses WebGL compile and detaches a rejected WebGPU compile object', async () => {
-    const compile = vi.fn();
-    const webgl = { isWebGLRenderer: true, compile } as unknown as WarmupRenderer;
+    const compile = vi.fn((_scene: THREE.Scene) => new Set<THREE.Material>());
+    const webgl = {
+      isWebGLRenderer: true,
+      compile,
+      getContext: () => ({ isContextLost: () => false }),
+    } as unknown as WarmupRenderer;
     const manager = new BlendWarmupManager(() => Promise.resolve(), undefined, activateImmediately);
     const root = new THREE.Group();
     root.add(makeRenderableMesh('points'));
@@ -455,6 +458,294 @@ describe('BlendWarmupManager', () => {
     await completion;
     expect(compileOne).toHaveBeenCalledTimes(3);
     expect(resolved).toBe(true);
+  });
+
+  it('counts a variant only after the driver finishes linking it', async () => {
+    const warmupTurns = makeWarmupTurnController();
+    const finishLinks: Array<() => void> = [];
+    const compileOne = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishLinks.push(resolve);
+        })
+    );
+    const manager = new BlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
+    manager.configure({
+      enabled: true,
+      renderer: {} as THREE.WebGLRenderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+
+    let ready = false;
+    const completion = manager.warmScene(makeRenderableMesh('points')).then(() => {
+      ready = true;
+    });
+    await warmupTurns.releaseNext();
+    expect(compileOne).toHaveBeenCalledTimes(1);
+    expect(manager.getStats().compiled).toBe(0);
+    expect(warmupTurns.pending).toBe(0);
+    expect(ready).toBe(false);
+
+    finishLinks[0]?.();
+    await vi.waitFor(() => expect(manager.getStats().compiled).toBe(1));
+    expect(manager.getStats().compiled).toBe(1);
+    expect(warmupTurns.pending).toBe(1);
+    await warmupTurns.releaseNext();
+    expect(compileOne).toHaveBeenCalledTimes(2);
+    finishLinks[1]?.();
+    await vi.waitFor(() => expect(warmupTurns.pending).toBe(1));
+    await warmupTurns.releaseNext();
+    expect(compileOne).toHaveBeenCalledTimes(3);
+    finishLinks[2]?.();
+    await completion;
+    expect(manager.getStats().compiled).toBe(3);
+    expect(ready).toBe(true);
+  });
+
+  it('waits for Three.js program readiness without polling after context loss', async () => {
+    let ready = false;
+    let lost = false;
+    const isReady = vi.fn(() => ready);
+    const compile = vi.fn(
+      (scene: THREE.Object3D) =>
+        new Set([(scene.children[0] as THREE.Mesh).material as THREE.Material])
+    );
+    const renderer = {
+      compile,
+      getContext: () => ({ isContextLost: () => lost }),
+      properties: { get: () => ({ currentProgram: { isReady } }) },
+    } as unknown as THREE.WebGLRenderer;
+    const manager = new BlendWarmupManager(async () => undefined, undefined, activateImmediately);
+    manager.configure({
+      enabled: true,
+      renderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+
+    const completion = manager.warmScene(makeRenderableMesh('points'));
+    await vi.waitFor(() => expect(compile).toHaveBeenCalledTimes(1));
+    expect(manager.getStats().compiled).toBe(0);
+    ready = true;
+    await vi.waitFor(() => expect(compile).toHaveBeenCalledTimes(3));
+    await completion;
+    expect(manager.getStats()).toMatchObject({ queued: 3, compiled: 3 });
+    ready = false;
+    const next = manager.warmScene(
+      makeRenderableMesh('points', new FakeWarmupMaterial('normal', { OTHER: 1 }))
+    );
+    await vi.waitFor(() => expect(compile).toHaveBeenCalledTimes(4));
+    lost = true;
+    await next;
+    const polls = isReady.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(isReady).toHaveBeenCalledTimes(polls);
+    expect(manager.getStats().compiled).toBe(3);
+    await manager.warmScene(
+      makeRenderableMesh('points', new FakeWarmupMaterial('normal', { OTHER: 2 }))
+    );
+    expect(compile).toHaveBeenCalledTimes(4);
+  });
+
+  it('starts a new warm-up after clear while an old link is pending', async () => {
+    const finishLinks: Array<() => void> = [];
+    const compileOne = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishLinks.push(resolve);
+        })
+    );
+    const manager = new BlendWarmupManager(async () => undefined, compileOne, activateImmediately);
+    const config = {
+      enabled: true,
+      renderer: {} as THREE.WebGLRenderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    };
+    manager.configure(config);
+    const first = manager.warmScene(makeRenderableMesh('points'));
+    await vi.waitFor(() => expect(compileOne).toHaveBeenCalledTimes(1));
+
+    manager.configure(config);
+    await first;
+    const second = manager.warmScene(makeRenderableMesh('points'));
+    await vi.waitFor(() => expect(compileOne).toHaveBeenCalledTimes(2));
+    expect(manager.getStats().compiled).toBe(0);
+    finishLinks[0]?.();
+    expect(manager.getStats().compiled).toBe(0);
+    finishLinks[1]?.();
+    await vi.waitFor(() => expect(compileOne).toHaveBeenCalledTimes(3));
+    finishLinks[2]?.();
+    await vi.waitFor(() => expect(compileOne).toHaveBeenCalledTimes(4));
+    finishLinks[3]?.();
+    await second;
+    expect(manager.getStats().compiled).toBe(3);
+  });
+
+  it('keeps a removed node keeper alive until its link settles and warms the next node', async () => {
+    const finishLinks: Array<() => void> = [];
+    const compileOne = vi.fn(
+      (
+        _renderer: WarmupRenderer,
+        _camera: THREE.Camera,
+        _scene: THREE.Scene,
+        _object: THREE.Object3D
+      ) => new Promise<void>((resolve) => finishLinks.push(resolve))
+    );
+    const manager = new BlendWarmupManager(async () => undefined, compileOne, activateImmediately);
+    manager.configure({
+      enabled: true,
+      renderer: {} as THREE.WebGLRenderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+    const root = new THREE.Group();
+    const first = makeRenderableMesh('points');
+    root.add(first);
+    const completion = manager.warmScene(root);
+    await vi.waitFor(() => expect(compileOne).toHaveBeenCalledTimes(1));
+    const keeper = (compileOne.mock.calls[0]?.[3] as THREE.Mesh).material as THREE.Material;
+    const disposed = vi.fn();
+    keeper.addEventListener('dispose', disposed);
+
+    root.remove(first);
+    expect(disposed).not.toHaveBeenCalled();
+    manager.scheduleObject(
+      makeRenderableMesh('points', new FakeWarmupMaterial('normal', { OTHER: 1 }))
+    );
+    finishLinks[0]?.();
+    await vi.waitFor(() => expect(compileOne).toHaveBeenCalledTimes(2));
+    expect(disposed).toHaveBeenCalledTimes(1);
+    for (let index = 1; index < 4; index++) {
+      finishLinks[index]?.();
+      if (index < 3) await vi.waitFor(() => expect(compileOne).toHaveBeenCalledTimes(index + 2));
+    }
+    await completion;
+    expect(manager.getStats().compiled).toBe(3);
+  });
+
+  it('defers disposal of a pending keeper across clear', async () => {
+    let finishLink: (() => void) | undefined;
+    const compileOne = vi.fn(
+      (
+        _renderer: WarmupRenderer,
+        _camera: THREE.Camera,
+        _scene: THREE.Scene,
+        _object: THREE.Object3D
+      ) =>
+        new Promise<void>((resolve) => {
+          finishLink = resolve;
+        })
+    );
+    const manager = new BlendWarmupManager(async () => undefined, compileOne, activateImmediately);
+    manager.configure({
+      enabled: true,
+      renderer: {} as THREE.WebGLRenderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+    const completion = manager.warmScene(makeRenderableMesh('points'));
+    await vi.waitFor(() => expect(compileOne).toHaveBeenCalledTimes(1));
+    const keeper = (compileOne.mock.calls[0]?.[3] as THREE.Mesh).material as THREE.Material;
+    const disposed = vi.fn();
+    keeper.addEventListener('dispose', disposed);
+    manager.clear();
+    await completion;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(disposed).not.toHaveBeenCalled();
+    finishLink?.();
+    await vi.waitFor(() => expect(disposed).toHaveBeenCalledTimes(1));
+    expect(manager.getStats().compiled).toBe(0);
+  });
+
+  it('stops the default readiness poll when clearing a scene', async () => {
+    const isReady = vi.fn(() => false);
+    const compile = vi.fn(
+      (scene: THREE.Object3D) =>
+        new Set([(scene.children[0] as THREE.Mesh).material as THREE.Material])
+    );
+    const renderer = {
+      compile,
+      getContext: () => ({ isContextLost: () => false }),
+      properties: { get: () => ({ currentProgram: { isReady } }) },
+    } as unknown as THREE.WebGLRenderer;
+    const manager = new BlendWarmupManager(async () => undefined, undefined, activateImmediately);
+    manager.configure({
+      enabled: true,
+      renderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+    const completion = manager.warmScene(makeRenderableMesh('points'));
+    await vi.waitFor(() => expect(isReady).toHaveBeenCalled());
+    const keeper = ((compile.mock.calls[0]?.[0] as THREE.Scene).children[0] as THREE.Mesh)
+      .material as THREE.Material;
+    const disposed = vi.fn();
+    keeper.addEventListener('dispose', disposed);
+    manager.clear();
+    await completion;
+    const polls = isReady.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(isReady).toHaveBeenCalledTimes(polls);
+    expect(disposed).toHaveBeenCalledTimes(1);
+    expect(manager.getStats().compiled).toBe(0);
+  });
+
+  it('continues with a later node when a removed node link never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      let finishOld: (() => void) | undefined;
+      const compileOne = vi
+        .fn(
+          (
+            _renderer: WarmupRenderer,
+            _camera: THREE.Camera,
+            _scene: THREE.Scene,
+            _object: THREE.Object3D
+          ): Promise<void> | void => undefined
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise<void>((resolve) => {
+              finishOld = resolve;
+            })
+        )
+        .mockImplementation(() => undefined);
+      const manager = new BlendWarmupManager(
+        async () => undefined,
+        compileOne,
+        activateImmediately
+      );
+      manager.configure({
+        enabled: true,
+        renderer: {} as THREE.WebGLRenderer,
+        camera: new THREE.PerspectiveCamera(),
+        targetScene: new THREE.Scene(),
+      });
+      const root = new THREE.Group();
+      const first = makeRenderableMesh('points');
+      root.add(first);
+      void manager.warmScene(root);
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      expect(compileOne).toHaveBeenCalledTimes(1);
+      const keeper = (compileOne.mock.calls[0]?.[3] as THREE.Mesh).material as THREE.Material;
+      const disposed = vi.fn();
+      keeper.addEventListener('dispose', disposed);
+      root.remove(first);
+      manager.scheduleObject(
+        makeRenderableMesh('points', new FakeWarmupMaterial('normal', { OTHER: 1 }))
+      );
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(disposed).not.toHaveBeenCalled();
+      expect(compileOne).toHaveBeenCalledTimes(4);
+      expect(manager.getStats().compiled).toBe(3);
+      finishOld?.();
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      expect(disposed).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('releases scene warming on its readiness budget and keeps draining after', async () => {

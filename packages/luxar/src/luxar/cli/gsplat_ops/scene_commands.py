@@ -7,7 +7,7 @@ the shared ``app_gsplat`` Typer.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import Literal, Optional
 
 import typer
 from arbol import aprint, asection
@@ -16,46 +16,14 @@ from ...typing_utils.constants import DEFAULT_BLENDING_MODE
 from .._traceback import exit_with_error
 from .encoding import _resolve_encoding_mode
 
-if TYPE_CHECKING:
-    from ...core.viewer_config import ViewerConfig
-    from .scene_orientation import ConvertOrientation
 
+def _positive_scale(value: Optional[float]) -> Optional[float]:
+    """``--scale-intensity`` must be a positive finite factor (or absent)."""
+    import math
 
-def _convert_orientation(
-    extent: Any,
-    node: Any,
-    stats: dict,
-    *,
-    dim_order: Optional[str],
-    view: Optional[str],
-    remap: bool,
-) -> "ConvertOrientation":
-    """Resolve convert's scene orientation, turning a bad flag into a usage error."""
-    from .scene_orientation import resolve_convert_orientation
-
-    try:
-        return resolve_convert_orientation(
-            extent,
-            node.meta.get("dimension_metadata"),
-            dim_order=dim_order,
-            view=view,
-            fitting_info=stats,
-            remap=remap,
-        )
-    except ValueError as e:
-        raise typer.BadParameter(str(e)) from e
-
-
-def _scene_viewer_config(
-    orientation: "ConvertOrientation", tone_mapping: Optional[str]
-) -> "Optional[ViewerConfig]":
-    """The scene's ViewerConfig: tone mapping and/or the orientation's camera."""
-    from luxar.core.viewer_config import ViewerConfig
-
-    aprint(orientation.summary)
-    if tone_mapping is None and orientation.camera is None:
-        return None
-    return ViewerConfig(tone_mapping=tone_mapping, camera=orientation.camera)
+    if value is not None and not (math.isfinite(value) and value > 0.0):
+        raise typer.BadParameter(f"must be a positive number, got {value!r}")
+    return value
 
 
 def convert_to_scene(
@@ -71,8 +39,36 @@ def convert_to_scene(
     ),
     scale_intensity: Optional[float] = typer.Option(
         None,
+        "--display-gain",
         "--scale-intensity",
-        help="Scale matrix-shaped amplitudes by factor; replaces automatic normalization",
+        callback=_positive_scale,
+        help="Set the node's display gain (brightness per data unit) to exactly "
+        "this factor instead of auto exposure. The amplitudes are NOT edited: "
+        "they stay in data units (any tree shape). --scale-intensity is the old "
+        "name; `gsplat transform --scale-intensity` is the command that edits "
+        "the data.",
+    ),
+    auto_exposure: bool = typer.Option(
+        True,
+        "--auto-exposure/--no-auto-exposure",
+        help="Dim splat brightness so the opening view is not saturated: predict "
+        "the per-pixel additive sum down the default view axis and set the "
+        "node's display gain so its p99.9 is --target-brightness (never "
+        "brightens; the amplitudes stay in data units), "
+        "dimming further if a side view or another timepoint would exceed 4x "
+        "that. Hidden axes are predicted where the viewer opens them (a "
+        "timelapse at its first timepoint, up to 4 more sampled for the cap). "
+        "--no-auto-exposure = gain from the legacy per-splat p99.9 "
+        "normalization only.",
+    ),
+    target_brightness: Optional[float] = typer.Option(
+        None,
+        "--target-brightness",
+        min=1e-6,
+        help="Auto-exposure target for the predicted projected p99.9 (HDR, "
+        "before tone mapping). Default: 2.0 under ACES/AgX/Neutral/Reinhard/"
+        "Cineon (and when --tone-mapping is unset), 0.9 under None/Linear, "
+        "which clip at 1.0. Lower is dimmer.",
     ),
     opacity: float = typer.Option(1.0, "--opacity", help="Opacity (0.0-1.0)"),
     absorption: float = typer.Option(
@@ -106,8 +102,9 @@ def convert_to_scene(
     intensity: Optional[float] = typer.Option(
         None,
         "--intensity",
-        help="Display-window intensity relative to amplitudes as stored "
-        "(automatically normalized unless --scale-intensity is set)",
+        help="Display-window intensity relative to the display-gained "
+        "amplitudes (after auto exposure / normalization, or "
+        "--display-gain); a colormap window is restated in data units",
     ),
     layer: bool = typer.Option(
         True,
@@ -153,7 +150,8 @@ def convert_to_scene(
     chroma (essentially white by peak 100), while a ``None`` clamp flattens
     everything above 1.0 and shifts hue when channels clip unequally, losing
     saturation too wherever the darkest channel is not already 0. So bring the
-    scene back into [0, 1] with ``--intensity`` and use ``None``, or accept
+    scene back into [0, 1] with ``--display-gain`` (or a lower
+    ``--target-brightness``) and use ``None``, or accept
     ACES's filmic rolloff (#1459).
 
     Orientation follows the IMAGE CONVENTION for fitted volumes: the center
@@ -173,7 +171,7 @@ def convert_to_scene(
     Examples:
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --no-center
-        luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --scale-intensity 0.1
+        luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --display-gain 0.1
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr \\
             --colormap plasma --tone-mapping ACES
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr \\
@@ -182,151 +180,27 @@ def convert_to_scene(
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --dim-order x,y,z
     """
     try:
-        import numpy as np
+        from .scene_build import SceneBuildOptions, build_gsplat_scene
 
-        from luxar import LuxarZarrCompiler
-        from luxar.core.viewer_config import VALID_TONE_MAPPINGS
-        from luxar.gsplats.gsplat_data import GSplatData
-        from luxar.gsplats.io.load_gsplats import load_gsplat_node
-        from luxar.gsplats.io.save_gsplats import resolve_amplitude_bits
-        from luxar.gsplats.tree import center_bounds, is_matrix_shaped
-
-        # Validate + assemble appearance attrs (only forward what was set).
-        from luxar.validation.types import validate_absorption, validate_blending_mode
-
-        try:
-            validate_blending_mode(blending_mode)
-            validate_absorption(absorption)
-        except (ValueError, TypeError) as e:
-            raise typer.BadParameter(str(e)) from e
-
-        appearance: dict = {"layer": layer}
-        if colormap is not None:
-            from luxar.colormaps import BUILTIN_COLORMAP_NAMES
-            from luxar.colormaps.registry import resolve_colormap
-
-            if colormap not in BUILTIN_COLORMAP_NAMES:
-                try:
-                    resolve_colormap(colormap)
-                except Exception as e:
-                    raise typer.BadParameter(
-                        f"--colormap '{colormap}' is not a known builtin / "
-                        f"matplotlib / colorcet colormap"
-                    ) from e
-            appearance["colormap"] = colormap
-        if gamma is not None:
-            appearance["gamma"] = gamma
-        if intensity is not None:
-            appearance["intensity"] = intensity
-
-        if tone_mapping is not None and tone_mapping not in VALID_TONE_MAPPINGS:
-            raise typer.BadParameter(
-                f"--tone-mapping must be one of {VALID_TONE_MAPPINGS}, "
-                f"got '{tone_mapping}'"
-            )
-
-        def orient(extent: Any, *, remap: bool) -> "ConvertOrientation":
-            return _convert_orientation(
-                extent, node, stats, dim_order=dim_order, view=view, remap=remap
-            )
-
+        opts = SceneBuildOptions(
+            center=center,
+            scale_intensity=scale_intensity,
+            auto_exposure=auto_exposure,
+            target_brightness=target_brightness,
+            opacity=opacity,
+            absorption=absorption,
+            blending_mode=blending_mode,
+            colormap=colormap,
+            tone_mapping=tone_mapping,
+            gamma=gamma,
+            intensity=intensity,
+            layer=layer,
+            encoding=encoding,
+            dim_order=dim_order,
+            view=view,
+        )
         with asection(f"Converting: {input_path.name} -> {output_path.name}"):
-            with asection("Loading gsplat dataset"):
-                # Peek at the on-disk shape. A matrix-shaped tree (leaf / additive
-                # ladder / kind=lod of leaves) round-trips through GSplatData and
-                # supports --center / --scale-intensity. A partition / nested tree
-                # has no flat GSplatData equivalent: it is grafted node-for-node.
-                node, stats = load_gsplat_node(input_path, include_stats=True)
-                matrix = is_matrix_shaped(node)
-                amplitude_bits = resolve_amplitude_bits(
-                    "auto", source_dtype=stats.get("source_dtype")
-                )
-
-            if matrix:
-                data = GSplatData.from_tree(node)
-                aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
-
-                if center:
-                    aprint("Centering at amplitude-weighted centroid")
-                    data = data.center_at_centroid()
-                if scale_intensity is not None:
-                    aprint(f"Scaling intensity by {scale_intensity}")
-                    data = data.scale_intensity(scale_intensity)
-
-                with asection("Creating Luxar scene"):
-                    orientation = orient(data.centers, remap=True)
-                    dims = orientation.dimensions
-                    viewer_config = _scene_viewer_config(orientation, tone_mapping)
-                    with LuxarZarrCompiler(
-                        output_path,
-                        encoding_mode=_resolve_encoding_mode(encoding),
-                        gsplat_amplitude_bits=amplitude_bits,
-                    ) as compiler:
-                        scene = compiler.create_scene(
-                            dimensions=dims, viewer_config=viewer_config
-                        )
-                        scene.add_gsplats_from_data(
-                            name="gsplats",
-                            result=data,
-                            dim_order=orientation.dim_order,
-                            # An explicit scale is the caller's authored amplitude
-                            # transform; normalising immediately afterward would
-                            # cancel it exactly for raw-unit stores.
-                            normalize_amplitudes=scale_intensity is None,
-                            opacity=opacity,
-                            absorption=absorption,
-                            blending_mode=blending_mode,
-                            **appearance,
-                        )
-            else:
-                kind = (
-                    "partition"
-                    if node.__class__.__name__ == "GSplatPartition"
-                    else "nested LOD"
-                )
-                aprint(f"Grafting a {kind} node tree (no flat-data transforms apply)")
-                if scale_intensity is not None:
-                    aprint(
-                        "⚠️  --scale-intensity is ignored for a partition/nested "
-                        "file (re-author intensity upstream with `gsplat transform`)."
-                    )
-                # --center defaults True; it does not apply to a graft (the file's
-                # own coordinates are preserved), so note it rather than fail.
-                if center:
-                    aprint(
-                        "ℹ️  --center is ignored for a partition/nested file; the "
-                        "node tree keeps its authored coordinates."
-                    )
-                bounds = center_bounds(node)
-                if bounds is None:
-                    raise ValueError("Could not derive bounds from the node tree")
-                bmin, bmax = bounds
-                box = np.array([bmin, bmax], dtype=np.float32)
-
-                with asection("Creating Luxar scene"):
-                    # A grafted tree cannot be remapped (`add_gsplats_from_file`
-                    # refuses dim_order there): the scene dims keep column order
-                    # and the camera preset finds the XY plane by name.
-                    orientation = orient(box, remap=False)
-                    dims = orientation.dimensions
-                    viewer_config = _scene_viewer_config(orientation, tone_mapping)
-                    with LuxarZarrCompiler(
-                        output_path,
-                        encoding_mode=_resolve_encoding_mode(encoding),
-                        gsplat_amplitude_bits=amplitude_bits,
-                    ) as compiler:
-                        scene = compiler.create_scene(
-                            dimensions=dims, viewer_config=viewer_config
-                        )
-                        scene.add_gsplats_from_file(
-                            name="gsplats",
-                            path=input_path,
-                            opacity=opacity,
-                            absorption=absorption,
-                            blending_mode=blending_mode,
-                            **appearance,
-                        )
-
+            build_gsplat_scene(input_path, output_path, opts)
             aprint(f"\nScene saved: {output_path}")
             aprint(f"Serve with: luxar serve {output_path} --viewer")
 
