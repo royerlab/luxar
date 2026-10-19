@@ -29,7 +29,14 @@
  * @see rendering/README.md — Dual-stack architecture overview
  */
 
-import { test, expect, ALLOW_CONSOLE_ERRORS } from './fixtures';
+import {
+  test,
+  expect,
+  ALLOW_CONSOLE_ERRORS,
+  DEFAULT_ALLOWED_CONSOLE_ERRORS,
+  unexpectedConsoleErrors,
+  type CapturedConsoleError,
+} from './fixtures';
 import { probeWebGPUBackend, waitForLuxarReady, waitForPointsLoaded } from './helpers';
 
 const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr';
@@ -72,10 +79,18 @@ test.describe('WebGPU smoke (native-only tests skip on the WebGL2 fallback)', ()
   test('recovers a native renderer, draws the scene, and resolves a pick', async ({ page }) => {
     test.skip(!(await probeWebGPUBackend(page)).isNative, SKIP_REASON);
     test.setTimeout(60_000);
+    // A device loss is logged with console.error by design. The fixture's gate
+    // is all-or-nothing, so opt out of it and forgive only that one line here:
+    // any other error during the rebuild still fails the test.
     test.info().annotations.push({
       type: ALLOW_CONSOLE_ERRORS,
-      description: 'A device loss is logged with console.error by design, simulated or not.',
+      description: 'Forgives only the device-lost log line; checked in the test body.',
     });
+    const captured: CapturedConsoleError[] = [];
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') captured.push({ kind: 'console.error', text: msg.text() });
+    });
+    page.on('pageerror', (err) => captured.push({ kind: 'pageerror', text: err.message }));
     await page.goto(`/?renderer=webgpu&src=${LABELLED_DATASET}&debug`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page);
@@ -117,6 +132,12 @@ test.describe('WebGPU smoke (native-only tests skip on the WebGL2 fallback)', ()
     await page.mouse.move(target.x, target.y);
     await expect(overlay).toHaveText('Origin marker', { timeout: 10000 });
     await expect(overlay).toHaveCSS('opacity', '1');
+
+    const expectedLoss = /WebGPU device lost \(reason=unknown\): simulated/;
+    expect(captured.some((e) => expectedLoss.test(e.text))).toBe(true);
+    expect(
+      unexpectedConsoleErrors(captured, [...DEFAULT_ALLOWED_CONSOLE_ERRORS, expectedLoss])
+    ).toEqual([]);
   });
 
   test('screenshot at an unaligned canvas width returns a non-empty, compact buffer', async ({
