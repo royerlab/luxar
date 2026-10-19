@@ -104,9 +104,6 @@ export const URL_PARAM_KEYS = {
 /** A recognized URL query parameter, spelled as it appears on the wire. */
 export type UrlParamKey = (typeof URL_PARAM_KEYS)[keyof typeof URL_PARAM_KEYS];
 
-/** @internal Preserve the alias table export for URL tooling. */
-export { URL_PARAM_ALIASES } from './url-param-access';
-
 /** Warn once when a deprecated query spelling is used. */
 const warnedAliases = new Set<string>();
 function warnDeprecatedAlias(alias: string, canonical: UrlParamKey): void {

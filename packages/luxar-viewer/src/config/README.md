@@ -562,10 +562,8 @@ From `./url-params.ts`:
   single place a spelling lives: `readUrlParams` reads through it, the README
   and `VIEWER_GUIDE.md` parity tests check every entry is documented, and it is
   re-exported from the package barrel for embedders assembling a viewer URL.
-- `URL_PARAM_ALIASES` + `hasParam(params, key)` / `getParam(params, key)` — the
-  deprecated-spelling mechanism for a POST-release rename: an alias maps an old
-  spelling to a current key, is honored by every read, and warns once per page
-  load. Empty today (the 2026-09 camelCase rename was a pre-release hard cut).
+- `hasParam(params, key)` / `getParam(params, key)` — alias-aware readers that
+  warn once per page load when a deprecated spelling is used.
 - `readUrlParams(search?)` — typed snapshot of recognized `?param=value` pairs.
   Includes `input: 'touch' | 'mouse' | null` (`?input=`), the JS-only input-profile
   override applied by `core/bootstrap.ts` via `utils/input-capabilities`, and
@@ -574,6 +572,18 @@ From `./url-params.ts`:
   bookmark parameter).
 - `normalizeDataSourceUrl(rawSrc)`, `buildDataSourceBrowserUrl(src, location)`,
   `replaceBrowserDataSourceUrl(src, target?)`.
+
+From `./url-param-access.ts`:
+
+- `URL_PARAM_ALIASES` and the raw `hasParam` / `getParam` accessors — the shared
+  deprecated-spelling mechanism for normal bootstrap and early WebGPU prefetch.
+  The alias table is empty today (the 2026-09 camelCase rename was a pre-release
+  hard cut).
+
+From `./renderer-preference.ts`:
+
+- Renderer normalization, stored preference sanitization, URL-over-storage
+  precedence, and settings schema version shared by both startup paths.
 
 From `./build-info.ts` (re-exported from the package barrel):
 
