@@ -183,6 +183,7 @@ export async function runInitPipeline(
     canvas: ports.options.canvas,
     debug: ports.options.debug,
     renderer: ports.options.renderer,
+    preRequestedWebGPUDevice: ports.options.preRequestedWebGPUDevice,
     webgpuForceWebGL: ports.options.webgpuForceWebGL,
     perfTimestamp: ports.options.perfTimestamp,
     hdr: ports.options.hdr ?? true,

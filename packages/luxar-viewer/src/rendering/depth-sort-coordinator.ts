@@ -100,6 +100,8 @@ import { transfer } from 'comlink';
 import {
   cancelAllSortedIndexOrderingApplies,
   cancelSortedIndexOrderingApply,
+  getActiveSortedIndexAttribute,
+  sortedIndexUsage,
 } from './element-storage';
 import { needsDepthSort } from './blending-state';
 import type { BlendingMode } from '../types/blending';
@@ -705,12 +707,21 @@ export class DepthSortCoordinator {
         // against. (The throw lands in the outer catch below.)
         const buffer =
           typeof centersForWorker === 'function' ? centersForWorker() : centersForWorker;
+        const orderingCapacity =
+          sortedIndexUsage() === THREE.StaticDrawUsage
+            ? getActiveSortedIndexAttribute(mesh.geometry as THREE.InstancedBufferGeometry)?.array
+                .length
+            : undefined;
         current.registered = true;
         // The register RPC is its own promise — the surrounding .catch
         // only sees synchronous throws, so a transport/transfer rejection
         // here would otherwise float as an unhandled rejection.
         api
-          .registerNode(transfer({ nodeId, generation, centers3: buffer, count }, [buffer.buffer]))
+          .registerNode(
+            transfer({ nodeId, generation, centers3: buffer, count, orderingCapacity }, [
+              buffer.buffer,
+            ])
+          )
           .catch((error: unknown) => {
             log.error(Modules.WORKER_POOL, `SortWorker registerNode failed for ${nodeId}`, error);
             // The worker never received this generation's centers — clear

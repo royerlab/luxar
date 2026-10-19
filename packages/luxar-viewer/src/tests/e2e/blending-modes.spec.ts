@@ -17,6 +17,7 @@ import {
   captureCanvasRGBA,
   samplePixelsAt,
   openLayersPanel,
+  probeWebGPUBackend,
 } from './helpers';
 import { EXPECTED_BLEND_STATE as EXPECTED_STATE } from './blending-expected-state';
 
@@ -526,6 +527,74 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
 
     const webglErrors = await getWebGLErrors(page);
     expect(webglErrors.length).toBe(0);
+  });
+
+  test('WebGPU applies gsplat blend pipeline changes in both directions without a graph rebuild', async ({
+    page,
+  }) => {
+    await page.goto(`/?src=${GSPLAT_OVERLAP_FIXTURE}&renderer=webgpu&debug&dpr=1`);
+    await waitForLuxarReady(page);
+    test.skip(
+      !(await probeWebGPUBackend(page)).isNative,
+      'Blend pipeline changes require a native WebGPU backend'
+    );
+    await waitForGSplatsCommitted(page);
+
+    const offsets: Array<[number, number]> = [];
+    for (let x = 0.1; x <= 0.9; x += 0.05) {
+      for (let y = 0.1; y <= 0.9; y += 0.05) offsets.push([x, y]);
+    }
+    const pixels = async () => {
+      await waitForNextRender(page, 3);
+      return samplePixelsAt(page, 'canvas#app', offsets, 'framebuffer');
+    };
+    const changeMode = async (mode: 'max' | 'opaque') => {
+      await page.evaluate((nextMode) => {
+        (window as any).__luxarDebug.scene.traverse((obj: any) => {
+          if (obj.userData?.nodeType === 'gsplats') obj.material?.applyBlendingMode(nextMode);
+        });
+      }, mode);
+    };
+    const materialVersions = async () =>
+      page.evaluate(() => {
+        const versions: number[] = [];
+        (window as any).__luxarDebug.scene.traverse((obj: any) => {
+          if (obj.userData?.nodeType === 'gsplats' && obj.material) {
+            versions.push(obj.material.version);
+          }
+        });
+        return versions;
+      });
+    const replaceWithFreshClones = async () => {
+      await page.evaluate(() => {
+        (window as any).__luxarDebug.scene.traverse((obj: any) => {
+          if (obj.userData?.nodeType === 'gsplats' && obj.material) {
+            obj.material = obj.material.clone();
+          }
+        });
+      });
+    };
+
+    await changeMode('max'); // Enter the peak-projection, alpha=1 graph variant.
+    const max = await pixels();
+    const peakVersions = await materialVersions();
+    expect(peakVersions.length).toBeGreaterThan(0);
+    await changeMode('opaque'); // Same graph; only the pipeline state changes.
+    expect(await materialVersions()).toEqual(peakVersions);
+    const switchedOpaque = await pixels();
+    await replaceWithFreshClones();
+    const freshOpaque = await pixels();
+    expect(switchedOpaque).toEqual(freshOpaque);
+
+    const opaqueVersions = await materialVersions();
+    await changeMode('max');
+    expect(await materialVersions()).toEqual(opaqueVersions);
+    const switchedMax = await pixels();
+    await replaceWithFreshClones();
+    const freshMax = await pixels();
+    expect(switchedMax).toEqual(freshMax);
+    expect(max).toEqual(freshMax);
+    expect(switchedOpaque).not.toEqual(switchedMax);
   });
 
   test('background splat shows through the overlap (real alpha-over)', async ({ page }) => {

@@ -197,7 +197,7 @@ Called on every non-noop commit of a sortable node (gsplats, points, lines, mesh
    - Re-check `current.generation === generation` (a newer commit may have landed while the worker was spawning)
    - Resolve lazy centers provider NOW (after the generation re-check, so a superseded commit never pays the copy)
    - Set `current.registered = true` BEFORE the register RPC (a throwing provider leaves the node unregistered instead of stranding a phantom registration)
-   - Transfer centers: `api.registerNode(transfer({ nodeId, generation, centers3, count }, [buffer.buffer]))`
+   - Transfer centers: `api.registerNode(transfer({ nodeId, generation, centers3, count, orderingCapacity }, [buffer.buffer]))`; on WebGPU, `orderingCapacity` is the live `aSortedIndex` length
    - `scheduleSort(c, mesh, nodeId)`
 5. Catch: once per EPISODE (a successful — possibly retried — init re-arms the flag), log that this commit could not reach the SortWorker and the identity order is drawn, quoting `getDepthSortWorkerStatus()` rather than asserting a cause: every later commit lands here while the cached `initPromise` is rejected, but the same catch also fires for a throwing lazy centers provider or a `transfer()` of an already-detached buffer. Rendering degrades gracefully to unsorted normal mode
 
@@ -222,7 +222,7 @@ Enforces **at most one in-flight sort per node**; a commit landing mid-sort queu
    - Clear `inFlight`
    - **Stale-drop**: stage only when `result.generation === current.generation` AND `hasCommittedData(mesh)` (LOD demotion signal)
    - Set profiler metadata: `splats`, `kernelMs`, `boundaryMs` (worker overhead), `queueMs` (round-trip minus worker time), and `info` with ordering bytes labeled `sched`
-   - Stage the ordering with lifecycle callbacks: `writeSortedIndexOrdering(geometry, result.ordering, count, callbacks)` — `callbacks` always carries the owner hooks (`orderingApplyHooks(c)`) and, with a profiler session, `onApplied` / `onAbandoned`; the per-frame pump streams slices into the inactive buffer
+   - Stage the ordering with lifecycle callbacks: `writeSortedIndexOrdering(geometry, result.ordering, count, callbacks, { adoptOrdering: true })` — `callbacks` always carries the owner hooks (`orderingApplyHooks(c)`) and, with a profiler session, `onApplied` / `onAbandoned`; the per-frame pump streams slices into the inactive buffer. On WebGPU, a result backed by the full attribute capacity becomes the inactive attribute array without a second CPU copy; orderings without that backing and WebGL still copy.
    - Transfer profiler-session ownership to those callbacks and request the bootstrap frame
    - Drain `resortQueued` if set: `scheduleSort(c, mesh, nodeId)`
 10. On **rendered application**:
