@@ -6,6 +6,7 @@ import {
   dragWorkload,
   judgeMetric,
   meetsExpectation,
+  missingStoreMessage,
   METRIC_DIRECTIONS,
   runSuite,
   serverMetrics,
@@ -520,5 +521,22 @@ describe('serverMetrics', () => {
   it('omits the first-frame figures when the workload reported no first frame', () => {
     const m = serverMetrics([], { navT: 0, firstFrameMs: undefined, maxInflight: 0 });
     expect(m).toEqual({ serverRequests: 0, serverBytes: 0, maxInflight: 0 });
+  });
+});
+
+describe('missingStoreMessage', () => {
+  it('names the generator command for a render-gate store', () => {
+    expect(missingStoreMessage('gate/sp64_closeup_authored.luxar.zarr')).toBe(
+      'store missing: datasets/gate/sp64_closeup_authored.luxar.zarr; write it with ' +
+        '`hatch run python packages/luxar-viewer/scripts/render-gate/generate_gate_scenes.py ' +
+        '--out datasets/gate --only sp64_closeup_authored` from the repository root'
+    );
+    expect(missingStoreMessage('gate/zip_mixed.luxar.zarr.zip')).toContain('--only zip_mixed`');
+  });
+
+  it('only reports the path for a store outside the gate set', () => {
+    expect(missingStoreMessage('demos/x.luxar.zarr')).toBe(
+      'store missing: datasets/demos/x.luxar.zarr'
+    );
   });
 });
