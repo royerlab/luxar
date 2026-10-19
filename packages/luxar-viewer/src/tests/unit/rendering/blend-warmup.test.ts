@@ -36,6 +36,9 @@ class FakeWarmupMaterial extends THREE.ShaderMaterial {
     const cloned = new FakeWarmupMaterial('additive');
     cloned.defines = { ...this.defines };
     cloned.userData = { ...this.userData };
+    cloned.side = this.side;
+    cloned.transparent = this.transparent;
+    cloned.forceSinglePass = this.forceSinglePass;
     return cloned as this;
   }
 }
@@ -218,6 +221,52 @@ describe('BlendWarmupManager', () => {
     // collapses the other modes onto one program.
     expect(await run(false)).toBe(3);
     expect(await run(true)).toBe(BLENDING_MODES.length);
+  });
+
+  it('pins both transparent DoubleSide mesh passes across a shared-variant owner transfer', async () => {
+    const compileOne = vi.fn();
+    const manager = new BlendWarmupManager(
+      () => Promise.resolve(),
+      compileOne,
+      activateImmediately
+    );
+    manager.configure({
+      enabled: true,
+      renderer: {} as WarmupRenderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+      pipelineVariants: true,
+    });
+    const owner = new FakeWarmupMaterial();
+    owner.side = THREE.DoubleSide;
+    owner.transparent = true;
+    owner.forceSinglePass = false;
+    const survivor = owner.clone();
+    const root = new THREE.Group();
+    root.add(makeRenderableMesh('mesh', owner));
+    root.add(makeRenderableMesh('mesh', survivor));
+
+    await manager.warmScene(root);
+    const sides = () =>
+      compileOne.mock.calls.map((call) => ((call[3] as THREE.Mesh).material as THREE.Material).side);
+    const passSides = [THREE.BackSide, THREE.FrontSide];
+    expect(sides()).toEqual(BLENDING_MODES.flatMap(() => passSides));
+    expect(manager.getStats()).toMatchObject({
+      queued: BLENDING_MODES.length * 2,
+      compiled: BLENDING_MODES.length * 2,
+      dedupedAcrossSources: BLENDING_MODES.length * 2,
+    });
+
+    owner.dispose();
+    await Promise.resolve();
+    await Promise.resolve();
+    // The survivor must pin both side variants after the owner goes away.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sides()).toEqual([
+      ...BLENDING_MODES.flatMap(() => passSides),
+      ...BLENDING_MODES.flatMap(() => passSides),
+    ]);
+    expect(manager.getStats().ownershipTransfers).toBe(BLENDING_MODES.length * 2);
   });
 
   it('awaits an asynchronous compile (WebGPU compileAsync) before the next one', async () => {
