@@ -88,6 +88,10 @@ rung 0 an aggregate `1/L` share of the whole node, so the average share is stabl
 as the slice count changes. It is not a per-slice guarantee: the global prefix
 concentrates where the signal is, and sparse slices can receive much less.
 
+Before the CLI scaling fix, Drosophila's `--target-ms` resolved to a 20,833-splat
+rung 0 for 500 timepoints; the measured slices had median = 45, p05 = 7, and
+min = 1, and playback rendered an empty frame.
+
 Measured on the shipped corpus — the 5th-percentile rung-0 count per coordinate
 against what the deployed viewer commits while the axis plays:
 

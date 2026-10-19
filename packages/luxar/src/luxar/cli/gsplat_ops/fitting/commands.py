@@ -11,6 +11,7 @@ from typing import Optional
 
 import typer
 
+from ...utils import local_input_path
 from .calibrate import run_calibrate_command
 from .denoise_render import (
     run_denoise_volume_cmd,
@@ -99,6 +100,14 @@ def render_to_file(
         "-t",
         help="Truncation radius in sigma. Defaults to dataset's stored value.",
     ),
+    voxel_size: Optional[str] = typer.Option(
+        None,
+        "--voxel-size",
+        help="Spacing the splat centers are scaled by, one value or one per axis. "
+        "Normally read from the dataset's voxel_size stamp (a physical-output "
+        "fit records it); pass it for a physical store without the stamp, or "
+        "'1' to render in the store's own units.",
+    ),
 ) -> None:
     """Render Gaussian splats back to a volume.
 
@@ -111,8 +120,15 @@ def render_to_file(
     compare, either subtract the same level from the reference
     (``clip(V - image_min, 0, None)``, where ``image_min`` is reported by
     ``luxar gsplat info``), or use ``luxar gsplat compare``, which does it for you.
+    It is also in the SOURCE's units: a ``transform --scale-intensity`` edit
+    (the store's ``intensity_scale``) is divided back out of the amplitudes.
 
-    If --shape is not given, it is auto-computed from the bounding box.
+    The render is on VOXEL indices: a physical-output fit (one that records
+    a voxel_size) is divided back onto the grid it was fitted on. Without
+    --shape, a fit renders on its own source grid (fitting/source_shape), so
+    the output lines up voxel-for-voxel with the fitted volume; any other store
+    renders on the bounding box of its centers, starting at the lowest center
+    (the origin is printed).
 
     Examples:
         luxar gsplat render fitted.gsplats.zarr rendered.npy
@@ -125,12 +141,15 @@ def render_to_file(
         shape=shape,
         device=device,
         truncate=truncate,
+        voxel_size=voxel_size,
     )
 
 
 def calibrate_command(
     input_path: Path = typer.Argument(
-        ..., exists=True, help="Input volume (.zarr, .zarr.zip, .tiff, .npy, .npz)"
+        ...,
+        callback=local_input_path,
+        help="Input volume (.zarr, .zarr.zip, .tiff, .npy, .npz)",
     ),
     output_json: Path = typer.Argument(
         ..., help="Output JSON with full sweep curves and recommended K*"
@@ -139,13 +158,27 @@ def calibrate_command(
     k_grid: Optional[str] = typer.Option(
         None,
         "--k-grid",
-        help="Explicit comma-separated K values (e.g. '1000,4000,16000'). Overrides --n-grid/--k-min/--k-max.",
+        help="Explicit comma-separated K values (e.g. '1000,4000,16000'). "
+        "Overrides --n-grid/--k-min/--k-max. Early stop and the low-edge "
+        "extension still apply (add --no-early-stop --no-extend-below to fit "
+        "exactly these points).",
     ),
     n_grid: int = typer.Option(
         10, "--n-grid", help="Number of K values when --k-grid is not given"
     ),
-    k_min: int = typer.Option(1_000, "--k-min", help="Smallest K in the sweep"),
-    k_max: int = typer.Option(512_000, "--k-max", help="Largest K in the sweep"),
+    k_min: Optional[int] = typer.Option(
+        None,
+        "--k-min",
+        help="Smallest K in the sweep (default: derived from the volume with "
+        "--k-max; 1000 when only --k-max is given).",
+    ),
+    k_max: Optional[int] = typer.Option(
+        None,
+        "--k-max",
+        help="Largest K in the sweep (default: derived from the volume's "
+        "foreground voxel count, at most 512000; 512000 when only --k-min is "
+        "given). See `cal.json` sweep.auto_grid for the derivation.",
+    ),
     progression: str = typer.Option(
         "exp",
         "--progression",
@@ -210,16 +243,39 @@ def calibrate_command(
         "is a flat row-major index across all channel-like axes, and more than "
         "one time axis is rejected. Spatial axes stay in the given order.",
     ),
-    # Regime-robust extensions (all opt-in; defaults preserve manuscript behaviour)
+    voxel_size: Optional[str] = typer.Option(
+        None,
+        "--voxel-size",
+        help="Physical voxel spacing Z,Y,X in micrometres (array axis order), "
+        "as for `fit`. Each K is fitted with it (so K* matches a physical fit) "
+        "and scored on the voxel grid; K* is a count either way. Takes "
+        "precedence over --physical.",
+    ),
+    physical: bool = typer.Option(
+        False,
+        "--physical",
+        help="Use the voxel size the file records (OME-Zarr NGFF, OME-TIFF, "
+        "ImageJ), as `fit --physical` does. Warns when there is none.",
+    ),
+    region: Optional[str] = typer.Option(
+        None,
+        "--region",
+        help="Calibrate on a crop: z0:z1,y0:y1,x0:x1 (numpy-style voxel spans; "
+        "empty = whole axis). K* is then the budget for THAT crop: pass it to "
+        "`fit --region` with the same spans. Excludes --auto-region.",
+    ),
+    # K* metric (CLI default: foreground; psnr_minmax is the manuscript metric)
     k_star_metric: str = typer.Option(
-        "psnr_minmax",
+        "psnr_foreground",
         "--k-star-metric",
         help=(
-            "Metric for K* selection: psnr_minmax (default, manuscript) | "
-            "psnr_foreground | psnr_fg_weighted | gain. For sparse or "
-            "deconvolved data, psnr_fg_weighted balances signal fidelity against "
-            "background haze. gain is diagnostic only: it selects identically "
-            "to psnr_minmax because its baseline is constant across K."
+            "Metric for K* selection: psnr_foreground (default: held-out PSNR "
+            "over foreground voxels, the score `fit` headlines) | psnr_minmax "
+            "(the manuscript's whole-volume metric, always reported alongside) "
+            "| psnr_fg_weighted | gain. On a noisy sparse stack the whole-volume "
+            "curve is nearly flat and its K* moved across a 4x range with the "
+            "grid; the foreground curve picked the same K* on every grid. gain "
+            "is diagnostic only: it selects identically to psnr_minmax."
         ),
     ),
     fg_bg_ratio: float = typer.Option(
@@ -277,8 +333,10 @@ def calibrate_command(
             "Measure the saturation exponent alpha (K~features^alpha) instead of "
             "assuming the default 0.44: calibrate K* at several region scales "
             "(--exponent-scales) and regress log K* on log n_features. The fitted "
-            "alpha is written into splat_density. WARNING: multiplies runtime by "
-            "the number of scales (each is a full K-sweep)."
+            "alpha is written into splat_density. Each scale re-runs the main "
+            "sweep's K grid in full (no early stop) and detects K* with the same "
+            "--k-star-metric (psnr_foreground by default, so alpha regresses "
+            "foreground K*). WARNING: multiplies runtime by the number of scales."
         ),
     ),
     exponent_scales: Optional[str] = typer.Option(
@@ -288,6 +346,23 @@ def calibrate_command(
             "Comma-separated region edge lengths for --fit-exponent "
             "(default '128,192,256'). Each yields one (n_features, K*) point."
         ),
+    ),
+    early_stop: bool = typer.Option(
+        True,
+        "--early-stop/--no-early-stop",
+        help="End the sweep once the K*-metric has gained no more than 0.1 dB "
+        "for 2 consecutive grid points, or one point falls >= 0.2 dB below the "
+        "best, and the measured curve is already decidable (a peak, or a flat "
+        "plateau spanning >= 0.3 dB). On a creeping curve with no knee the "
+        "early-stopped K* follows where the sweep stopped (as the full-grid K* "
+        "follows --k-max): use --no-early-stop with an explicit --k-max to see "
+        "the whole curve. Skipped K are recorded in cal.json under sweep.",
+    ),
+    extend_below: bool = typer.Option(
+        True,
+        "--extend-below/--no-extend-below",
+        help="When K* lands on the smallest grid point, fit up to 2 cheaper "
+        "points below it (once) so the optimum is bracketed.",
     ),
     # Optional outputs
     pdf_report: Optional[Path] = typer.Option(
@@ -361,6 +436,11 @@ def calibrate_command(
         pdf_report=pdf_report,
         keep_fits=keep_fits,
         quiet=quiet,
+        voxel_size=voxel_size,
+        physical=physical,
+        region_spec=region,
+        early_stop=early_stop,
+        extend_below=extend_below,
     )
 
 

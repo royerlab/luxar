@@ -124,6 +124,8 @@ export interface GSplatPickTSLNodes {
   readonly uProjectionMode: TSLNode;
   /** The visual node's ray-integral factor (its own T, not the pick's). */
   readonly uRayIntegralFactor: TSLNode;
+  /** The visual node's display gain (synced per pick render). */
+  readonly uDisplayGain: TSLNode;
   readonly uIntensity: TSLNode;
   readonly uOpacity: TSLNode;
   readonly uHasElementAlpha: TSLNode;
@@ -175,6 +177,7 @@ export function gsplatPickWebGPUFactory(
   const uTruncateSq = nodes.uTruncateSq;
   const uProjectionMode = nodes.uProjectionMode;
   const uRayIntegralFactor = nodes.uRayIntegralFactor;
+  const uDisplayGain = nodes.uDisplayGain;
   const uOpacity = nodes.uOpacity;
   const uIntensity = nodes.uIntensity;
 
@@ -190,8 +193,9 @@ export function gsplatPickWebGPUFactory(
 
   const vAmplitude2D: TSLNode = varying(float(0.0));
   // Visual-pass weight (alpha factor x opacity x max(gain, 1)) — the factor
-  // the fragment's visibility test multiplies its falloff by.
-  const vPickWeight: TSLNode = varying(float(0.0)).setInterpolation('flat');
+  // the fragment's visibility test multiplies its falloff by. It is per-splat,
+  // so `either` samples the same value at every quad corner.
+  const vPickWeight: TSLNode = varying(float(0.0)).setInterpolation('flat', 'either');
   const vL2D: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
   const vCenterScreen: TSLNode = varying(vec2(float(0.0), float(0.0)));
   const vNodeId: TSLNode = varying(uNodeId);
@@ -346,14 +350,15 @@ export function gsplatPickWebGPUFactory(
       isOrtho,
       centerCam
     );
-    const sumAmplitude: TSLNode = aAmplitude
+    const gainedAmplitude: TSLNode = aAmplitude.mul(uDisplayGain).toVar();
+    const sumAmplitude: TSLNode = gainedAmplitude
       .mul(sigmaRay.mul(uRayIntegralFactor))
       .mul(nearFade)
       .mul(dilationCompensation)
       .toVar();
     const amplitude2D: TSLNode = int(uProjectionMode)
       .equal(int(0))
-      .select(sumAmplitude, aAmplitude.mul(nearFade))
+      .select(sumAmplitude, gainedAmplitude.mul(nearFade))
       .toVar();
     // Visible-footprint tightening — visual parity (materials/gsplat/
     // shader-tsl.ts; derivation in materials/gsplat/math.ts). The SAME
@@ -591,6 +596,7 @@ export function buildGSplatPickTSLNodesFromUniforms(
       (uniforms.uRayIntegralFactor?.value as number) ??
         computeRayIntegralFactor(GSPLAT_DEFAULT_TRUNCATION_RADIUS)
     ),
+    uDisplayGain: uniform((uniforms.uDisplayGain?.value as number) ?? 1),
     ...pickVisibilityTSLNodesFromUniforms(uniforms),
   };
 }

@@ -125,6 +125,15 @@ export const log = {
     console.warn(`[${LogEmoji.WARNING}] [${module}] ${message}`, ...args);
   },
 
+  /**
+   * `console.debug` — hidden at the browser's default console level. For an
+   * expected, environment-driven condition worth one line to someone looking,
+   * but not a warning to everyone else (OPFS absent on an insecure origin).
+   */
+  debug: (module: string, message: string, ...args: unknown[]) => {
+    console.debug(`[${LogEmoji.DEBUG}] [${module}] ${message}`, ...args);
+  },
+
   // Action-specific logging
   load: (module: string, message: string, ...args: unknown[]) => {
     console.log(`[${LogEmoji.LOAD}] [${module}] ${message}`, ...args);

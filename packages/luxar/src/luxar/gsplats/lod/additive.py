@@ -57,7 +57,7 @@ from luxar.gsplats.gsplat_data import (
     SubstitutiveLevel,
 )
 from luxar.gsplats.lod._kernels import (
-    gaussian_pair_inner_product_numpy,
+    gaussian_pair_inner_products_numpy,
     gaussian_self_energy_numpy,
     truncation_radii_numpy,
 )
@@ -105,9 +105,11 @@ _VALID_CHOICES: tuple[str, ...] = GSPLAT_ADDITIVE_CHOICES
 #: every prefix) at or below this count, else ``self_energy`` (a cheap
 #: O(N log N) vectorized ranking). The dominant cost of the greedy/spectral path
 #: is NOT the lazy-heap pass (sub-second even at 20K) but :func:`_build_sparse_gram`,
-#: whose pure-Python per-pair loop is O(nnz) and scales with *overlap density*
-#: (avg neighbours per splat), not N alone — so a dense scientific volume can
-#: make even a modest part slow (this is what made a 1.5 M-splat part hang). N is
+#: which is O(nnz) and scales with *overlap density* (avg neighbours per splat),
+#: not N alone — so a dense scientific volume can make even a modest part slow
+#: (this is what made a 1.5 M-splat part hang). Its pairs are scored in
+#: vectorized batches (~1 s at N=5000, ~440 neighbours each, on a laptop CPU;
+#: see the lod README). N is
 #: only a crude proxy for nnz, so the threshold is set conservatively (mirrors
 #: substitutive LOD's ``_AUTO_GREEDY_MAX_N=5000``); above it ``self_energy`` never
 #: builds the Gram. Tunable. (NB: "Runnalls" is the *substitutive* Gaussian-
@@ -318,59 +320,79 @@ def _build_sparse_gram(data: GSplatData, *, sigmas: float) -> sparse.csr_matrix:
     radii = _truncation_radii(data, sigmas=sigmas)
     r_max = float(radii.max()) if N > 0 else 0.0
 
-    rows: list[int] = []
-    cols: list[int] = []
-    vals: list[float] = []
-
     # Diagonal: K_ii = a_i^2 * π^(D/2) * |Σ_i|^{1/2}
     diag_vals = gaussian_self_energy_numpy(amps, sqrt_det_Sigma, ndim=D)
-    for i in range(N):
-        rows.append(i)
-        cols.append(i)
-        vals.append(float(diag_vals[i]))
+    rows = [np.arange(N, dtype=np.int64)]
+    cols = [np.arange(N, dtype=np.int64)]
+    vals = [np.asarray(diag_vals, dtype=np.float64)]
 
     if N > 1 and r_max > 0.0:
         # All per-query radii ``radii[i] + r_max`` are <= ``2 * r_max``;
         # build the spatial hash with that as cell size and run a single
-        # batched radius query. Per-pair tightening to
-        # ``radii[i] + radii[j]`` happens in the inner filter below.
+        # batched radius query, then tighten each pair to ``radii[i] +
+        # radii[j]``. The pairs are scored in vectorized batches (at N <= 5000
+        # this build, not the greedy pass, is what `lod --recipe stream` spends
+        # its time on).
         coarse_radius = 2.0 * r_max
         grid = BatchedSpatialHashGrid.from_points(
             centers, cell_size=coarse_radius, device="auto"
         )
-        candidates_per_i = grid.query_radius(centers, radius=coarse_radius)
-        for i in range(N):
-            for j in candidates_per_i[i]:
-                j = int(j)
-                if j <= i:
-                    continue
-                d = centers[i] - centers[j]
-                d_norm = float(np.linalg.norm(d))
-                if d_norm > radii[i] + radii[j]:
-                    continue
-                K_ij = gaussian_pair_inner_product_numpy(
-                    centers[i],
-                    Sigma[i],
-                    float(amps[i]),
-                    centers[j],
-                    Sigma[j],
-                    float(amps[j]),
-                    sqrt_det_Sigma_i=float(sqrt_det_Sigma[i]),
-                    sqrt_det_Sigma_j=float(sqrt_det_Sigma[j]),
-                )
-                if K_ij <= 0.0:
-                    continue
-                rows.append(i)
-                cols.append(j)
-                vals.append(K_ij)
-                rows.append(j)
-                cols.append(i)
-                vals.append(K_ij)
+        i_idx, j_idx = _candidate_pairs(
+            grid.query_radius(centers, radius=coarse_radius), centers, radii
+        )
+        batch = max(1, _GRAM_BATCH_BYTES // (8 * D * D))
+        for lo in range(0, i_idx.size, batch):
+            bi = i_idx[lo : lo + batch]
+            bj = j_idx[lo : lo + batch]
+            K = gaussian_pair_inner_products_numpy(
+                centers[bi],
+                Sigma[bi],
+                amps[bi],
+                centers[bj],
+                Sigma[bj],
+                amps[bj],
+                sqrt_det_Sigma_i=sqrt_det_Sigma[bi],
+                sqrt_det_Sigma_j=sqrt_det_Sigma[bj],
+            )
+            keep = K > 0.0
+            bi, bj, K = bi[keep], bj[keep], K[keep]
+            rows += [bi, bj]
+            cols += [bj, bi]
+            vals += [K, K]
 
     return sparse.csr_matrix(
-        (np.asarray(vals, dtype=np.float64), (rows, cols)),
+        (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
         shape=(N, N),
     )
+
+
+#: Bytes of one ``(P, D, D)`` float64 covariance stack per vectorized batch in
+#: :func:`_build_sparse_gram` (the pair count follows from ``D``; a handful of
+#: such temporaries are alive at once).
+_GRAM_BATCH_BYTES = 1 << 24
+
+
+def _candidate_pairs(
+    candidates_per_i: list[np.ndarray], centers: np.ndarray, radii: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """``(i, j)`` with ``i < j`` whose truncation spheres overlap.
+
+    ``candidates_per_i`` is the spatial hash's coarse radius query; a pair is
+    kept when ``|mu_i - mu_j| <= radii[i] + radii[j]``, the same test the
+    per-pair loop applied.
+    """
+    n = len(candidates_per_i)
+    lengths = np.fromiter((len(c) for c in candidates_per_i), np.int64, count=n)
+    if not lengths.any():
+        empty = np.empty(0, dtype=np.int64)
+        return empty, empty
+    i_idx = np.repeat(np.arange(n, dtype=np.int64), lengths)
+    j_idx = np.concatenate([np.asarray(c, dtype=np.int64) for c in candidates_per_i])
+    upper = j_idx > i_idx
+    i_idx, j_idx = i_idx[upper], j_idx[upper]
+    dist = np.linalg.norm(centers[i_idx] - centers[j_idx], axis=1)
+    near = dist <= radii[i_idx] + radii[j_idx]
+    return i_idx[near], j_idx[near]
 
 
 # ─────────────────────────────────────────────────────────────────────

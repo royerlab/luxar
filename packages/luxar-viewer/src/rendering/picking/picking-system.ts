@@ -39,6 +39,7 @@ import type { PostProcessingManager } from '../post-processing/post-processing-m
 import { isCameraAwareMaterial } from '../materials/_shared/camera-aware-material';
 import { installProjectionVariantHook } from '../materials/_shared/projection-variant';
 import { alignProvokingVertexWithWebGPU } from './mesh/provoking-vertex';
+import { enableFirstVertexMeshPickFallback } from '../mesh-geometry';
 import {
   disposePickMaterial,
   isEffectivelyVisible,
@@ -130,6 +131,7 @@ export function computePickBufferSize(drawW: number, drawH: number): { w: number
 }
 
 export class PickingSystem {
+  private readonly rotateMeshPickIndices: boolean;
   private pickScene: THREE.Scene;
   private pickTarget: THREE.WebGLRenderTarget;
   private nodeMap: Map<number, PickNodeEntry> = new Map();
@@ -248,11 +250,11 @@ export class PickingSystem {
       },
     });
 
-    // Align the WebGL backend's `flat` provoking vertex with WebGPU's, so a mesh
-    // pick reports the same triangle corner on both. No-op on WebGPU and on any
-    // context without WEBGL_provoking_vertex — see picking/mesh/provoking-vertex.ts
-    // for why this context-wide flip is observable only by mesh.
-    alignProvokingVertexWithWebGPU(this.renderer);
+    // On GL, either switch to first-vertex flat sampling or rotate mesh index
+    // triples so last-vertex sampling still returns the original first corner.
+    // The renderer API surface can be WebGPU while its effective backend is GL.
+    this.rotateMeshPickIndices =
+      !alignProvokingVertexWithWebGPU(this.renderer) && !this.capabilities.nativeWebGPUBackend;
 
     log.info(Modules.RENDERER, 'PickingSystem initialized (5x5 RGBA32F)');
   }
@@ -295,6 +297,9 @@ export class PickingSystem {
 
   /** Register a main scene node and its picking shadow node. */
   registerNode(mainNode: THREE.Object3D, pickNode: THREE.Object3D, pickId: number): void {
+    if (this.rotateMeshPickIndices && mainNode.userData.nodeType === 'mesh') {
+      enableFirstVertexMeshPickFallback((mainNode as THREE.Mesh).geometry);
+    }
     // Disable automatic matrix updates on pick nodes. Their matrixWorld is
     // manually synced from the main node in renderPickBuffer(). Without this,
     // renderer.render() calls scene.updateMatrixWorld() which recomputes

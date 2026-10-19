@@ -319,3 +319,41 @@ class TestLoopbackHostPredicate:
     )
     def test_only_genuine_loopback_counts(self, bind: str, expected: bool) -> None:
         assert is_loopback_host(bind) is expected
+
+
+class TestLoopbackViewerUrl:
+    """A wildcard bind also prints the loopback URL a port forward reaches.
+
+    Inside a container the advertised LAN address is container-internal, so
+    the one printed URL was undialable from the host the port forward lands on.
+    """
+
+    def test_a_wildcard_bind_gets_a_loopback_url_for_both_servers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from ..serving import _loopback_viewer_url
+
+        monkeypatch.setattr("luxar.cli.utils.primary_lan_address", lambda: "172.17.0.2")
+        url = _loopback_viewer_url(
+            "0.0.0.0",  # nosec B104 - test argument
+            5200,
+            "http://172.17.0.2:8001",
+            title="scene",
+        )
+        assert url is not None
+        assert url.startswith("http://127.0.0.1:5200/?src=http://127.0.0.1:8001")
+        assert "172.17.0.2" not in url
+
+    def test_a_remote_src_is_left_alone(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from ..serving import _loopback_viewer_url
+
+        monkeypatch.setattr("luxar.cli.utils.primary_lan_address", lambda: "10.0.0.9")
+        wildcard = "0.0.0.0"  # nosec B104 - test argument
+        url = _loopback_viewer_url(wildcard, 5200, "https://data.example.org:443/x")
+        assert url is not None and "src=https://data.example.org:443/x" in url
+
+    def test_a_concrete_bind_prints_only_its_own_url(self) -> None:
+        from ..serving import _loopback_viewer_url
+
+        assert _loopback_viewer_url("10.0.0.5", 5200, "http://10.0.0.5:8001") is None
+        assert _loopback_viewer_url("127.0.0.1", 5200, None) is None

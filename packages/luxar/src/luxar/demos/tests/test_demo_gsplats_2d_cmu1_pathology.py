@@ -111,7 +111,8 @@ def test_local_tiled_refit_preserves_overlap_contributions(
     image = np.exp(-((y - 12) ** 2 / 50 + (x - 24) ** 2 / 450)).astype(np.float32)
     result = demo.fit_channel_tiled(image, "red", tmp_path / "red.gsplats.zarr.zip")
 
-    assert result.n_splats == 256  # Both tiles keep their full seed budget.
+    assert 0 < result.n_splats < 256
+    assert np.all(result.amplitudes >= 1e-5)
     assert result.stats.get("culled") is not True
     reconstruction = result.render_to_volume(shape=image.shape, device="cpu")
     seam_mse = np.mean((reconstruction[:, 24:32] - image[:, 24:32]) ** 2)

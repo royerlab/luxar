@@ -585,6 +585,12 @@ export interface GSplatTSLNodes {
   readonly uInvGamma: TSLNode;
   readonly uIntensity: TSLNode;
   readonly uOffset: TSLNode;
+  /**
+   * Display gain (`display_gain`): multiplies the amplitude into
+   * `vAmplitude2D` (every amplitude-linear term), never the colormap lookup.
+   * GLSL twin: `uDisplayGain` in shader-glsl.ts.
+   */
+  readonly uDisplayGain: TSLNode;
   readonly uShiftC: TSLNode;
   readonly uInvOneMinusC: TSLNode;
   readonly uColormapTex?: TSLNode;
@@ -639,6 +645,7 @@ export function gsplatWebGPUFactory(
   const uInvGamma = nodes.uInvGamma;
   const uIntensity = nodes.uIntensity;
   const uOffset = nodes.uOffset;
+  const uDisplayGain = nodes.uDisplayGain;
   const uShiftC = nodes.uShiftC;
   const uInvOneMinusC = nodes.uInvOneMinusC;
   const uTruncateSq = nodes.uTruncateSq;
@@ -838,13 +845,16 @@ export function gsplatWebGPUFactory(
       // the 2D low-pass (derivation at its definition). Sum projection only —
       // this branch's quantity IS that integral. The peak branch reports a
       // peak, not an integral, and is left alone.
+      // uDisplayGain first, matching the GLSL operand order (so a gain of
+      // exactly 1 leaves every product bit-identical).
       vAmplitude2DVal = aAmplitude
+        .mul(uDisplayGain)
         .mul(rayIntegrationBoost)
         .mul(nearFade)
         .mul(dilationCompensation!)
         .toVar();
     } else {
-      vAmplitude2DVal = aAmplitude.mul(nearFade).toVar();
+      vAmplitude2DVal = aAmplitude.mul(uDisplayGain).mul(nearFade).toVar();
     }
 
     // Eigen-axes of Σ_2D and the max-extent-clamped quad half extents (shared
@@ -1204,6 +1214,7 @@ export function buildGSplatTSLNodesFromUniforms(
     uInvGamma: uniform((uniforms.uInvGamma?.value as number) ?? 1.0),
     uIntensity: uniform((uniforms.uIntensity?.value as number) ?? 1.0),
     uOffset: uniform((uniforms.uOffset?.value as number) ?? 0.0),
+    uDisplayGain: uniform((uniforms.uDisplayGain?.value as number) ?? 1.0),
     uLabelColorMode: uniform((uniforms.uLabelColorMode?.value as number) ?? 0),
     uLabelFilterIndex: uniform((uniforms.uLabelFilterIndex?.value as number) ?? 0),
     uShiftC: uniform((uniforms.uShiftC?.value as number) ?? shiftC),

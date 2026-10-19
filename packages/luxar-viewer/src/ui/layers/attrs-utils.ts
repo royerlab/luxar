@@ -101,6 +101,8 @@ export function liveLayerAttrs(layer: LayerInfo): ComposableAttrs {
     // unlike blending_mode, which has no identity value (the campaign's
     // setter-valued-vs-identity-valued doctrine).
     absorption: layer.absorption,
+    // Identity-valued too (multiplicative 1.0), so always emitted.
+    display_gain: layer.brightness,
     gamma: clampGamma(layer.gamma),
     intensity,
     offset,

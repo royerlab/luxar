@@ -1560,6 +1560,25 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(3.0);
   });
 
+  test('gsplat-display-gain: a gain of 0.37 dims both backends alike', async ({ page }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'gsplat-display-gain');
+    const tslResult = await runTSL(page, 'gsplat-display-gain');
+    assertBothRendered(glslPixels, tslResult.pixels, 'gsplat-display-gain');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'gsplat-display-gain: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+    expect(meanAbsDiff(glslPixels, tslResult.pixels)).toBeLessThan(3.0);
+
+    // The gain really reached the emission: dimmer than the identical
+    // ungained `gsplat-colormap` draw on the same backend.
+    const ungained = await runGLSL(page, 'gsplat-colormap');
+    const sum = (px: number[]) => px.reduce((a, v, i) => (i % 4 === 3 ? a : a + v), 0);
+    expect(sum(glslPixels)).toBeLessThan(0.8 * sum(ungained));
+  });
+
   test('gsplat-gamma-one: LUXAR_GAMMA_ONE fast path matches the slow pow() path', async ({
     page,
   }) => {
