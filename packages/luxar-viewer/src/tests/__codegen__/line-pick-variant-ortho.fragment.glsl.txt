@@ -49,39 +49,29 @@ layout( std140 ) uniform render {
 layout( std140 ) uniform object {
 	mat4 nodeUniform1;
 	float nodeUniform3;
-	mat3 nodeUniform5;
+	uint nodeUniform5;
 	uint nodeUniform6;
-	mat3 nodeUniform7;
+	uint nodeUniform7;
 	uint nodeUniform8;
-	mat3 nodeUniform9;
+	uint nodeUniform9;
 	uint nodeUniform10;
-	mat3 nodeUniform11;
-	uint nodeUniform12;
-	mat3 nodeUniform13;
-	uint nodeUniform14;
-	mat3 nodeUniform15;
+	float nodeUniform11;
+	vec2 nodeUniform13;
+	float nodeUniform14;
+	float nodeUniform15;
 	uint nodeUniform16;
-	float nodeUniform17;
-	vec2 nodeUniform19;
+	uint nodeUniform17;
+	uint nodeUniform18;
+	uint nodeUniform19;
 	float nodeUniform20;
 	float nodeUniform21;
-	mat3 nodeUniform22;
-	uint nodeUniform23;
-	mat3 nodeUniform24;
-	uint nodeUniform25;
-	mat3 nodeUniform26;
-	uint nodeUniform27;
-	mat3 nodeUniform28;
-	uint nodeUniform29;
+	float nodeUniform22;
+	float nodeUniform23;
+	float nodeUniform24;
+	float nodeUniform25;
+	float nodeUniform29;
 	float nodeUniform30;
 	float nodeUniform31;
-	float nodeUniform32;
-	float nodeUniform33;
-	float nodeUniform34;
-	float nodeUniform35;
-	float nodeUniform39;
-	float nodeUniform40;
-	float nodeUniform41;
 };
 
 
@@ -153,9 +143,9 @@ void main() {
 	}
 
 
-	if ( ( int( nodeUniform32 ) == 1 ) ) {
+	if ( ( int( nodeUniform22 ) == 1 ) ) {
 
-		nodeVar175 = mix( 1.0, ( - log( ( 1.0 - min( nodeVarying5, 0.998046875 ) ) ) ), nodeUniform33 );
+		nodeVar175 = mix( 1.0, ( - log( ( 1.0 - min( nodeVarying5, 0.998046875 ) ) ) ), nodeUniform23 );
 
 	} else {
 
@@ -163,7 +153,7 @@ void main() {
 
 	}
 
-	lineBrightness = ( ( ( ( ( min( mix( ( 0.5 + ( nodeVar173 * 0.5 ) ), 1.0, nodeVarying8 ), mix( ( 0.5 + ( nodeVar174 * 0.5 ) ), 1.0, nodeVarying9 ) ) * ( max( ( exp( ( pow( abs( nodeVarying1 ), pow( 2.0, ( ( nodeVarying0 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * min( ( nodeVarying6 / ( max( nodeUniform31, 1.0 ) * 1.5 ) ), 1.0 ) ) * nodeVarying7 ) * 1.0 ) * ( ( nodeVar175 * nodeUniform34 ) * max( nodeUniform35, 1.0 ) ) );
+	lineBrightness = ( ( ( ( ( min( mix( ( 0.5 + ( nodeVar173 * 0.5 ) ), 1.0, nodeVarying8 ), mix( ( 0.5 + ( nodeVar174 * 0.5 ) ), 1.0, nodeVarying9 ) ) * ( max( ( exp( ( pow( abs( nodeVarying1 ), pow( 2.0, ( ( nodeVarying0 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * min( ( nodeVarying6 / ( max( nodeUniform21, 1.0 ) * 1.5 ) ), 1.0 ) ) * nodeVarying7 ) * 1.0 ) * ( ( nodeVar175 * nodeUniform24 ) * max( nodeUniform25, 1.0 ) ) );
 
 	if ( ( cameraProjectionMatrix[ 3 ].w > 0.5 ) ) {
 
@@ -186,7 +176,7 @@ void main() {
 
 	}
 
-	gl_FragDepth = mix( ( 1.0 / ( 1.0 + lineBrightness ) ), nodeVar176, nodeUniform39 );
+	gl_FragDepth = mix( ( 1.0 / ( 1.0 + lineBrightness ) ), nodeVar176, nodeUniform29 );
 
 	if ( ( abs( nodeVarying1 ) >= 1.0 ) ) {
 
@@ -204,7 +194,7 @@ void main() {
 	}
 
 	DiffuseColor = vec4( nodeVarying11, nodeVarying12.x, lineBrightness, nodeVarying12.y );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform41 );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform31 );
 	nodeVar180 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
 	Output = nodeVar180;
 
