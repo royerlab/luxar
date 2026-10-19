@@ -20,6 +20,11 @@ Every scene is seeded, so two runs write the same data. Usage::
     python generate_gate_scenes.py --out <repo>/datasets/gate
     python generate_gate_scenes.py --out <repo>/datasets/gate --heavy
     python generate_gate_scenes.py --out <repo>/datasets/gate --only sp64 tp50
+    python generate_gate_scenes.py --out <repo>/datasets/gate --missing
+
+``--missing`` writes only the selected scenes whose store is not on disk yet
+(what ``make render-gate`` runs), so a scene added after the directory was
+first generated appears without rewriting the others.
 """
 
 from __future__ import annotations
@@ -1180,6 +1185,11 @@ def main(argv: list[str] | None = None) -> None:
         help="Write the heavy set (large, slow stores) instead of the default set.",
     )
     parser.add_argument(
+        "--missing",
+        action="store_true",
+        help="Skip every selected scene whose store already exists under --out.",
+    )
+    parser.add_argument(
         "--small",
         action="store_true",
         help="Shrink the perf-audit writers' element counts (tests only; the "
@@ -1188,6 +1198,8 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
     names = args.only or (HEAVY_SCENE_NAMES if args.heavy else SCENE_NAMES)
+    if args.missing:
+        names = [n for n in names if not (args.out / store_filename(n)).exists()]
     entries: dict[str, PoseEntry] = {}
     with asection(f"Writing render-gate scenes to {args.out}"):
         for name in names:

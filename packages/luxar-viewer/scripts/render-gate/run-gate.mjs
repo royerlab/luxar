@@ -31,6 +31,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { availableParallelism, loadavg } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -42,7 +43,7 @@ import { pickWithinDraw, scoreBlocks, scoreFloatBuffers, scorePickBuffers } from
 import { writeUlpHeatmap } from './heatmap.mjs';
 import * as ops from './page-ops.mjs';
 import { perfRowStatus, scorePerfMetric } from './perf-row.mjs';
-import { ROTATIONS } from './perf-stats.mjs';
+import { loadSummary, ROTATIONS } from './perf-stats.mjs';
 import { startServer } from './server.mjs';
 import {
   countTimingJudgements,
@@ -403,6 +404,8 @@ async function measureArm(browser, origin, c, backend) {
       rendersPerFrame: mo.rendersPerFrame,
       wakeRenders: wk.renders,
       wakeBlockMs: wk.blockMs,
+      // Reported, not judged: the host load this arm ran under (`loadSummary`).
+      load1: loadavg()[0],
     };
   } finally {
     await context.close();
@@ -524,6 +527,19 @@ function markdown(meta, exact, perf, suites) {
     `- class: ${opts.cls}; intended: ${opts.intended.join(', ') || '-'}`
   );
   lines.push(`- host: ${meta.host}; GPU: ${meta.gpu ?? '?'}`);
+  const load = meta.hostLoad;
+  if (load) {
+    const arms = Object.entries(load.arms)
+      .map(([arm, v]) => `${arm} ${v.median.toFixed(1)} (max ${v.max.toFixed(1)})`)
+      .join(', ');
+    lines.push(`- host load (1-min average, ${load.cpus} CPUs): ${arms}`);
+    if (load.high) {
+      lines.push(
+        `- **warning: the host was busy** (median load ${load.medianPerCpu.toFixed(2)} per CPU). ` +
+          'Timings shared the machine with other work; read perf verdicts with care and rerun on an idle host.'
+      );
+    }
+  }
   if (meta.browserRelaunches > 0) {
     lines.push(
       `- browser relaunched ${meta.browserRelaunches}x after disconnecting (cases retried once)`
@@ -714,6 +730,7 @@ async function main() {
     cand: { ref: cand.ref, sha: cand.sha },
     host: `${process.platform}/${process.arch}`,
     gpu: [...seenGpus].join(' | '),
+    hostLoad: loadSummary(rows, availableParallelism()),
     browserRelaunches,
     timingTests,
     verdict,

@@ -3,7 +3,7 @@ import { log, Modules } from '../../utils/log';
 import { getErrorMessage } from '../../utils/format-error';
 import { config } from '../../config';
 import { OPFSBucketCache, getBucket, hashTag, keyToFileName } from './opfs-store/buckets';
-import { getLuxarOpfsRoot } from './opfs-store/opfs-root';
+import { getLuxarOpfsRoot, isOpfsSupported, opfsUnavailableReason } from './opfs-store/opfs-root';
 import {
   IDENTITY_FILE,
   OPFSMetadataManager,
@@ -413,6 +413,13 @@ export class OPFSStore {
     // calls init() twice in production, but this makes stickiness
     // structural rather than incidental.
     if (this.breakerTripped) return;
+    if (!isOpfsSupported()) {
+      // Expected on an insecure origin, so one quiet line and no stack: the
+      // warning below is for an OPFS that exists and still fails.
+      log.debug(Modules.CACHE, `No L2 disk cache: ${opfsUnavailableReason()}`);
+      this.opfsRoot = null;
+      return;
+    }
     try {
       const root = await getLuxarOpfsRoot({ create: true });
       // dispose() may land during any of these awaits. Re-check after each so
@@ -441,11 +448,18 @@ export class OPFSStore {
       // must not delay the first chunk reads. dispose() awaits it.
       this.pendingReconcile = this.reconcileOrphans();
     } catch (error) {
-      log.warning(
-        Modules.CACHE,
-        'OPFSStore unavailable (init / write-probe failed) — running without the L2 disk cache',
-        error
-      );
+      if (error instanceof DOMException && error.name === 'SecurityError') {
+        // The browser refuses storage outright for this origin (an insecure
+        // context, a private window, storage blocked by policy): expected,
+        // so one quiet line rather than a warning with a stack.
+        log.debug(Modules.CACHE, `No L2 disk cache: OPFS refused (${error.message})`);
+      } else {
+        log.warning(
+          Modules.CACHE,
+          'OPFSStore unavailable (init / write-probe failed) — running without the L2 disk cache',
+          error
+        );
+      }
       this.opfsRoot = null;
     }
   }

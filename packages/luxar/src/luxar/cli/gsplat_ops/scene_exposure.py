@@ -27,7 +27,7 @@ exactly ``S``. The ``.gsplats.zarr`` itself is never touched: ``gsplat render`` 
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 
 from ...core.group.gsplats_pipeline.amplitude_norm import (
@@ -45,7 +45,12 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ...gsplats.tree import GSplatNode
     from .scene_orientation import ConvertOrientation
 
-__all__ = ["ConvertExposure", "resolve_convert_exposure"]
+__all__ = [
+    "ConvertExposure",
+    "predict_volumetric_ray_mass",
+    "resolve_convert_exposure",
+    "volumetric_depth_line",
+]
 
 
 @dataclass(frozen=True)
@@ -67,81 +72,22 @@ class ConvertExposure:
     normalize: NormalizeSpec = False
 
 
-def _column_of(name: str, orientation: "ConvertOrientation") -> int:
-    """Center column holding the scene dimension ``name``."""
-    if orientation.dim_order is not None:
-        return list(orientation.dim_order).index(name)
-    return orientation.dimensions.names.index(name)
-
-
-def _world_index(letter: str, displayed: List[str]) -> int:
-    """Displayed position of the dimension named ``letter`` (as the camera does)."""
-    lowered = [name.lower() for name in displayed]
-    return lowered.index(letter) if letter in lowered else "xyz".index(letter)
-
-
 def opening_view_columns(
     orientation: "ConvertOrientation",
 ) -> Tuple[List[int], Optional[int], Optional[str]]:
-    """Displayed center columns, the view-axis column and its scene name.
+    """:func:`luxar.gsplats.exposure.opening_view_columns` for convert's layout."""
+    from ...gsplats.exposure import opening_view_columns as _columns
 
-    The camera's ``view_axis`` (``xy`` faces the XY plane, looking along the
-    third displayed axis); without one, the viewer's default looks along the
-    third displayed dimension. A planar scene has no view axis.
-    """
-    dims = orientation.dimensions
-    displayed = [dims.dimensions[i].name for i in dims.displayed]
-    columns = [_column_of(name, orientation) for name in displayed]
-    if len(displayed) != 3:
-        return columns, None, None
-    camera = orientation.camera
-    depth = 2
-    if camera is not None and camera.view_axis is not None:
-        plane = {_world_index(c, displayed) for c in camera.view_axis}
-        depth = ({0, 1, 2} - plane).pop()
-    return columns, columns[depth], displayed[depth]
+    return _columns(orientation.dimensions, orientation.dim_order, orientation.camera)
 
 
 def opening_hidden_axes(
     orientation: "ConvertOrientation", centers: Any
 ) -> List["HiddenAxis"]:
-    """Each hidden scene dimension as a :class:`HiddenAxis` at its opening position.
+    """:func:`luxar.gsplats.exposure.opening_hidden_axes` for convert's layout."""
+    from ...gsplats.exposure import opening_hidden_axes as _hidden
 
-    The viewer's ``SceneDimsManager.defaultPosition``: a discrete (or
-    categorical) axis opens at its range minimum, a continuous one at its centre.
-    """
-    import numpy as np
-
-    from ...gsplats.exposure import HiddenAxis
-
-    axes: List[HiddenAxis] = []
-    for dim in orientation.dimensions.dimensions:
-        if dim.display:
-            continue
-        column = _column_of(dim.name, orientation)
-        values = np.asarray(centers[:, column], dtype=np.float64)
-        if dim.range is not None:
-            lo, hi = float(dim.range[0]), float(dim.range[1])
-        else:
-            lo, hi = float(values.min()), float(values.max())
-        discrete = bool(dim.discrete or dim.categories)
-        step = float(dim.step or 1.0)
-        position = lo if discrete else 0.5 * (lo + hi)
-        axes.append(HiddenAxis(column, position, discrete, step, (lo, hi)))
-    return axes
-
-
-def _leaf_truncation(node: "GSplatNode") -> float:
-    """The truncation radius the opening leaves render with."""
-    from ...gsplats.tree import iter_default_leaves
-    from ...typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
-
-    for leaf in iter_default_leaves(node):
-        for sub in leaf.additive_sublods:
-            radius = getattr(sub, "truncation_radius", None)
-            if radius:
-                return float(radius)
-    return DEFAULT_TRUNCATION_RADIUS
+    return _hidden(orientation.dimensions, centers, orientation.dim_order)
 
 
 def _gain_attrs(
@@ -178,6 +124,27 @@ def _manual(
         units,
         f"Exposure: manual gain ×{scale_intensity:g} (--display-gain); "
         "auto exposure off",
+    )
+
+
+#: Opening-view projected p99.9, in per-splat-normalised units (the brightest
+#: splat peaks at ~1), above which the brightest rays stack so many splats that
+#: additive blending shows an integrated haze rather than interior structure.
+#: Measured on real fits: sparse cells/nuclei (A549, Allen DNA at 128k splats,
+#: h2afva) sit at 0.6-10; dense nuclear stains (cells3d nuclei, a full Allen
+#: FOV) at 28-31, the volumes testers described as a featureless glow.
+DENSE_PROJECTED_SUM = 20.0
+
+
+def dense_view_hint(predicted_before: float) -> Optional[str]:
+    """One line pointing a dense volume at volumetric blending, else ``None``."""
+    if predicted_before < DENSE_PROJECTED_SUM:
+        return None
+    return (
+        f"Dense along the view: the brightest rays stack ~{predicted_before:.0f} "
+        "splat peaks, so additive blending shows an integrated glow rather than "
+        "interior detail. For interior structure try --blending-mode volumetric "
+        "(convert then prints a starting --absorption)."
     )
 
 
@@ -236,6 +203,7 @@ def resolve_convert_exposure(
         SUMMING_BLENDING_MODES,
         collect_default_splats,
         default_target_brightness,
+        opening_truncation_radius,
         plan_projected_exposure,
         stamped_amplitude_window,
     )
@@ -273,7 +241,7 @@ def resolve_convert_exposure(
             opacity=opacity,
             data_range=stamped_amplitude_window(node, per_splat),
             target=target,
-            trunc=_leaf_truncation(node),
+            trunc=opening_truncation_radius(node),
         )
     except ValueError as exc:
         return _exposure(
@@ -289,10 +257,72 @@ def resolve_convert_exposure(
     }
     if axis_name is not None:
         extra[PROJECTED_SUM_AXIS_ATTR] = axis_name
-    return _exposure(
+    exposure = _exposure(
         per_splat * plan.factor,
         "projected",
         units,
         _exposure_line(plan, per_splat),
         **extra,
+    )
+    hint = dense_view_hint(plan.predicted_before)
+    if hint is not None and exposure.line:
+        exposure = replace(exposure, line=f"{exposure.line}\n{hint}")
+    return exposure
+
+
+def predict_volumetric_ray_mass(
+    node: "GSplatNode",
+    orientation: "ConvertOrientation",
+    *,
+    gain: float,
+    opacity: float,
+) -> Optional[float]:
+    """Opening-view p99.9 of the per-ray density sum ``volumetric`` absorbs by.
+
+    The shader's optical depth is ``tau = absorption * opacity * intensity``,
+    where ``intensity`` is the sum-projected ray mass of the GAINED amplitudes —
+    the additive render's sum before any colour or colormap gain. That is the
+    projected-sum predictor with every splat's colour gain set to 1, so the
+    returned value ``S`` gives ``tau ~= absorption * S`` on the brightest rays.
+    ``None`` when nothing can be predicted (empty node, unsupported dims).
+    """
+    import numpy as np
+
+    from ...gsplats.exposure import (
+        collect_default_splats,
+        opening_truncation_radius,
+        plan_projected_exposure,
+    )
+
+    centers, chol, amps, _colors = collect_default_splats(node)
+    if np.asarray(amps).size == 0:
+        return None
+    columns, axis_col, _axis_name = opening_view_columns(orientation)
+    try:
+        plan = plan_projected_exposure(
+            centers,
+            chol,
+            np.asarray(amps, dtype=np.float64) * gain,
+            np.ones((np.asarray(amps).size, 3)),
+            view_axis=axis_col,
+            display_dims=columns,
+            hidden=opening_hidden_axes(orientation, centers),
+            opacity=opacity,
+            trunc=opening_truncation_radius(node),
+        )
+    except ValueError:
+        return None
+    return float(plan.predicted_before) if plan.predicted_before > 0 else None
+
+
+def volumetric_depth_line(ray_mass: float, absorption: float) -> str:
+    """Narrate the brightest rays' optical depth and the κ for ~one depth there."""
+    import math
+
+    tau = absorption * ray_mass
+    return (
+        f"Volumetric: brightest rays (opening-view p99.9) carry density "
+        f"{ray_mass:.3g}, so --absorption {absorption:g} gives optical depth "
+        f"~{tau:.3g} there ({100 * math.exp(-tau):.0f}% transmitted); "
+        f"--absorption {1.0 / ray_mass:.2g} would give ~1 (37%)"
     )

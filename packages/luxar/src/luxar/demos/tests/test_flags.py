@@ -172,9 +172,13 @@ def test_add_serve_arguments_lets_argparse_demos_accept_host_and_no_open() -> No
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-serve", action="store_true")
     add_serve_arguments(parser)
-    args = parser.parse_args(["--host", "0.0.0.0", "--no-open"])
+    args = parser.parse_args(
+        ["--host", "0.0.0.0", "--no-open", "--port", "9100", "--viewer-port", "9200"]
+    )
     assert args.host == "0.0.0.0" and args.no_open is True
+    assert (args.port, args.viewer_port) == (9100, 9200)
     assert parser.parse_args([]).host is None
+    assert parser.parse_args([]).port is None
 
 
 def test_argparse_demos_accept_the_forwarded_serve_flags() -> None:

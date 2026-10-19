@@ -17,6 +17,7 @@
 
 import { test, expect } from './fixtures';
 import { waitForLuxarReady } from './helpers';
+import { skipUnlessWebGL } from './webgpu-project';
 
 async function loseAndRestoreContext(page: import('@playwright/test').Page): Promise<boolean> {
   const lost = await page.evaluate(() => {
@@ -57,6 +58,9 @@ test.describe('WebGL Context Restore (CR-1)', () => {
   // `caps.apiSurface !== 'webgl2'`. Run these tests under
   // `VITE_LUXAR_USE_LEGACY_WEBGL=1` for coverage of the GLSL path.
   test.beforeEach(async ({ page }) => {
+    // Decided before loading anything in the native-WebGPU project, where the
+    // page would come up on `renderer=webgpu` and skip below anyway.
+    skipUnlessWebGL('drives WEBGL_lose_context and the webglcontext* event cycle');
     await page.goto('/?debug');
     await waitForLuxarReady(page);
     const api = await page.evaluate(

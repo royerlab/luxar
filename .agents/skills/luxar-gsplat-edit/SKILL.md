@@ -21,8 +21,9 @@ of `fit` / `batch-fit`). For fitting a volume, calibration, and LOD recipes, use
 
 The read-only inspection commands (`info` / `render` / `compare` / `view` /
 `napari`) accept flat, partition, or nested LOD stores. `partition`, `cull`,
-`filter`, `slice`, `decimate`, and `merge` require a flat (matrix-shaped) store;
-run `luxar gsplat flatten` first for partition or nested inputs. Most *editing*
+`filter`, `slice`, and `decimate` require a flat (matrix-shaped) store; run
+`luxar gsplat flatten` first for partition or nested inputs. `merge` flattens such
+an input itself (same code as `flatten`, staged in a temporary store) and says so. Most *editing*
 commands accept `--encoding`/`-e` and usually `--compress`, and write a new
 dataset (non-destructive). Exception: `annotate-quality` stamps the input IN
 PLACE (no `-e`).
@@ -210,7 +211,8 @@ luxar gsplat annotate-quality in.gsplats.zarr                # e(k) + w only (fa
 luxar gsplat annotate-quality in.gsplats.zarr --with-quality # + measured per-level Q
 luxar gsplat annotate-quality in.gsplats.zarr --dry-run      # print stamps, write nothing
 
-# Merge: stack two channels with colors, or stack timepoints as a new dimension
+# Merge: stack two channels with colors, or stack timepoints as a new dimension.
+# Tiled fit outputs (kind=partition) are flattened automatically first.
 luxar gsplat merge ch0.gsplats.zarr ch1.gsplats.zarr -o multi.gsplats.zarr \
     --channel-colors "#ff0080,#00ff00"
 # --as-dimension quantises the stacked coordinate under the default `auto`
@@ -236,7 +238,26 @@ luxar gsplat napari in.gsplats.zarr                    # napari + centers overla
 
 Before scoring a stacked or transformed archive, read "Scoring a STACKED or
 TRANSFORMED archive" in the `luxar-gsplat-pipeline` skill; `compare --timepoint`
-slices the reference, not the splat archive.
+slices the reference, not the splat archive. `transform --scale-intensity` and
+`--normalize-intensity` are safe to score: the store records the cumulative
+`intensity_scale`, `compare` / `render` divide the render by it and `cull
+--target` multiplies the target by it, so the numbers match the unedited fit. An
+offset, clamp or per-splat reweight drops the basis (`compare` warns); score
+before it.
+
+`compare` also prints a **noise ceiling**: the foreground PSNR a noise-free model
+would score against this noisy reference (`20 log10(peak / sigma)`, sigma measured
+in the foreground), with a verdict. On noise-limited data ~20 dB foreground can
+be the best possible: within 1 dB below the ceiling is "at the noise floor".
+Above it is never proof of fitted noise: 1-3 dB above is "ambiguous", >3 dB
+"undetermined", because sub-voxel structure (sparse puncta, hot pixels) inflates
+the noise estimate unseen. A scale check marks the ceiling UNRELIABLE when the
+finest band is not white (voxel-scale structure, or correlated noise from a
+deconvolved/upsampled/downscaled reference); by design that withholds the
+verdict on many clean, high-SNR volumes. JSON: `foreground_psnr_noise_ceiling_db`,
+`noise_ceiling_reliable`, `noise_sigma`, `noise_verdict`. A `--region` crop fit
+compared against its full source volume is scored on the region it fitted (the
+fit stamp's mask); `--whole-volume` scores all of it.
 
 ### Physical-unit fits: `render`/`compare` map them back to voxels
 
@@ -284,7 +305,7 @@ the pedestal is gone by design.
 
 - **Full flag tables** for every command (cull methods, filter criteria, transform
   order, merge modes, partition/flatten rules, inspect options) are in
-  `references/edit-commands.md`.
+  [references/edit-commands.md](references/edit-commands.md).
 - The old `split` command is gone — use `partition`.
 - `transform` applies operations in a fixed order: scale → rotate → translate → center
   → scale-intensity → normalize-intensity. It composes to `p → R·S·p + (t − c)`, so **a

@@ -15,7 +15,12 @@ from arbol import aprint, asection
 
 from .._traceback import exit_with_error, report_error
 from ..common_options import CorsOriginOption, HostOption, make_port_option
-from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size, store_size
+from ..utils import (
+    _DEFAULT_CORS_ORIGIN,
+    format_memory_size,
+    local_input_path,
+    store_size,
+)
 
 if TYPE_CHECKING:
     import numpy as np
@@ -595,7 +600,9 @@ def _info_report(
 
 def info_dataset(
     path: Path = typer.Argument(
-        ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
+        ...,
+        callback=local_input_path,
+        help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)",
     ),
     show_histograms: bool = typer.Option(
         True, "--histograms/--no-histograms", help="Show ASCII histograms"
@@ -998,10 +1005,14 @@ def quick_view(
 
 def compare_quality(
     gsplats_path: Path = typer.Argument(
-        ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
+        ...,
+        callback=local_input_path,
+        help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)",
     ),
     reference_path: Path = typer.Argument(
-        ..., exists=True, help="Reference volume (.npy, .tiff, .zarr, etc.)"
+        ...,
+        callback=local_input_path,
+        help="Reference volume (.npy, .tiff, .zarr, etc.)",
     ),
     shape: Optional[str] = typer.Option(
         None,
@@ -1041,6 +1052,15 @@ def compare_quality(
         help="Score a --downscale fit on the grid it was fitted on: the reference "
         "is decimated the same way (anti-aliased, strided) and the splats mapped "
         "onto that grid. Default: score at the source resolution.",
+    ),
+    whole_volume: bool = typer.Option(
+        False,
+        "--whole-volume",
+        help="Score a --region crop fit over the WHOLE reference. By default a "
+        "crop fit compared against its full source volume is scored on the "
+        "region it fitted (fitting/source_region), so the foreground mask "
+        "matches the one the fit stamped; outside the region every structure "
+        "counts as error.",
     ),
     mask: Optional[Path] = typer.Option(
         None,
@@ -1097,7 +1117,10 @@ def compare_quality(
     with its stored voxel_size. Partition and nested stores are scored over
     their default-rendered selection: all parts and each LOD group's finest
     level. The compression ratio covers the whole store, including coarse
-    levels that are not scored.
+    levels that are not scored. A --region crop fit is scored on the region it
+    fitted (--whole-volume for all of the reference). Beside the foreground
+    PSNR it prints the PSNR a noise-free model would score against this noisy
+    reference (from the noise sigma measured in the foreground) and a verdict.
 
     Examples:
         luxar gsplat compare fitted.gsplats.zarr original.tiff
@@ -1124,6 +1147,7 @@ def compare_quality(
             fg_threshold=fg_threshold,
             voxel_size=voxel_size,
             at_fit_resolution=at_fit_resolution,
+            whole_volume=whole_volume,
             output_json=output_json,
             quiet=quiet,
         )

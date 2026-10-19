@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { getSplatTexture } from './gsplat-geometry';
 import { getPointTexture } from './point-geometry';
 import { getLineTexture } from './line-geometry';
-import { scheduleBlendModeProgramWarmupForObject } from './webgl-blend-warmup';
+import { scheduleBlendModeProgramWarmupForObject } from './blend-warmup';
 
 /*
  * Family detection is STRUCTURAL, not `instanceof`.

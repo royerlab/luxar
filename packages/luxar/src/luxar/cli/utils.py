@@ -45,6 +45,47 @@ is_loopback_host = _is_loopback_host
 T = TypeVar("T")
 
 
+#: URL schemes a user plausibly hands a volume/store argument. The match is on
+#: the PATH-NORMALIZED spelling too: Typer turns ``https://h/x.zarr`` into a
+#: ``Path`` and ``Path`` collapses ``//`` to ``/``, so ``https:/h/x.zarr`` is
+#: what reaches the command.
+_REMOTE_INPUT_RE = re.compile(r"^(https?|s3|gs|gcs|az|abfss?|ftp)://?", re.IGNORECASE)
+
+
+def reject_remote_input(path: "Path | str") -> None:
+    """Refuse ``path`` with a usage error when it is a URL, not a local path.
+
+    The volume/store readers behind ``gsplat fit``/``cal``/``compare``/``info``
+    open local files only; without this check a URL fails as a misleading
+    "file not found" on its slash-collapsed spelling.
+
+    Raises:
+        typer.BadParameter: When ``path`` starts with a remote URL scheme.
+    """
+    text = str(path)
+    if not _REMOTE_INPUT_RE.match(text):
+        return
+    url = re.sub(r"^([A-Za-z0-9+.-]+):/(?!/)", r"\1://", text)
+    raise typer.BadParameter(
+        f"{url} is a remote URL; remote stores are not supported. Download it "
+        "(or the crop you need) to a local path first and pass that path."
+    )
+
+
+def local_input_path(value: Optional[Path]) -> Optional[Path]:
+    """Typer callback: an existing LOCAL path, refusing URLs by name.
+
+    Use instead of ``exists=True``, whose check runs first and would report a
+    URL as a missing file. The missing-path message matches Click's.
+    """
+    if value is None:
+        return value
+    reject_remote_input(value)
+    if not value.exists():
+        raise typer.BadParameter(f"Path {str(value)!r} does not exist.")
+    return value
+
+
 def deprecated_option(
     value: T,
     old_flag: str,

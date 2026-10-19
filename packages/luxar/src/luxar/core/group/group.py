@@ -1385,7 +1385,11 @@ class Group(Node):
                 — ``display_gain`` / ``amplitude_unit`` / ``amplitude_offset`` /
                 ``source_data_range``, exactly what ``luxar gsplat convert``
                 stamps. They are refused while ``normalize_amplitudes`` would
-                rescale the amplitudes.
+                rescale the amplitudes. Neither path dims for splats SUMMING
+                along a ray, which ``gsplat convert``'s auto exposure does: a
+                dense fit under ``additive`` opens white. Pass
+                ``**luxar.gsplats.exposure.auto_exposure_attrs(path, ...)`` for
+                convert's exposure (it sets ``normalize_amplitudes=False``).
             partition: Spatial partition control applied to the loaded matrix,
                 or to each leaf of a retained nested tree.
             substitutive_lod: Substitutive-LOD control applied after loading;

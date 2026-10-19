@@ -264,10 +264,15 @@ def run_denoise_volume_cmd(
 def _load_render_leaves(
     input_path: Path, voxel_size: Optional[str]
 ) -> tuple[list[GSplatData], dict, int, Any]:
-    """The default-rendered leaves on the voxel grid, root stats, ndim, axis names."""
+    """The default-rendered leaves on the voxel grid, root stats, ndim, axis names.
+
+    The leaves are also back in the source's units: a recorded
+    ``intensity_scale`` (``transform --scale-intensity``) is divided out.
+    """
+    from luxar.gsplats.fit_basis import stored_intensity_scale
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.io.load_gsplats import load_gsplat_node
-    from luxar.gsplats.scoring_grid import map_to_grid
+    from luxar.gsplats.scoring_grid import amplitudes_in_source_units, map_to_grid
     from luxar.gsplats.tree import iter_default_leaves
 
     from ..compare_ops import resolve_voxel_size
@@ -285,6 +290,13 @@ def _load_render_leaves(
             f"(from {source})"
         )
         datas = [map_to_grid(d, scale=scale) for d in datas]
+    intensity_scale = stored_intensity_scale(stats)
+    if intensity_scale != 1.0:
+        aprint(
+            f"Amplitudes divided by intensity_scale={intensity_scale:.6g} (a "
+            "transform --scale-intensity edit); rendering in the source's units"
+        )
+        datas = [amplitudes_in_source_units(d, intensity_scale) for d in datas]
     return datas, stats, ndim, node.meta.get("dimension_metadata")
 
 

@@ -72,6 +72,11 @@ export const ASYNC_OPERATIONS: readonly AsyncOperation[] = [
 
   // ── Covered by their own tests ───────────────────────────────────────────
   {
+    id: 'WebGPU device loss and renderer rebuild',
+    symbols: ['scene/scene-manager/render-pipeline/webgpu-device-recovery.ts#WebGPUDeviceRecovery'],
+    tests: ['scene/scene-manager/render-pipeline/webgpu-device-recovery.test.ts'],
+  },
+  {
     id: 'HDR headroom controller (screen details, display listeners)',
     symbols: ['utils/hdr/hdr-headroom.ts#HdrHeadroomController'],
     tests: ['utils/hdr/hdr-headroom.test.ts'],

@@ -9,6 +9,16 @@
  * the whole frame's counters before the next reset. On the WebGPU backend
  * the counters may lag one frame; they are diagnostics, not assertions.
  *
+ * The two renderers' `info` objects disagree on field meaning, and the
+ * snapshot normalizes them:
+ *
+ * | snapshot   | `WebGLRenderer`             | `WebGPURenderer` (three `common/Info`)   |
+ * | ---------- | --------------------------- | ---------------------------------------- |
+ * | `calls`    | `render.calls` (draw calls) | `render.drawCalls` (`render.calls` there |
+ * |            |                             | counts `render()` passes since startup)  |
+ * | `frame`    | `render.frame`              | `render.calls`                           |
+ * | `programs` | `programs.length`           | `memory.programs` (shader stages)        |
+ *
  * Allocation-free on the hot path: one snapshot object is mutated in place
  * per frame and copied only when read.
  *
@@ -21,13 +31,18 @@ import { eventBus, type Unsubscribe } from '../../../utils/cross-layer/event-bus
 export interface RendererInfoSnapshot {
   /** Three's render-pass counter (increments per `render()` call, not per frame). */
   frame: number;
+  /** Draw calls in the sampled frame, on either backend. */
   calls: number;
   triangles: number;
   points: number;
   lines: number;
   geometries: number;
   textures: number;
-  /** Compiled programs, when the backend exposes them (WebGL only). */
+  /**
+   * Live shader programs, or null when the backend exposes none. NOT comparable
+   * across backends: WebGL counts linked programs, WebGPU counts shader STAGES
+   * (a render pipeline's vertex and fragment modules each count once).
+   */
   programs: number | null;
   /** `performance.now()` of the sampled frame-end. */
   sampledAt: number;
@@ -42,13 +57,21 @@ export interface RendererInfoSource {
     autoReset?: boolean;
     reset?: () => void;
     render?: {
+      /** WebGL only: render-pass counter. */
       frame?: number;
+      /** WebGL: draw calls this frame. WebGPU: `render()` passes since startup. */
       calls?: number;
+      /** WebGPU only: draw calls this frame. */
+      drawCalls?: number;
+      /** WebGPU only: `render()` passes this frame. */
+      frameCalls?: number;
       triangles?: number;
       points?: number;
       lines?: number;
     };
-    memory?: { geometries?: number; textures?: number };
+    /** `programs` is WebGPU only (a count). */
+    memory?: { geometries?: number; textures?: number; programs?: number };
+    /** WebGL only: the program cache. */
     programs?: unknown[] | null;
   };
 }
@@ -81,42 +104,74 @@ function nowMs(): number {
     : Date.now();
 }
 
+type RendererInfo = NonNullable<RendererInfoSource['info']>;
+
+/** WebGPU's `Info` is the one with a per-frame `drawCalls` counter. */
+function isWebGPUInfo(render: RendererInfo['render'] | undefined): boolean {
+  return typeof render?.drawCalls === 'number';
+}
+
+function programCount(info: RendererInfo): number | null {
+  if (Array.isArray(info.programs)) return info.programs.length;
+  const programs = info.memory?.programs;
+  return typeof programs === 'number' ? programs : null;
+}
+
 function sample(renderer: RendererInfoSource | null | undefined): void {
   const info = renderer?.info;
   if (!info) return;
   const render = info.render ?? EMPTY;
   const memory = info.memory ?? EMPTY;
-  snapshot.frame = num(render.frame);
-  snapshot.calls = num(render.calls);
+  const webgpu = isWebGPUInfo(info.render);
+  snapshot.frame = num(webgpu ? render.calls : render.frame);
+  snapshot.calls = num(webgpu ? render.drawCalls : render.calls);
   snapshot.triangles = num(render.triangles);
   snapshot.points = num(render.points);
   snapshot.lines = num(render.lines);
   snapshot.geometries = num(memory.geometries);
   snapshot.textures = num(memory.textures);
-  snapshot.programs = Array.isArray(info.programs) ? info.programs.length : null;
+  snapshot.programs = programCount(info);
   snapshot.sampledAt = nowMs();
   snapshot.samples += 1;
 }
 
-/** The per-frame counters `info.reset()` zeroes, saved at frame-start. */
-const savedRender = { calls: 0, triangles: 0, points: 0, lines: 0 };
+/**
+ * The per-frame counters `info.reset()` zeroes, saved at frame-start. WebGL
+ * zeroes `calls`; WebGPU zeroes `drawCalls` / `frameCalls` and leaves its
+ * cumulative `calls` alone (restoring that one is then a no-op).
+ */
+const RESET_COUNTERS = [
+  'calls',
+  'drawCalls',
+  'frameCalls',
+  'triangles',
+  'points',
+  'lines',
+] as const;
+type ResetCounter = (typeof RESET_COUNTERS)[number];
+const savedRender: Record<ResetCounter, number | undefined> = {
+  calls: undefined,
+  drawCalls: undefined,
+  frameCalls: undefined,
+  triangles: undefined,
+  points: undefined,
+  lines: undefined,
+};
 
-type RenderCounters = NonNullable<NonNullable<RendererInfoSource['info']>['render']>;
+type RenderCounters = NonNullable<RendererInfo['render']>;
 
 function saveRenderCounters(render: RenderCounters | undefined): void {
-  savedRender.calls = num(render?.calls);
-  savedRender.triangles = num(render?.triangles);
-  savedRender.points = num(render?.points);
-  savedRender.lines = num(render?.lines);
+  for (const key of RESET_COUNTERS) savedRender[key] = render?.[key];
 }
 
 /** Undo a frame-start reset for a tick that drew nothing. */
 function restoreRenderCounters(render: RenderCounters | undefined): void {
   if (!render) return;
-  render.calls = savedRender.calls;
-  render.triangles = savedRender.triangles;
-  render.points = savedRender.points;
-  render.lines = savedRender.lines;
+  for (const key of RESET_COUNTERS) {
+    const saved = savedRender[key];
+    // Never invent a field the backend's Info does not carry.
+    if (typeof saved === 'number') render[key] = saved;
+  }
 }
 
 /**
