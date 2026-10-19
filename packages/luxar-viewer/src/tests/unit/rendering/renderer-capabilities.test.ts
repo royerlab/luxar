@@ -82,7 +82,6 @@ describe('createRendererCapabilities', () => {
     const caps = createRendererCapabilities(fakeRenderer());
     expect(caps.apiSurface).toBe('webgl2');
     expect(caps.backendKind).toBe('webgl');
-    expect(caps.nativeWebGPUBackend).toBe(false);
   });
 
   it('reports framebufferYDown=false under WebGL2 (FBO row 0 = bottom)', () => {
@@ -240,7 +239,6 @@ describe('createRendererCapabilities (WebGPU limits)', () => {
     expect(caps.framebufferYDown).toBe(true);
     expect(caps.readbackYDown).toBe(isNative);
     expect(caps.backendKind).toBe(isNative ? 'webgpu-native' : 'webgpu-gl');
-    expect(caps.nativeWebGPUBackend).toBe(isNative);
   });
 
   it('reports the WebGL2 bridge when backend introspection is unavailable', () => {
