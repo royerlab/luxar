@@ -18,6 +18,7 @@ import {
   waitForSpatialQueryOrThrow,
   waitForNextRender,
 } from './helpers';
+import { skipUnlessWebGL } from './webgpu-project';
 
 // All tests in this file deliberately exercise broken-dataset paths
 // (missing files, corrupted zmetadata, missing positions, network
@@ -253,6 +254,10 @@ test.describe('Error Recovery - Network Failures', () => {
 });
 
 test.describe('Error Recovery - WebGL Failures', () => {
+  test.beforeEach(() => {
+    skipUnlessWebGL('simulates loss through WEBGL_lose_context on a webgl2 context');
+  });
+
   test('should detect WebGL context loss without crashing', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (err) => errors.push(err.message));

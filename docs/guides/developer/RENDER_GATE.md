@@ -52,7 +52,11 @@ those fields.
    by `scripts/render-gate/generate_gate_scenes.py` into `datasets/gate/`:
    `mixed` (all four geometry types, pickable), `env_splats` (splats reflected in a
    scene-captured environment), `partition_normal`, `glass` (`refract_data`),
-   `lod_ladder` (one copy under a rotated parent) and `tiny_units_ortho`. Every
+   `lod_ladder` (one copy under a rotated parent) and `tiny_units_ortho`.
+   `make render-gate` runs the generator with `--missing`, which writes only the
+   stores not on disk yet, so a scene added after `datasets/gate` was first
+   generated appears on the next run (`REGEN=1` rewrites them all). A suite case
+   whose store is still missing errors with the command that writes it. Every
    exact case runs per renderer path (WebGLRenderer, native WebGPURenderer,
    WebGPURenderer forced onto WebGL2), per device scale factor (1 and 2;
    an odd 1277×719 viewport at 1.5 for two cases), per projection and per pose.
@@ -245,7 +249,10 @@ The unpaced orbit adds 30 warm-up animation frames and one 180-step render batch
 per arm. A metric missing from either build reads `n/a` and does not decide the row.
 
 Run the perf suite on the machine whose numbers you care about, with nothing else
-heavy on its GPU. In headless Chrome with vsync off, rAF does not wait for the
+heavy on its GPU. Every measured arm records the host's 1-minute load
+average (`load1` in its sample); the report header gives each arm's median and
+maximum and warns when the median exceeds half the logical CPUs
+(`HIGH_LOAD_PER_CPU`), so a run that shared the machine says so. In headless Chrome with vsync off, rAF does not wait for the
 GPU: without the per-frame sync an orbit frame times only the CPU submitting it
 (0.1-0.3 ms against a 20-110 ms `gpuMs`), a GPU-bound change is invisible, and a
 CPU stall on a resource the GPU still holds (a blocking `bufferSubData`) moves the

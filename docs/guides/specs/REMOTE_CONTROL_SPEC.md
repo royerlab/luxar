@@ -485,9 +485,11 @@ Every field is optional and unset keeps the viewer's ordinary behaviour, so
 exception to that shape: it stays **off** unless asked for, because a reload is
 destructive to a recovery already in progress — the viewer restores a lost
 WebGL context on its own where it can, and the watchdog fires only after
-`watchdog_grace_s` has passed without that working. A lost WebGPU device has no
-recovery in this release, so it always ends in the reload, after the same grace
-period; embedders see it as the `webgpu-device-lost` event.
+`watchdog_grace_s` has passed without that working. A lost WebGPU device is
+recovered the same way, by rebuilding the renderer on a fresh device, and the
+same grace period gives that its chance; embedders see the stages as the
+`webgpu-device-lost`, `webgpu-device-restored` and `webgpu-device-unrecoverable`
+events.
 
 `?kiosk` on the URL is a hard override for a display whose store predates the
 block. It can **lock** such a display and deliberately cannot unlock one: a URL
@@ -623,7 +625,7 @@ and they are three implementations of one protocol:
 |---|---|---|
 | Dev checkout / a served scene | `luxar.cli.control_hub` (asyncio) | `luxar serve <scene> --viewer --control` |
 | Native app (`luxar export --native`) | `packages/luxar-launcher/hub.go` | `LUXAR_LAUNCHER_CONTROL=1` |
-| Exported folder (`luxar export`) | `luxar/cli/_export_serve_template.py` (threads, stdlib) | `python serve.py --control` |
+| Exported folder (`luxar export`) | `luxar/cli/_export_serve_template.py` (threads, stdlib) | `python3 serve.py --control` |
 
 Three implementations of a protocol is three chances to drift, and the third
 one ships inside artifacts nobody rebuilds: a native binary, and a folder that

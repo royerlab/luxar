@@ -16,11 +16,12 @@ Luxar Core is built on the principle that **data compilation should never be the
 ## 📦 Installation
 
 ```bash
-# From PyPI (when available)
+# From PyPI (Python 3.12+, ideally inside a virtual environment)
+python3 -m venv luxar-env && source luxar-env/bin/activate
 pip install luxar
 
-# Optional Gaussian splatting support
-pip install "luxar[gsplats]"
+# Gaussian splatting (fitting) + TIFF reading
+pip install "luxar[gsplats,io]"
 
 # Development installation
 git clone https://github.com/royerlab/luxar.git

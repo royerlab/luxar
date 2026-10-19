@@ -44,8 +44,8 @@ def _with_basis(
     """Keep ``result``'s intensity basis truthful after an amplitude edit.
 
     ``factor`` is the exact multiplier the edit applied to every amplitude (the
-    basis scales with it); ``None`` means the edit was not one global factor (a
-    normalise to an arbitrary target, an offset, a clamp, a per-splat reweight),
+    basis scales with it); ``None`` means the edit was not one global factor (an
+    offset, a clamp, a per-splat reweight),
     so the amplitude-unit basis is DROPPED and a converted scene says ``a.u.``
     instead of claiming source counts (:func:`~luxar.gsplats.fit_basis.
     rescale_intensity_basis`). A no-op edit keeps the stats untouched, and the
@@ -256,9 +256,10 @@ class IntensityMixin(_GSplatDataOps):
         current_max = float(self.amplitudes.max()) if self.n_splats > 0 else 0.0
         if current_max == 0:
             return self.scale_intensity(1.0)  # no-op, but preserves the pyramid
-        # An arbitrary target, not a unit change: the result is in no source
-        # unit, so the basis is dropped rather than scaled.
-        return _with_basis(self, self.scale_intensity(target_max / current_max), None)
+        # One exact global factor, so the basis scales with it like any other
+        # `scale_intensity` (which records it as `intensity_scale`): scorers can
+        # still take it back out.
+        return self.scale_intensity(target_max / current_max)
 
     def clamp_intensity(
         self,

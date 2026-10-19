@@ -14,6 +14,7 @@ a single tile under-saturates the GPU and there is spare compute/VRAM.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -348,6 +349,22 @@ def report_auto_jobs(jobs: str | int, worker_limit: "WorkerLimit") -> None:
         )
 
 
+def _tile_worker_env(workers: int) -> dict[str, str]:
+    """The parent environment, plus a per-worker CPU thread share.
+
+    ``workers`` concurrent fits would each default the native CPU kernels to
+    every physical core; give each ``physical_cores // workers`` for both the
+    kernels and CLI torch, unless the user set a nonzero
+    ``LUXAR_CPU_THREADS``. Harmless for GPU workers.
+    """
+    from luxar.gsplats.utils.device import cpu_worker_threads_env
+
+    env = os.environ.copy()
+    if workers > 1:
+        env.update(cpu_worker_threads_env(workers))
+    return env
+
+
 def fit_tiled_parallel(
     *,
     num_tiles: int,
@@ -459,6 +476,7 @@ def fit_tiled_parallel(
 
     tile_paths = [tmp_dir / f"tile_{i}.gsplats.zarr" for i in range(num_tiles)]
     stop = threading.Event()
+    worker_env = _tile_worker_env(min(max(1, jobs), max(1, num_tiles)))
 
     def _run(i: int) -> tuple[int, int, str]:
         # A worker that dequeued this tile after a Ctrl-C must not spawn a new
@@ -467,7 +485,7 @@ def fit_tiled_parallel(
             return i, -1, "cancelled before launch"
         try:
             cmd = [str(c) for c in worker_cmd_builder(i, num_tiles, tile_paths[i])]
-            proc = subprocess.run(cmd, capture_output=True, text=True)
+            proc = subprocess.run(cmd, capture_output=True, text=True, env=worker_env)
         except Exception as exc:  # bad argv → FileNotFoundError/OSError, builder bug
             # Funnel build/launch failures into the normal per-tile failure path
             # so the caller gets the curated error + retained tmp_dir, not a raw

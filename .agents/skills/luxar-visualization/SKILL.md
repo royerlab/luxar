@@ -43,7 +43,7 @@ launch_viewer(output_path)                              # 5. view it
 ```
 
 That is the whole shape. Build data → `LuxarZarrCompiler` → `create_scene(dimensions=)`
-→ `add_points` / `add_lines` / `add_gsplats` → serve. See `references/scene-api.md`
+→ `add_points` / `add_lines` / `add_gsplats` → serve. See [references/scene-api.md](references/scene-api.md)
 for every method signature, `**attrs`, transforms, and overlays.
 
 ## Pick the geometry type
@@ -57,6 +57,76 @@ for every method signature, `**attrs`, transforms, and overlays.
 
 For raw volumes, fit Gaussian splats first — see the **`luxar-gsplat-pipeline`**
 skill, then `add_gsplats_from_file` / `add_gsplats_from_volume` here.
+
+## Fitted volumes: axis order and the first view
+
+Two things trip up nearly everyone who views their own fitted volume:
+
+- **Axis order.** A fit's centre columns follow the ARRAY's axis order — `(z, y, x)`
+  for a ZYX stack — while `Dimensions.default_3d()` is `x, y, z`. Grafted as-is,
+  the stack's z lands on the scene's x and a thin z-stack opens edge-on. Map the
+  columns by name with `dim_order` (`demo_gsplats_3d_cells3d_multichannel.py`
+  passes the same `dim_order=["z", "y", "x"]` to `scene.add_gsplats`):
+
+  ```python
+  scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+  scene.add_gsplats_from_file("embryo", "fit.gsplats.zarr", dim_order=["z", "y", "x"])
+  ```
+
+  `dim_order` works on a leaf / additive / `kind=lod` store. A tiled or
+  partitioned store (`fit --tiling uniform|content`, `batch-fit`) refuses it:
+  pass `flatten=True` as well (one flat leaf of the default finest selection, so
+  the parts are no longer culled separately), or keep the partition with
+  `luxar gsplat convert`, which grafts the tree whole in its stored column order.
+
+- **The opening view.** `luxar gsplat convert` names the columns itself (the
+  store's recorded axis names, else array order for a fit; `--dim-order t,z,y,x`
+  overrides). When the y column precedes the x column (image order, as in every
+  fit) it opens the scene the way Fiji/napari show the stack: facing XY with y
+  pointing down, stored as `viewer_config.camera` with `up=(0, -1, 0)` and
+  `view_axis="xy"`. The flip is the camera's, so coordinates stay as fitted.
+  `--view xz|yz` picks another face; `?viewAxis=xy|xz|yz` overrides it for one
+  session. From Python, set the same thing yourself:
+  `ViewerConfig(camera=CameraConfig(up=(0, -1, 0), view_axis="xy"))`.
+
+- **A dense fluorescence volume under `additive` blending saturates to a white
+  blob**, because every splat along a ray adds. Pick the blending for the data:
+  `blending_mode="max"`, or `"volumetric"` with `absorption=` for
+  emission–absorption depth; then set exposure with `opacity`
+  (see "Appearance is authored" below). The modes are `normal`, `additive`, `max`,
+  `opaque`, `luminous`, `volumetric`. `luxar gsplat convert` keeps the
+  amplitudes in source data units and auto-exposes a separate `display_gain`
+  (dimmed, never brightened, so the opening view is not saturated;
+  `--display-gain`, `--target-brightness`, `--no-auto-exposure`).
+  **The Python adders do NOT auto-expose** (they normalise each splat, not the
+  sum along a ray), so a multichannel scene built with `add_gsplats_from_file`
+  per channel opens white. Get convert's exposure per node with
+  `luxar.gsplats.exposure.auto_exposure_attrs`, passing the same `dim_order` /
+  `colormap` (and your `camera` / `tone_mapping` when not the defaults):
+
+  ```python
+  from luxar.gsplats.exposure import auto_exposure_attrs
+  camera = CameraConfig(up=(0, -1, 0), view_axis="xy")  # the scene's ViewerConfig camera
+  zyx = ["z", "y", "x"]
+  for name, path, cmap in [("membrane", "mem.gsplats.zarr", "bop_orange"),
+                           ("nuclei", "nuc.gsplats.zarr", "bop_blue")]:
+      scene.add_gsplats_from_file(
+          name, path, dim_order=zyx, colormap=cmap, layer=True,
+          blending_mode="additive",
+          **auto_exposure_attrs(path, dim_order=zyx, colormap=cmap, camera=camera),
+      )
+  ```
+
+  Pass the store PATH (it reads the unit labels' stats and takes tiled fits).
+  Each channel is exposed on its own; where channels overlap their colours add.
+
+  **`max` is not a MIP.** It keeps the brightest SINGLE splat on each ray, and a
+  structure many splats share (any splat fit) reads dimmer than its voxel MIP.
+  On a UNIFORM TILED fit it shows a dark seam cross: the Hann-blended tiles split
+  each overlap's signal between their splats (Hann weights of 1/2 each at
+  mid-overlap), which additive sums back and `max` does not: a 20-35% dip in a
+  measured 3x3-tile fit (`convert` warns). For max-blend
+  viewing, fit with `--tiling none`.
 
 ## Dimensions = the coordinate system
 
@@ -118,29 +188,9 @@ output locations (never commit `.luxar.zarr`).
 
 ### Shipping a demo's data
 
-`ensure_dataset("<key>")` — also from the `luxar.demos` barrel — resolves a demo's
-payload cache → in-repo (git-LFS) → Zenodo, verifying the manifest sha256 at every
-step, and returns the paths. The key comes from
-`packages/luxar/src/luxar/demos/data_manifest.json`. It only resolves `zenodo`
-keys: a `local-compute` / `regenerate` one raises `LocalComputeDataset` instead,
-so those demos have to build their data themselves.
-
-**That manifest is GENERATED — never hand-edit it.** Declare the dataset in
-`scripts/gen_data_manifest.py` (bucket, record, license, source, attribution) and
-run `make gen-data-manifest`; in-repo files are measured from the tree, while a
-`zenodo` entry's `sha256` and byte count pin the published record. Legacy
-`hosted_sha256` metadata is carried forward when present because it cannot be
-derived from the tree.
-A hand-edited metadata field always fails
-`test_committed_manifest_matches_generator`; a hand-edited checksum does not when
-the payload directory is absent or empty in your checkout, since the generator
-then reuses the committed file list verbatim rather than wiping it. Re-serializing
-it yourself with the wrong `indent` rewrites all ~600 lines into diff noise (the
-generator uses `indent=2`). To replace a `zenodo` payload, upload the new bytes to
-the record first, update its `sha256`/`bytes`, append the outgoing digest to
-`superseded_sha256`, then run `make gen-data-manifest` and inspect the focused
-diff. Copying a replacement over an LFS-tracked file applies only to the retained
-Dip-C payload; regenerate afterwards and verify its `sha256`/`bytes` change.
+Bundled demos resolve their payloads with `ensure_dataset("<key>")` against a
+GENERATED manifest — never hand-edit `data_manifest.json`. The full procedure is in
+[references/demo-authoring.md](references/demo-authoring.md).
 
 ## Appearance is authored, not defaulted
 
@@ -213,7 +263,14 @@ the `add_*` call or it is lost. Five things about that round-trip surprise peopl
   ray**, so the right value depends on how deep the object is, not on how bright it
   is. It is not portable between datasets: a value tuned on a 170 µm brain will
   over- or under-attenuate on a different one. Retune it, and remember the pair —
-  raising absorption usually wants the window's max lowered with it.
+  raising absorption usually wants the window's max lowered with it. τ on a ray
+  = κ × opacity × the colour-free sum of gained amplitudes along it; auto
+  exposure never runs for `volumetric`, so that sum is set by the fit (thickness,
+  splat size in SCENE units — µm vs voxel changes it). `gsplat convert
+  --blending-mode volumetric` prints the predicted p99.9 of that sum and the κ for
+  τ≈1 there (a 10-tp zebrafish nuclei fit: 3.95 → κ≈0.25); start from it. Pair
+  it with a black-footed colormap (`inferno`, `magma`, `gray`):
+  `plasma`/`viridis` turn residual haze into blue/purple fog.
 - **A stored window only means anything for that exact store.** Any refit, rescale
   or re-encode moves it. Say so in a comment next to the constant.
 
@@ -235,39 +292,9 @@ scene = compiler.create_scene(
 )
 ```
 
-**In a bundled demo this exact call fails required tests.** Demos run under the
-cinematic 35 mm preset, and `test_demos_cinematic_mode.py` refuses an authored
-pose that pins `fov`/`fov_preset` or that is not visibly composed for the 63°
-lens. It also requires literal `cinematic_mode=True` on every `ViewerConfig`
-built under `luxar/demos/`. Leave the FOV unset, derive the distance at
-`CINEMATIC_FOV_DEG` directly, and show the full wrapper:
-
-```python
-import math
-
-from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
-
-half_fov = math.radians(CINEMATIC_FOV_DEG) / 2
-d = (
-    max(
-        (W / fill) / (2 * math.tan(half_fov) * aspect),
-        (H / fill) / (2 * math.tan(half_fov)),
-    )
-    + depth / 2
-)
-camera = CameraConfig(position=(cx, cy, cz + d), target=(cx, cy, cz))
-scene = compiler.create_scene(
-    dimensions=dims,
-    viewer_config=ViewerConfig(
-        cinematic_mode=True, tone_mapping="ACES", camera=camera
-    ),
-)
-```
-
-The guard also recognises an inline `position=pull_in(...)` when carrying over an
-empirically tuned distance from another FOV. For a derived distance, importing
-`CINEMATIC_FOV_DEG` or `framing_scale` vouches for the module and lets the pose use
-a local variable normally.
+**In a bundled demo this exact call fails required tests** (demos run under the
+cinematic 35 mm preset and must not pin `fov`); the demo-safe wrapper is in
+[references/demo-authoring.md](references/demo-authoring.md).
 
 Two decisions this formula makes explicit:
 
@@ -413,6 +440,13 @@ luxar export my_scene.luxar.zarr -o out/ --open     # standalone offline folder
 luxar info my_scene.luxar.zarr --stats              # inspect a built scene
 ```
 
+`luxar serve` binds `127.0.0.1` (this machine only). On a remote or headless box,
+either tunnel both ports from your laptop (`ssh -L 8000:127.0.0.1:8000 -L
+5173:127.0.0.1:5173 host`, then open the printed URL locally) or pass `--host
+0.0.0.0` to bind the data and viewer servers on every interface. `launch_viewer`
+(from `luxar.demos`) runs `luxar serve --viewer` on a port pair derived from the
+dataset, not 8000/5173 — tunnel the ports it prints.
+
 ## Gotchas (from the codebase)
 
 - `create_scene` REQUIRES `dimensions=`.
@@ -461,5 +495,5 @@ luxar info my_scene.luxar.zarr --stats              # inspect a built scene
   Fold the parameters into the filename (a short digest) rather than relying on
   anyone remembering `--recompute`.
 
-See `references/scene-api.md` for exact signatures and `**attrs`. For volume→splats,
+See [references/scene-api.md](references/scene-api.md) for exact signatures and `**attrs`. For volume→splats,
 use the `luxar-gsplat-pipeline` skill.

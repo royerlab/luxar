@@ -34,6 +34,7 @@ import hmac
 import http.server
 import json
 import os
+import re
 import socket
 import struct
 import sys
@@ -652,6 +653,8 @@ class ControlServer(http.server.ThreadingHTTPServer):
             self.address_family = socket.AF_INET6
         super().__init__(address, handler)
         self.relay = relay
+        #: ``--text-scale``, carried into the ``/`` redirect to the viewer.
+        self.text_scale: float | None = None
 
     #: Client disconnects, not faults. A browser that has changed its mind
     #: closes the socket mid-response and the write raises one of these.
@@ -798,7 +801,43 @@ class LuxarHandler(http.server.SimpleHTTPRequestHandler):
         if _request_path(self.path) == CONTROL_PATH:
             self._serve_control()
             return
+        if _request_path(self.path) == "/":
+            self._redirect_to_viewer()
+            return
         super().do_GET()
+
+    def do_HEAD(self) -> None:  # noqa: N802  (http.server's spelling)
+        """As ``do_GET``: the folder root redirects to the viewer."""
+        if _request_path(self.path) == "/":
+            self._redirect_to_viewer()
+            return
+        super().do_HEAD()
+
+    def _redirect_to_viewer(self) -> None:
+        """Send ``/`` to the viewer with the scene loaded, not a file listing.
+
+        The data URL is built from the request's own ``Host``, so the redirect
+        is right however the folder was reached -- the printed LAN address, a
+        port forward on another port, or a hostname. The header is echoed only
+        when it matches ``_HOST_HEADER`` (host or bracketed IPv6, optional port:
+        no scheme, path, query or whitespace can ride along), and the Location
+        itself is path-relative, so a forged Host can at worst point this one
+        client's ``src`` at another server -- never redirect it off this origin.
+        Deliberately WITHOUT the control flag and token: anyone who can reach
+        ``/`` would otherwise be handed the token that is meant to keep them out
+        (``main`` says so at startup when the relay is on).
+        """
+        server = self.server
+        host = self.headers.get("Host", "")
+        if not _HOST_HEADER.fullmatch(host):
+            address: Any = server.server_address
+            host = f"{_url_host(advertised_host(str(address[0])))}:{address[1]}"
+        scale = server.text_scale if isinstance(server, ControlServer) else None
+        target = viewer_target(f"http://{host}/{DATA_DIR_NAME}", scale)
+        self.send_response(302)
+        self.send_header("Location", target)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _relay(self) -> Relay | None:
         server = self.server
@@ -866,6 +905,11 @@ class LuxarHandler(http.server.SimpleHTTPRequestHandler):
             self.headers.get("Origin"),
             self.headers.get("Host"),
         )
+
+
+#: A ``Host`` header safe to echo into a redirect: a hostname, IPv4 or bracketed
+#: IPv6 address, and an optional port. Anything else falls back to the bind.
+_HOST_HEADER = re.compile(r"(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(?::[0-9]{1,5})?")
 
 
 def _first(query: dict[str, list[str]], name: str) -> str | None:
@@ -1008,6 +1052,14 @@ def _text_scale(value: str) -> float:
     return scale
 
 
+def viewer_target(data_url: str, text_scale: float | None = None) -> str:
+    """The viewer's path and query for the scene served at ``data_url``."""
+    target = f"/viewer/?src={data_url}{TITLE_QUERY}{LAUNCH_QUERY}"
+    if text_scale is not None:
+        target += f"&textScale={text_scale:g}"
+    return target
+
+
 def urls(
     host: str,
     port: int,
@@ -1018,11 +1070,7 @@ def urls(
     """The URLs to print, and the first of them is the one to open."""
     reachable = _url_host(advertised_host(host))
     data_url = f"http://{reachable}:{port}/{DATA_DIR_NAME}"
-    viewer_url = (
-        f"http://{reachable}:{port}/viewer/?src={data_url}{TITLE_QUERY}{LAUNCH_QUERY}"
-    )
-    if text_scale is not None:
-        viewer_url += f"&textScale={text_scale:g}"
+    viewer_url = f"http://{reachable}:{port}" + viewer_target(data_url, text_scale)
     if not control:
         return [viewer_url]
     suffix = f"&controlToken={quote(token, safe='')}" if token else ""
@@ -1077,6 +1125,7 @@ def main(argv: list[str] | None = None) -> int:
     relay = Relay(args.control_token) if args.control else None
     handler = partial(LuxarHandler, directory=str(SCRIPT_DIR))
     server = ControlServer((args.host, port), handler, relay)
+    server.text_scale = args.text_scale
 
     addresses = urls(args.host, port, args.control, args.control_token, args.text_scale)
     print()
@@ -1087,6 +1136,11 @@ def main(argv: list[str] | None = None) -> int:
         print("  Control panel (open this on the tablet)")
         print(f"    {addresses[1]}")
         print_control_qr(addresses[1])
+        print()
+        print(
+            "  Note: the bare address (http://host:port/) opens a VIEW-ONLY viewer\n"
+            "  that the panel cannot drive. Open the Display URL above instead."
+        )
         if not is_loopback_host(args.host) and not args.control_token:
             print()
             print(

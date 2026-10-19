@@ -37,11 +37,19 @@ export function loadsDirectlyWithoutProbe(src: string | undefined | null): boole
  *      always must-browse, no need to probe.
  *   2. Zipped stores load directly — see below.
  *   3. A `.zarr`-suffixed URL loads directly — see below.
- *   4. HEAD-probe zarr v2 (`.zgroup`, `.zattrs`) and v3 (`zarr.json`)
- *      markers in parallel; short-circuit on the first 2xx response.
- *      Returns `false` (load directly) when any probe hits.
- *   5. If all probes fail or time out after 5s, fall through to `true`
- *      (show the browser — likely a directory listing or non-zarr URL).
+ *   4. HEAD-probe the store markers ONE AT A TIME, format 3 first
+ *      ({@link STORE_MARKERS}); the first 2xx returns `false` (load directly).
+ *   5. If every probe fails, or one hangs past its own 5 s budget (the server
+ *      is not answering, so the next marker would hang too), fall through to
+ *      `true` (show the browser — likely a directory listing or non-zarr URL).
+ *
+ * Sequential, not parallel: each miss is a console `HEAD … 404` the user sees
+ * (and reports), and the URLs that reach this probe are mostly suffix-less
+ * store roots — `luxar serve` mounts the store at `/`, an exported folder at
+ * `/data`. A parallel probe of all three markers logged two 404s on EVERY such
+ * load of a format-3 store; v3-first logs none. A format-2 store pays one miss
+ * (`zarr.json`) and one extra round trip, once, before its first byte; a
+ * format-2 store with root attributes but no `.zgroup` pays two.
  */
 export async function shouldShowBrowser(src: string): Promise<boolean> {
   // Synchronous classification: empty / trailing-slash URLs always
@@ -67,34 +75,39 @@ export async function shouldShowBrowser(src: string): Promise<boolean> {
   // failure for a URL that explicitly names a store.
   if (isZarrStoreSuffix(src)) return false;
 
-  // Check if it's a Zarr dataset by looking for zarr metadata files
-  // Try both v2 (.zgroup) and v3 (zarr.json) formats
+  for (const marker of STORE_MARKERS) {
+    const verdict = await probeMarker(`${src}/${marker}`);
+    if (verdict === 'found') return false;
+    if (verdict === 'timeout') break;
+  }
+  // No marker answered — likely a directory listing: show the browser.
+  return true;
+}
+
+/**
+ * The store-root documents that prove `src` is a zarr store, most likely
+ * first: a format-3 root (`zarr.json`, what Luxar writes today), then a
+ * format-2 group (`.zgroup`), then format-2 attributes alone (`.zattrs`).
+ */
+export const STORE_MARKERS = ['zarr.json', '.zgroup', '.zattrs'] as const;
+
+/** How long ONE marker probe may take before it is abandoned. */
+const PROBE_TIMEOUT_MS = 5000;
+
+/**
+ * HEAD `url` under its own {@link PROBE_TIMEOUT_MS} budget: `found` on 2xx,
+ * `timeout` when it was abandoned, `missing` for any other answer or a
+ * network error.
+ */
+async function probeMarker(url: string): Promise<'found' | 'missing' | 'timeout'> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-  const zarrChecks = [
-    fetch(src + '/.zgroup', { method: 'HEAD', signal: controller.signal }),
-    fetch(src + '/.zattrs', { method: 'HEAD', signal: controller.signal }),
-    fetch(src + '/zarr.json', { method: 'HEAD', signal: controller.signal }),
-  ];
-
+  const timeoutId = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
   try {
-    // Short-circuit: return as soon as any probe confirms zarr metadata exists.
-    // This avoids waiting for the zarr.json 404 on v2 stores (~200ms on slow networks).
-    await Promise.any(
-      zarrChecks.map((p) =>
-        p.then((r) => {
-          if (!r.ok) throw new Error('not ok');
-          return r;
-        })
-      )
-    );
-    return false; // At least one zarr metadata file exists — load directly
+    const response = await fetch(url, { method: 'HEAD', signal: controller.signal });
+    return response.ok ? 'found' : 'missing';
   } catch {
-    // All probes failed or errored — likely a directory, show browser
+    return controller.signal.aborted ? 'timeout' : 'missing';
   } finally {
     clearTimeout(timeoutId);
   }
-
-  return true;
 }

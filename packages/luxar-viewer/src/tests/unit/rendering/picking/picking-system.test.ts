@@ -43,12 +43,13 @@ function makeStubRenderer(): THREE.WebGLRenderer {
 }
 
 function makeStubCapabilities(): import('../../../../rendering/renderer-capabilities').RendererCapabilities {
-  // Minimal capabilities for unit tests — only `apiSurface` is read by
-  // the picking-system body (to discriminate readback signatures);
+  // Minimal capabilities for unit tests — `apiSurface` selects readback
+  // signatures and `backendKind` selects mesh index rotation;
   // `framebufferYDown` is added for completeness (the readback
   // primitive consults it, but no readback path is exercised here).
   return {
     apiSurface: 'webgl2',
+    backendKind: 'webgl',
     framebufferYDown: false,
     hdr: {
       hdr: false,
@@ -82,10 +83,10 @@ describe('mesh pick corner selection', () => {
             extension ? { FIRST_VERTEX_CONVENTION_WEBGL: 1, provokingVertexWEBGL: vi.fn() } : null,
         }),
       } as unknown as THREE.WebGLRenderer;
-      const capabilities = {
+      const capabilities: ReturnType<typeof makeStubCapabilities> = {
         ...makeStubCapabilities(),
         apiSurface,
-        nativeWebGPUBackend: webgpu,
+        backendKind: webgpu ? 'webgpu-native' : apiSurface === 'webgpu' ? 'webgpu-gl' : 'webgl',
         readbackYDown: !webgpu,
       };
       const system = new PickingSystem(renderer, capabilities, makeCamera(), vi.fn());

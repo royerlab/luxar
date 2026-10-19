@@ -93,7 +93,7 @@ group table.
 | `lodFinest`        | `boolean`             | `false`         | Force the finest replacement LOD regardless of projected coverage; useful for high-quality still or video capture.                                                                                                                                                      |
 | `lodBias`          | `number`              | `1`             | Bias replacement LOD selection in screen-area units; `2` selects one occupancy-halved level finer and `4` selects two. Below `1`, a partition-anchored ladder cannot reach its finest level; below `0.5`, neither can a whole-object ladder.                            |
 | `depthSort`        | `boolean`             | `true`          | Enable worker-based back-to-front sorting for order-dependent geometry; disable for deterministic comparisons.                                                                                                                                                          |
-| `blendWarmup`      | `boolean`             | device          | WebGL blend-program warm-up (one variant compile per macrotask). On for laptops/desktops, off on phones/tablets; `false` opts out (`?noBlendWarmup`).                                                                                                                   |
+| `blendWarmup`      | `boolean`             | device          | Blend-program warm-up, WebGL programs and WebGPU pipelines (one variant compile per macrotask). On for laptops/desktops, off on phones/tablets; `false` opts out (`?noBlendWarmup`).                                                                                    |
 | `densityGuard`     | `boolean`             | `true`          | Projected-density guard: thin blendable nodes packing more elements per pixel than `config.densityGuard` allows (brightness compensated) and cap refinement rungs (`?noDensityGuard`).                                                                                  |
 | `densityCap`       | `number`              | config          | Session-only override of the density guard's blendable cap, in elements per drawing-buffer pixel (`?densityCap=8`).                                                                                                                                                     |
 | `bakeEnvironment`  | `object`              | —               | `{ probe?, resolution? }`: bake the scene-derived environment once the load settles, for `luxar env bake` (`?bakeEnv&probe=…&envResolution=…`). Omit for normal viewing.                                                                                                |
@@ -186,7 +186,7 @@ app.on('element-contextmenu', (event) => console.log(event));
 app.on('camera-changed', (pose) => mirror(pose)); // frame rate while moving; throttle if relaying
 app.on('sound-started', ({ name }) => console.log('playing', name)); // and 'sound-ended'
 app.on('waypoint-arrived', ({ index, completed }) => console.log(index, completed)); // and 'waypoint-departed'
-app.on('webgpu-device-lost', ({ reason }) => location.reload()); // unrecoverable in this release
+app.on('webgpu-device-unrecoverable', () => location.reload()); // after a WebGPU device loss the viewer recovers on its own when it can
 // off();
 ```
 
@@ -809,8 +809,9 @@ monitor.element; // the widget element (mounted by the control rail)
 ### Browser Compatibility
 
 Requires **WebGL 2.0**, which is the default backend. WebGPU is opt-in via
-`?renderer=webgpu` and falls back to an internal WebGL2 backend when no adapter
-is available. The build targets `esnext` with no `browserslist`, so there is no
+`?renderer=webgpu`; with no WebGPU adapter that explicit choice runs on three's
+internal WebGL2 backend, while `VITE_LUXAR_USE_WEBGPU=1` falls back to the
+WebGL renderer. The build targets `esnext` with no `browserslist`, so there is no
 toolchain-derived version floor.
 
 Verified 2026-09-04 on macOS arm64 by running the E2E smoke subset (13 tests)
@@ -872,7 +873,7 @@ the native WKWebView launcher fall back to L1-only caching; see the
 - `?noLodEnergy` — Disable stream-ladder energy compensation (enabled by default)
 - `?lodFinest` — Force the finest replacement LOD regardless of projected coverage
 - `?lodBias=<N>` — Bias replacement LOD selection in screen-area units (`2` = one level finer on occupancy-halved ladders; positive values only). Because finite screen-area coverage tops out at `1`, values below `1` make a partition-anchored finest threshold of `1` unreachable, and values below `0.5` make a whole-object finest threshold of `0.5` unreachable; near-plane saturation can still select finest
-- `?noBlendWarmup` — Disable the WebGL blend-variant program warm-up (enabled by default): each reachable blend-mode program is otherwise pre-linked off the interaction path after a dataset load, so the first Layers-panel blend switch does not pay the link cost on the click
+- `?noBlendWarmup` — Disable the blend-variant warm-up (enabled by default; WebGL programs and WebGPU pipelines): each reachable blend-mode program is otherwise pre-linked off the interaction path after a dataset load, so the first Layers-panel blend switch does not pay the link cost on the click
 - `?noLinks` — Disable element-authored navigation and link menu items while preserving copy actions and `element-click` / `element-contextmenu` events
 - `?depthSort=0` — Disable worker depth sorting (`false` and `off` are also accepted)
 - `?noDensityGuard` — Disable the projected-density guard (per-node keep-fraction thinning + refinement rung cap on over-drawn nodes; enabled by default) for the session

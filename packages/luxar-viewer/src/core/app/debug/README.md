@@ -62,7 +62,12 @@ lazy LOD level loads and additive per-level ladder loads
 (`setLodLoadStatsEnabled(true)` — those lazy `ensureLoaded` loads run outside
 any `updateView` cycle, so the `UpdateProfiler` never sees them), the
 `scene.getObjectByName` call counter, and the `renderer.info` sampler, re-pointed
-at the live renderer. The LOD stats are reachable as
+at the live renderer. The sampler normalizes the two renderers' `info`
+shapes: `rendererInfo.calls` is the frame's draw calls on both (`render.calls`
+under WebGL, `render.drawCalls` under WebGPU, whose `render.calls` counts
+`render()` passes since startup), and `programs` is WebGL's linked-program
+count or WebGPU's live shader-stage count (`memory.programs`), so it is not
+comparable across backends. The LOD stats are reachable as
 `__luxarDebug.getLodLoadStats()` (snapshot) and `resetLodLoadStats()`.
 
 `injectSyntheticScene`'s body is wrapped in try/catch: on failure it logs via

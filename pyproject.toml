@@ -125,7 +125,12 @@ Changelog = "https://github.com/royerlab/luxar/blob/main/CHANGELOG.md"
 # that would break the prebuilt .so.
 gsplats = [
     "scipy>=1.9.0,<2.0",
-    "torch>=2.2.0,<3.0"
+    "torch>=2.2.0,<3.0",
+    # The native CPU splatting kernels (luxar.gsplats.models.gsplats.cpu),
+    # JIT-compiled at runtime from these wheels: CPU-only installs need no C++
+    # toolchain. Optional at runtime -- without it CPU fits use the PyTorch
+    # renderer. >=0.60 for `numba.parallel_chunksize` and Python 3.12+ wheels.
+    "numba>=0.60"
 ]
 # `test` extends `gsplats`; `dev` extends `test`. This keeps scipy/torch (and
 # their bounds) defined in exactly one place — no hand-copied drift.
@@ -181,6 +186,10 @@ dev = [
 ]
 io = [
     "tifffile>=2023.1.0",
+    # tifffile decodes deflate TIFFs itself, but LZW/JPEG/zstd TIFFs and
+    # OME-TIFFs can need imagecodecs. Without it, tifffile raises a codec
+    # error or tries an unavailable zstd fallback on Python < 3.14.
+    "imagecodecs>=2023.1.0",
     "imageio>=2.31.0",
 ]
 demos = [
@@ -833,6 +842,7 @@ module = [
     "luxar.io.ordering",
     "luxar.io._ordering.curves.morton",
     "luxar.io._ordering.curves.hilbert",
+    "luxar.gsplats.models.gsplats.cpu.kernels",
 ]
 warn_unused_ignores = false
 

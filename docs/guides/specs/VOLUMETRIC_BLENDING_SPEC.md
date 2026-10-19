@@ -173,7 +173,8 @@ turbidity of the sample") rather than being a rendering hack.
 X-ray-like additive glow (κ = 0 — bit-identical to today's `additive`, §4.3
 invariant I1) through attenuated projection (small κ: front structures pop,
 occluded ones dim — depth cueing for dense timelapses) to a dense
-smoke/ink-like medium (large κ). Together with `max` (MIP) and `normal`/`opaque`
+smoke/ink-like medium (large κ). Together with `max` (a per-splat maximum — MIP-like,
+but over individual splats, not over the summed field) and `normal`/`opaque`
 (surface), Luxar then covers every classical volume-rendering regime.
 
 ### 1.1 Mode taxonomy after the change

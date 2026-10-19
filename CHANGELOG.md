@@ -4,6 +4,2427 @@ All notable changes to Luxar are documented in this file.
 
 ## [Unreleased]
 
+## [2026.10.19] - 2026-10-19
+
+### October 2026
+
+#### CI auto-recovers interrupt-killed required legs
+
+The dispatched `repair-cancelled-push-checks` window only re-ran required push
+jobs whose conclusion was `cancelled`. A required leg killed mid-run by a
+host-level signal is recorded as `failure`, so it was never auto-recovered and
+left `dev` red — blocking promotion — until a manual rerun. The window now also
+re-runs a `failure` leg, but only when its log tail carries the interrupt
+signature (`KeyboardInterrupt` / `Terminated` / the xdist controller's
+"cannot send") and shows no pytest failure or error marker. A genuine failure
+in another required leg suppresses interrupt recovery for that run. Each candidate
+gets at most one rerun request: a job rerun for one qualifying leg, or a run-level
+failed-jobs rerun for several. The existing two-candidate cap still applies; an
+unreadable log is treated as a real failure.
+
+#### Relocation-scale diagnostic for Gaussian-splat fits (and opt-in relocation levers)
+
+Fits now record how many splats finish near the relocation reseed scale, split by
+whether each was ever relocated — `splats_near_relocation_init_sigma_{count,
+fraction,relocated_count,unrelocated_count}` plus `relocation_reseed_sigma_vox_effective`
+— and the values now survive an unculled tiled merge (previously absent on partition
+output). Relocation event counters also survive content-planned merges. Population
+counts are omitted when culling or core filtering changes the delivered splats.
+An A/B on real light-sheet data settled what this population is: ~100%
+relocation-caused, spread across the whole schedule, and made of legitimate
+small-residual fillers. Every lever that removes it — a tail-of-schedule cutoff, a
+larger reseed sigma, keeping the Adam moments, or a lower relocation budget — costs
+foreground PSNR (baseline is best). So those levers ship as **opt-in**
+`DynamicOpsConfig` fields (`relocation_stop_fraction`, `reset_adam_on_relocation`,
+`relocation_reseed_sigma_vox`) with **no default change**: the stuck-at-reseed
+fraction is a splat-size-distribution statistic, not a reconstruction defect.
+
+#### Grafted LOD levels keep their footprint stamps
+
+Grafting a laddered `.gsplats.zarr` into a scene with `add_gsplats_from_file` copied
+only the energy stamps (`reference_energy`, `quality`, `energy_kind`) onto each level
+and silently dropped `median_footprint` and `footprint_dims`. Without them the viewer
+cannot use its projected-footprint LOD selector and falls back to the per-tile
+screen-area thresholds, which hold small partition tiles at coarse, blurry levels
+until a single tile fills the screen. The graft leaf writer now carries the two
+footprint keys through as well, so grafted partitions select levels the same way
+in-memory ladders do; existing scenes need only be re-assembled, not refitted.
+
+#### Keep HDR captures responsive on dense scenes
+
+The viewer pauses background frame draws while an HDR or image readback owns
+the render target, avoiding a large SwiftShader slowdown on dense scenes.
+It resumes rendering when the capture finishes so camera and data changes made
+during a long readback appear without another interaction.
+
+#### WebGPU materials share their compiled shaders
+
+On WebGPU, every new gsplat, point, line or mesh material used to pay a full
+node-graph build (11-28 ms each), because three keys its build cache on graph
+node ids and each material built a private graph. Materials of one
+configuration now share a single graph whose leaves forward each draw's own
+uniform and texture values. On a 50-timepoint partitioned timelapse, playback
+used to compile about 92 shaders in the first 6 s; it now compiles none, and
+first-pass playback rises from 4.3 to 5.8 fps (8.2 fps on the second pass).
+Rendering is pixel-identical on both backends; the WebGL path is unchanged.
+
+#### Viewer review fixes
+
+A read-through of the viewer after the performance programme turned up a set
+of liveness, staleness and lifecycle bugs, now fixed:
+
+- The render loop goes idle again after you pause playback (it used to keep
+  ticking for the rest of the session).
+- Offline turntable captures are depth-sorted for each frame's own pose.
+- A slice scrub no longer waits behind a stale pass, a failed load retries
+  even during refinement, and a cold mesh lands while you scrub.
+- The persistent (OPFS) cache loses no completed chunk write across a reload,
+  whenever it happens. The dataset's identity is written before any chunk,
+  chunk files the debounced index missed are recovered on their first read,
+  and an interrupted index or chunk write no longer wipes or corrupts the
+  cache.
+- One plain-http dataset no longer narrows later h2 datasets to HTTP/1.1
+  fetch widths; zip-store reads honour cancellation.
+- `LuxarLayer` embedded in a host WebGPU renderer configures the WebGPU
+  paths (large sorted nodes no longer stall), and its `update()` reports when
+  a redraw is needed.
+- A failed first dataset load keeps the viewer alive with the dataset browser
+  available; embedders can listen for `dataset-error` to report the failure.
+  `switchDataset` updates `?src`.
+- `density_guard_enabled` can be set in `viewer_config`.
+
+#### Fetch-gate widths are configurable
+
+The global chunk-fetch concurrency limits are now set in
+`config.dataLoading.network.fetchGate` and validated there. Before, they were
+fixed module constants. The keys and their defaults (unchanged) are:
+
+| Key | Default |
+|---|---|
+| `maxChunkFetches` | 24 |
+| `maxMultiplexedChunkFetches` | 96 |
+| `maxMetadataFetches` | 4 |
+| `http1MaxChunkFetches` | 4 |
+| `http1MaxMetadataFetches` | 2 |
+| `speculativeShare` | 0.25 |
+
+#### LuxarLayer embeds get the density guard; dead config keys removed
+
+`LuxarLayer` now builds its LOD registry and density guard through the same
+code as the app. Embedded scenes therefore thin over-dense splat views the way
+the app does; pass `densityGuard: false` to opt out.
+
+Config keys that nothing read have been removed:
+- `webgl.renderTarget.*`: MSAA comes from the rendering controls'
+  `msaaSamples`.
+- `webgl.renderer.shadowMap`.
+- `dataLoading.memory.minCacheMB`, `checkIntervalMs` and
+  `adjustmentThresholds`.
+
+#### Points and Lines ladders stream like GSplats ladders
+
+Progressive (additive) Points and Lines nodes now share one ladder engine with
+GSplats, so they get the streaming behaviour GSplats already had:
+- the next rung's index is warmed while a rung loads;
+- pinned rungs load concurrently, and a budget stop cancels them;
+- the next-rung lookahead is cancelled with its view;
+- neighbouring slices are read ahead while scrubbing;
+- predictive slice prefetch works for laddered nodes. It used to do nothing
+  for any laddered node.
+
+A rung without colours is now white-filled on all three types. Points used to
+drop colour from the whole node when any one rung lacked it.
+
+A Points node that fits in one chunk skips its `chunk_bounds` spatial index:
+per-point slice filtering keeps it correct without radii or scene dimensions.
+A Lines node skips both indexes when its
+vertices and its segments each fit one chunk; segment clipping filters it
+after loading.
+
+#### Tune lifted Gaussian LOD for Points and Lines
+
+Points and Lines substitutive LOD now accept `lloyd_iterations`, `candidate_bins_k`,
+`coverage_inflation`, and `color_weight` for their Gaussian coarse levels.
+
+#### Refine lifted Points and Lines LOD levels
+
+Points and Lines substitutive LOD now accept `refine="l2"` and `refine_iters` to improve Gaussian coarse levels without a source volume. Volume refinement remains unavailable for lifted geometry.
+
+#### Keep picking aligned with visible geometry
+
+Transparent points, lines and Gaussian splats no longer win hovers or clicks, and Layers-panel opacity and gain edits update picking immediately. Under opaque and normal blending, points and lines pick the front-most element; under commutative blending, brighter elements keep priority even when their weighted salience exceeds one.
+
+#### Orthographic line picking agrees across viewer backends
+
+WebGPU orthographic line picking now agrees with WebGL to within one pixel.
+Pick materials also share their compiled WebGPU graphs across scene parts,
+reducing the shader build work when opening a many-part scene.
+
+#### Glass no longer smears the screen edges
+
+A refracting glass samples the scene behind it at a shifted screen position,
+and three.js never checks that the shifted position is still on screen. Near
+an edge it often is not, the texture sampler clamps to the border pixel, and
+the border is smeared inward as streaks. It was most visible with the camera
+inside a `refract_data` shell looking at dense data, where every pixel is
+glass and a double-sided shell is refracted twice.
+
+The refraction shift is now apodized: on each axis it is left untouched until
+it would carry the sample halfway to the nearest screen border, then rolled
+off smoothly toward three quarters of that room, with the stricter axis scaling the whole
+shift so the refraction keeps its direction. The field is zero on every
+border, continuous, and exactly the identity wherever a shift stays clear of
+the edges. Stopping short of the whole room is what keeps edge detail: the
+sample still moves at least a quarter as fast as the pixel, so the edge band is
+stretched at most fourfold instead of collapsing onto the border column, which
+would smear it just as the clamp did. It is applied by
+shortening the ray three.js traces by the exact perspective-correct amount,
+with the absorption distance scaled alike so tinted glass does not lighten
+near the edges, on both WebGL and WebGPU.
+
+#### Free media connections when kiosk stories change
+
+Video overlays release their source after fading out, so quickly switching stories no longer leaves hidden clips holding the kiosk's HTTP connections. Exported scenes' `serve.py` now supports single byte-range requests, allowing media downloads to resume when a clip is shown again.
+
+#### Allow workers to initialize during scene capture
+
+The data-worker initialization deadline is now 30 seconds. A synchronous GPU
+readback can stall the main thread while a scene environment is captured, delaying
+the workers' replies even after they finish. The init guard gives queued replies
+one turn to settle before declaring a worker timed out.
+
+#### One refraction, not two, from inside a glass bubble
+
+Flying into a refracting glass bubble on WebGL distorted the data behind it twice
+as much as it should. three.js draws a double-sided glass's back faces into the
+image the glass refracts, and then draws those same back faces sampling that
+image; from outside the near wall hides this, but from inside every pixel is
+the far wall refracting its own refracted image. While the camera is inside a
+closed glass of up to 20,000 triangles, the viewer now draws only its back faces,
+so the far wall refracts the scene once. Whether the camera is inside is tested
+against the mesh's drawn triangles, so a ring viewed through its hole stays
+double-sided even when its bounding sphere surrounds the camera. From inside a
+non-convex closed shell, the back-faces-only draw can hide farther front faces.
+
+#### Waypoint flights: a choice of trajectories, paced by perceived distance
+
+A story waypoint used to fly the camera one way: the target slid in a straight
+line while the distance interpolated on its own, for a fixed time. A long jump
+at close range therefore stayed close and raced across the screen, a short hop
+crawled, and every flight took the same time whatever it covered.
+
+Waypoints now choose their path with `trajectory=`, from `luxar.core.trajectories`:
+`Orbit` (the previous behaviour, still the default), `ZoomPan` (van Wijk &
+Nuij's smooth zooming and panning, which pulls back while it travels and dives
+in at the end), `Arc` (a pull-back of a chosen proportion), `Straight` (a
+dolly), `Swing` (round a pivot rather than through the data), `FlyThrough`
+(first person, looking where it is going) and `Via` (through an intermediate
+pose, pausing there). Each carries only its own parameters and is validated
+where it is written; a name such as `"zoom-pan"` stands for a trajectory's
+defaults. The viewer guide's *Waypoint trajectories* section compares them.
+
+A flight can now be paced instead of timed. With `speed=` it lasts its path's
+perceived length over that speed, clamped to `duration_range_ms`; the length
+counts panning in screen heights, zooming in log scale and turning in radians,
+so travel time follows what the visitor sees, zoom included, for every
+trajectory. Two easings join the existing ones: `smooth`, which starts and
+lands without an acceleration jump, and `cruise`, which ramps smoothly at both
+ends and holds a constant speed between, so the camera moves for nearly the
+whole flight.
+
+Trajectories that decide where the camera looks (`Straight`, `Swing`,
+`FlyThrough`) take the view direction from the turntable for the flight and hand
+it back on arrival; the others keep moving only the target and the distance
+while auto-rotate is on. The ESM protein tours now fly `ZoomPan` with `cruise`
+easing at a pace that makes a typical flight about ten seconds long.
+The hosted protein universe demo now renders at full device resolution by
+default, with its pixel ratio held fixed during flights.
+
+#### Control panel tiles fit their text on small screens
+
+On a phone, a tour with twenty chapters gives each tile a fingertip-sized
+cell, and the tile text overflowed it. The top of the title was clipped along
+with the end of the sublabel, and the tour numeral sat on top of two-line
+titles.
+
+The panel now measures its tiles after layout and gives text up in a fixed
+order until every tile fits. It switches to the authored short sublabel, then
+limits the sublabel to fewer lines, then drops it. Next it drops the numeral
+and switches to the authored short label. Only then does it shrink the label,
+and as a last resort it breaks a word. One step applies to the whole grid, so
+the tiles stay alike. The grid shape is chosen with the text in mind: when
+the best-shaped grid would cost text, the next two shapes are also tried, and
+the one that keeps the most text wins. The numeral now has its own space at
+the top of the tile, and any text that still overflows is clipped at the
+bottom, never the top. Tablets and wall displays, where everything already
+fit, look exactly as before.
+
+`Chapter` gains `short_label` and `short_sublabel` for those shorter texts.
+
+#### Fewer requests per timepoint for small gsplat rungs
+
+A gsplat node whose splats fit in one chunk no longer requests its
+`chunk_bounds` spatial index first. With one chunk the index can only answer
+"load it or not", and loading it is always correct. On a 50-timepoint
+partitioned timelapse that removes one request (and one serial round trip) per
+rung: about 17% fewer requests per playback tick and 14-16% lower tick
+latency, with rendering unchanged.
+
+#### Scene-environment capture no longer stalls data-worker startup
+
+A scene-derived environment (`viewer_config.environment.source = "scene"`, used by the
+reflective-mesh demos) took its first cube-map capture the instant a physical material
+asked for light — an immediate, multi-second synchronous render on the main thread. When
+that landed while the data-worker pool was still handshaking its workers on the same
+thread, the last workers could miss their initialization deadline under load, so loading
+such a scene intermittently logged worker-init timeouts.
+
+Live scene capture now waits for any worker-pool startup in progress and for the
+loader to settle; the runtime remains available from startup for HDRI assets.
+Physical meshes are lit by the room-environment stand-in until then, and the
+capture of the finished scene replaces what used to be two early captures (first light
+plus the first post-commit refresh).
+
+#### Broadcast arrays no longer cost a request
+
+A uniform (`broadcasted`) array now carries its single stored row in its
+`encoding.value` attribute, and the viewer takes it from there instead of
+fetching it. That removes one request per broadcast array per node, or per
+rung of a ladder, including the 404 an all-zero row used to cost (zarr never
+writes such a chunk). On a 50-timepoint partitioned timelapse that is about a
+fifth of the playback requests (58 to 47 per tick) and 9-11% higher first-pass
+fps. Older stores load unchanged, and older viewers ignore the attribute.
+
+#### The viewer goes idle sooner after an orbit or pan
+
+The damped camera tail after a drag used to keep moving the camera at float64
+precision long after nothing on screen could change, so a small drag drew
+dozens of identical frames before the loop went idle (and a pan never had a
+stopping threshold at all). The tail now ends once the remaining motion is
+below float32 resolution: a 4 px drag draws 48 frames instead of 113, with
+every remaining frame changing pixels.
+
+#### `luxar optimize --pack`: one request per small node
+
+`luxar optimize --pack` adds a `chunk_packs/` sidecar to a compiled scene. Every
+geometry node with at most 64 KB of chunks gets one extra object holding copies of
+them, which the viewer reads in a single request instead of one per chunk. On a
+laddered timelapse partition (200 parts × 4 rungs), first-pass playback goes from
+~7 to ~9.8 fps against a 10 fps target, and tick latency drops from ~80 ms to
+~2 ms. The plain chunks stay, so the store is still an ordinary zarr store that
+zarr-python, napari and older viewers read unchanged, and packing does not move
+`content_hash` (the output carries the hash `optimize` stamps either way). Edits
+that change chunks and restamp the hash make the viewer ignore the packs until
+`--pack` is run again; `restamp-lod` preserves packs that were current before the
+restamp. Packing helps only stores made of many tiny nodes; nodes already at the
+chunk target are left alone. A broadcast array's row is never packed (the viewer
+takes it from its attrs), and the viewer holds a pack's unread members within a
+fixed 4 MB, fetching the pack again when it needs one it let go.
+
+#### Viewer: off-screen nodes no longer read as full-screen; faulted loads no longer stall the pass lock
+
+If a node's bounding sphere crossed the camera's eye plane, the density guard
+treated the node as filling the screen, even when it sat beside or behind the
+camera. The guard then stopped thinning the node and let its refinement go ahead
+for geometry nobody could see. Such a sphere now counts as full-screen only when
+the camera is inside it. A refinement kick on a loader whose archive had failed
+during the load used to hold the pass lock forever, so later views and retries
+waited indefinitely. It now releases the lock. In orthographic views the
+pan-settle threshold now scales with the visible field, so a one-pixel pan at very
+high zoom is no longer dropped. `lod.failedRetryMs` must now be greater than 0.
+
+#### Viewer: safer teardown and multi-host isolation
+
+Calling `dispose()` while `init()` is still running now stops the init instead of
+wiring listeners into a dead app. A load that a newer one has replaced can no longer
+write its waypoints, audio or control-panel state into the newer session. With
+several hosts on one page (a `LuxarApp` plus `LuxarLayer`s, or two layers), one
+host's dataset dispose no longer aborts another host's worker work. A layer's
+commits no longer reach the page event bus, and custom colormaps stay alive until
+the last dataset using them is gone. A layer constructor that throws no longer
+leaks its worker-pool lease. Mixing renderer backends across hosts now logs a
+one-time warning.
+
+#### WebGPU picking: correct front-most hits after a projection switch
+
+On the WebGPU renderer, hover and click picking could report a node behind the
+front-most one after switching between perspective and orthographic projection.
+Pick shaders built under one camera kind kept that camera's depth formula, so
+nodes compared depth values from different formulas. Picking now chooses the
+formula per draw from the projection matrix, as WebGL always effectively did.
+
+#### Viewer disk cache: no stale bytes across tabs; one-time cache reset
+
+Two tabs of the same dataset URL share one on-disk (OPFS) cache directory. When
+the dataset was republished, the tab that opened the new version cleared that
+directory, while a tab still showing the old version kept writing chunks into
+it. Those files were not in the new index, so the next session recovered them
+as unindexed files and served old bytes as the new dataset. Each cached chunk
+file name now carries a tag of the content hash it was written under, so a file
+of one version is never read or recovered as another's; the reconcile deletes
+it. The on-disk encoding version moves to 3, so every existing disk cache starts
+fresh once after upgrading.
+
+The open-time reconcile also no longer resurrects a recovered file that live
+traffic wrote and then evicted while it ran, re-checks the size budget when it
+merges, and stops the unindexed-file lookup when it ends even if its budget cut
+it short (that lookup used to cost one failed disk read per cache miss for the
+rest of the session).
+
+#### Layers panel: authored palettes visible, sound and glass rows honest, reflections follow edits
+
+A layer authored with a non-builtin colormap (any matplotlib or colorcet name, or
+an array LUT) now shows as "custom (authored)" in the Layers dropdown and row
+menu, can be re-selected after trying another palette, and is drawn correctly in
+the colormap legend instead of flat grey. Flat gsplats layers always offer a
+colormap, as the same data under a LOD or partition wrapper already did.
+
+Sound rows no longer offer Blending or "Apply appearance to all layers", and
+applying appearance to all layers no longer stamps visual settings onto them;
+the row menu no longer offers Blending for a `material="physical"` mesh either.
+Resetting a layer, or all layers, now restores a sound row's authored gain in
+the audio itself, not just on its slider.
+
+A scene-derived environment (what physical metals and glass reflect) now
+re-captures after Layers-panel edits to colour, opacity, visibility, mesh knobs
+or a reset, though not after a selection or gain change. The data monitor's
+lines headline now reads "VISIBLE SEGMENTS · segs", naming what it counts.
+
+#### Viewer workers and caches: crashed workers fail over at once, honest statistics
+
+When a data worker crashes or times out, the tasks still queued on it now move
+at once to a surviving worker instead of each waiting out its own timeout; they
+run on the main thread only when no worker is left. The task that timed out is
+still never re-run. A worker that only started slowly on a busy page is restarted
+instead of being lost for the session. The bandwidth tracker no longer grows
+without bound while the data monitor is hidden.
+
+The cache statistics count what they say: an aborted read counts in no tier,
+and cache warm-ups no longer count as L0 or demand hits, nor trigger
+neighbour prefetching. A stale WASM build whose projection kernel predates
+picking source indices is now rejected instead of silently reporting every
+splat as source 0.
+
+#### Viewer rendering: HDRI loads, capture stalls, capsule picking, LUT leak
+
+A scene's HDRI environment can no longer be lost to an older load's failure,
+never carries over into the next dataset, follows a changed URL, and falls back
+to the room when its URL cannot be resolved. Offline captures no longer stall
+for 3 s per frame when a hidden node was mid-way through a depth-sort apply.
+
+Capsule line segments the density guard has thinned can no longer be picked,
+as was already true of quad lines, points and splats. Custom colormap textures
+evicted from the LUT cache are released when the dataset unloads instead of
+leaking, a torn-down viewer no longer leaves an orphan depth-sort worker
+running, and WebGL upload counters now include compressed (KTX2) textures.
+
+#### Viewer core: dispose-safe loads, notifications for embeds, steadier controls
+
+A dataset load interrupted by `dispose()` (or dispose and re-init) no longer
+restarts the old load's animation, overlays or picking, or announces its dataset
+to the new viewer. Library embeds (`new LuxarApp().init()`) now get the viewer's
+toasts, error dialog and loading spinner, as the standalone page did, including
+after dispose and re-init.
+
+A kiosk with `allow_pointer: false` stays locked when the camera mode changes.
+Fly movement no longer gets stuck after the window loses focus, the tab is
+hidden, the controls are disabled mid-press, or a key is released while Ctrl or
+Cmd is held, and on macOS Option+W / Option+S now fly up and down as the help
+overlay says. A scene's `viewer_config.dimensions.selected_dimension` now
+chooses which dimension `[` / `]` navigate, and Ctrl+Shift+S exports it.
+
+Every `sound-started` event is now followed by a `sound-ended`, and switching
+back to a scene with sound no longer decodes its clips twice. A kiosk with
+`watchdog_reload` now also reloads after a WebGPU device loss, and embedders
+receive a new `webgpu-device-lost` event. Remote controllers receive the
+camera's final pose at the end of a movement. `LuxarLayer` accepts `densityCap`
+and `blendWarmup` like `LuxarApp`, and `RenderingSettings`, `LayerType`,
+`ControlPanelSettings` and `AppFactories` are exported types.
+
+#### Viewer loaders and LOD: failed loads back off, counts and labels tell the truth
+
+A progressive node whose first load or retry fails now retries the same LOD
+prefix instead of escalating to a larger allocation, as the refinement path
+already did. The data monitor's visible-element count for Points, Lines and
+GSplats ladders no longer includes deeper levels from an earlier slice, and hover
+labels on a sliced, laddered Lines node now name the picked row instead of a
+wrong one.
+
+A layer re-shown while a retry is running now refreshes to the current slice
+once the retry ends. Flying inside a GSplat LOD node now shows its finest level
+rather than a coarse one, deferred partition parts are no longer all activated
+by a pass that runs before the first frame, and a partition part that fails to
+activate no longer leaves its nested LOD groups loading against detached
+objects. A hand-written mesh reveal ladder whose levels declare a texture is
+refused with a clear error, and a Points ladder level carrying undeclared RGBA
+colours now fails loudly instead of mis-striding them.
+
+#### Points and Lines stream in sorted, like Gaussian splats
+
+Points and Lines in `normal` or `volumetric` blending no longer flash appended
+elements on top of the existing ones (or redraw the whole node unsorted after a
+buffer grow) while a progressive ladder streams in. Like Gaussian splats, they
+keep drawing the previous population in sorted order until the grown
+population's sort arrives, so above the synchronous-sort size an appended rung
+appears one sort round trip later, already in order. Appends in additive modes
+also upload only the new tail of the ordering buffer instead of all of it.
+
+#### Layers-panel Reset also unlocks a locked Active level
+
+"Reset this layer" and "Reset all layers" now also return a locked LOD Active
+level to `auto`, matching every other control. Before, a locked level stayed
+locked while the rest of the layer snapped back to its authored state.
+
+#### Checks against dead exports, inert controls and stale READMEs
+
+`pnpm run check:ci` now ratchets the viewer's unused exports and types against
+`knip-baseline.json` (`check:knip:ratchet`). A new unused export fails; paying
+one down requires `node scripts/check-knip-ratchet.mjs --update-baseline`. The
+Layers panel decides which controls to show from one table
+(`src/ui/layers/layer-control-rules.ts`), and a unit test drives every shown
+control on each layer kind and checks it has an effect that Reset undoes. A
+second test checks that code names quoted in the viewer READMEs still exist,
+and that README lists marked `<!-- mirrors: file#exports -->` match the code.
+
+#### S-cache perf gauges describe the scene that is loaded
+
+After a dataset switch, the `scache.pinnedEntries`, `scache.pinnedBytes` and
+`scache.stage.bytes` perf counters now describe the new scene's S-cache instead
+of still reporting the previous scene's pins.
+
+#### Perf counters are declared, and cancellable operations share one contract
+
+Every viewer perf counter is declared in `PERF_COUNTERS`
+(`src/profiling/perf-counters.ts`) with its unit, kind and meaning, and an
+undeclared name no longer compiles. A meta-test requires each counter to have a
+test asserting its exact value, and every counter a render-gate metric judges to
+be declared. Cancellable async operations are listed in
+`src/tests/_conformance/async-operations.ts`. Each is tested through a shared
+lifecycle contract covering abort, dispose, failure, retry and supersede, and a
+source scan fails when a new `AbortSignal`-taking export or disposable async
+class is not registered.
+
+#### One table of what each geometry type does, and draw/pick visibility parity
+
+`src/tests/_conformance/geometry-behaviours.ts` records, for every viewer
+behaviour that differs by geometry type, whether Points, Lines, GSplats and Mesh
+do it. Each deliberate absence names its reason and where it is decided, and a
+per-type probe runs every cell against the real code. A sibling table,
+`pick-visibility-rules.ts`, records which per-element visibility rules the pick
+pass must share with the draw pass. It is checked in the shader sources, in the
+codegen snapshots, at pixel level in `tsl-shader-parity.spec.ts`, and by a new
+`pickWithinDraw` render-gate judgement. A new lint rule rejects hand-written
+geometry-type literal chains in production code.
+
+#### Correct hidden-slice visibility for Points without radii
+
+Points now filter each point against hidden dimensions when effective-radius
+filtering is unavailable. Unordered nD nodes and one-chunk nodes no longer
+show off-slice points at other timepoints or categories. The one-chunk
+`chunk_bounds` shortcut is safe for Points with or without radii.
+Discrete membership uses an absolute ±0.5, regardless of dimension step.
+
+#### Keep chunk packs current across LOD restamps and warm loads
+
+`restamp-lod` now retains usable chunk packs when their copied bytes still match
+the scene chunks. Packs with stale copies remain unbound. On a warm viewer load,
+the pack sidecar is read from the source store so a cached root index cannot hide
+newly built packs; zipped stores reuse their existing archive reader for this
+probe.
+
+#### Align post-fit culling across Gaussian splat fitters
+
+Direct calls to `fit_gaussian_splats`, `fit_progressive_gaussian_splats`, and
+`fit_tiled` now default to 0.999 cumulative amplitude retention, matching CLI
+presets. Fits that omit `cull_retention` may keep more splats and produce different
+results. More splats do not always raise PSNR: on one noisy flat-fit fixture,
+post-cull PSNR changed from 18.33 to 16.96 dB. Demos that omit this argument
+will also change when regenerated.
+
+#### The control panel follows a display that reloads
+
+The panel's subscription to story changes lives in the display page. When the
+display reloaded, it came back with no subscribers and the hub did not tell the
+panel, so taps still moved the display but the highlighted tile froze on the
+last story the panel had heard about, and stayed wrong until the panel itself
+was reloaded. A loaded panel now re-reads the display's position and renews its
+subscription every five seconds while it is visible, so it corrects itself
+within one interval of any reload.
+
+#### Controllers recover event subscriptions after a display reload
+
+Control hubs now notify connected controllers when a display attaches. The Python controller renews its subscriptions on that notification, so scripts listening for events recover after a display page reload without periodic polling.
+
+#### The control panel resyncs as soon as a display attaches
+
+The touch panel now renews its event subscription and reads the display's
+position when the hub announces a viewer attachment. A reloaded display's
+highlight recovers without waiting for a periodic poll.
+Native bundles need a launcher rebuilt with `make build-launchers` to receive
+the attachment event.
+
+#### The touch panel waits for an attached display to finish loading
+
+Opening the panel during display initialization now retries chapter loading
+until the display can describe its dimensions, instead of leaving the chapter
+menu on an error message.
+
+#### Keep dimension events and touch-panel chapters current across dataset switches
+
+Dimension change listeners now survive scene resets, so `app.on('dimensions-changed')` continues working after `switchDataset`. The touch panel refreshes chapters and authored presentation when the new dataset loads.
+
+#### Demos and examples run from a plain `pip install`
+
+Resolving the output directory for a demo or example walked up for a
+`pyproject.toml` and raised "could not find project root" when there wasn't one.
+From a wheel install (`pip install "luxar[gsplats]"`) any demo that writes a
+dataset therefore failed, and only running from a git clone worked. The same
+lookup could also pick an *unrelated* `pyproject.toml` — a non-editable install
+inside another project's virtualenv would write Luxar's datasets into the user's
+own tree.
+
+`get_datasets_dir` now uses the repository's `datasets/` only when the discovered
+root actually owns the imported `luxar`; otherwise it falls back to the user cache
+directory `~/.cache/luxar/datasets`. Demos and examples work from a regular
+install, with no checkout required. `LUXAR_DATASETS_DIR` can redirect generated
+scenes to another disk. The demo cache inventory and orphan cleaner leave these
+generated outputs alone; `demo cache clear --outputs` removes them explicitly.
+
+#### Scale-population diagnostics survive fit-time culling
+
+Gaussian-splat fits now report scale-population counts and fractions for the splats they deliver, including default closing culls and uniform-tile or content-box merges. The fitter retains each splat's voxel-space classification through output transforms, so clipping, footprint correction, downscaling, and physical units do not change the meaning of a near-scale count.
+
+#### CUDA splatting and NLM kernels without a build step (NVRTC)
+
+A plain `pip install "luxar[gsplats]"` on Linux with an NVIDIA GPU now gets the
+custom CUDA kernels. Until now they existed only as a torch C++ extension built
+by `make build-cuda`, which needs a source checkout, `nvcc` and a C++ compiler,
+so a pip install fitted on the PyTorch renderer: a 100-iteration 128³ fit
+with 2,000 splats took 136 s instead of 8 s on an RTX 3070. The same kernel
+sources ship in the wheel and are now compiled on first use by NVRTC, the CUDA runtime compiler inside the NVIDIA
+wheels that a CUDA build of torch already installs, then loaded and launched
+through the CUDA driver API with `ctypes`. Nothing new is installed and there
+is no torch C++ ABI to match. Each dimensionality compiles on its own the first
+time it is used, and the binary is cached under
+`$XDG_CACHE_HOME/luxar/cuda/` (default `~/.cache`). A corrupt or unwritable
+cache only costs a recompile. A GPU newer than the installed NVRTC gets PTX that
+the driver compiles. On an RTX PRO 6000 (sm_120) and an RTX 3070 (sm_86) the
+runtime-compiled kernels give the same gradients as the extension, bit for
+bit, and forward volumes that differ only by float atomic-accumulation order
+(relative L2 about 5e-8); fit speed matches. The parity suite also passes on a
+DGX Spark GB10 (sm_121, aarch64) installed from the wheel.
+
+The extension is still used first when it imports, so checkouts and HPC
+installs that build it behave as before. `LUXAR_CUDA_BACKEND=aot|nvrtc|torch`
+forces a path; a forced kernel path that cannot run raises instead of falling
+back. The fit log names the kernels in use, and the warning when none can run
+now gives the reason instead of telling pip users to run `make build-cuda`. The
+non-local-means denoising kernels follow the same order.
+
+`cholesky_to_conic` runs under `torch.compile`, which only compiles at its first
+call. On a machine without a working C compiler or the Python headers Triton
+needs, that call raised and aborted every fit on the custom-kernel path. It now
+falls back to eager execution for the rest of the process and warns once.
+
+#### Metal splatting kernels compile at runtime, no Xcode needed
+
+On Apple silicon, the 3D Gaussian-splat kernels in `kernels.metal` are now compiled
+on first use by `torch.mps.compile_shader`, i.e. by the Metal compiler built into
+macOS, so `pip install "luxar[gsplats]"` gets the fast kernels with no Xcode and no
+compiled extension tied to one torch ABI (torch >= 2.7; 2.6 through torch's private
+API). The runtime path matches the ahead-of-time extension to float32 rounding and
+is as fast or faster (1.5 ms vs 1.9 ms per 128³/2k-splat training step on an M4
+Max; the PyTorch fallback takes 646 ms).
+
+Importing the Metal package no longer tries to build the extension into the package
+directory or prints an Xcode banner. The extension is now an explicit developer
+build (`python setup.py build_ext --inplace --force`); when built and up to date it
+is still preferred in `auto`, mirroring the CUDA backend order.
+`LUXAR_METAL_BACKEND=auto|aot|runtime|torch` overrides the choice (`runtime`
+selects the equivalent runtime path even when the extension is built); a forced
+backend that cannot run raises, in fitting too, and a fit that falls back to
+PyTorch on MPS warns with the reason.
+
+#### A fresh Linux machine gets through `make setup-dev` and `make test-fast`
+
+On a fresh Ubuntu box the first `make setup-dev` installed nvm, never installed
+Node, stopped with a bare `Error 3` — and printed a ✅ first. Sourcing `nvm.sh`
+runs an implicit `nvm use` that honours the repository's `.nvmrc`, and it returns
+3 while Node 22 is not installed yet; under the Makefile's `-e` shell the `&&`
+chain silently skipped `nvm install`. Every nvm site now sources with `--no-use`
+and selects Node explicitly. Installing runs as separate checked steps, and
+`node -v` is checked against the floor before anything reports success.
+
+The first Hatch environment build (torch, napari/Qt, about 10-25 minutes) now
+says up front what it is downloading and streams the installer's output. A
+failure stops setup with a pointer instead of being swallowed by `|| true`.
+Every run then checks the env with a verbose `hatch -v run`. On an env left
+half-built by an interrupted first run, that installs what is missing in plain
+sight or fails with the `hatch env remove default` hint. Before, `env create`
+reported "already exists" and the sync happened silently inside the tolerated
+pre-commit step.
+`installer = "uv"` was evaluated and left out, because this env must keep `pip`.
+
+The fresh-machine test loop works too. napari's auto-loaded pytest plugin is
+disabled (`-p no:napari`), so pytest no longer crashes at startup on a box
+without libGL; no test used its fixtures. The `jq` requirement in
+`test_ci_diff_classifier.py` moved from a module-wide autouse assert (200 errors
+without jq) into the two runners that execute jq scripts. Locally those tests
+skip with an install hint; under `CI=true` they fail, so CI can never drop them
+silently. `make test-fast` now always runs both the Python and TypeScript halves
+and combines their exit codes, except that a Ctrl-C during the Python half stops
+there. Its xdist run, and the local `hatch run test` / `test-cov-all` scripts,
+pass `--max-worker-restart=0`: the run aborts at the first worker crash instead
+of respawning workers and hanging at 99%.
+
+CUDA advice no longer recommends Ubuntu's `nvidia-cuda-toolkit` (CUDA 12.0, too
+old for cu13x torch and for Blackwell). `make check-cuda-deps` and
+`make setup-cuda` print NVIDIA's `cuda-keyring` repository commands for x86_64
+or sbsa (aarch64). Ubuntu derivatives such as Mint and Pop!_OS map through
+`UBUNTU_CODENAME`, and other distros get NVIDIA's download page. The toolkit major
+is picked to match `torch.version.cuda` (11, 12 or 13; a CPU-only torch gets the
+current default with a note). The cu130 hints note that they need driver >= 580,
+and point to cu128 for older drivers.
+`setup-cuda` no longer runs `sudo apt install python3-dev` without asking; it
+now sits behind the same prompt as the other packages. The torch index map
+gains cu126 and cu130. `make install-rust` checks for a C compiler before
+`cargo install wasm-pack` needs one, and `make check-deps` reports `cc` and `jq`.
+README, CONTRIBUTING and the build-system guide share one prerequisite list for
+Ubuntu/Debian and macOS. CONTRIBUTING's test loop now matches the rest of the
+docs: `make test-fast` while iterating, `make test-all` before pushing.
+
+#### `gsplat cal`: grid-edge warnings, bounded memory, and faster seeding
+
+`gsplat cal` now says when its sweep did not bracket the optimum. When K* is the
+smallest or largest grid point with a finite result, or when the held-out metric moves less than 1 dB
+across the whole grid, a ⚠ line names the flag to extend (`--k-min`, `--k-max`,
+`--k-grid`). The line prints even under `--quiet`, and the text is recorded in
+`cal.json` as `held_out_peak.warnings`. When the table already says the curve
+has not converged at K_max, it skips the duplicate largest-grid-point line. A curve that is best at the first K and
+then falls by at least 0.3 dB is now labelled `low_k_optimal`. It used to be
+called `plateau`, but a falling curve has no plateau. Older `cal.json` files still
+load, with an empty warning list.
+
+Per-K scoring no longer copies the volume around. The render is overwritten in
+place with its squared error, only the 5 % held-out set is gathered, and the
+train MSE is the total error minus the held-out part. Before, a boolean gather
+built `train_pred`/`train_true`, about twice the volume. SSIM now filters with
+a separable Gaussian, one 1-D pass per axis, on every device; it matches the
+former n-D kernel to within 4e-7. The former CPU `conv3d` lowered the 11³
+kernel to im2col, about 5 KB of temporaries per voxel: 73 GB for a 16.8 Mvox
+volume, and the reason a 64 Mvox `cal` died on a 16 GB machine. A 200³ SSIM on
+CPU now peaks at 0.24 GB in 0.23 s; the reported untiled cost was 37 GB and
+79 s. On CPU and MPS, SSIM also tiles once its untiled temporaries would pass
+256 MiB; before, it tiled only on CUDA. The whole scoring step on a 65 Mvox
+volume now peaks at 0.34 GB on CPU and takes 2.3 s single-threaded. The old
+code was OOM-killed there on a 128 GB Mac. On MPS, SSIM on that volume takes
+0.8 s untiled or 1.5 s tiled, against 21–25 s with `conv3d`.
+
+Each grid point also prints one progress line with K, held-out and train PSNR,
+the fit time and the sweep's running total.
+
+Seed generation drops three superlinear paths. The selected seeds do not change,
+and tests check them against the old algorithms. The grid top-up filtered its
+grid with a k-nearest-neighbour query. That query fell back to brute force over
+every seed for each grid point far from all of them, which is the normal case
+when the seeds sit in a few clusters inside an empty volume. It took 29 s for a
+32k target on a 9 Mvox volume and grew as queries times seeds. It is now a
+bounded KD-tree range test: 0.07 s at that size and 0.37 s for 128k on 37 Mvox.
+Greedy minimum-distance deduplication and edge Poisson-disk sampling now resolve
+blocks of candidates with KD-tree range tests instead of looping in Python per
+candidate, 3 to 12 times faster. Before each block they estimate how densely its candidates conflict from a
+small sample, then cap how many candidates one pass resolves. Past about 512
+conflicts per candidate (a large minimum distance on dense candidates) they
+hand over to the per-point loop. On a 64³ lattice at `min_distance` 8 or 16, an
+unshuffled or intensity-ordered input now runs at the old loop's speed (4 s,
+under 25 MB on Linux). A fixed block size had needed 4.5 GB there. The public
+`greedy_min_distance_select(..., max_count=0)` returns no points; the old loop
+always kept the first one. Farthest-first subsampling for targets under
+10k kept recomputing the full remaining-by-selected distance matrix, which cost
+O(N·T²). It now keeps a running nearest distance, O(N·T): 140 s became 0.46 s for
+5,000 of 10,000 candidates. It now always runs this NumPy CPU path. CUDA hosts
+used to run a `torch.cdist` branch for targets over 1,000, so their seed order
+changes and near-ties can resolve differently.
+
+#### Demos and servers behave on remote, headless and scripted machines
+
+`luxar demo run` now forwards `--host` and `--no-open` to the server of every
+demo that serves through `launch_viewer` (`luxar demo run lorenz -- --host
+0.0.0.0` serves it to another machine), and `luxar demo run <key> -- --help`
+describes the demo — its details, its own notes and the shared demo flags —
+instead of starting it. Demos that served out of a temporary directory now
+build into the demos output directory exactly as `--no-serve` does, so
+`luxar demo` marks them built afterwards. A store written into the demos
+directory is now built in a hidden sibling and renamed into place only when
+complete (`LuxarZarrCompiler(atomic=...)`, on by default there), so a reader
+never sees a half-written scene and a failed rebuild keeps the previous one.
+`luxar demo run` refuses to start a demo that is already running, `run-all`
+skips running demos, and `demo cache clear --outputs` keeps their scenes.
+Arguments that change what a demo builds (`-- --points 100`) build into
+`demos/variants/custom-<hash>/`, leaving the default build — the one the
+catalogue marks and `run-all` skips — untouched.
+
+The browser `luxar viewer`, `luxar gsplat view` and demos open by default is
+skipped where nobody can see it — over SSH, on Linux without
+`DISPLAY`/`WAYLAND_DISPLAY`, or with no terminal attached — and the URL is
+printed instead, unless `$BROWSER` routes it somewhere (VS Code Remote-SSH,
+Codespaces). A typed `--open` always launches one; `LUXAR_OPEN_BROWSER=1` or
+`=0` overrides everything. `luxar gsplat view` gains `--host`, binding both servers
+and advertising a dialable address like `luxar serve` does.
+
+The new top-level `luxar stop` stops servers started by `luxar serve`,
+`luxar viewer`, `luxar gsplat view` and `luxar export --open` — which now
+register themselves in the run registry while they serve — plus every running
+demo. A server is stopped by PID, never by process group, so the script that
+started it survives, and only after checking that the PID still runs the same
+luxar subcommand and started before it registered — a stale entry whose PID
+was recycled is pruned, not signalled, and without a process table nothing is
+signalled at all. `luxar stop`, `luxar demo stop` and `luxar demo cache
+clear` no longer wait at a `[y/N]` prompt when stdin is not a terminal: they
+exit 1 and ask for `--yes`.
+
+`luxar export --open` runs the exported `serve.py` as an owned child: stopping
+or killing the command (a closed session, a harness timeout, `luxar stop`) now
+takes the server down instead of orphaning it on its port, a server that fails
+is reported with its exit status instead of ending the command with status 0,
+and the command's own output is flushed before the server starts so a
+redirected log keeps it. From an installed wheel, `luxar export --native` and
+a missing viewer build no longer point at `make build-launchers` or
+`pnpm build`, which only exist in a source checkout; they say what is needed.
+
+#### Faster, quieter-failing and resumable Gaussian-splat fits on MPS and CUDA
+
+A content-tiled fit on Apple Silicon could look hung: it was slow, silent, and
+several steps scaled badly on MPS. `otsu_threshold` no longer runs a full-volume
+`torch.histc` on the fit device (on MPS that allocated about numel x bins x 4 bytes,
+9.4 GB for an 8 Mvox crop, and failed outright above ~16 Mvox). It now counts a
+CPU `bincount` over at most 5 M fixed-seed random samples, with bin edges still
+taken from the full range. The calibration Otsu helper used a strided subsample
+that could alias with the fastest axis, so a structured volume could read a
+threshold near zero; it now uses the same random sample. The post-fit quality render on MPS uses the Metal splatting kernels
+the fit trains with, instead of the pure-PyTorch renderer. The PyTorch renderer's
+chunk sizing now uses a measured 76 B per (splat, voxel) element (it assumed 48 B)
+and a budget taken from the device's reported free memory. It also splits large
+groups of same-sized splats, so one chunk can no longer jump to 131,072 voxels.
+
+The fit's best-state snapshot is now taken before `optimizer.step()`, so the
+restored "best" parameters are the ones that produced the best loss. They used
+to be one step ahead of it. A warm start (`seeds=` an existing fit) whose steps
+only made things worse therefore returned the post-first-step parameters: a
+synthetic refit at `lr=0.05` came back at 24.1 dB PSNR instead of the seed's
+59.7 dB, and an A549 refit lost 8 dB of foreground PSNR. Cold fits that keep
+improving are unaffected. The parameters left by the final step are now scored
+once after the loop and compete with the best snapshot; before, they were never
+considered. On a convergence stop they are returned outright, so
+`converged=True` now always means the returned splats meet the threshold.
+
+The fit loop no longer forces a GPU-to-host sync every iteration. The best loss and
+best-state snapshot are tracked on the device and read back on eval iterations.
+`ReduceLROnPlateau` receives every iteration's loss from a device-side buffer,
+replayed every few iterations (5 at the default patience), so a learning-rate
+reduction can take effect up to four iterations later than it used to.
+Tiled residual peak finding searches all tiles in one batched pass instead of
+about 2,500 blocking syncs per relocation step, and selects the same peaks.
+With `num_tiles_per_dim=None`, a 3D fit now follows the documented auto rule
+(6 tiles per axis, 216 tiles instead of 512), which was measured to keep fit
+quality. Other dimensionalities keep the historical 8 tiles per axis inside the
+fit loop.
+
+A failed post-fit quality measurement now prints one warning line even when the
+fit is not verbose. The reason is stored as `quality_error` in the store's
+`fitting/` group, so a missing PSNR is never silent.
+
+Content-tiled fits (`gsplat fit --tiling content`, sequential and `-j N`) now
+checkpoint every finished box to `<output>.boxes/`. Rerunning the same command
+reuses each box whose marker matches the run's plan, fit configuration and input,
+and refits the rest. The `-j N` staging directory is no longer wiped at start.
+A marked box whose store no longer reads is refitted. SIGTERM now unwinds the fit
+like Ctrl-C, so `kill` leaves finished boxes on disk. On an interrupt, `-j N` also
+terminates its running worker processes before releasing the directory. The
+directory is removed only after the merged output is saved. A second live fit to
+the same output uses a private directory instead of sharing boxes; the message
+names the lock file, and `LUXAR_CHECKPOINT_FORCE_UNLOCK=1` breaks a dead lock.
+Library callers of `fit_planned_parallel` that pass no `fingerprint` still get
+a cleared staging directory.
+
+#### Warm starts begin on their seed
+
+A fit warm-started from a previous fit (`fit_gaussian_splats(V, seeds=<GSplatData>, seed_amps_background_relative=True)`) now starts its optimization on exactly the mixture it was handed: before the first step, the initial model's centers, Cholesky factors and amplitudes match the seed's, and so does its render (the tests require agreement within 1e-4 of the peak; MPS and CUDA measured about 2e-5).
+
+Three conversions used to change the seed. The largest was the coordinate frame. A fit with `voxel_size` writes physical units by default, and feeding that result back with the same settings read them as voxel indices, which took a 24^3 warm start from 47 dB to 18 dB before any step. The new `seed_space` parameter (`"voxel"`, `"real"`, or `None`) declares the frame. `None` is the default: a seed declared to be a fit's output is taken to be in this call's `output_space`, and any other seed, such as `generate_seeds()` output, stays in voxel indices. A caller that already divides a physical-unit seed by `voxel_size` by hand, and then passes it with `voxel_size` and `seed_amps_background_relative=True`, now gets the division twice: drop the manual conversion or pass `seed_space="voxel"`. A `seed_space` that cannot apply (a non-`GSplatData` seed, or `"real"` without `voxel_size`) warns. Second, Cholesky diagonals in `[sigma_min, sigma_min + 0.1)` were raised by the fresh-seed gradient-safety margin, which widened near-floor splats. A declared warm start now keeps every diagonal the model can represent and moves a diagonal on the floor (within a 1e-3 relative tolerance, so a float32 or quantised round trip still counts) off it by 1e-4 voxel. Third, background-relative amplitudes were capped at 1.0 even though a fit's own `amp_max` follows the normalized peak and can be above 1. A warm-start amplitude above this fit's `amp_max` now starts just under the cap, where the forward clamp still passes it a gradient.
+
+The quality drop at iteration 1 that started this work does not come from the conversion. Adam's first step moves every raw parameter by about `lr` whatever the gradient magnitude, and on a converged 24^3 seed at the default `lr=0.01` that step costs about 20 dB (59 to 39 dB). Recovery takes about 50 iterations. At `lr=0.001` the first step is nearly lossless. The best-state snapshot timing is handled separately.
+
+#### Viewer polish: overlays clear the rail, no console 404s, the loop rests when it should
+
+Scene and demo text overlays anchored at the left edge used to paint under the
+control rail's icons on desktop. They now take the same `--luxar-rail-gutter` as
+the docked panels, as a floor (`max(authored x, gutter)`), so an overlay already
+right of the rail is untouched, and an explicit-width overlay is capped to the
+room left on screen; right- and centre-anchored overlays never move.
+
+A normal scene load logged two to five `GET … 404` lines in the console, each a
+speculative read of something the store's consolidated index had already
+answered. `openStore` now places a metadata gate under zarrita's consolidated
+wrapper: once the store's format is known, the other format's documents (and a
+format-2 `.zattrs` the index settles) are answered without a request. A scene
+without overlays no longer probes `overlays/`, and the `chunk_packs/` and
+`environment/` sidecars are checked against an index fetched from the network
+that load — on a warm load the load-time root-document fetch, which for a
+format-3 store is the consolidated index — so the stale-cache guarantees both
+sidecars rely on are unchanged. When a probe is still needed (format 2, a
+presigned or zipped source) it asks for one document of the known format. The
+identity watchdog's first poll asks for the document the load was served from
+even when the server sends no `ETag`.
+
+The window `focus` handler no longer restarts rendering while the document is
+hidden. While the data server cannot be reached at all (a refused or dropped
+connection; an HTTP status such as an expired presigned credential, a rate
+limit or a 5xx shows the identity banner but does not count), the render loop
+stops sustaining itself: cinematic noise, the auto-rotate turntable and
+auto-dolly, dimension playback and loader polls pause, while user input still
+renders the loaded scene. Recording is exempt, so a video or offline turntable
+never films a frozen canvas. The loop resumes when the server answers again.
+
+#### `gsplat fit` defaults, summary and help text
+
+A bare `luxar gsplat fit` (no `--preset`) now runs the `standard` preset (5000 iterations with early stopping) instead of falling through to `fit_gaussian_splats`'s 1000-iteration signature defaults, which sat below `draft`. `load_fit_config` resolves `preset=None` to `DEFAULT_FIT_PRESET`, so a sequential fit, a `-j N` tile/box worker and a hand-run `--tile k/M` all agree, and a `--config` without `--preset` layers on top of `standard`. The Python API keeps its own defaults. `--dump-config`, `--iters`/`--preset` help and the `gsplat --help` getting-started line say so.
+
+The fit summary now describes the model that was SAVED. In a whole-volume fit and a `--progressive` fit, the post-fit cull is followed by a re-score of the surviving splats, so the stored overall scores belong to the saved model (the pre-cull line is labelled "before any post-fit cull"). A progressive fit's per-pass ladder and each part's own tile score in a tiled partition remain pre-cull measurements; a tiled fit's merged whole-volume score was already taken on the saved set. If a re-score fails, the pre-cull score stands, one warning is printed even in quiet mode, and the reason is recorded as `quality_error`. Demos that were fitted at the old 1000-iteration bare default now pin `--iters 1000` so a rebuild reproduces their archives. The compression analysis moved after the cull and the save, and `fit`, `info`, `compare` and `cull` now quote one compression ratio: decoded source bytes over the store's bytes on disk (`compression_ratio` in `luxar.gsplats.fitting.visualization`). Before this, `fit` divided float32 voxels by float32 splat parameters, `compare` divided the reference FILE by the store, and `cull` used parameter counts again, so the same store got three different numbers. `compare` reports the ratio against the raw (decoded) reference.
+
+Store sizes are now measured, not guessed: `fit`, `denoise`, `transform`, `filter` and `slice` used `stat().st_size` on a directory store and reported a few hundred bytes for a store of tens of kilobytes. They share `luxar.cli.utils.store_size` with `info`.
+
+The CPU-fallback warning now says what is actually wrong: a CUDA build of torch with no visible GPU (check the driver / `CUDA_VISIBLE_DEVICES`), a CPU-only torch on Linux/Windows (install a CUDA build), or the MPS hint on macOS. It no longer recommends checkout-only `make` targets, and it prints once instead of twice per fit.
+
+`fit --help` groups `--lr`, `--loss`, `--seed-method`, `--downscale` and `--cull-retention` under an "Advanced" panel, and the `--floor`/`--cull-retention` help shrinks to a line or two with a pointer to the CLI README, where the long form now lives. `--plan-only` given a store-like output (`out.gsplats.zarr`) writes `out.plan.json` beside it and says so, instead of a JSON document under a `.zarr` name. The plan summary labels the padding share as "halo overhead" and shows the halo-scaled per-box budgets the boxes actually fit. `gsplat transform --scale/--translate` help and its arity error spell out "one value per center column, in array axis order (Z,Y,X for a ZYX volume)", with a `4,1,1` example. `gsplat info` on a `.tif`/`.tiff`/`.npy`/`.npz` file, or on a zarr store with no Gaussian-splat structure, now says it is an image volume and to fit it first.
+
+#### CLI progress streams when redirected; quiet runs still name their backend
+
+Every `luxar` command now switches stdout and stderr to line buffering at startup. Python block-buffers a stdout that is not a terminal, so a long command run under `nohup`, `> log` or `| tee` used to show nothing until a buffer filled or the process exited — a `gsplat cal` log could stay empty for half an hour. Worker subprocesses (`fit --tile`, `--plan-box`, batch-fit tasks) are `luxar` invocations and get the same behavior.
+
+`gsplat fit --quiet` (and the quiet inner fits of `cal` and content tiling) now prints a one-line `Fitting backend: …` summary naming the model class and kernel backend, once per process, so a fall back to the much slower PyTorch renderer is never silent.
+
+Content-tiled fits now print one per-box progress stream in place of the per-box fit narration: a start line, iteration lines at 25/50/75% of each box, and a completion line with kept splats, the box PSNR on its padded crop, elapsed time and a budget-weighted ETA (`-j N` prints the completion line per finished worker). The inner box fits are quiet, and each distinct warning (such as the CPU-fallback ones) is shown once per run instead of once per box. The new `luxar.utils.verbosity.quiet_narration()` / `aprint_heartbeat()` pair provides this.
+
+`gsplat compare -q` now silences the whole output tree rather than only the final table; failures still reach stderr.
+
+#### `gsplat fit` prunes sub-voxel specks
+
+Fits now drop sub-voxel "specks" after optimization: splats whose geometric-mean spatial sigma is below `--min-extent` fitted voxels (default `0.6`; `0` disables; `min_extent` in YAML and in `fit_gaussian_splats`). They are relocated splats stuck near the 0.5-voxel reseed size and render as glitter. Measured with held-out (Noise2Self) scoring on nine fits of six volumes, pruning at 0.6 removed 8-70% of the splats and moved held-out foreground PSNR by -0.01 to -0.07 dB, except a Tribolium light-sheet stack, which gained 0.40 dB. The speck share (sigma 0.45-0.55) went from 7-67% to zero, and the pruned splats carried 0.5-0.75% of the fitted brightness. A stacked time/channel axis is ignored, and a `voxel_size` or `--downscale` is undone first, so the threshold is in the voxels the optimizer saw; in a native nD fit, a fitted time axis counts in the geometric mean. The pruning runs before the cumulative cull, and a single re-score after both makes the stored quality describe the saved model; the pre-cull line now reads "before post-fit pruning/cull". The removed count and brightness share are printed and stored (`min_extent_removed`, `min_extent_removed_mass_share`).
+
+A mass guard keeps real structure: when pruning would remove more than 2% of the fitted brightness (after `--floor p95` the same threshold removed 4.3-15%), that fit, tile or box keeps its splats, prints one note, and records `min_extent_skipped`. The threshold is the config/YAML key `min_extent_max_mass_share`.
+
+Uniform tiles, content boxes and `batch-fit` tiles prune their own splats, and every merge (including the `batch-fit` streaming merge) sums the record. `batch-fit run` and `submit` take `--min-extent` and `--reseed-sigma`, recorded in the manifest's fit arguments. A `-j N` parent forwards an explicit `--min-extent` to its workers. Progressive fits prune once, on the accumulated result. `gsplat cal` always fits with `min_extent=0`, so K\*, `k_values_effective` and `saturation_cap` stay unpruned counts. Volume re-fits in `gsplat lod --refine volume` keep every row, as before.
+
+`--reseed-sigma` (Advanced panel; `relocation_reseed_sigma_vox` in YAML and in `fit_gaussian_splats`) exposes `DynamicOpsConfig.relocation_reseed_sigma_vox`. The default stays at 0.5. On seven measured fits, 0.75-1.0 left no specks and fitted up to 2x faster, with held-out PSNR moving -0.02 to +0.41 dB. It warns when relocation is off (for example under `--progressive`), where it has no effect.
+
+#### Fitted volumes open the way Fiji and napari show them
+
+A z-stack converted with `luxar gsplat convert` used to open edge-on, with z drawn
+as screen-x, and mirrored vertically compared with Fiji. A fit stores its center
+columns in array order (z, y, x), and convert mapped them onto scene axes by
+position. Convert now names the columns and maps them onto x, y, z scene
+dimensions with `dim_order`, so the Cholesky factors are permuted along with the
+centers. The scene opens facing the XY plane with y pointing down
+(`viewer_config.camera = {up: (0, -1, 0), view_axis: "xy"}`). The flip is done by
+the camera, not by a negative scale, so coordinates, units, picking and scene
+bounds stay as fitted. `--view xy|xz|yz` picks a different face. `--dim-order`
+names the columns (`t,z,y,x` hides `t` and draws x, y, z). On a z,y,x fit,
+`--dim-order x,y,z` is the legacy positional mapping. An unnamed store with no
+fitting provenance, such as geometric x, y, z data, keeps the positional mapping
+too. A partition is grafted
+unchanged and keeps its column order. The preset still finds its XY plane
+because the viewer matches the preset letters against dimension names.
+
+Fits now record their axis names. Every writer stamps root `dimension_metadata`
+with the array-order names whenever a fit's `fitting/source_shape` has the same
+rank as its centers, and an explicit descriptor always takes precedence.
+`gsplat merge` writes the names again when all its inputs agree on them; with
+`--as-dimension` it adds the new axis, named by `--dimension-name` (default `t`).
+A merged timelapse of fits therefore no longer opens edge-on.
+`CameraConfig` has a new `view_axis` field, defined in the format contract, which
+the viewer uses for the opening frame and for Home/F. The URL parameter
+`?viewAxis=` overrides it for one session; it has its own name because `?view=`
+is taken by bookmarks. `load_volume(info=...)` now reports the voxel spacing of
+OME-TIFF (`PhysicalSize*`) and calibrated ImageJ TIFF files as `axes` and
+`voxel_size`. The size is normalized to micrometres (`voxel_unit: "um"`), and the
+values and units as recorded are kept in `source_voxel_size` and
+`source_voxel_units`.
+
+#### `gsplat fit` and `cal` take physical voxel sizes and crop regions
+
+An anisotropic microscopy stack can now be fitted in physical units, and a region of it cropped, without writing Python. `--physical` reads the voxel size the file records: the OME-Zarr NGFF `coordinateTransformations` scale, OME-TIFF `PhysicalSizeZ/Y/X`, or a calibrated ImageJ TIFF's z `spacing` and XY resolution (TIFF sizes are converted to micrometres). `--voxel-size Z,Y,X`, which was a hidden worker handoff, is now public. It takes micrometres in the array's axis order and wins over the metadata and over a config `voxel_size`, which in turn wins over the metadata. The fit prints one line naming the spacing and its source (`Voxel size Z,Y,X = 0.29×0.108×0.108 µm (from OME-TIFF metadata)`), and `--physical` with nothing to read warns and stays in voxel units. A fit given neither flag still runs in voxel units, but when the file records an anisotropic spacing it prints a one-line hint to pass `--physical`. So `luxar gsplat fit stack.ome.tif s.gsplats.zarr --physical` followed by `luxar gsplat convert` gives a µm-scaled scene in the image orientation. `batch-fit --physical` now reads NGFF spacing through the same helper.
+
+`--region z0:z1,y0:y1,x0:x1` fits a crop. It takes numpy-style half-open voxel spans, where an empty span keeps the whole axis, and zarr crops are read lazily. The splats are translated by the crop's start, so their centers are in full-volume coordinates and a crop overlays the whole volume (convert with `--no-center` to keep that placement). It works with every tiling mode and with `-j N`, whose workers read the same crop while the parent applies the offset once; a hand-run `--tile k/M` refuses it. Remote stores are not supported, so download the crop first. Physical output under `--tiling content` still needs `-j 1`. An `output_space: voxel` config keeps `--voxel-size` output in voxel units. `--tile-region` remains a separate internal handoff and cannot be combined with `--region`.
+
+Fitted stores now record their coordinate frame under `fitting/`: `physical_coordinates` (written by every CLI fit), `voxel_size`, `voxel_unit`, `voxel_size_source` and, for a crop, `source_region`. `fit_gaussian_splats(voxel_size=...)` records `voxel_size` and `physical_coordinates` itself. This corrects the format spec, which said the spacing was already kept under `fitting/config`, a group that a CLI fit never wrote. Content-tiled fits now record `source_shape` too, so like every other fit they get axis names and open in the image orientation. A physical fit's `dimension_metadata` also carries the unit (`{"name": "z", "unit": "um"}`), so converted scene dimensions and the scale bar read in µm.
+
+`gsplat cal` accepts the same three flags. Each K is fitted with the resolved spacing, so K* is measured for the fit `--physical` will run, while the splats stay on the voxel grid where the held-out score renders them. A `voxel_size` in a `cal --config` used to put the per-K fits in physical coordinates and score them off-grid. `cal --region` calibrates a crop, and its K* is the budget for `fit --region` with the same spans. `cal.json` records the spacing and crop under `input_frame`.
+
+#### `gsplat convert` no longer opens a dense fit as a white blob
+
+`luxar gsplat convert` now auto-exposes the scene it writes. Per-splat amplitude
+normalization maps the brightest splats to 1.0, but additive blending sums every
+splat along the view ray, so `fit` followed by `convert` used to open thick
+specimens as a saturated white blob. Convert now predicts the opening view's
+per-pixel additive sum (each splat's projected footprint, colormap or colour
+gain and opacity, looking down the axis the opening camera faces) and dims the
+scene so that sum's 99.9th percentile is `--target-brightness`. The default
+target is 2.0 under ACES and the other filmic tone mappings, and 0.9 under
+`None`/`Linear`, which clip at 1.0.
+
+The two side views, and up to four more timepoints of a timelapse, are predicted
+too and held to at most 4x the target. Orbiting a thin specimen edge-on
+therefore reaches about 8 rather than 16-60, and when that cap is what sets the
+factor, the narration line says so. Hidden axes are weighted where the viewer
+opens them: a timelapse at its first timepoint, a continuous axis at its centre.
+On five real fits the prediction tracked the rendered sum within 1.0-1.3x, and
+the dimming removed the saturation on all of them. It never brightens, applies
+only to `additive`/`luminous` blending, works on partition and LOD stores, and
+takes about 7 s and 1 GB for 10M splats, because the set is subsampled before
+any covariance is built. How the dimming is stored (a per-node display gain on
+data-unit amplitudes) is described in the data-units entry (#3128). The
+prediction is recorded as `amplitude_normalization_mode` with
+`projected_sum_p999`, `projected_sum_target` and `projected_sum_axis`.
+
+`luxar gsplat view` now gives the same first look. It builds the scene `convert`
+would write (orientation, opening camera, auto exposure) into a temporary
+directory, serves it and removes it on exit. The build is shared with `convert`,
+not run as a subprocess, and takes about 1 s for a 30k-splat fit and 8-11 s for
+1M splats. `view` accepts `--auto-exposure/--no-auto-exposure`,
+`--target-brightness`, `--dim-order`, `--view` and `--colormap`, and `--raw`
+keeps the previous behaviour of serving the node tree as stored. The Python
+`add_gsplats_*` defaults are unchanged, so demos and examples render as before.
+The predictor is `luxar.gsplats.exposure.predict_projected_sum`, and the new
+`AmplitudeScale(f)` spec for `normalize_amplitudes` applies an exact factor.
+
+#### `gsplat compare` and `render` score and render on the right grid
+
+`luxar gsplat compare` and `luxar gsplat render` used to compare physical-unit
+splats against a voxel-index grid. A fit given a `voxel_size` multiplies its
+centers and Cholesky rows by that spacing, so its splats landed in a corner of the
+reference and scored as a failed fit. Fits now record the spacing they applied as
+`fitting/voxel_size` (single, progressive and tiled fits). `compare` and `render`
+divide it back out, and `--voxel-size` covers stores fitted before the stamp.
+Both also honour a `physical_coordinates: false` stamp and a `--region`
+crop fit's `source_region` (rendering and scoring on the crop's grid).
+A timelapse batch-fit merge carries the spatial stamp, and readers pad its
+stacked column. `compare` and `render` warn when most splat centers miss the
+grid, or are crammed into a corner of it. A scale or rotation, from the CLI
+`gsplat transform` or from `GSplatData.transform`, drops the stamp; a
+translation keeps it. Without `--shape`,
+`render` now uses the fit's own source grid (`fitting/source_shape`), so its
+output lines up voxel for voxel with the fitted volume. Stacked stores, whose
+`source_shape` lists time first, are excluded. Other stores render on
+the bounding box of their centers. That box used to start at index 0 and clipped
+any store whose splats did not start there; it now starts at the lowest center,
+and the origin is printed.
+
+The headline PSNR now uses a robust peak: the reference's 99.99th percentile
+minus the floor, the minimum of the fit-basis reference. One hot pixel used to
+set the classical `max - min` peak, and with it the score. The full-range figure
+is still reported and labelled, in `compare` and in the fit summary. Stored fits
+keep `psnr_db` as the full-range figure and add `psnr_robust_db` and
+`foreground_psnr_robust_db`. The `compare --output-json` record carries both
+values with explicit keys (`psnr_headline` names the headline) and both peaks.
+`compare` also reports a foreground SSIM. The foreground, in `compare` and in
+the scores a fit stores, is now one definition: a smoothed Otsu mask, as
+calibration uses, with the histogram capped at the reference's 99.99th
+percentile. Uncapped, one hot pixel pushed every real structure below the
+threshold and reported a 0.00% foreground. In `compare`, `--mask <file>` and
+`--fg-threshold <value>` (in the reference's raw units) override it.
+`--at-fit-resolution` scores a `--downscale` fit on the grid it was fitted on: the
+reference is decimated the same way the fit decimated its input.
+
+`compare` gains `--axes` and `--array-key`, matching `fit`. A `--channel` or
+`--timepoint` given for a TIFF or NumPy input without `--axes` is now an error in
+`fit`, `cal` and `compare`. Before, the index was ignored without a word and every
+channel was fitted as extra z-planes. `compare` streams its full-volume reductions
+and tiles SSIM on every device. A 256x512x512 float32 comparison on CPU peaked at
+3.2 GB max RSS in our measurement on macOS. `GSplatData.load()` without `include_stats` keeps the
+normalization basis (`image_min`, `floor`, ...), so a store loaded, edited and
+saved in Python is still scored against the right basis.
+
+#### Install docs for a fresh machine, compressed-TIFF support in `[io]`, and leaner agent skills
+
+The `[io]` extra now includes `imagecodecs`, so `pip install 'luxar[io]'` reads
+LZW/JPEG/zstd-compressed TIFF and OME-TIFF (common microscope exports), which
+tifffile cannot decode by itself. An install that still lacks it gets an error
+naming `pip install 'luxar[io]'` / `pip install imagecodecs` instead of tifffile's
+bare "requires the 'imagecodecs' package". A colormap name that fails only because
+matplotlib or colorcet is not installed (`--colormap magma` on a plain
+`luxar[gsplats]` install) now says which package to install, and `gsplat convert`
+passes that message through.
+
+The README quick start now starts from a virtual environment and covers what a
+pristine machine lacks: `python3-venv` on Ubuntu, a Python 3.12 on macOS (whose
+system Python is 3.9, plus python.org's certificate step), `uv`, the CPU-only
+PyTorch wheel that keeps a GPU-less Linux box from downloading CUDA, and
+`luxar[gsplats,io]` for fitting TIFF volumes. The Gaussian-splatting README gains a
+"Fitting on a CPU or a Mac" section with measured timings. Exported folders are
+documented as `python3 serve.py`.
+
+The agent skills were revised against the code: `luxar-install` is rewritten
+around `pip install` (dev route second), `luxar-data-loading` corrects which
+commands accept `--axes` (fit and cal, not compare) and that an unknown label is
+an error, `luxar-export` documents `serve.py --host`, and `luxar-visualization`
+covers the fitted-volume axis order and the additive white-blob first view.
+`luxar-gsplat-pipeline` is cut from 777 to under 500 lines by moving measured cases
+into linked `references/` files, and a new test enforces the skills README's
+500-line budget, reference links, frontmatter, symlinks and README rows.
+
+#### CPU fits and calibrations use more than one thread
+
+`luxar gsplat fit` and `luxar gsplat cal` on CPU now raise torch's intra-op thread count to `min(physical cores, 8)` for the duration of the command. The hatch environments pin `OMP_NUM_THREADS=MKL_NUM_THREADS=1` for the test suite, and that pin also reached CPU fits, which then ran on one thread unless both variables were exported by hand. On a 128x256x256 volume with 4k splats one thread took 4.6 s per iteration and 4 to 8 threads took 2.6 s; 16 threads was slower again (3.4 s), hence the cap of 8. The command prints `CPU: using N threads (set LUXAR_CPU_THREADS to change)` and restores the previous count on exit.
+
+`LUXAR_CPU_THREADS=N` sets the count explicitly and `LUXAR_CPU_THREADS=0` turns the adjustment off. An OMP/MKL export that raised torch's count is respected; if torch remains at one thread, the CLI widens it, so set `LUXAR_CPU_THREADS=1` to explicitly run one thread. Multi-worker CPU fits (`fit -j N`, content `-j N`, `batch-fit run --gpus cpu`, Slurm `--parallel`) give each worker a CPU share for both torch and native kernels unless a nonzero `LUXAR_CPU_THREADS` value was set. A hand-run `fit --tile` or `--plan-box` without a parent-supplied share leaves torch's inherited count alone unless `LUXAR_CPU_THREADS` is set. Calling the library from Python never changes torch's thread count, and the test suite sets `LUXAR_CPU_THREADS=0` so its single-thread pin holds.
+
+The fit-summary and `compare` SSIM on CPU already use the separable Gaussian filter: at 128x256x256 `compute_ssim` takes 0.15 s with a 0.59 GB peak RSS, where the earlier dense `conv3d` path took 15.3 s and 38.5 GB, with the same result. A new test checks that the tiled path matches the dense kernel at ragged volume edges.
+
+#### Native CPU kernels make 3D splat fitting many times faster without a GPU
+
+A 3D fit on the CPU used to run the PyTorch renderer: dense, unfused autograd over
+per-splat voxel boxes, grouped by box shape in a Python loop, accumulated with a
+serial `index_add_`, and a backward about three times the forward. It now runs on
+fused numba kernels (`GaussianSplatModelCPUNative`): a splat-centric forward that
+splits the output into per-plane tiles (one writer per voxel, so no atomics and a
+deterministic result) and an analytic backward that loops over splats, both
+skipping every voxel outside the truncated ellipsoid. The numbers are the PyTorch
+renderer's to float rounding, and a fit lands on the same PSNR. On an M4 Max, one
+forward+backward of 4,000 splats into a 128x256x256 volume drops from 3.9 s to
+0.06 s at 8 threads, and a whole `--preset draft` CLI fit from 130 s to 16 s.
+
+numba is part of the `gsplats` extra and compiles the kernels at runtime from its
+wheel (about 2 s, once; cached afterwards in the user cache directory when
+site-packages is read-only), so a CPU-only install needs no C++ toolchain. Without
+numba, CPU fits keep the PyTorch renderer and say why.
+numba also caps the numpy version it supports, so the extra now implicitly bounds
+numpy from above until numba catches up with a new numpy release.
+`LUXAR_CPU_BACKEND=auto|native|torch` forces a choice (`native` raises if numba is
+missing), and `LUXAR_CPU_THREADS` sets the kernels' thread count, defaulting to the
+physical cores; multi-worker CPU fits split the cores between their workers. The
+early "fitting on CPU is orders of magnitude slower" `UserWarning` is gone (it fired
+before the backend was known and tripped `-W error`); a one-line note replaces it,
+and the warning now comes only from the PyTorch fallback. 2D and 4D+ CPU fits, and the MPS and CUDA paths, are unchanged.
+
+#### Converted Gaussian-splat scenes read in the data's own units
+
+`luxar gsplat convert` and `luxar gsplat view` no longer rescale a fit's
+amplitudes. The scene keeps them in the source's own units (detector counts
+above the subtracted background for an integer stack, "above minimum" when no
+floor was resolved) and labels them with the new `amplitude_unit` attr, with the
+subtracted level in `amplitude_offset`. Brightness now lives in a separate
+per-node `display_gain` attr, which the viewer multiplies into the emission and
+the volumetric density but never into the colormap lookup. The render is the
+same one rescaling gave, but the Layers panel reads in those units.
+
+The window is labelled **Splat amplitude**, because each value is one Gaussian's
+peak: overlapping splats sum to the data value, so the window sits below the
+data's own range, which a new `source_data_range` attr records. The label's
+tooltip gives the unit, that data range with its floor, and the peak/sum
+explanation, so the control keeps the height of any range control. A new
+logarithmic **Brightness** control edits the gain relative to the opening
+exposure (×1; double-click returns to it; the tooltip gives the absolute gain).
+The gain composes like `intensity` and reaches the pick pass. It travels in the
+embedder API as the ABSOLUTE `LayerPatch.brightness`, beside
+`LayerSummary.authoredBrightness`, `sourceDataRange` and `amplitudeOffset`, and
+in view bookmarks. Bookmarks now stamp the scene `content_hash`, and a window or
+gain saved on another build of a scene is not applied to a re-converted one.
+
+Auto exposure, `--no-auto-exposure` and `--display-gain` (the new name for
+convert's `--scale-intensity`, which remains an alias) now set the gain, and
+`amplitude_normalization_mode` records which. The narration line prints the
+gain it stamped. A colormap `--intensity` window is restated in data units,
+except the identity `--intensity 1`. `amplitude_normalization_factor` is no
+longer written by convert, because convert no longer rescales the data.
+
+The Python `add_gsplats_*` adders still normalise by default. To opt in, pass
+`normalize_amplitudes=False` with the attrs that the new public
+`luxar.gsplats.exposure.data_unit_display_attrs(stats, ...)` returns; they are
+refused while normalising and on `add_gsplats_from_volume`. The intensity basis
+now follows every amplitude edit. `gsplat transform --scale-intensity` and
+`GSplatData.scale_intensity` scale it, and `--normalize-intensity`, offsets,
+clamps and per-splat reweights (`filter --soft-highpass`) drop it. A merge
+containing splats without a basis claims none. Content-tiled fits record their
+`source_dtype`, and multi-tile batch merges record the shared basis, so integer
+stacks read "counts".
+
+Scenes without the attrs render bit-identically. Every amplitude encoding holds
+data units: counts up to 65535 and float data of any magnitude keep the relative
+precision normalised values had, and no amplitude path uses float16.
+
+#### True HDR canvas output on WebGPU
+
+The WebGPU renderer now presents an extended-range `rgba16float` canvas on displays that report HDR, so emissive highlights can rise above SDR white instead of being tone-mapped down to it. It is on by default in WebGPU sessions and falls back to the ordinary SDR canvas wherever true HDR cannot be achieved (the WebGL renderer, which stays the default, an SDR display, no native WebGPU device, or a browser that cannot confirm extended tone mapping); support is probed before the canvas is built, so a fallback session pays nothing. Settings › Advanced › HDR Output or `?hdr=off` turns it off, and `?hdr=<n>` pins the headroom.
+
+Below a knee the image is exactly the selected SDR tone curve; above it a smooth, slope-matched shoulder rises to the display's headroom. Headroom is resolved per display: a value set with the new Headroom slider, the browser's live measurement (Detect Display, where the browser reports it), a conservative model guess such as 3x for a MacBook Pro XDR panel, or 2x. 8-bit exports and live recordings keep the SDR curve, and EXR exports keep the float data. The float canvas costs about 0.2 ms per frame at 4K on an RTX 3070.
+
+#### Scorers undo a recorded `transform --scale-intensity` / `--normalize-intensity`
+
+`luxar gsplat compare` and `luxar gsplat render` now divide a store's recorded `intensity_scale` (the cumulative factor `transform --scale-intensity` and `--normalize-intensity` stamp) back out of the amplitudes, so a pure display rescale scores, and renders, exactly like the unedited fit: the reference, its robust peak, the floor, the foreground mask and `--fg-threshold` all stay in the source's own units, and the JSON record carries `intensity_scale` when one was undone. `cull --target` and the `--refine volume` LOD re-fit (whole-store, per-part `adaptive`, fit-time and batch-merge recipes) instead multiply the target volume by the factor, because the store they write keeps the edited amplitudes. A store with no recorded factor, or a factor of 1.0, is scored as before; a round trip that multiplies back to 1.0 drops the key. `--normalize-intensity` now scales the amplitude basis like `--scale-intensity` instead of dropping it, both flags reject a non-positive or non-finite value as a usage error, and `compare` warns when a store keeps `image_min` but no amplitude basis (an offset, clamp or per-splat reweight dropped it).
+
+#### Serving and first-run friction from the third round of new-user testing
+
+`luxar demo run` accepts `--port` and `--viewer-port` (1-65535, directly or after
+`--`), forwarded to `luxar serve` like `--host`, so a demo behind a port forward
+or a firewall rule no longer has to be re-served by hand. Serving flags never
+send a run to a custom-variant build, after `--` or not. A re-run still rebuilds
+the scene (so a code change always shows), but when the default build is present
+it first prints the `luxar serve … --viewer` command, with the same host and
+ports, that serves the existing build without rebuilding. A server bound to a
+wildcard host (`--host 0.0.0.0`) now also prints a `127.0.0.1` viewer URL: the
+advertised LAN address inside a container or VM is an internal one, while a port
+forward reaches the servers on loopback. `luxar demo run <key> --help` now
+describes the demo, as `-- --help` already did; a wrapper such as `hatch run`
+swallows the `--`, which used to print the generic `demo run` usage instead.
+
+An exported folder's `serve.py` redirects `/` to the viewer with the scene loaded
+instead of showing a directory listing. The redirect is built from the request's
+own host, so it is right through a port forward, and never carries the control
+flag or token; with the relay on, `serve.py` says at startup that the bare
+address opens a view-only viewer and the printed Display URL is the one the
+panel drives.
+
+The viewer no longer logs two `HEAD … 404` lines on every load of a format-3 store
+at a URL without a `.zarr` suffix (`luxar serve` mounts a store at `/`, an export
+at `/data`): the store probe now asks for `zarr.json` first and stops at the first
+hit, each probe with its own timeout, instead of firing all three markers in
+parallel. Over plain http from another host, where the browser exposes no OPFS,
+the missing disk cache is one `console.debug` line instead of a warning with a
+`TypeError` stack; a genuine OPFS failure still warns.
+
+`gsplat convert --blending-mode volumetric` prints the predicted density on the
+opening view's brightest rays and the `--absorption` that gives about one optical
+depth there. Auto exposure does not run for volumetric, so that density is set by
+the fit (on a 10-timepoint zebrafish nuclei fit it was 3.95, so κ ≈ 0.25), and the
+README's example, which used κ = 4, rendered such fits as an opaque wall. The
+README now uses κ = 0.25 with a black-footed colormap and explains the choice. The
+ACES/colormap-LUT notice is printed once per convert (a LOD store printed it
+twice) and names `--tone-mapping`.
+
+`make test-fast` no longer always runs both halves (superseding the #3110 entry):
+setting only `PYTEST_ARGS` runs only the scoped Python half, setting only
+`TS_ARGS` runs only the scoped vitest half, both runs both scoped, and neither
+runs everything as before. Its documented timing now quotes the measurement
+precisely: ~22.5 minutes for the Python half alone (~20k tests) on a fresh
+20-core machine, before ~18k vitest tests. The `gsplat view` SIGHUP test no
+longer fails when it inherits an ignored SIGHUP (`nohup`, agent shells), which
+also made it touch the real 8000/5173 ports.
+
+Install docs: the README's capability table says a native app export needs a
+source checkout (`make build-launchers`), the Ubuntu `apt` lines run `apt update`
+first, and the install skill's "Hatch owns the environment" advice moved under
+the NVIDIA profile's dev-checkout heading, where it applies.
+
+#### `gsplat convert` points dense volumes at volumetric blending
+
+When the predicted opening view stacks more than about 20 splat peaks along its brightest rays (dense nuclear stains: a cells3d nuclei fit predicts 31, a full Allen FOV 28; sparse cells sit at 0.6–10), the exposure line is followed by one hint: additive blending shows an integrated glow there, and `--blending-mode volumetric` (which then prints a starting `--absorption`) shows interior structure. The lod substitutive reducer also stops warning about the MPS float64 fallback when the device was chosen automatically.
+
+#### `gsplat fit` refuses an existing output without `--overwrite`
+
+`luxar gsplat fit` now stops with a usage error naming `--overwrite` when OUTPUT
+already exists, as `gsplat lod` and `luxar export` do, instead of replacing it
+silently. The internal `--tile k/M` and `--plan-box` workers that `-j N` and
+`batch-fit` spawn are exempt, so batch resumption is unchanged. `--plan-only`
+writes only a plan JSON (OUTPUT itself when it is not store-like, else
+`<stem>.plan.json`) and is now refused unless the fit resolves to `--tiling
+content`: elsewhere it was ignored and a full fit replaced OUTPUT.
+
+#### Remote inputs are refused by name
+
+`gsplat fit`, `cal`, `compare` and `info` read local paths only. A URL argument
+(`https://`, `s3://`, `gs://`, ...) used to be reported as a missing file under a
+slash-collapsed spelling; it now fails with a usage error that names the URL and
+says to download the data first.
+
+#### Tiled fits report their elapsed time
+
+The closing `Done: N splats in Xs` line of a sequential tiled fit printed `0.0s`,
+because a partition result carries no single fit time, and a `-j N` fit printed
+no time at both. Both now report wall-clock time; a flat fit still reports its
+optimization time.
+
+#### Piped `--help` is no longer clipped to 80 columns
+
+When stdout is not a terminal, `luxar ... --help` renders at 120 columns instead
+of Rich's 80-column fallback, so agents and piped logs see whole option lines.
+Only the console entry point does this, and only for a help request: importing
+`luxar.cli` changes nothing and the environment is left alone. An explicit
+`COLUMNS` or `TERMINAL_WIDTH` still wins.
+
+#### `gsplat merge` flattens partition inputs itself
+
+`gsplat merge` accepted only flat stores and told the user to `flatten` the
+default output of a tiled fit first. It now flattens a partition or nested-LOD
+input with the same streaming code `gsplat flatten` runs, staged in a temporary
+store beside the output (or the system temp directory), and prints a line naming
+the input it flattened. Flatness is decided from group attrs, so a flat input is
+still read once.
+
+#### `gsplat cal --pdf` checks for matplotlib before the sweep
+
+A missing matplotlib was discovered only when the report was rendered, after the
+whole K sweep. `cal --pdf` now checks first and exits with the install hint.
+
+#### No range warning for values equal to a dimension's bounds
+
+The scene's "values outside declared range" warning compared exactly, so a
+coordinate that differs from a range bound only by float32 rounding (the same
+number reached through float32 and float64) warned although both print as the
+same value. The check now allows a few float32 ulps at each bound.
+
+#### `gsplat compare` scores a crop fit on its region and says where the noise floor is
+
+A `--region` crop fit compared against its full source volume is now scored on the
+region it fitted. Its foreground mask used to be an Otsu threshold of the WHOLE
+volume, so the "same" foreground PSNR moved by up to 6 dB between the fit-time
+stamp and `compare` (31.5 vs 25.5 dB on one organoid membrane fit), and the splats
+filling only their region set off a false "crammed into a corner?" warning.
+Outside the region the fit saw nothing, so scoring there counts every structure it
+was never asked to model as error; `--whole-volume` still does that, and the corner
+heuristic now measures the splats against the fitted region. A full-volume `--mask`
+is cropped with the reference, and the JSON records `scored_region`.
+
+`compare` also answers "is ~20 dB foreground PSNR good?". Beside the foreground
+PSNR it prints the score a noise-free model would get against the same noisy
+reference, `20 log10(peak / sigma)`, with sigma the RMS noise measured in the
+foreground (shot noise is larger there than in the background), and a verdict:
+at the noise floor (within 1 dB below), near it, or signal left to fit. A score
+above the ceiling is never called definitively: the model may be reproducing
+noise, or the reference may have sub-voxel structure the estimate counts as
+noise, so 1-3 dB above reads "ambiguous" and more than 3 dB "undetermined". A
+scale check reports the ceiling as unreliable, with no verdict, when the finest
+band is not white (voxel-scale structure or correlated noise); by design that
+withholds the verdict on many clean, high-SNR volumes. On the Cell Tracking Challenge A549 `t000` the
+ceiling is 20.9 dB, against 21.0 dB for the raw data scored against a lightly
+blurred copy of itself; a K=1000 fit scores 20.0 dB (at the floor) and a K=10000
+fit 22.9 dB, 2.0 dB above (ambiguous). The JSON carries `noise_sigma`,
+`noise_ceiling_reliable`, `foreground_psnr_noise_ceiling_db`,
+`model_error_over_noise_sigma` and `noise_verdict`. The compression ratio of a
+crop fit is now taken against its region, matching the fit's stamp.
+
+#### `gsplat lod --recipe stream` no longer takes minutes on a few thousand splats
+
+The additive `auto` method orders up to 5,000 splats with the provably
+(1-1/e)-optimal greedy. Its cost was never the greedy pass but the sparse Gram it
+needs, whose pairs went through a Python loop at ~20 us each: 2.1 minutes for
+4,786 densely overlapping splats on one tester's CPU. The pairs are now scored in
+vectorized batches with the same closed form, giving the same matrix (to ~1e-16)
+and the same order: 4,800 splats with ~100 neighbours each went from 14.8 s to
+0.6 s on a laptop CPU, and ~1.3 s at ~440 neighbours. The 5,000 threshold is
+unchanged; the lod README records the measurements.
+
+#### `auto_exposure_attrs`: convert's auto exposure for scenes built in Python
+
+`luxar gsplat convert` dims a dense fit so it does not open as a saturated white
+blob under `additive` blending; the Python adders normalise each splat but do not
+account for splats summing along a ray, so a multichannel scene built with
+`add_gsplats_from_file` per channel opened white. The new
+`luxar.gsplats.exposure.auto_exposure_attrs(path, dim_order=..., colormap=...)`
+runs convert's prediction and returns the adder kwargs convert would use
+(`normalize_amplitudes=False`, the dimmed `display_gain`, the unit labels; pass
+the store path, which also reads the unit labels' stats and takes tiled fits), so
+`scene.add_gsplats_from_file(name, path, ..., **auto_exposure_attrs(path, ...))`
+opens the way `convert` does. The adders' defaults are unchanged.
+
+
+#### `gsplat cal` sizes its grid from the volume, stops on a plateau, and survives Ctrl-C
+
+The default calibration sweep ran `[1000, 512000]` whatever the volume: on the
+3 Mvoxel CTC A549 stack its top point took 9.5 of 16 minutes to confirm a curve
+that peaked at K = 1000. With no `--k-grid/--k-min/--k-max`, `cal` now sizes the
+bounds from the volume (`k_max` = foreground voxels / 2, clamped to [4000,
+512000]; `k_min` = `k_max` / 512; recorded under `sweep.auto_grid`), stops two
+points after the K\*-metric stops gaining 0.1 dB, or at once when a point falls
+0.2 dB below the best (`--no-early-stop`), and, when
+K\* lands on the smallest point, fits up to two cheaper points below it once
+instead of only advising a re-run (`--no-extend-below`). On A549 the default
+sweep now takes about a minute; on `cells3d` nuclei the historical grid's 1449 s
+of fits drops to 308 s with the same K\*; on a dense 37.7 Mvoxel synthetic stack
+the sweep stops after 128000, never fitting the 256000 and 512000 points (the
+128000 fit alone took 63 minutes on a GB10). Each point prints elapsed time and an
+ETA, and `cal.json` is rewritten after every point (`status: partial`): Ctrl-C
+writes the measured points (`status: interrupted`), prints the best-so-far K\*
+and exits 130.
+
+The CLI now chooses K\* on the foreground held-out curve (`--k-star-metric
+psnr_foreground`; the library `calibrate()` keeps `psnr_minmax`, which is still
+reported). On A549 the whole-volume curve spans 0.37 dB over 250…512000, so its
+K\* followed the grid's lower end (250 / 500 / 1000 / 2000); the foreground K\*
+was 1000 on every grid. PSNRs now print on the robust peak (p99.99 − floor) that
+`fit` and `compare` headline, with the full-range figures kept in `cal.json`
+(`held_out_psnr_robust_db`); the peak is a per-volume constant, so K\* is
+unchanged. K\* is a seeding budget: the table's `stored` column and a closing
+`fit --seeds K* will store about N splats` line report what the default fit
+keeps after speck pruning and the cull (`k_values_stored`, `k_star_stored`). A
+`--region` / `--auto-region` calibration also prints a whole-volume `--seeds`
+budget (`whole_volume_seeds`: the content planner's density transfer summed over
+crop-sized boxes of the input).
+
+The early stop only fires once the measured curve can be decided on its own
+(it spans the 0.3 dB knee margin, is not still climbing, and K\* is not its top
+point), so a slow creep is not cut at three points. When it skipped the grid's
+top, the density's `saturation_cap` is estimated at that top from the measured
+kept/requested ratio (`saturation_cap_measured: false`) instead of shrinking to
+the last fitted point (A549: 2972 against the full grid's 48371), and the
+always-reported min-max K\* is labelled as coming from the early-stopped curve.
+`cal.json` writes are atomic, the complete file is written before any post-sweep
+step, and `fit --tiling content --cal` warns when handed a `partial` or
+`interrupted` calibration. The FlyLight 63x archive rebuild and
+`scripts/calibrate_gsplat_demos.py` pin the historical sweep (`--k-star-metric
+psnr_minmax --no-early-stop --no-extend-below` with explicit bounds) so they
+reproduce.
+
+#### `--tiling auto` fits whole volumes up to the GPU's memory; `max` blending warns on tiled fits
+
+`--tiling auto` tiled anything above 64 Mvoxel. A whole-volume fit's peak was
+measured at 3.9 GB for 67 Mvoxel and 7.5-7.9 GB for 134-268 Mvoxel on CUDA (4.9 GB
+at 134 Mvoxel on MPS), and on the one GPU timed (a GB10) it was the faster fit
+at equal `--seeds` (340 s vs 563 s at 67 Mvoxel, 692 s vs 1420 s at 134 Mvoxel).
+The whole-volume budget is now sized from the fit device's usable memory (64
+B/voxel within half of the FREE memory on CUDA, of the recommended working set
+on MPS), from 64 Mvoxel on the CPU or an 8 GB card up to 256 Mvoxel. The choice
+is therefore machine-dependent: the same 100 Mvoxel `fit` resolves to one whole
+fit on a large GPU and to uniform tiles on a laptop CPU or a busy card. Under
+`--tiling auto`, `--recipe` and `-j` > 1 (which both need tiles) keep a volume
+over 64 Mvoxel tiled and say so in one line.
+
+`max` blending keeps the brightest single splat on each ray; it is not a
+maximum-intensity projection. On a uniform tiled fit the Hann-blended tiles
+split each overlap's signal between their splats, which additive blending sums
+back and `max` does not, so tile overlaps showed a dark seam cross (a 20-35%
+dip mid-overlap in a measured 3x3-tile fit). `gsplat convert --blending-mode
+max` now warns on such a fit and points at `--tiling none`; the visualization
+skill no longer calls `max` a MIP.
+
+#### CPU fits no longer crawl inside a container with a CPU limit
+
+The native CPU kernels' thread pool was sized to every CPU the machine shows,
+and a container's CPU quota (`docker run --cpus 4`, a Kubernetes CPU limit)
+does not hide any of them. Under the quota the extra pool threads starved the
+fit's own work: a 64³ CPU fit took 183 s in a 4-CPU container on a 16-CPU host
+instead of 5 s. Luxar now reads the cgroup CPU quota when counting usable cores
+(for `LUXAR_CPU_THREADS`' default and the `-j auto` CPU worker count) and sizes
+numba's pool to it before the first kernel launch. An explicit
+`NUMBA_NUM_THREADS` still wins. Fits on a machine without a quota are
+unchanged.
+
+#### Prune negligible splats before tiled fit merges
+
+`fit_tiled` can discard splats below a chosen fraction of each tile's
+normalization span as soon as that tile finishes, limiting the population held
+for the merge without cumulative culling across Hann overlaps. The CMU-1 and
+CODEX 2D demo refits use this option; fitted stores record the threshold and
+number of splats pruned.
+
+#### WebGPU compatibility mode accepts flat line and pick varyings
+
+Line rendering and line, Gaussian splat, and mesh picking now build on compatibility-mode WebGPU devices. Per-primitive flat values allow either corner; mesh picking keeps the first-corner choice on core WebGPU and accepts any corner of the hit triangle in compatibility mode.
+
+#### Mesh picks report the same vertex on WebGL and WebGPU
+
+On WebGL devices without `WEBGL_provoking_vertex`, mesh picks now return the original first vertex of the hit triangle, matching WebGPU. The choice remains stable when a mesh LOD level is evicted and loaded again.
+
+#### Overlay text scale, and machine settings for an exported kiosk
+
+A scene can now scale the type of its overlays without moving them:
+`viewer_config.text_scale` (or `?textScale=` on the URL, which wins) multiplies
+every text overlay's font size, and authored HTML follows it by writing its
+sizes as `calc(1.3vh * var(--luxar-text-scale, 1))`. Positions, widths and
+anchors stay where they were authored. A title that belongs to the layout keeps
+its size with `add_text(..., scale_text=False)`. An exported folder's `serve.py`
+takes `--text-scale 0.8` for the same thing at launch.
+
+`ViewerConfig.launch` (`LaunchConfig(renderer=, workers=, prefetch=)`) records
+the machine settings a package built for known hardware should run with. The
+viewer resolves these before it reads the scene, so `luxar export` bakes them
+into the URL its `serve.py` opens, as the new `?workers=` and `?prefetch=`
+parameters next to `?renderer=`. They win over the machine's saved Settings for
+the session without rewriting them.
+
+The protein universe tour gains `--kiosk` for its exhibit display: reading text
+at 0.8x, a third of the screen at most for each story panel, short structure
+captions placed just under the molecule, no Density Guard, and WebGPU with the
+full worker pool and prefetch limit. Detector noise in both builds is now shot
+noise only.
+
+#### Saved settings follow the scene build; Settings shows the URL's values
+
+The viewer keeps Rendering Controls edits per URL, and a saved document
+replaces every authored rendering default at load. A scene rebuilt and served
+at the same address, the normal life of an exhibit package, therefore never
+showed its new defaults on a machine where anyone had once moved a slider.
+Saved documents now record the scene's `content_hash`, and a load that finds
+edits from another build resets to the new build's defaults instead. Edits made
+on the current build keep winning, as before.
+
+The Settings popover shows the saved machine preferences, which `?workers=`,
+`?prefetch=` and `?renderer=` deliberately leave alone, so a launcher's values
+were invisible there. A line under Performance now says what the URL set for
+the page.
+
+The protein universe kiosk places each structure caption in the turntable's
+own units (an offset in `vw` from the clip's centre), so it sits under the
+molecule on any screen shape, not only a square one.
+
+An authored `adaptive_dpr_enabled` now reaches the adaptive-resolution manager.
+The scene-config path forwarded the DPR ceiling and the Density Guard but not
+this flag, so the panel read "off" while the manager kept stepping the
+resolution, and on WebGPU each step left the previous full-screen targets
+allocated: about 300 MB per step at 3260×3260, until the device ran out.
+
+### September 2026
+
+#### Specimen-aware background floor
+
+- Add an opt-in `--floor specimen` mode for specimen-in-medium volumes. It selects a second compact low-band background mode when bimodality is credible, falls back to `auto` otherwise, records the branch as `floor_strategy`, and is deliberately rejected by `batch-fit` where fallback slices cannot be reduced safely to one global level.
+
+#### Seven more stories in the ESM Protein Universe tour
+
+The ESM Atlas team reviewed the guided tour and asked for four more themes.
+All four are in, as seven stops, taking the tour from twelve to nineteen: the
+lanthipeptide antibiotics (the machinery that builds nisin), ice-binding
+proteins and the hyperthermophile's reverse gyrase, the three unrelated
+receptor families with which vertebrates, insects and nematodes each invented
+the sense of smell, and the gut tyrosine decarboxylase that destroys the
+Parkinson's drug levodopa.
+
+Every selector was measured against the map before its panel was written, and
+two of the measurements changed the story. The nematode chemoreceptors keep a
+deliberately smaller knot radius than the other families, because at the usual
+0.3 the purity-weighted seed abandons their tight knot for a diffuse component
+a fifth as pure. And tyrosine decarboxylase turns out not to be a family here
+at all: 52 clusters in 7.7 million, scattered right across the cloud inside a
+fold shared by four thousand other decarboxylases. Rather than frame a knot the
+map does not show, that stop is authored as a new kind of story — a `scatter`,
+which lights every member and makes the absence of a family the point, with
+markers sized from the framing distance so a few dozen clusters are visible at
+all where a region story's sub-pixel markers would vanish.
+
+#### A stacked-matte turntable no longer holds a WebGL context while hidden
+
+Each `alpha_matte="stacked"` video overlay owns a WebGL context to recombine
+the clip's colour and alpha halves. Those contexts used to live for the whole
+session, and a browser caps how many may be live at once — Chrome evicts the
+OLDEST when the cap is passed, and the oldest is the scene's own renderer. A
+twelve-stop tour fitted under the cap; a nineteen-stop one did not, and
+stepping through it lost the renderer partway.
+
+A compositor is now built when its clip becomes visible and destroyed, canvas
+and all, when the clip is hidden, so live contexts are bounded by what is on
+screen rather than by the length of the tour. The canvas is discarded rather
+than reused, because a context lost through `WEBGL_lose_context` cannot be
+re-acquired from the same canvas: asking it again returns the same dead
+context, which draws nothing and drops the overlay back to showing the raw
+stacked frame.
+
+#### The ice-binding story was lighting a protein-sorting motif
+
+Two independent fact-checks against the primary literature turned up thirty-odd
+corrections across the seven new panels. Most were wording: propionate is the
+acid of Swiss cheese rather than sour milk, an insect odorant receptor sits in a
+four-subunit channel with three Orco subunits rather than "a pair", the worm
+spends thirteen hundred genes on chemoreceptors rather than a thousand, and the
+one-neuron-one-receptor rule holds for mature neurons with known exceptions.
+
+One was not wording. The ice-binding story selected Pfam PF07589, because the
+Atlas's own `cluster_top_pfam_names` column calls it "Ice-binding protein,
+C-terminal domain". InterPro and current Pfam call it "PEP-CTERM protein-sorting
+motif". That accession supplied 2,076 of the 2,587 clusters the story claimed,
+and the entire 94-cluster knot it framed: PVC bacteria carrying a secretion
+signal, 90 of them named nothing but "hypothetical protein". A few members still
+had "PEP-CTERM sorting domain" in their product names, which was the tell.
+
+The selector is now the genuine ice-binding families and the story is smaller
+and cleaner: 32 clusters, all bacterial, 31 of them named for ice-binding. Every
+other Pfam accession the nineteen stories use was then checked against InterPro
+— 44 in total, and PF07589 is the only one where the Atlas's name disagrees. A
+test pins the corrected selector.
+
+Two further fixes came out of re-deriving our own numbers. The tyrosine
+decarboxylase panel described "a fold shared by more than four thousand clusters
+of decarboxylases", but that set spanned three Pfam clans and two unrelated
+folds; restricted to clan CL0061, where the enzyme actually sits, the figure is
+1,909. And the reverse gyrase panel asserted that positive supercoiling holds
+the double helix shut; that is the standard explanation but has never been shown
+directly, and the panel now says so.
+
+#### Constellations: three stories framed wide, as a figure rather than a knot
+
+A family rarely occupies one spot on this map. Photosystem II sits in six:
+D1, D2 and the purple-bacterial reaction centres each get their own
+neighbourhood. Three stories are now told as *constellations* — every place
+the family occupies is lit as a bead, a minimum spanning tree joins the beads
+with bright near-white lines, and the camera is pulled back to hold the whole
+figure in one shot.
+
+This is a mode of story rather than a decoration on the existing one, and it
+is mutually exclusive with the soap bubble. A constellation takes no knot cut:
+its lit clusters are exactly the union of the places its lines join, so an
+endpoint sits on a bead by construction. The first version did not work that
+way — it drew the lines between the family's components while the highlight
+lit a knot ball around a purity-weighted seed, and the two disagreed by up to
+0.45 world units, which on the olfactory story was a visible gap between a
+line and the blob it was supposed to leave.
+
+Framing follows from the same reasoning. The distance is computed from the
+figure's furthest member rather than from its projected width, because that
+bound holds from every direction and the tour runs with auto-rotate on; the
+still direction is the figure's thinnest principal axis, the one view that
+sees the places spread out rather than stacked. Bead radius and line width
+scale with the figure, so they hold a constant angular size whether the figure
+spans five units or thirteen.
+
+Constellations were cut from six candidates to three, because the lines assert
+that a family's split means something. The three that survive are measured:
+the globins sit in four places, one animal and three bacterial, and the
+bacterial ones destroy nitric oxide rather than carry oxygen; the
+photosynthetic reaction centres are filed as D1, D2 and the purple-bacterial L
+and M chains; the lanthipeptide machinery is one gene cluster scattered by job
+— dehydratase, cyclase, immunity proteins, precursor peptide. The three smell
+families lost their lines: their places are the same protein in another spot,
+so a line between them would assert structure the data does not carry, and
+they keep the bubble on one knot instead.
+
+The edge means "same Pfam family", which is a homology statement by
+construction, since a Pfam family is built from a single seed alignment. It is
+deliberately NOT the ESM Atlas preprint's own cluster-similarity metric
+(Jaccard over max-pooled sparse-autoencoder features, "same family" at 0.6 or
+above). Measured on this tour, no two different knots come close to that bar:
+the vertebrate and worm chemoreceptor knots reach 0.38, photosystem II's own D1
+and D2 only 0.27, against a 0.18 random-pair baseline. A feature line would
+either draw nothing at the calibrated threshold or assert a relation the
+preprint's calibration calls unremarkable.
+
+A line is an annotation, not a path. UMAP positions are not metric, so the
+straight segment between two places carries no information beyond joining them
+— which is why the preprint draws no lines between UMAP points either, and
+prints its similarity numbers on arrows between structures instead.
+
+Bead size and brightness were tuned on a rendered build rather than argued
+from first principles. The first pass sized a bead at 2.6% of the figure's
+radius, which clipped the cores to white and left only the halo carrying the
+story's hue; the shipped values halve the radius (which also quarters how many
+markers stack on a pixel) and drop the base intensity from 0.35 to 0.22.
+
+One consequence worth recording: the hemoglobin story used to carry a taxon
+filter, because the globin family forms two knots of equal size and the
+purity-weighted seed lands on the bacterial one, which would have made a story
+titled "the molecule of breath" light flavohemoglobins. As a constellation it
+cuts no knot and lights both, so the filter is gone and the story widened from
+"the animal globins" to "one fold in four places, doing two opposite jobs".
+
+#### A twentieth stop: the jumping-gene nucleases Cas12 grew out of
+
+Alex Rives asked about the evolutionary links in the ESM Atlas preprint. Its
+flagship connection is Fanzor to TnpB to Cas12 — eukaryotic and prokaryotic
+RNA-guided nucleases landing together despite 13.9% sequence identity — so that
+neighbourhood is now a stop. It checks out in our own data: 435 of the map's
+459 Cas12-named clusters and 830 of its 1,243 TnpB-named clusters lie within one
+unit of the spot the atlas API returns for the Spizellomyces Fanzor, and the
+knot is 624 clusters at 94% purity.
+
+Three things the fact-check changed before it shipped. Pfam PF07282, the
+selector, is a zinc-ribbon DNA-grip module and NOT the nuclease domain — the
+scissors are RuvC, in PF01385. "TnpB is the ancestor of Cas12" is the field's
+own wording but Cas12 is polyphyletic, recruited from TnpB on numerous
+independent occasions, so the panel says ancestral stock rather than implying
+one lineage. And the preprint's 0.87 feature-similarity figure is deliberately
+not quoted beside the TM-score: it is an internal metric of that model with no
+community threshold, and printing the two together would imply they are equally
+calibrated.
+
+#### The phage turntable was showing a head connector
+
+A structure audit of all twenty turntables against the RCSB API found that
+6R21, captioned as phage tail machinery, has the PORTAL as its first and
+largest entity — the head-to-tail connector, twelve of its thirty chains — and
+is explicitly a "fiberless" complex. The comment in this file describing it as
+"the whole tail machine, collar, nozzle and tube" was describing a head
+connector as a tail. It is now 8IYK, the phage lambda tail tip: tail tube,
+baseplate and needle, forty-two chains at 2.95 A, and lambda is the canonical
+tailed phage for a story about Uroviricota.
+
+
+#### Two turntables replaced: wild-type RecA, and a whole phage
+
+The RecA turntable was `3CMW`, an engineered single chain of five RecA copies
+fused head to tail whose own first entity is a DNA 15-mer — and it contains no
+Rad51 at all, though the story is titled for both. It is now `1U94`, wild-type
+*E. coli* RecA at 1.9 Å with no engineering. The entry is carried by the
+protein-universe tour from the Swiss-Prot tour, so the single edit fixes both.
+
+The phage turntable showed parts of a phage rather than a phage. `6R21` was
+captioned as tail machinery but has the portal — the head-to-tail connector —
+as its largest entity and is explicitly "fiberless"; `8IYK`, the λ tail tip,
+is honestly a tail but only a tail. It is now `6Q3G`, the native *Staphylococcus*
+phage P68 virion, which carries the whole recognisable animal in one entry at
+3.8 Å: 235 major head protein chains for the capsid, portal and lower collar
+for the connector, minor structural and tail fibre chains for the tail and
+legs, and fifteen head fibres — 668 chains and 20 MDa in total.
+
+`9MJN`, the near-complete PhiTE virion, is the most complete phage in the PDB
+and is the better answer, but it is the wrong size for this pipeline: PyMOL's
+per-chain molecular surface passed 7.9 GB after eighteen minutes without
+finishing. If the turntable ever grows a coarse-surface path for huge
+assemblies, that is the entry to come back to.
+
+#### The tour now walks a narrative order rather than the order it was written
+
+Twenty stops had accumulated in the order they were authored — the seven
+carried from the Swiss-Prot tour, then the three only this map can tell, then
+the batch the ESM Atlas team asked for — which is provenance, not a story. The
+order is now explicit in `TOUR_ORDER`, validated as a permutation of the
+authored pool, and arranged in five movements: the machinery every cell runs
+on; the map's own geography; the arms race; life at the edges and the senses;
+and a closer.
+
+Three adjacencies in it are load-bearing rather than taste, and a test pins
+each. CRISPR-Cas is immediately followed by TnpB and Fanzor because Cas12
+links the CRISPR system to its TnpB ancestors. The three smell stops stay
+consecutive and in order, because each narration counts itself ("a second
+time", "a third time"). And the spur, dark
+proteome and phage stops keep their order, because the dark story sets up how
+much of the dark is phage.
+
+Two smaller moves have reasons worth recording: photosystem II now hands
+straight to RuBisCO, the two halves of photosynthesis; and the viral spike
+moved out of the opening group to sit after the phage universe, so the arms
+race reads as a chain — what a virus wears, the immune system bacteria evolved
+against viruses, and where that immune system's scissors were recruited from.
+
+This renumbers the kiosk chapter indices, which used to be pinned by a test so
+that adding a stop never moved an existing one. Nothing persists a chapter
+index across builds, so the cost is a stale bookmark rather than a broken
+kiosk, and that test now says so.
+
+#### The scatter story's panel described a picture it was not showing
+
+Asked why the tyrosine decarboxylase stop has neither a bubble nor a
+constellation, the answer turned out to be right but the panel around it
+wrong. Both absences are deliberate. A bubble asserts "the story is this
+blob", and there is no blob. A constellation would be worse: two of the
+family's components do clear the ten-member floor, so a line could be drawn
+between them, and that line would assert exactly the family relation the whole
+story is about not finding.
+
+The text was another matter. It said "fifty-two clusters scattered across the
+whole map" and "right across the cloud", and it showed about a dozen beads
+inside a fifth of it. Measured: the members' bounding box is 15.3 units
+against the map's 89.4-unit diagonal, and their median nearest-neighbour
+distance is 0.022 units — a fifth of the scatter marker radius — so 34 of the
+52 sit in two clumps that each draw as ONE point, leaving 13 visible blobs. No
+marker size fixes that; resolving a 0.022 gap needs a marker smaller than a
+knot's, which is invisible at this story's 38-unit framing. So the panel now
+describes a dozen specks across a fifth of the cloud, which is what is there.
+
+The marker constant's own justification was stale in the same way: it computed
+its pixel size against a 15-unit framing and claimed 13 px on a 1080p display.
+The story frames at 38 units, so the real figure is about 5 px. Still an order
+of magnitude above the backdrop, still the right value, but the reasoning now
+matches the framing it is reasoning about.
+
+Two guard tests came out of it. One pins the framing vocabulary: no panel may
+name the bubble, only a constellation may say "the lines join", and no story
+that cuts no knot may say "this knot". The other pins the tour's one
+reference-by-position — the CRISPR panel calls sickle-cell "the illness of the
+first story on this tour" — which is precisely what reordering the tour could
+have broken silently.
+
+#### Every turntable now turns a complete molecule
+
+The owner asked that the rendered structures be complete, following the phage
+stop where a part of a phage was replaced by a whole virion. Auditing all
+twenty entries against RCSB turned up the same class of defect in the
+PIPELINE rather than in the choices, in two independent ways.
+
+**It rendered the asymmetric unit, which is bookkeeping rather than a
+molecule.** Three of the twenty disagreed with their own biological assembly,
+and each disagreement was something the story's text described correctly while
+the picture showed otherwise. `4OO8` packs TWO complete Cas9-guide-target
+complexes, so the turntable showed a pair. `8RUC` is eight chains of a
+sixteen-chain RuBisCO, so it showed half an enzyme — under a panel about the
+most abundant protein on Earth. And `1U94`, the wild-type RecA this very pull
+request swapped in to replace an engineered five-copy fusion, deposits ONE
+protomer of a six-subunit filament, under a panel that describes RecA coating
+a broken strand into a filament. The fetch now asks for assembly 1 first and
+falls back to the legacy PDB and the entry mmCIF, so the turntable turns what
+the depositors say the molecule is.
+
+**It drew `polymer` only, which silently deleted the chemistry.** Every
+cofactor and ligand was missing: hemoglobin's four hemes, photosystem II's
+Mn4CaO5 cluster and its chlorophylls and carotenes, the PLP that does the
+decarboxylation in the levodopa story, the catalytic zinc of the nisin
+cyclase, the glycan shield of the spike — under a caption reading
+"glycoprotein" — and the propionate a panel called the odorant the receptor
+was caught holding. The surface is now computed over everything that is not
+solvent, and chains are enumerated over the same selection so a ligand
+deposited on its own chain id still gets a mesh. Ligand atoms now taking part
+that previously did not: 9,681 for photosystem II, 882 for the spike, 174 for
+hemoglobin, 30 for the levodopa enzyme, five for the propionate, one for the
+zinc.
+
+**Selecting a ligand is not the same as surfacing it, and the first fix only
+did the former.** PyMOL sets an `ignore` flag on non-polymer atoms, and a
+flagged atom takes no part in the surface even when it is selected and shown.
+So the atom counts above went up while the picture did not change at all — an
+atom-count check passes either way, which is exactly why it was the wrong
+check. The script now clears the flag, and the evidence is geometric instead:
+with it cleared, hemoglobin's chain A loses 2,574 vertices, because the heme
+fills the pocket whose concave lining used to be surfaced. A vertex count that
+FALLS is the signature of a ligand entering the mesh.
+
+Two bugs found on the way, both of the silent kind. Rendering more chains
+surfaced a case the pipeline could not survive: 6VXX's assembly deposits its
+glycans on fifteen chains of their own, one of which raised out of the mesh
+export — and the ELEVEN structures queued behind it lost their turntables
+while the build still exited 0, because turntables are optional and the
+failure was swallowed upstream. A chain that yields no triangles is now
+skipped with a line saying so. And `fetch_pdb`'s first draft asked for the
+assembly only when no structure file was cached, so every machine with a warm
+cache would have kept rendering asymmetric units for ever; a test now pins the
+upgrade path.
+
+Completeness means the molecule, not the drop it was grown in, so a short
+`CRYSTALLISATION_ADDITIVES` list is removed first — glycerol, sulfate, PEG,
+DMSO and the rest. It is deliberately short and keeps every metal and
+cofactor, because a longer one starts deleting chemistry: the magnesium in
+RuBisCO's active site and the zinc in the cyclase are both "ions". It removed
+five sulfate atoms from the beta-lactamase and six glycerol atoms from the
+dark-proteome protein, and nothing from the eighteen others.
+
+One turntable could not be fixed by rendering more. `8F76` IS five chains, and
+only one of them is the olfactory receptor the story is about: 330 of 1,177
+residues. The other four are the Gs heterotrimer and Nanobody 35, which exist
+to trap the receptor's active state and are not found in a nose. A new
+`Story.pdb_caption` overrides the deposited title for that case, and says the
+ratio rather than a position, since the renderer picks the orientation from
+the assembly's own inertia.
+
+A second audit checked the opposite failure — a domain standing in for a whole
+protein — by comparing each entry's modelled length against its UniProt
+sequence. None of the twenty is a domain: eighteen model 89% or more, and the
+lowest is a GPCR at 75% with flexible termini unmodelled.
+
+Finally, a trap removed. The render cache key held `STYLE_VERSION` but not
+`MESH_VERSION`, so bumping the mesh version recomputed every surface and then
+served the WebM built from the old ones — a corrected structure appeared to
+change nothing, and the only warning was a docstring asking you to remember to
+bump both. The geometry is part of the key now.
+
+#### "No structure has been solved" beside a structure
+
+The worm-chemoreceptor panel says no nematode chemoreceptor has ever been
+solved, and a structure turns beside it. The panel did disclaim it, in the
+last clause of its last fact — but a viewer reads the CAPTION, and the caption
+was the deposited title, "Structure of a LGR dimer from Caenorhabditis elegans
+in apo state". Nothing in it said stand-in, so the pairing read as a
+contradiction.
+
+The claim checks out. An RCSB search for *Caenorhabditis elegans* against
+"chemoreceptor" and against "serpentine receptor" returns zero entries, as
+does a Nematoda-wide search for "chemoreceptor"; the single "odorant receptor"
+hit is a false positive, an arginine methyltransferase. And 8W1Z really is a
+hormone receptor: it is FSHR-1 (UniProt G5EG04), the worm's orthologue of the
+follicle-stimulating-hormone receptor, a leucine-rich-repeat GPCR.
+
+So the caption now carries the disclaimer and names the protein, and the panel
+names it too rather than saying "a hormone receptor" and leaving the viewer to
+connect it to a title that mentions neither hormones nor a stand-in. This is
+the second use of `Story.pdb_caption`, and the same shape as the first: an
+entry whose deposited title is accurate and whose caption was misleading.
+
+While there: the reason the levodopa stop is a scatter rather than a
+constellation is now measured in the test that pins it, not asserted. Two of
+its components DO clear the ten-member floor, so the rule would allow a figure
+of two nodes and one line. But a constellation lights only the places it
+joins, so that figure would light 34 of the 52 clusters and hide 18 — 35% of
+the subject, including every singleton, and the singletons are the scatter.
+The one line would also assert exactly the family relation the story exists to
+say is absent.
+
+#### The narration now says what is on screen
+
+Seven of the twenty spoken scripts never mentioned the picture at all, which
+the owner noticed by ear: Hemoglobin, Photosystem II, RuBisCO, ATP synthase,
+CRISPR-Cas, TnpB and Fanzor, and the beta-lactamases. Five are carried from
+the Swiss-Prot tour, where the map line was deliberately left to the panel
+because that tour shows a different map. CRISPR-Cas only looked covered — its
+one map-ish phrase, "the first story on this tour", is a cross-reference to
+hemoglobin, not a description of anything lit.
+
+The two constellations were the worst of it. Their framing changed completely
+in this pull request, and a visitor heard Perutz's balsa-wood model while
+looking at four beads joined by threads with nothing connecting the two.
+
+Each gained ONE sentence, placed second-to-last so the open question still
+closes, which is where the thirteen that already worked put theirs. Every
+number in them is a count already verified in the panel and re-checked against
+what the build actually draws: four places and three lines for the globins,
+six places for the reaction centres, 117 clusters for RuBisCO, ~300 for ATP
+synthase, 260 for Cas9, 600 for TnpB, 400 for the beta-lactamases. The scripts
+now run 73 to 108 words against the 110-word cap, so there was room without
+cutting anything. For the five carried stories the sentence is a `narration=`
+override on this tour alone, or the Swiss-Prot demo would start describing a
+map it does not show.
+
+The voice stays `alloy`. Offered all eleven voices that `gpt-4o-mini-tts`
+accepts, reading the same narration side by side, the owner kept the neutral
+one: "the ambiguity is perhaps a feature and not a bug" — a kiosk narrator
+reading twenty pieces of science wants no persona of its own. That is now
+recorded next to `NARRATION_VOICES` as a decision rather than a default, since
+the obvious "improvement" is to swap it for a voice some blog ranks higher for
+audiobooks.
+
+#### CI fails fast before disk exhaustion
+
+The long Python and coverage jobs reclaim unused tooling on hosted runners,
+then require 25 GiB of free root-disk space before checkout or environment
+creation. A saturated CI host therefore stops early with an explicit disk
+headroom error instead of starting a job with too little space.
+
+#### Quantify uniform tile mass-allocation tradeoffs
+
+The tiled-fitting regression suite now measures the mass seed split against equal-share and the former foreground-threshold rule on one fixed haze/blob grid, including per-tile global and foreground PSNR rather than amplitude disparity alone. The former threshold's measurable reconstruction cost on that fixture is confined to the pure-pedestal tile; content-tile differences between the three splits stay within observed fit-to-fit scatter. The suite also pins the brightness-depth tradeoff on controlled repeated attenuated structure: the default exponent shifts budget toward the bright face and moves foreground error to the far face with no mean foreground-PSNR gain. The allocator remains unchanged because a separate biological-volume corroboration did not show a systematic far-face loss, so a depth-normalizing profile still needs broader real-data evidence.
+
+#### Published software and preprint citation metadata
+
+The README and `CITATION.cff` now link to Luxar's Zenodo software and preprint
+DOIs, so repository and method citations resolve to their published records.
+
+#### Pin published README links to release tags
+
+Future PyPI releases now freeze rewritten README links to the triggering Git tag
+instead of the moving `main` branch, and release-wheel validation rejects links
+that embed a different repository ref.
+
+#### Python ratchets reject stale baselines
+
+The complexity and defect-rule lint gates now fail full-tree runs when debt was
+paid down or moved but the checked-in baseline was not refreshed. Restricted
+scans keep vanished baseline entries advisory because omitted paths were not
+examined, while full runs explain that local changes, merged work, or Ruff
+updates can require regenerating and committing the baseline.
+
+#### Picked labels load on demand
+
+Picking a text-labelled element now reads only its offset pair and byte range
+instead of downloading and decoding every label on the node before showing the
+tooltip. Decoded labels are retained in a bounded 1 MB cache rather than for the
+full viewer session.
+
+#### E2E checks enforce timeout headroom
+
+The viewer static checks now reject default-project Playwright tests whose
+in-page deadlines consume their declared test or describe timeout. Reasoned
+exceptions are line-keyed and stale-failing, while mobile and performance specs
+continue to use the larger budgets from their dedicated configurations.
+
+#### Sliders share one precision ladder
+
+Layers and rendering controls now use the same wheel and arrow-key modifier
+steps, preserve fine values in their visible readouts, and offer exact numeric
+entry without the native range input rounding those values away. Layers sliders
+also gain accessible names and double-click reset, while degenerate ranges no
+longer emit an invalid `step="0"`.
+
+Rendering-control wheel steps now use one authored step per notch (10× with
+Ctrl), instead of one tenth of a step per notch (one step with Ctrl).
+
+#### E2E timeout budgets include shared helper defaults
+
+The viewer timeout-budget check now resolves exported defaults imported from the shared E2E helpers. Existing exposure is captured in a per-file count baseline that rejects both new violations and stale over-declarations, so the corpus can ratchet down without weakening the helpers' deliberate 45-second starvation diagnostics.
+
+#### Protein-story tours correct their science and narration licences
+
+The Swiss-Prot and ESM Atlas protein tours now check the discoveries, evolutionary
+relationships and prevalence claims in their panels and narration against the
+cited primary sources. Narration clips also record the licence of the engine that
+created them: OpenAI output remains CC0, while a macOS system voice produces clips
+marked for personal, non-commercial use only, and the build warns when it is used.
+
+#### E2E timeout budgets include helper-body deadlines
+
+The viewer timeout-budget check now follows deadlines through local and imported helper bodies instead of seeing only helper parameter defaults. Recursive helper graphs are cycle-safe and depth-bounded, and the refreshed per-file baseline exposes tests whose long waits were previously hidden behind wrapper helpers.
+
+#### Protein landscapes: taxon colours from the UniProt lineage
+
+The Swiss-Prot landscape and its story tour coloured and labelled each protein
+by a guess from its organism name, which was wrong for about a third of them:
+*Haemophilus influenzae* matched "influenza" and was drawn as a virus, and any
+genus the rules did not know fell through to "Other Eukaryotes". The twelve
+categories now come from each entry's UniProt taxonomic lineage (one ~6 MB
+download, cached), with the name rules kept only as a fallback. An existing
+cache is upgraded in place on first load, recovering its accessions from the
+cached FASTA when it predates them; the embeddings and UMAP are untouched.
+
+#### Points, lines and splats size themselves from the camera they are drawn with
+
+The viewer's shaders now derive every view-dependent scale (point size, line
+width, a splat's screen centre and covariance projection, the orthographic
+test) from the projection matrix three binds per draw, instead of from
+CPU-computed uniforms that only some camera changes re-pushed. This fixes
+splats appearing mirrored in a scene-captured environment
+(`EnvironmentConfig(source="scene")` and `luxar env bake`). A cube-capture face
+flips the projection, and the CPU focal length carried no sign. Environment maps
+baked before this change show splats on the wrong side; re-bake them. It also
+fixes point and splat sizes going stale after a camera flight, snapshot restore
+or `setCameraPose` changed the field of view, and splats sitting a fraction of a
+pixel off points and lines on odd-size canvases at fractional pixel ratios. It
+fixes nanometre-scale orthographic line widths too. `LuxarLayer` now honours the
+projection of whatever camera the host renders with, including ones without a
+`fov`.
+
+A render gate, `make render-gate BASE=<ref> CAND=<ref>`, builds two refs and
+compares them on real GPUs. It checks exactness per scene, pose, backend and
+pixel ratio in half-float ULPs (HDR, LDR and pick buffers), and performance
+against an A/A noise floor. See `docs/guides/developer/RENDER_GATE.md`.
+
+#### Check beforeAll and afterAll timeout budgets
+
+The E2E timeout-budget check now reports long waits in beforeAll and afterAll hooks against each hook's separate timeout. It recognizes hook-local timeout declarations and slow modifiers, and reports findings at the hook declaration.
+
+#### Camera changes reach every listener, and a wake renders once
+
+Every programmatic camera write (field of view, orthographic zoom, framing,
+`setCameraPose`, snapshot restore, camera flights) now publishes exactly one
+controls `change`, so an embedder's `camera-changed` listener sees
+field-of-view and zoom changes it previously missed, and fly-mode framing wakes
+an idle viewer. A restored pose keeps its up vector in orbit and fly mode, where
+a Z-up view or an authored roll used to snap back to world +Y. A container
+resize repaints an idle viewer.
+
+The frame loop now runs its per-frame work in phases (camera, view, pre-render,
+ui), so a camera flight's near/far planes and every other view-dependent value
+are computed from the pose of the frame being drawn rather than the previous
+one. A callback that throws is logged once and no longer stops the frame. Waking
+the loop arms the next animation frame instead of rendering inline, so a wake
+costs one render rather than two and no longer blocks the calling event
+handler. `__luxarDebug.renderOnce()` keeps its synchronous behaviour.
+
+Also fixed: an EXR screenshot no longer briefly shows the raw HDR frame on
+screen, and the glass refraction layers moved off layers 1 and 2, which three's
+WebXR reserves for the eyes.
+
+#### Level of detail and draw order follow the view the frame renders
+
+LOD selection now reads one camera snapshot per frame (view, projection,
+frustum and canvas sizes), built after the frame's camera writes, instead of
+a view matrix that only orbit controls kept fresh. In fly mode it could lag
+the pose by a frame. Its footprint projection sizes with the projection's own
+scale, so a perspective zoom now counts, and a collapsed canvas skips LOD
+selection instead of selecting against the window size. A rotated LOD group
+is measured by its own corners rather than by its world bounding box, which
+inflated it and could upgrade it for being turned away. That upgrade could
+leave two levels drawn at once.
+
+Under an orthographic camera, the parts of a `kind=partition` in `normal`
+blending are drawn back to front by view direction. They could previously be
+drawn front to back when the camera sat on the far side of a split plane.
+Clipping planes are fitted from the camera's world position, which matters
+once the camera is parented (an XR rig).
+
+#### LOD debug readout shows the real cross-fade state
+
+`window.__luxarDebug.getState().lodGroups[]` now carries `drawnLevels`: every
+level of a `kind=lod` group that is currently drawn, with the live opacity
+multiplier of its first leaf. That value is the shader's `uOpacity` uniform as the
+LOD fade composes it: the authored layer opacity times the cross-fade
+weight times any energy or density compensation. The fade never writes THREE's
+`material.opacity`, which stays at 1.00 on both levels in a blend. Reading
+`material.opacity` therefore made an LOD dissolve look like
+two levels drawn at full weight, as reported in #2925. Two entries in
+`drawnLevels` mean a cross-fade is in flight.
+
+The reported values are not bare blend weights. At authored opacity 1 with no
+compensation active, a dissolve at weights 0.84 / 0.16 between levels 0 and 1
+reads exactly that, and the two sum to one. A layer at opacity 0.5 in the same
+blend reads 0.42 / 0.08, and energy compensation (on by default) scales a
+streaming leaf further.
+
+The existing `activeLevel` field (first visible level) is unchanged.
+
+#### Account for and release lazy mesh LOD geometry
+
+Mesh vertex and index buffers now count toward the GPU resident-byte budget, including on static meshes. Demoting a lazy mesh LOD level releases its committed geometry, so the budget can reclaim its memory and reload the level when selected again. Mesh-heavy scenes can now cause earlier demotion of other LOD levels and reclamation of pooled buffers.
+
+#### The viewer renders only when something changed, and WebGPU stops re-uploading unchanged buffers
+
+The frame loop used to render on every animation tick: through the two
+seconds after every interaction, at the display's refresh rate during
+hidden-dimension playback, and on every frame while progressive levels
+loaded. It now renders only when a frame would differ: a wake, a camera or
+canvas change, a data commit, or a per-frame step that changed what is drawn
+(clipping, draw order, level of detail, density thinning, environment
+capture). One drag's idle tail fell from about 180 renders to about 80, and
+10 fps playback from about 300 renders in five seconds to about 90.
+Cinematic mode, real-time recording and `?renderAlways` still render every
+frame. Adaptive resolution now learns only from frames that were drawn.
+
+On the WebGPU renderer the per-element draw-order buffers were re-uploaded
+on every frame whether or not they had changed, which cost 8 bytes per
+element slot per node per frame (80 MB per frame at 10 million elements).
+They now upload only when they change. Order-independent nodes also no
+longer rewrite a draw order the buffer already holds.
+
+Faint Gaussian splats are drawn with a quad no larger than the area their
+light can still reach, which cuts the fragment work of dim, sparse scenes
+without changing a pixel. A damped orbit could keep flipping between two
+nearly identical orientations after a drag and never let the viewer idle;
+that is fixed. Per-query and per-part log lines are off unless `?verboseLog`
+is set; on large partitioned scenes they reached tens of thousands of
+console lines per slice step.
+
+#### Playback holds its frame rate and shows the last timepoint
+
+Dimension playback gated each tick on the time elapsed since the frame that last
+ticked, so every tick drifted by up to a vsync: on a 60 Hz display a 10 fps target
+played at about 9.2 fps and 30 fps at about 23. Ticks now fall due on a fixed
+schedule, and the display frame nearest the due time takes the tick; after a data
+stall the schedule restarts from the current frame instead of catching up in a
+burst. The range ends are now shown as well. `loop` and `once` used to wrap or
+stop on arriving at the last timepoint, so on a `[0, 50]` axis frame 50 never
+appeared (forward playback went 49 to 0, and `once` finished on 49); backward
+playback skipped the first frame the same way. A step now lands on the endpoint,
+and only the next step wraps or completes. `bounce` is unchanged.
+
+#### Timelapses decode each chunk once, and the local cache survives a reload
+
+During playback the viewer prepared the next timepoint in the background and
+then prepared it again in the foreground: the same chunks were decompressed
+twice (about half of all decodes on a time-partitioned store), and a
+lookahead fetched the next level of detail for frames that were never shown
+(45% of the bytes of a first loop). The foreground now reuses the background
+pass, decodes are shared, the lookahead no longer runs during playback or
+scrubbing, and slice-cache entries held for the next frame are released when
+playback stops (up to 490 MB stayed held before). A superseded update stops
+its worker projection instead of finishing it, and worker tasks are routed to
+workers that are actually idle.
+
+The on-disk cache (OPFS) now saves its index while a scene is still loading
+and when the page is hidden or closed, so a reload is served from disk
+instead of refetching everything, and files left behind by an interrupted
+session are reclaimed. Writes no longer query the storage quota each time,
+and chunks the viewer actually displayed are no longer dropped from the
+write queue under load.
+
+#### Zipped stores load in parallel, and hosted scenes paint sooner
+
+Reads of a `.zarr.zip` member never had more than two requests in flight: they are
+all Range requests to one URL, and Chrome queued them behind its HTTP-cache writer
+lock. Member reads now bypass the cache, a member costs one request instead of two,
+and opening a zip costs one. On a simulated hosted link (100 ms, 25 Mbps) a mixed
+zip scene reached its first frame in 2.5 s instead of 7.6 s and settled in 2.8 s
+instead of 10.9 s.
+
+Requests now carry a priority: what the current frame needs goes before refinement,
+and speculative prefetch is capped at a quarter of the connection budget, which
+widens from 24 to 96 requests on an HTTP/2 or HTTP/3 origin. The root document is
+fetched once and early, absent environment sidecars are not probed when the root
+index was fetched from the network, and the store watchdog's first poll is
+conditional. A 64-part hosted scene painted its first frame in 3.7 s instead
+of 4.6 s.
+
+#### Chunk decoding moves off the main thread
+
+Blosc and `luxar_delta` chunks of 16 KB and more are now decoded in the data
+workers, fused into one pass and batched; smaller chunks, which cost more to ship
+than to decode, stay on the main thread. The workers load their codec only once a
+chunk actually clears that floor, so a scene of small chunks never downloads it.
+`?mainThreadCodecs` turns the offload off.
+
+#### Playback renders once per tick
+
+A dimension change redrew the previous timepoint before the new one had loaded, so
+playback rendered twice per tick. It now renders once, on the commit.
+
+#### Revisited timepoints reuse their projection when the cache has room
+
+A timepoint restored from the in-memory slice cache used to be projected from nD
+to 3D again on every visit: the whole slice was copied into a worker, projected,
+and copied back. The slice cache now keeps the projected buffers next to the slice
+they came from, keyed by every projection input that is not the slice data
+(truncation, displayed dimensions, hidden-dimension membership and
+`extend_to_all`), so a revisit with unchanged settings commits the stored buffers
+directly. Changing any of those settings projects afresh. The stored projections
+count against the slice cache's budget but only ever use its spare room: when a
+decoded slice needs the space they are dropped first, so a timelapse that already
+fills the budget plays exactly as before. On a 20-timepoint loop of the h2afva
+timelapse, which fits, the warm per-tick latency fell from about 100 ms to 13 ms
+and playback held its 10 fps target.
+
+#### A partitioned timelapse loads only the parts it can show
+
+A `kind=partition` node used to initialise every part, and every part's refinement
+rungs, when the scene loaded, even the parts lying outside the current slice of a
+hidden dimension, where they draw nothing. The viewer now loads and shows only the
+parts that are both in view and in the slice; the others wait, and join the pass
+that first shows them (in the same commit, so nothing blinks). On a 50-timepoint
+partitioned timelapse a cold load initialised 4 parts instead of 200 and made 145
+requests instead of 959; on a simulated hosted link a 64-part scene settled in
+9.9 s instead of 21.1 s. Stepping a timepoint got faster too (67 to 50 ms), and
+the per-node detail those loads used to print moved behind `?verboseLog`.
+
+#### Large scene trees stop paying per-node lookups
+
+Every update pass found each node by walking the whole scene graph, and the update
+profiler merged each loader's timings by searching the tree by name, which was
+quadratic in the number of loaders and, when two loaders had children with the same
+names, added one loader's timings to the other's. Nodes are now found through an
+index the scene graph keeps up to date, and timings merge by full path: one update
+pass over 2000 nodes took 10 ms instead of 53, and the profiler's merge at 1000
+loaders 1.3 ms instead of 28. Partition footprint invalidation, the GPU pool's
+resident-byte total and the re-entry resync of partition parts are incremental as
+well, and a partition part moving in or out of view no longer resets the adaptive
+pixel-ratio's learning.
+
+#### Scrubbing shows data while you drag
+
+A slider drag superseded every in-flight pass, so over a slow store it could show
+nothing new until the drag ended. A drag now commits at least every 150 ms (a
+pass stuck on a slow chunk for over a second is still superseded, including when
+the drag has stopped and only its last position is waiting, so one stalled
+download cannot freeze the scrub), the rungs a scrub pass needs are fetched together (coarsest first), and the coarse rung
+of the neighbouring timepoints is read ahead. Refinement runs up to four loader steps
+at once, at a lower fetch priority than what the current frame needs.
+
+If a refinement rung reaches the consecutive-failure limit, the viewer now
+retries it on a bounded backoff (#2975). The load remains unsettled while a
+retry is pending; a view change retries immediately. A rung that keeps failing
+shows one reduced-detail notification until it succeeds.
+
+The opening camera is now framed from scene metadata before partition nodes
+load, so a close-up authored pose limits the initial part fetch. Scenes whose
+camera names a `target_node` wait until that node exists before framing.
+
+#### LOD levels switch less with viewing angle
+
+A `kind=lod` group picked its level from the screen rectangle around its bounding
+box's eight corners, so the same box at the same distance read a different size
+from every direction and an orbit swapped levels back and forth. Coverage is now
+measured on the box's projected inscribed ellipsoid, sized using its view-axis
+half-chord. Seen face-on it reads what the box's near face covers, the
+value the thresholds were defined against, so a thick box close to the camera
+keeps its level: the zebrafish time-lapse opens on the same level as before. A
+cube orbited at ten times its half-width now stays constant rather than varying
+by 50%. Elongated boxes still change size when viewed from different directions.
+Existing `screen-area` stores use the new metric without re-stamping; face-on
+coverage agrees with the former rectangle metric, while oblique views may
+select a different level.
+The Python opening-shot screen (`luxar.io.lod_screening`, behind
+`check-demo-ladders --screen`) measures the same way now, including projecting a
+rotated group's own box rather than its larger world-aligned box.
+
+#### A level change dissolves in 250 ms, then draws one level
+
+The LOD cross-fade used to be a band of coverage inside which both levels drew, so a
+camera that stopped inside it drew two levels for as long as it stayed there (#2925).
+A level change now dissolves over a fixed time, `config.lod.fadeMs` (250 ms), and then
+draws the new level alone; reversing mid-way starts from the current opacities, so
+nothing pops. Offline capture waits a dissolve out.
+
+#### Playback keeps the finest LOD level it can afford
+
+While a hidden dimension played, a `kind=lod` group dropped to its coarsest level on
+almost every tick, because the fine level's reload never landed in time. During
+playback the viewer now aims for the finest level whose reload fits the frame period,
+and holds the level on screen until its replacement lands, at the same frame rate and
+one render per tick.
+
+#### Dense sorted splats are thinned too
+
+The density guard, which thins splats so small on screen that they only cost time,
+now applies to `normal` (sorted) nodes as well, compensating each kept splat's
+opacity so the layer keeps its overall opacity. A 10-million-splat normal node drew
+in half the GPU time.
+
+#### Dimension changes notify listeners only when the slice changes
+
+Clamped or snapped dimension input that resolves to the current position no longer
+restarts loading or emits a `dimensions-changed` event. Scrub-settle and pause
+still request their budget-free refinement passes explicitly, without reporting
+a false position change to embedders.
+
+#### Correct native WebGPU pixel readback orientation
+
+Screenshots, PNG recordings, EXR exports, and off-centre picking now use the running backend's readback orientation. Environment bakes preserve each capture face's raw texel rows.
+
+#### Plain-http servers no longer time out chunk loads under steady streaming
+
+The viewer admitted up to 24 chunk requests at once, a width sized for HTTP/2,
+and each admitted request starts its header timer. A browser opens only six
+HTTP/1.1 sockets per origin, so on a plain `http:` server (the kiosk bundles,
+`luxar serve`, anything on a LAN) the surplus waited in the browser's own queue
+with the clock running. Stepping quickly through a tour while a large backdrop
+was still streaming timed those requests out, and their retries piled into the
+same queue until every load failed together. Browsers use HTTP/2 only over TLS,
+so an `http:` URL now narrows the gate to four chunk and two metadata requests,
+which is exactly what the browser puts on the wire.
+
+#### Gsplat depth order stays current while a scene loads
+
+Rotating a gsplat scene while it streams in no longer leaves the back-to-front
+order stale. Per-frame camera re-sorts used to pause for the whole
+progressive-refinement drain, and a node that grew by a rung was drawn in
+storage order until its sort landed. On the hosted h2afva timelapse the worst
+lag during a load went from 180 degrees (fully inverted, for 11.7 s) to under
+7 degrees, with sort latency unchanged. A grown node now keeps drawing its
+previous population, in order, until the new ordering arrives.
+
+#### Share named viewer bookmarks
+
+The viewer's Bookmarks rail panel captures the camera, slice positions,
+rendering settings, and layer appearance in a shareable link. Bookmarks can be
+reopened during the session, cleared, or saved as a text file; opening a link
+loads its dataset and restores the view.
+
+#### Sound no longer piles up behind a blocked audio context
+
+A browser will not start an `AudioContext` without a gesture, and the viewer
+deferred each `on_arrive` narration until it could. One was held per node, so a
+listener who walked several stops before sound started heard all of them at
+once the moment it did. A deferred waypoint trigger is now superseded by the
+next waypoint event, so at most one is ever waiting.
+
+The gate that enables sound is also no longer a single attempt. It is decided
+from `context.state` rather than the outcome of `resume()`, whose promise a
+blocked context may leave unsettled, and it reopens from the context's own
+state change, from a one-shot pointer or key listener, or from `enableSound()`.
+
+The rail's Sound button gains a third state for this. "Blocked by the browser"
+is not the same as "muted": nothing is audible either way, but only one of them
+is the listener's choice, and clicking a blocked button resumes the context
+instead of toggling a mute they never set.
+
+#### Demos bake their scene environment
+
+A scene whose environment source is a live capture had it taken by the viewer
+on load: six renders of the whole scene into a cube map, repeated whenever the
+geometry, slice or appearance changed. What a bubble reflected therefore
+depended on how much data had streamed in when the capture fired, so it varied
+between machines and between runs, and every visitor paid for it.
+
+The two demos with `material="physical"` bubbles now bake that environment into
+their store as they build, through `luxar.demos.bake_scene_environment`. The
+viewer prefers the stored faces over any capture, so the reflections are
+identical everywhere and there is nothing to recompute at load. The map is
+excluded from the scene `content_hash`, so attaching one leaves warm viewer
+caches valid, and it costs about 136 KB.
+
+The step is best-effort and self-gating: it uses the scene's own probe and
+resolution, skips a scene that cannot gain from it or already carries a map,
+and a checkout without a built viewer simply keeps the live capture.
+
+#### An exported folder that knows it is a kiosk
+
+`luxar export` produced a folder that could host the touch-panel relay and
+never mentioned whether the scene it contained had a panel to drive. The
+relay was off by default, the README documented `--control` identically for
+every scene, and an operator got a URL to type into a tablet by hand.
+
+The exporter now reads the scene's own attributes, through the bi-format
+`read_node_attrs` rather than by naming a metadata document — the attributes
+live in `.zattrs` at zarr format 2 and under `attributes` in `zarr.json` at
+format 3, and a literal filename would have answered "no control panel" for
+half the stores in existence while looking like it worked.
+
+A scene that declares a `viewer_config.control_panel` gets a `serve.py` whose
+relay and network binding are **on by default**, because the alternative is an
+exhibit operator reading a README to make the tablet work. A scene without one
+behaves exactly as before: loopback, no relay, since a folder you
+double-click should not start listening for anything that wants to drive it.
+`--no-control` and `--host 127.0.0.1` override either way.
+
+On start the script now prints the two URLs as a labelled pair — *Display*
+for the big screen, *Control panel* for the tablet — followed by a QR of the
+panel URL as terminal half-blocks, and writes the same code to
+`control-qr.png` for printing or a second screen. Verified end to end on the
+protein-universe scene: the exported folder runs under `/usr/bin/python3` with
+nothing installed, serves both pages, and the PNG decodes to exactly the URL
+printed above it.
+
+The token default is unchanged, deliberately. With the relay on by default
+that means an exhibit scene listens on the LAN without a secret, so the banner
+now says in one line what that permits: anyone who can reach the machine can
+drive the display, a foreign web page cannot (the relay checks the request
+origin on the WebSocket handshake), and `--control-token` is there for a
+network you do not control.
+
+The README gained an *About this scene* section built from the attributes —
+title, which dimensions are displayed and which are steppable, how many stops
+the panel names, the citation — so the folder explains the thing it contains
+and not only how to serve it. Getting that lookup wrong is silent, and did
+happen: the dimensions live under `scene_dimensions.dimensions`, a top-level
+`dimensions` finds nothing, and the README simply omitted those lines rather
+than complaining. The shape is asserted in the tests now.
+
+Native app bundles are deliberately untouched: a `.app` with an embedded
+WebView has no console to print a URL to and needs its own pairing surface,
+which is a separate design.
+
+Four things the README got wrong, found by reading the shipped file rather
+than the template. Quick Start said `python serve.py`, and a stock macOS has
+no `python` at all -- it worked on the author's machine only because
+miniconda was on the PATH, which is exactly the audience this folder is not
+for. The Options block listed `--control` and `--host` as things to turn on
+while the kiosk section above it said they were already the default, so the
+two contradicted each other; those options now belong to the kiosk section
+alone. The folder listing hard-coded its column padding for a data directory
+called "data" and went crooked for any other name. And "stdlib only" was
+nearly true rather than true: it now says what `luxar_qr.py` is and that
+deleting it costs you the QR and nothing else.
+
+The floor is tested, not asserted: the exported folder was run end to end
+under `/usr/bin/python3`, which on this machine is Python 3.9.6, the same
+version the README claims.
+
+A kiosk export also gets a `TESTING.txt`, written only when the scene declares
+a panel: a plain export has nothing non-obvious to check, whereas pairing a
+tablet has an order to it and failure modes that look like software faults and
+are not. It states what has NOT been verified as plainly as what has.
+
+Cross-device reachability was then tested rather than assumed, by running the
+exported folder on the Linux box and driving it from this Mac over the
+network: both pages and the zarr data served, the relay completed its
+handshake, the panel built its 21 tiles, and a tap landed the display on the
+right stop. Two things came out of that which the code reading had got wrong.
+
+The origin check does NOT reject a foreign origin during the handshake -- it
+completes the handshake and then closes with 1008, which is the conforming
+way to do it. A first probe read only the HTTP status line, saw `101` for
+`https://evil.example.com` and looked like a security hole. Reading the frame
+after the handshake shows `cross-origin handshake`, and an origin matching the
+loaded URL is accepted, so the claim in the README holds -- but it held for a
+reason the first test could not see.
+
+And the panel showed ZERO tiles over the network while showing 21 on
+loopback, which looked like a latency bug in the relay. It is not: the panel
+asks the display for its stops and gives up after 30 seconds, and the harness
+had both pages in one browser, where the display becomes a throttled
+background tab. The same two pages in two separate browser processes work over
+the same network. That is now in TESTING.txt, because anyone testing a kiosk
+on one laptop with two tabs will hit it and report it as broken.
+
+One more found by running it rather than testing it: a scene load printed
+dozens of `BrokenPipeError` tracebacks. The viewer cancels in-flight chunk
+fetches on every camera move and every level-of-detail decision, each
+cancellation aborts a response the server is still writing, and
+`socketserver` treats that as a handler crash. Nothing was broken -- the scene
+worked throughout -- but the two URLs and the QR an operator needs were buried
+under stack traces that read as the server falling over.
+
+`ControlServer.handle_error` now swallows `BrokenPipeError`,
+`ConnectionResetError` and `ConnectionAbortedError` and passes everything else
+to the base implementation, so a real handler fault stays loud. The narrowness
+is asserted in the tests, because the tempting fix -- a bare `except` around
+`do_GET` -- would have hidden those too.
+
+Worth recording how this was missed: every earlier check looked at HTTP status
+codes and browser state and never at the server's own stderr. Forty
+deliberately aborted mid-response requests now produce zero tracebacks, and a
+full browser load with six story steps leaves the server output at its
+27-line banner.
+
 ## [2026.09.22] - 2026-09-22
 
 ### September 2026
