@@ -28,6 +28,8 @@ import type { RegistryEntry } from './types';
 import { loadTslMaterials } from '../../../../rendering/tsl/load';
 import { compactWebGPUReadbackRows } from '../../../../rendering/post-processing/hdr/pixel-utils';
 import { alignProvokingVertexWithWebGPU } from '../../../../rendering/picking/mesh/provoking-vertex';
+import { enableFirstVertexMeshPickFallback } from '../../../../rendering/mesh-geometry';
+import { meshPickSamplesFirstCorner } from '../../../../rendering/picking/mesh/pick.tsl';
 
 /** Edge length (px) of the square offscreen render target the parity harness draws into. */
 export const HARNESS_SIZE = 64;
@@ -47,6 +49,18 @@ export interface BloomChainRenderResult {
  *   catches an orientation or per-tap flip regression (#2584).
  */
 export type BloomChainFixture = 'radial' | 'ramp-y';
+
+function alignMeshPickFixture(
+  shaderName: string,
+  mesh: THREE.Object3D,
+  firstVertexAligned: boolean,
+  native: boolean
+): void {
+  if (shaderName.startsWith('mesh-pick') && !firstVertexAligned && !native) {
+    // These fixtures bypass PickingSystem, which normally enables the fallback.
+    enableFirstVertexMeshPickFallback((mesh as THREE.Mesh).geometry);
+  }
+}
 
 function copyReadback(readback: ArrayBufferView): Uint8Array {
   return new Uint8Array(readback.buffer, readback.byteOffset, readback.byteLength).slice();
@@ -376,9 +390,6 @@ async function createHarnessWebGPURenderer(
   renderer.setSize(HARNESS_SIZE, HARNESS_SIZE);
   await renderer.init();
   if (!native) {
-    // Same production alignment as renderGLSL, on three's WebGL2 backend
-    // (a no-op on the native one, whose convention it copies).
-    alignProvokingVertexWithWebGPU(renderer);
     return renderer;
   }
 
@@ -488,11 +499,9 @@ export function renderGLSL(
   const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
   renderer.setPixelRatio(1);
   renderer.setSize(HARNESS_SIZE, HARNESS_SIZE);
-  // Mirror production: `PickingSystem` switches every WebGL context to
-  // WebGPU's first-vertex `flat` convention (MESH_NODE_SPEC §6.5). Without it
-  // the mesh pick's per-vertex id comes from a different triangle corner here
-  // than on native WebGPU, and the pick parity cases compare two conventions.
-  alignProvokingVertexWithWebGPU(renderer);
+  // Mirror PickingSystem's extension path; alignMeshPickFixture below applies
+  // its index rotation fallback when the extension is unavailable (§6.5).
+  const firstVertexAligned = alignProvokingVertexWithWebGPU(renderer);
 
   const target = new THREE.WebGLRenderTarget(HARNESS_SIZE, HARNESS_SIZE, {
     type: THREE.UnsignedByteType,
@@ -509,6 +518,7 @@ export function renderGLSL(
   const mesh = entry.buildMesh
     ? entry.buildMesh(material)
     : new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+  alignMeshPickFixture(shaderName, mesh, firstVertexAligned, false);
   scene.add(mesh);
 
   renderer.setRenderTarget(target);
@@ -540,7 +550,12 @@ export function renderGLSL(
 export async function renderTSL(
   shaderName: string,
   opts: { native?: boolean; uniforms?: Readonly<Record<string, number>> } = {}
-): Promise<{ pixels: Uint8Array; vertexShader: string; fragmentShader: string }> {
+): Promise<{
+  pixels: Uint8Array;
+  vertexShader: string;
+  fragmentShader: string;
+  meshPickMembershipOnly: boolean;
+}> {
   const entry = SHADER_REGISTRY[shaderName];
   if (!entry) throw new Error(`Unknown shader: ${shaderName}`);
   if (!entry.source.webgpu) {
@@ -571,6 +586,10 @@ export async function renderTSL(
   // Apple Metal 3, where every line-primitive fixture matched its GLSL
   // render EXACTLY — mean-covered diff 0.000).
   const renderer = await createHarnessWebGPURenderer(opts.native === true);
+  const firstVertexAligned = !opts.native && alignProvokingVertexWithWebGPU(renderer);
+  const meshPickMembershipOnly =
+    opts.native === true &&
+    !meshPickSamplesFirstCorner(renderer.backend as { compatibilityMode?: boolean | null });
 
   // Capture the generated GLSL / WGSL strings by patching the renderer's
   // NodeManager. `_createNodeBuilderState(nodeBuilder)` is called by
@@ -612,6 +631,7 @@ export async function renderTSL(
   const mesh = entry.buildMesh
     ? entry.buildMesh(material)
     : new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+  alignMeshPickFixture(shaderName, mesh, firstVertexAligned, opts.native === true);
   scene.add(mesh);
 
   renderer.setRenderTarget(target);
@@ -649,5 +669,5 @@ export async function renderTSL(
   (uniforms.uInput?.value as THREE.Texture | null | undefined)?.dispose();
   renderer.dispose();
 
-  return { pixels, vertexShader, fragmentShader };
+  return { pixels, vertexShader, fragmentShader, meshPickMembershipOnly };
 }

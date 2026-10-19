@@ -82,6 +82,13 @@ const vec4: (a?: TSLNode, b?: TSLNode, c?: TSLNode, d?: TSLNode) => TSLNode = _v
 const clamp: (v: TSLNode, lo: TSLNode, hi: TSLNode) => TSLNode = _clamp as TSLNode;
 const max: (a: TSLNode, b: TSLNode) => TSLNode = _max as TSLNode;
 
+/** Keep unknown modes compatibility-safe until the backend reports its mode. */
+export function meshPickSamplesFirstCorner(backend: {
+  compatibilityMode?: boolean | null;
+}): boolean {
+  return backend.compatibilityMode === false;
+}
+
 /**
  * Keep core WebGPU's first-corner result; compatibility mode cannot use first.
  * An unknown mode (null before WebGPUBackend.init, or absent on a bridge backend)
@@ -98,7 +105,7 @@ class MeshElementIdNode extends Node {
     const backend = builder.renderer.backend as { compatibilityMode?: boolean | null };
     return varying(this.elementId).setInterpolation(
       'flat',
-      backend.compatibilityMode === false ? 'first' : 'either'
+      meshPickSamplesFirstCorner(backend) ? 'first' : 'either'
     );
   }
 }

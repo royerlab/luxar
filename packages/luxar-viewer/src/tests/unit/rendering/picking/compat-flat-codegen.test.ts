@@ -15,6 +15,16 @@ import { LineTSLMaterial } from '../../../../rendering/materials/line/material-t
 import { LinePickingTSLMaterial } from '../../../../rendering/picking/line/material-tsl';
 import { GSplatPickingTSLMaterial } from '../../../../rendering/picking/gsplat/material-tsl';
 import { MeshPickingTSLMaterial } from '../../../../rendering/picking/mesh/material-tsl';
+import { meshPickSamplesFirstCorner } from '../../../../rendering/picking/mesh/pick.tsl';
+
+it.each([
+  ['core', false, true],
+  ['compatibility', true, false],
+  ['pending', null, false],
+  ['unreported', undefined, false],
+] as const)('mesh pick first-corner selector for %s mode', (_name, mode, expected) => {
+  expect(meshPickSamplesFirstCorner({ compatibilityMode: mode })).toBe(expected);
+});
 
 function interpolationViolations(file: ts.SourceFile, relative: string): string[] {
   const violations: string[] = [];

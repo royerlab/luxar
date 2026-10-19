@@ -60,20 +60,18 @@ declare global {
       renderTSL: (
         shaderName: string,
         opts?: { native?: boolean; uniforms?: Readonly<Record<string, number>> }
-      ) => Promise<{ pixels: Uint8Array; vertexShader: string; fragmentShader: string }>;
+      ) => Promise<{
+        pixels: Uint8Array;
+        vertexShader: string;
+        fragmentShader: string;
+        meshPickMembershipOnly: boolean;
+      }>;
       renderBloomChainGLSL: (fixture?: BloomChainFixture) => Promise<BloomChainRenderResult>;
       renderBloomChainTSL: (
         fixture?: BloomChainFixture,
         opts?: { native?: boolean }
       ) => Promise<BloomChainRenderResult>;
       listShaders: () => string[];
-      /**
-       * Whether this browser's WebGL2 has `WEBGL_provoking_vertex`, i.e.
-       * whether the GLSL arm can adopt WebGPU's first-vertex `flat`
-       * convention (MESH_NODE_SPEC §6.5). When it cannot, a mesh pick's
-       * per-vertex id legitimately differs between WebGL and native WebGPU.
-       */
-      provokingVertexAlignable: () => boolean;
     };
   }
 }
@@ -94,7 +92,4 @@ window.__tslHarness = {
   renderBloomChainGLSL,
   renderBloomChainTSL,
   listShaders: () => Object.keys(SHADER_REGISTRY),
-  provokingVertexAlignable: () =>
-    document.createElement('canvas').getContext('webgl2')?.getExtension('WEBGL_provoking_vertex') !=
-    null,
 };

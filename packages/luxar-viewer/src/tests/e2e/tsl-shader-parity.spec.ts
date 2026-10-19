@@ -47,6 +47,7 @@ type TSLResult = {
   pixels: number[];
   vertexShader: string;
   fragmentShader: string;
+  meshPickMembershipOnly: boolean;
 };
 
 type BloomChainResult = {
@@ -64,51 +65,15 @@ async function bootHarness(page: Page): Promise<string[]> {
   return page.evaluate(() => window.__tslHarness!.listShaders());
 }
 
-/**
- * Whether a mesh pick's element-id channel can be compared across the two arms.
- *
- * The pick shader's per-vertex id rides a `flat` varying, sourced from the
- * LAST corner of a triangle on WebGL and the FIRST on WebGPU. Production (and
- * this harness) align WebGL to first-vertex through `WEBGL_provoking_vertex`,
- * but where the extension is missing the divergence is the documented
- * exception of MESH_NODE_SPEC §6.5: every corner is a valid answer. That only
- * matters in the native arm — on the WebGL fallback both arms share one
- * convention — and on obsidian's ANGLE-on-Vulkan (Chrome 146) the extension is
- * absent, so the id byte reads 255 on GLSL and 0 on native WGSL for the same
- * triangle. When it is not comparable, {@link maskMeshPickElementId} drops that
- * byte from both arms; the discard pattern, node id and brightness, which is
- * what the pick cases assert, stay compared exactly as before.
- */
-async function meshPickIdsComparable(page: Page): Promise<boolean> {
-  if (!isWebGPUProject()) return true;
-  return page.evaluate(() => window.__tslHarness!.provokingVertexAlignable());
-}
-
-/**
- * Zero the element-id channel (G — see `tsl-harness/mesh.ts`) of a mesh pick
- * readback when {@link meshPickIdsComparable} says the two arms legitimately
- * disagree on it. A no-op for every other shader.
- */
-async function maskMeshPickElementId(
-  page: Page,
-  shaderName: string,
-  pixels: number[]
-): Promise<number[]> {
-  if (!shaderName.startsWith('mesh-pick') || (await meshPickIdsComparable(page))) return pixels;
-  for (let i = 1; i < pixels.length; i += 4) pixels[i] = 0;
-  return pixels;
-}
-
 async function runGLSL(
   page: Page,
   shaderName: string,
   uniforms?: Record<string, number>
 ): Promise<number[]> {
-  const pixels = await page.evaluate(
+  return page.evaluate(
     ([name, overrides]) => Array.from(window.__tslHarness!.renderGLSL(name, overrides)),
     [shaderName, uniforms] as const
   );
-  return maskMeshPickElementId(page, shaderName, pixels);
 }
 
 async function runTSL(
@@ -123,12 +88,27 @@ async function runTSL(
         pixels: Array.from(result.pixels),
         vertexShader: result.vertexShader,
         fragmentShader: result.fragmentShader,
+        meshPickMembershipOnly: result.meshPickMembershipOnly,
       };
     },
     [shaderName, uniforms, isWebGPUProject()] as const
   );
-  result.pixels = await maskMeshPickElementId(page, shaderName, result.pixels);
   return result;
+}
+
+/** Core WebGPU compares the exact ID; other native modes permit any face corner. */
+function comparableMeshPickPixels(glsl: number[], tsl: TSLResult): [number[], number[]] {
+  if (!tsl.meshPickMembershipOnly) return [glsl, tsl.pixels];
+  // This harness uses RGBA8: vertex 0 encodes as 0, and vertices 1–3
+  // saturate to 255. Reject intermediate ID bytes before excluding that
+  // channel; exact face-corner membership is not observable at 8 bits.
+  for (let i = 1; i < tsl.pixels.length; i += 4) {
+    expect([0, 255], `mesh pick at pixel ${(i - 1) / 4} has an intermediate ID byte`).toContain(
+      tsl.pixels[i]
+    );
+  }
+  const withoutId = (pixels: number[]) => pixels.map((value, i) => (i % 4 === 1 ? 0 : value));
+  return [withoutId(glsl), withoutId(tsl.pixels)];
 }
 
 async function runBloomChain(
@@ -2680,6 +2660,9 @@ test.describe('TSL ↔ GLSL shader parity', () => {
 
       const glslPixels = await runGLSL(page, variant);
       const tslResult = await runTSL(page, variant);
+      const [comparableGLSL, comparableTSL] = variant.startsWith('mesh-pick')
+        ? comparableMeshPickPixels(glslPixels, tslResult)
+        : [glslPixels, tslResult.pixels];
 
       // NOT `assertBothRendered`: this fixture's quad fills the frame, so pixel 0
       // is a SHADED corner, not background, and an exact match there is the
@@ -2687,8 +2670,8 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       // TSL-on-the-WebGL-backend happens to agree to the bit; against native
       // WGSL `mesh-texture` lands 1 LSB apart (red 186 vs 187), well inside the
       // mean-diff bound below.
-      assertNeitherFrameEmpty(glslPixels, tslResult.pixels, variant);
-      const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+      assertNeitherFrameEmpty(comparableGLSL, comparableTSL, variant);
+      const diff = meanAbsDiff(comparableGLSL, comparableTSL);
       const samplePx = (px: number[], x: number, y: number) =>
         `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;
       const samples = [
@@ -2907,9 +2890,20 @@ test.describe('TSL ↔ GLSL shader parity', () => {
 
     const glslPixels = await runGLSL(page, 'mesh-pick');
     const tslResult = await runTSL(page, 'mesh-pick');
+    const [comparableGLSL, comparableTSL] = comparableMeshPickPixels(glslPixels, tslResult);
 
-    assertBothRendered(glslPixels, tslResult.pixels, 'mesh-pick');
-    expect(meanAbsDiff(glslPixels, tslResult.pixels), 'mesh-pick: parity').toBeLessThan(2.0);
+    assertBothRendered(comparableGLSL, comparableTSL, 'mesh-pick');
+    expect(meanAbsDiff(comparableGLSL, comparableTSL), 'mesh-pick: parity').toBeLessThan(2.0);
+    const centreIdByte = (32 * 64 + 32) * 4 + 1;
+    expect(glslPixels[centreIdByte], 'WebGL must report the original first corner').toBe(0);
+    if (isWebGPUProject()) {
+      expect(/@interpolate\(\s*flat,\s*first\s*\)/.test(tslResult.vertexShader)).toBe(
+        !tslResult.meshPickMembershipOnly
+      );
+    }
+    if (!tslResult.meshPickMembershipOnly) {
+      expect(tslResult.pixels[centreIdByte], 'core WebGPU must report first').toBe(0);
+    }
   });
 
   test('mesh-pick: the cutout is REAL — turning it off recovers the discarded corner', async ({
@@ -3159,7 +3153,10 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
 
     const glslPick = await runGLSL(page, 'mesh-pick-near-fade');
-    const tslPick = (await runTSL(page, 'mesh-pick-near-fade')).pixels;
+    const [comparableGLSLPick, comparableTSLPick] = comparableMeshPickPixels(
+      glslPick,
+      await runTSL(page, 'mesh-pick-near-fade')
+    );
     // `assertBothRendered` is deliberately NOT used on this one. Its "did anything
     // render?" proxy is "some pixel differs from pixel 0", and this frame is a single
     // RGBA value repeated 4096 times — legitimately, by construction: the quad
@@ -3180,10 +3177,10 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     // 70° and the same corner interpolates to 0.475, the cutout starts discarding
     // there, and this assertion fails for a reason that has nothing to do with the
     // near fade. If `buildBehindCamera` ever has to change, re-derive it here first.
-    const expectedPick = [...pixelAt(glslPick, ...CENTRE)];
+    const expectedPick = [...pixelAt(comparableGLSLPick, ...CENTRE)];
     for (const [name, buf] of [
-      ['glsl', glslPick],
-      ['tsl', tslPick],
+      ['glsl', comparableGLSLPick],
+      ['tsl', comparableTSLPick],
     ] as const) {
       let off = 0;
       for (let i = 0; i < buf.length; i += 4) {
