@@ -590,7 +590,6 @@ describe('SceneManager', () => {
         capabilities: {
           apiSurface: 'webgpu' as const,
           backendKind: 'webgpu-native' as const,
-          nativeWebGPUBackend: true,
           framebufferYDown: true,
           readbackYDown: true,
           hdr: {
