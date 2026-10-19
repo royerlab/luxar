@@ -395,7 +395,7 @@ result = fit_gaussian_splats(
     lr=0.01,
     loss_type="l1",       # "l1" | "mse" | "poisson"
     max_eccentricity=10.0,
-    device="cuda",        # "auto" | "cpu" | "cuda" | "mps"
+    device="auto",        # "auto" | "cpu" | "cuda" | "mps"
     cull_retention=0.999,  # post-fit cull; the function default
 )
 # result is a GSplatData: .centers (N,d), .amplitudes (N,), .cholesky_factors (N, d(d+1)/2), .stats
@@ -458,7 +458,7 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene.add_gsplats_from_data("embryo", result)
 
     # (c) Fit in one step from a volume:
-    scene.add_gsplats_from_volume("embryo", volume, seeds=8000, n_iters=5000, device="cuda")
+    scene.add_gsplats_from_volume("embryo", volume, seeds=8000, n_iters=5000, device="auto")
 
     # (d) From raw arrays — cholesky_factors is the packed lower-triangular factor L
     #     of the COVARIANCE (Σ = L·Lᵀ); 3D = (N,6):

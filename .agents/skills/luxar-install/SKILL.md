@@ -170,7 +170,9 @@ takes well under a second. If it logs `none, using PyTorch`, the reason follows
 NVRTC can target -- sm_75 is the floor for CUDA 13's NVRTC, while CUDA 12's
 reaches older cards, untested here -- or no libnvrtc;
 `LUXAR_NVRTC_LIBRARY=/path/to/libnvrtc.so` points at one explicitly).
-`LUXAR_CUDA_BACKEND=aot|nvrtc|torch` forces a path.
+`LUXAR_CUDA_BACKEND=aot|nvrtc|torch` forces a path. Expect a large download: the
+CUDA torch build and its NVIDIA wheels are about 3 GB to fetch and about 6 GB
+installed (roughly 25 minutes on a 1.5 MB/s link).
 
 **Dev checkout:** the ahead-of-time extension is still supported and preferred
 when it is built. Here Hatch owns the environment, so do NOT build into a

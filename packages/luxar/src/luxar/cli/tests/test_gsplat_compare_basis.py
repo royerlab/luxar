@@ -317,7 +317,7 @@ def test_a_tiff_channel_without_axes_is_refused(tmp_path, blob_reference) -> Non
 
     result = _run(str(store), str(tif), "--channel", "1")
     output = normalized_cli_output(result)
-    assert result.exit_code == 1, output
+    assert result.exit_code == 2, output  # a usage error, as on fit and cal
     assert "channel=1" in output and "--axes" in output
 
     ok = _run(str(store), str(tif), "--channel", "1", "--axes", "c,z,y,x")
@@ -335,8 +335,9 @@ def test_fit_and_cal_refuse_an_inapplicable_tiff_index(tmp_path, command) -> Non
         app, ["gsplat", command, str(tif), str(out), "--timepoint", "1"]
     )
     output = normalized_cli_output(result)
-    assert result.exit_code == 1, output
+    assert result.exit_code == 2, output  # a usage error, reported without a traceback
     assert "timepoint=1" in output
+    assert "Traceback" not in result.output
 
 
 def test_at_fit_resolution_scores_on_the_decimated_grid(tmp_path) -> None:

@@ -316,7 +316,9 @@ def dump_default_config(preset: str = DEFAULT_FIT_PRESET) -> str:
 # Volume loading, OME-Zarr discovery, and dimension inference now live in the
 # domain layer (luxar.io / luxar.core); the gsplat CLI re-exports them so its
 # command modules keep a single import site. `load_volume` is wrapped to convert
-# the domain ImportError (missing optional reader) into a clean Typer exit.
+# the domain ImportError (missing optional reader) into a clean Typer exit, and
+# a VolumeSelectionError (an unusable --channel/--timepoint/--axes) into a usage
+# error.
 # ---------------------------------------------------------------------------
 
 from luxar.core.dimension_inference import (  # noqa: E402
@@ -327,6 +329,7 @@ from luxar.io.ome_zarr import (  # noqa: E402
     discover_ome_zarr_shape,
 )
 from luxar.io.volume import (  # noqa: E402
+    VolumeSelectionError,
     decode_flat_channel_index,
 )
 from luxar.io.volume import (  # noqa: E402
@@ -365,7 +368,10 @@ def load_volume(
     Converts the domain-layer :class:`ImportError` (raised when an optional
     reader such as tifffile/imageio is missing) into a clean ``typer.Exit(1)``
     with an install hint, so the CLI shows a friendly message instead of a
-    traceback. All loading behaviour is identical to the domain function.
+    traceback, and a :class:`~luxar.io.volume.VolumeSelectionError` (e.g.
+    ``--channel`` on an input with no channel axis) into ``typer.BadParameter``
+    so it reads as the usage error it is. Any other exception propagates. All
+    loading behaviour is identical to the domain function.
     """
     import typer
 
@@ -382,6 +388,8 @@ def load_volume(
     except ImportError as exc:
         aprint(str(exc))
         raise typer.Exit(1)
+    except VolumeSelectionError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

@@ -109,8 +109,16 @@ Without `--axes`, the loader infers axes from the number of dimensions:
 **That table is the zarr path only.** For `.npy` / `.npz` / `.tiff` / imageio inputs
 the loader squeezes the decoded array and returns it as-is, so a `--channel` /
 `--timepoint` there has nothing to index and is REFUSED (`fit`, `cal`, `compare`
-exit 1 naming `--axes`). On any non-zarr nD input, pass `--axes` (which does the
-indexing itself).
+exit with an error naming `--axes`, no traceback). The exception is an OME-TIFF or
+ImageJ TIFF whose metadata was NOT written by a known Python writer: an index uses
+its declared order without `--axes`, and one log line always names each axis with
+its size (`z=65, c=7, y=624, x=924`). Not trusted, so `--axes` stays required (the
+error shows the declared order and sizes): OME `Creator` starting `tifffile`,
+`bioio` or `aicsimageio`, and ImageJ `ImageJ=1.11a` (tifffile), because these fill
+in default axes (a CZYX array saved without axes reads back as ZCYX, a z-stack as
+CYX); any axis letter other than T/C/Z/Y/X (e.g. RGB `S`); and an index for an axis
+the file does not declare. Without an index the declaration is ignored. `--axes`
+always overrides it.
 
 **Override with `--axes`** (on `fit` / `cal` / `compare`) when the layout differs (e.g. a
 camera axis, or `ZCYX`). Give exactly one label per array dimension; recognized

@@ -23,6 +23,7 @@ from starlette.types import ASGIApp
 
 from luxar import __version__
 from luxar.utils.arbol_warnings import install_arbol_warnings
+from luxar.utils.color_output import apply_arbol_color_policy
 
 from . import demo_runs
 from ._traceback import exit_with_error
@@ -179,6 +180,8 @@ def main_callback(
     # install is skipped when a recorder is active.
     install_arbol_warnings()
     _line_buffer_std_streams()
+    # No ANSI colour in a redirected log or under NO_COLOR (FORCE_COLOR wins).
+    apply_arbol_color_policy()
     if not ctx.invoked_subcommand:
         aprint(ctx.get_help())
         raise typer.Exit(0)

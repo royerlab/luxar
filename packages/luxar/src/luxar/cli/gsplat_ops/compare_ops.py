@@ -282,17 +282,20 @@ def _load_reference(
     The domain loader, not the CLI wrapper: its ImportError (missing tifffile)
     must reach ``exit_with_error`` so ``-q`` still reports it on stderr.
     """
-    from luxar.io.volume import load_volume
+    from luxar.io.volume import VolumeSelectionError, load_volume
 
     info: dict[str, Any] = {}
-    ref = load_volume(
-        opts.reference_path,
-        channel=opts.channel,
-        timepoint=opts.timepoint,
-        array_key=opts.array_key,
-        axes=opts.axes,
-        info=info,
-    )
+    try:
+        ref = load_volume(
+            opts.reference_path,
+            channel=opts.channel,
+            timepoint=opts.timepoint,
+            array_key=opts.array_key,
+            axes=opts.axes,
+            info=info,
+        )
+    except VolumeSelectionError as exc:  # a usage error, as on fit and cal
+        raise typer.BadParameter(str(exc)) from exc
     decoded_bytes = _decoded_bytes(ref, info)
     ctx.loaded_shape = tuple(ref.shape)
     region = _fitted_region_crop(ctx.loaded_shape, stats, ctx.dimension_metadata)

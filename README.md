@@ -113,6 +113,20 @@ also `pip install imagecodecs`). Some demos need extra packages; `luxar demo dep
 --install` fetches what a demo reports missing (it runs `python -m pip`, so the
 environment needs pip). `luxar demo run` needs 2026.10.19 or newer: the 2026.9.22 release fails with "Could not find project root" when installed from PyPI.
 
+**On a remote or headless machine** the data and viewer servers listen on
+127.0.0.1 only, so a browser on your laptop cannot reach the printed URL. Either
+tunnel both ports over SSH and open the printed URL locally:
+
+```bash
+ssh -L 8000:localhost:8000 -L 8001:localhost:8001 user@remote-box
+luxar demo run cloud --port 8000 --viewer-port 8001     # on the remote box
+```
+
+or bind every interface with `luxar demo run cloud --host 0.0.0.0` (the same
+`--host`, `--port`, `--viewer-port` work on `luxar serve`). Binding 0.0.0.0 serves
+the data and the viewer, unauthenticated, to anyone who can reach the machine on
+those ports; prefer the tunnel on a shared or untrusted network.
+
 **Getting a Python 3.12 first.** A fresh machine often lacks one:
 
 - **Ubuntu / Debian** ships Python without `venv` or `pip`:
@@ -130,6 +144,10 @@ environment needs pip). `luxar demo run` needs 2026.10.19 or newer: the 2026.9.2
   `uv pip install luxar`. `--seed` puts pip in the environment, which
   `luxar demo deps --install` needs; without it, use `uv pip` for every install
   below.
+
+**Linux with an NVIDIA GPU:** `[gsplats]` installs PyTorch's CUDA build and its
+NVIDIA libraries, about 3 GB to download and about 6 GB installed, so the first
+install takes a while on a slow link.
 
 **Linux without an NVIDIA GPU:** the default PyTorch wheel that `[gsplats]` pulls
 on Linux bundles CUDA (several GB). Install the CPU-only wheel first and pip keeps
