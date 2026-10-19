@@ -6,7 +6,7 @@
  *   - `configureRendererBackend` — point the backend-dependent rendering
  *     paths (texture layout, ordering applies, RenderObject eviction,
  *     element-texture row uploads) at a renderer; shared with layer mode.
- *   - `selectBackend` — apply the URL-param / env-var / default
+ *   - `selectBackend` — apply the URL-param / env-var / platform-policy
  *     precedence ladder to pick WebGL or WebGPU.
  *   - `createWebGLRenderer` — construct a `THREE.WebGLRenderer`
  *     from the configured WebGL2 context, build the renderer-
@@ -48,6 +48,14 @@ import { resolveHdrHeadroom } from '../../../utils/hdr/hdr-headroom';
 import { platformName } from '../../../utils/platform';
 import { log, Modules } from '../../../utils/log';
 import { loadTslMaterials } from '../../../rendering/tsl/load';
+import {
+  candidateRules,
+  detectBrowserPlatform,
+  matchAdapterRule,
+  WEBGPU_PLATFORM_RULES,
+  type BrowserPlatform,
+  type WebGPUPlatformRule,
+} from './backend-policy';
 import {
   clampHdrHeadroom,
   DEFAULT_HDR_HEADROOM,
@@ -118,7 +126,7 @@ export interface BackendSelection {
   /** Backend to use: 'webgl' or 'webgpu'. */
   backend: 'webgl' | 'webgpu';
   /** Where the selection came from, for logging. */
-  source: 'url-param' | 'env-var' | 'default';
+  source: 'url-param' | 'env-var' | 'platform-policy';
   /**
    * WebGPU only on a NATIVE adapter: without one, use `WebGLRenderer` rather
    * than letting three run TSL on its internal WebGL2 backend. True for every
@@ -126,14 +134,13 @@ export interface BackendSelection {
    * bridge reachable for diagnostics (and the render gate's `webgpu-gl` arm).
    */
   requireNativeAdapter: boolean;
+  /**
+   * Set when the platform policy chose WebGPU from the OS and browser alone:
+   * the rules the adapter must still satisfy (its vendor) once it answers,
+   * or the session falls back to `WebGLRenderer`. See `backend-policy.ts`.
+   */
+  platformRules?: readonly WebGPUPlatformRule[];
 }
-
-/**
- * The backend a session gets when nothing selects one. WebGL until native
- * WebGPU meets the go/no-go criteria of issue #3146; a `'webgpu'` default
- * still falls back to `WebGLRenderer` wherever no native adapter exists.
- */
-const DEFAULT_BACKEND: BackendSelection['backend'] = 'webgl';
 
 /**
  * Select the rendering backend.
@@ -143,14 +150,17 @@ const DEFAULT_BACKEND: BackendSelection['backend'] = 'webgl';
  *      Settings › Advanced › Renderer choice).
  *   2. `VITE_LUXAR_USE_WEBGPU=1` / `VITE_LUXAR_USE_WEBGPU_RENDERER=1` env vars.
  *   3. `VITE_LUXAR_USE_LEGACY_WEBGL=1` env var (forces WebGL).
- *   4. `defaultBackend` (`DEFAULT_BACKEND`, WebGL today).
+ *   4. The platform policy (`backend-policy.ts`): WebGPU when the OS and
+ *      browser match a measured platform (the adapter's vendor is checked
+ *      once it answers), WebGL everywhere else.
  *
  * Only an explicit `'webgpu'` override may run on three's WebGL2 bridge; every
  * other WebGPU selection requires a native adapter.
  */
 export function selectBackend(
   rendererOverride: 'webgl' | 'webgpu' | undefined,
-  defaultBackend: BackendSelection['backend'] = DEFAULT_BACKEND
+  platform: BrowserPlatform = detectBrowserPlatform(),
+  rules: readonly WebGPUPlatformRule[] = WEBGPU_PLATFORM_RULES
 ): BackendSelection {
   if (rendererOverride === 'webgl') {
     return { backend: 'webgl', source: 'url-param', requireNativeAdapter: true };
@@ -167,7 +177,16 @@ export function selectBackend(
   if (import.meta.env.VITE_LUXAR_USE_LEGACY_WEBGL === '1') {
     return { backend: 'webgl', source: 'env-var', requireNativeAdapter: true };
   }
-  return { backend: defaultBackend, source: 'default', requireNativeAdapter: true };
+  const platformRules = candidateRules(platform, rules);
+  if (platformRules.length === 0) {
+    return { backend: 'webgl', source: 'platform-policy', requireNativeAdapter: true };
+  }
+  return {
+    backend: 'webgpu',
+    source: 'platform-policy',
+    requireNativeAdapter: true,
+    platformRules,
+  };
 }
 
 /**
@@ -331,6 +350,11 @@ export interface CreateWebGPUOptions {
    * backend. Ignored with `webgpuForceWebGL`, which asks for that backend.
    */
   requireNativeAdapter?: boolean;
+  /**
+   * The platform-policy rules the adapter must satisfy (`BackendSelection.platformRules`);
+   * an adapter matching none returns `{ fallback: true }`.
+   */
+  platformRules?: readonly WebGPUPlatformRule[];
   /** PROTOTYPE: request extended-range (HDR) output (`?hdr`); gated by `planHdrOutput`. */
   hdr?: boolean;
   /** Pinned HDR headroom (`?hdr=<n>`); omitted = resolved per display. */
@@ -358,6 +382,7 @@ export type WebGPUDeviceRequest =
 interface GPUAdapterLike {
   readonly features: ReadonlySet<string>;
   readonly limits: Record<string, number | undefined>;
+  readonly info?: { vendor?: string; architecture?: string; isFallbackAdapter?: boolean };
   requestDevice: (descriptor: {
     requiredFeatures?: string[];
     requiredLimits?: Record<string, number>;
@@ -388,8 +413,51 @@ async function requestCoreAdapter(): Promise<GPUAdapterLike | null> {
   return adapter ?? gpu.requestAdapter().catch(() => null);
 }
 
-function prefetchTslMaterialsWhenUsable(hasGpu: boolean, requireNativeAdapter?: boolean): void {
+function prefetchTslMaterialsWhenUsable(
+  hasGpu: boolean,
+  requireNativeAdapter?: boolean,
+  platformRules?: readonly WebGPUPlatformRule[]
+): void {
+  if (platformRules) return; // fetched once the adapter qualifies (failsPlatformPolicy)
   if (hasGpu || !requireNativeAdapter) void loadTslMaterials().catch(() => undefined);
+}
+
+/** No adapter: fall back to WebGL when a native one was required, else run the WebGL2 bridge. */
+function noAdapterResult(hasGpu: boolean, requireNativeAdapter?: boolean): WebGPUDeviceRequest {
+  if (lacksRequiredNativeDevice(requireNativeAdapter, hasGpu, false, undefined)) {
+    return { fallback: true };
+  }
+  return { fallback: false, device: undefined };
+}
+
+/**
+ * Check the adapter against the platform-policy rules, if any: true (logged)
+ * when it satisfies none and the session must fall back to WebGL. An admitted
+ * adapter starts the TSL chunk fetch, which the policy holds back until here
+ * (a browser can expose `navigator.gpu` yet offer no adapter, or only a
+ * software one, and must not download WebGPU code it will never run).
+ */
+function failsPlatformPolicy(
+  adapter: GPUAdapterLike,
+  platformRules: readonly WebGPUPlatformRule[] | undefined
+): boolean {
+  if (!platformRules) return false;
+  const info = adapter.info;
+  const name = [info?.vendor || 'unknown vendor', info?.architecture].filter(Boolean).join(' ');
+  const rule = matchAdapterRule(platformRules, info);
+  if (!rule) {
+    log.info(
+      Modules.RENDERER,
+      `WebGPU adapter (${name}) is not on a measured WebGPU platform; using WebGLRenderer.`
+    );
+    return true;
+  }
+  log.info(
+    Modules.RENDERER,
+    `WebGPU by platform policy: ${rule.os} / ${rule.browser} / ${rule.vendor} (adapter: ${name}).`
+  );
+  void loadTslMaterials().catch(() => undefined);
+  return false;
 }
 
 /**
@@ -397,23 +465,22 @@ function prefetchTslMaterialsWhenUsable(hasGpu: boolean, requireNativeAdapter?: 
  * fetches, and — when `requireNativeAdapter` is set — the fallback decision
  * itself. The one place this negotiation happens, for both the bootstrap-time
  * call (before `SceneManager` exists) and `createWebGPURenderer`'s own fresh
- * request.
+ * request. `platformRules` (from the platform policy) adds the adapter-vendor
+ * check before the device request and the `three/webgpu` download.
  */
 export async function requestWebGPUDevice(
   rendererOverride?: 'webgl' | 'webgpu',
-  requireNativeAdapter?: boolean
+  requireNativeAdapter?: boolean,
+  platformRules?: readonly WebGPUPlatformRule[]
 ): Promise<WebGPUDeviceRequest> {
   const hasGpu = (navigator as NavigatorWithGPU).gpu !== undefined;
   // Start the TSL chunk before waiting for the adapter when this session can
-  // still use WebGPU. The awaited setup load retries if the prefetch fails.
-  prefetchTslMaterialsWhenUsable(hasGpu, requireNativeAdapter);
+  // still use WebGPU (under the platform policy, only once the adapter
+  // qualifies). The awaited setup load retries if the prefetch fails.
+  prefetchTslMaterialsWhenUsable(hasGpu, requireNativeAdapter, platformRules);
   const adapter = await requestCoreAdapter();
-  if (!adapter) {
-    if (lacksRequiredNativeDevice(requireNativeAdapter, hasGpu, false, undefined)) {
-      return { fallback: true };
-    }
-    return { fallback: false, device: undefined };
-  }
+  if (!adapter) return noAdapterResult(hasGpu, requireNativeAdapter);
+  if (failsPlatformPolicy(adapter, platformRules)) return { fallback: true };
   const adapterMax = adapter.limits?.maxVertexBuffers;
   const minVertexBuffers = 8;
   if (
@@ -685,7 +752,11 @@ function resolveWebGPUDeviceRequest(options: CreateWebGPUOptions): Promise<WebGP
   if (options.webgpuForceWebGL) return Promise.resolve({ fallback: false, device: undefined });
   return (
     options.preRequestedWebGPUDevice ??
-    requestWebGPUDevice(options.rendererOverride, options.requireNativeAdapter)
+    requestWebGPUDevice(
+      options.rendererOverride,
+      options.requireNativeAdapter,
+      options.platformRules
+    )
   );
 }
 

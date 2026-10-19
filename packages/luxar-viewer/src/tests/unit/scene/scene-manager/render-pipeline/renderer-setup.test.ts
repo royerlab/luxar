@@ -125,19 +125,44 @@ describe('selectBackend', () => {
     vi.unstubAllEnvs();
   });
 
-  it('defaults to webgl when neither URL nor env vars are set', () => {
-    const r = selectBackend(undefined);
-    expect(r).toEqual({ backend: 'webgl', source: 'default', requireNativeAdapter: true });
-  });
+  const LINUX_CHROME = { os: 'linux', browser: 'chromium' } as const;
+  const MAC_CHROME = { os: 'macos', browser: 'chromium' } as const;
 
-  it('a WebGPU default requires a native adapter; an explicit ?renderer=webgpu does not', () => {
-    expect(selectBackend(undefined, 'webgpu')).toEqual({
-      backend: 'webgpu',
-      source: 'default',
+  it('defaults to webgl on a platform without a policy row', () => {
+    expect(selectBackend(undefined, MAC_CHROME)).toEqual({
+      backend: 'webgl',
+      source: 'platform-policy',
       requireNativeAdapter: true,
     });
-    expect(selectBackend('webgpu', 'webgpu').requireNativeAdapter).toBe(false);
-    expect(selectBackend('webgl', 'webgpu').backend).toBe('webgl');
+    expect(selectBackend(undefined, { os: 'linux', browser: 'firefox' }).backend).toBe('webgl');
+  });
+
+  it('defaults to webgpu on a policy platform, with the rules the adapter must still meet', () => {
+    const r = selectBackend(undefined, LINUX_CHROME);
+    expect(r).toMatchObject({
+      backend: 'webgpu',
+      source: 'platform-policy',
+      requireNativeAdapter: true,
+    });
+    expect(r.platformRules?.map((rule) => rule.vendor)).toEqual(['nvidia']);
+  });
+
+  it('overrides and env vars beat the platform policy', () => {
+    expect(selectBackend('webgl', LINUX_CHROME).backend).toBe('webgl');
+    expect(selectBackend('webgpu', MAC_CHROME)).toEqual({
+      backend: 'webgpu',
+      source: 'url-param',
+      requireNativeAdapter: false,
+    });
+    vi.stubEnv('VITE_LUXAR_USE_LEGACY_WEBGL', '1');
+    expect(selectBackend(undefined, LINUX_CHROME).backend).toBe('webgl');
+    vi.unstubAllEnvs();
+  });
+
+  it('takes its rows from the rules argument', () => {
+    const rule = { os: 'macos', browser: 'chromium', vendor: 'apple', evidence: 'test' } as const;
+    expect(selectBackend(undefined, MAC_CHROME, [rule]).platformRules).toEqual([rule]);
+    expect(selectBackend(undefined, LINUX_CHROME, [rule]).backend).toBe('webgl');
   });
 });
 
@@ -441,6 +466,49 @@ describe('createWebGPURenderer', () => {
       const result = await createWebGPURenderer(makeCanvas(), { requireNativeAdapter: true });
       expect(result).toMatchObject({ fallback: false });
       expect((webgpuConstructorArgs[0] as { device?: unknown }).device).toBeDefined();
+    });
+
+    const NVIDIA_RULES = [
+      { os: 'linux', browser: 'chromium', vendor: 'nvidia', evidence: 'test' },
+    ] as const;
+
+    function adapterWithInfo(info: object) {
+      return { ...makeAdapter({ maxVertexBuffers: 16 }), info };
+    }
+
+    it('platform policy: an adapter from another vendor falls back before the device request and downloads', async () => {
+      const adapter = adapterWithInfo({ vendor: 'amd', architecture: 'rdna-3' });
+      stubNavigatorGpu(vi.fn().mockResolvedValue(adapter));
+      const calls = webgpuImport.calls;
+      expect(await requestWebGPUDevice(undefined, true, NVIDIA_RULES)).toEqual({ fallback: true });
+      expect(adapter.requestDevice).not.toHaveBeenCalled();
+      expect(loadTslMaterials).not.toHaveBeenCalled();
+      expect(webgpuImport.calls).toBe(calls);
+    });
+
+    it('platform policy: a software fallback adapter never qualifies', async () => {
+      const adapter = adapterWithInfo({ vendor: 'nvidia', isFallbackAdapter: true });
+      stubNavigatorGpu(vi.fn().mockResolvedValue(adapter));
+      expect(await requestWebGPUDevice(undefined, true, NVIDIA_RULES)).toEqual({ fallback: true });
+      expect(adapter.requestDevice).not.toHaveBeenCalled();
+    });
+
+    it('platform policy: navigator.gpu without an adapter downloads nothing', async () => {
+      stubNavigatorGpu(vi.fn().mockResolvedValue(null));
+      expect(await requestWebGPUDevice(undefined, true, NVIDIA_RULES)).toEqual({ fallback: true });
+      expect(loadTslMaterials).not.toHaveBeenCalled();
+    });
+
+    it('platform policy: a matching adapter gets the device and starts the TSL fetch', async () => {
+      const adapter = adapterWithInfo({ vendor: 'NVIDIA', architecture: 'ampere' });
+      stubNavigatorGpu(vi.fn().mockResolvedValue(adapter));
+      const result = await createWebGPURenderer(makeCanvas(), {
+        requireNativeAdapter: true,
+        platformRules: NVIDIA_RULES,
+      });
+      expect(result).toMatchObject({ fallback: false });
+      expect(adapter.requestDevice).toHaveBeenCalledOnce();
+      expect(loadTslMaterials).toHaveBeenCalled();
     });
 
     it('is ignored under webgpuForceWebGL, which asks for the WebGL2 backend', async () => {

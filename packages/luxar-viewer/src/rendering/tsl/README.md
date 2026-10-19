@@ -3,9 +3,11 @@
 Three tiny modules whose only job is to keep the three.js node system off the
 initial payload.
 
-The production default backend is WebGL (`selectBackend()` in
-`scene/scene-manager/render-pipeline/renderer-setup.ts`); WebGPU is opt-in per
-session via `?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`. But the TSL
+The default backend is WebGL except on the measured platforms the platform
+policy admits to WebGPU (`selectBackend()` in
+`scene/scene-manager/render-pipeline/renderer-setup.ts`, rows in
+`backend-policy.ts`); elsewhere WebGPU is opt-in per session via
+`?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`. But the TSL
 material classes all `extend NodeMaterial` from `three/webgpu`, and until
 issue #1679 twenty-three production modules imported that subpath as a value.
 One such import anywhere the entry point reaches is enough to pin the whole

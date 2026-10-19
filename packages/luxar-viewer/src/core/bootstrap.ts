@@ -379,7 +379,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   if (backendSelection.backend === 'webgpu' && !appOptions.webgpuForceWebGL) {
     appOptions.preRequestedWebGPUDevice = requestWebGPUDevice(
       appOptions.renderer,
-      backendSelection.requireNativeAdapter
+      backendSelection.requireNativeAdapter,
+      backendSelection.platformRules
     );
     void appOptions.preRequestedWebGPUDevice.catch(() => undefined);
   }
