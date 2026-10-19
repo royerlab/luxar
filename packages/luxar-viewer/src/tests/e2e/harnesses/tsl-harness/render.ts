@@ -29,6 +29,7 @@ import { loadTslMaterials } from '../../../../rendering/tsl/load';
 import { compactWebGPUReadbackRows } from '../../../../rendering/post-processing/hdr/pixel-utils';
 import { alignProvokingVertexWithWebGPU } from '../../../../rendering/picking/mesh/provoking-vertex';
 import { enableFirstVertexMeshPickFallback } from '../../../../rendering/mesh-geometry';
+import { meshPickSamplesFirstCorner } from '../../../../rendering/picking/mesh/pick.tsl';
 
 /** Edge length (px) of the square offscreen render target the parity harness draws into. */
 export const HARNESS_SIZE = 64;
@@ -586,10 +587,9 @@ export async function renderTSL(
   // render EXACTLY — mean-covered diff 0.000).
   const renderer = await createHarnessWebGPURenderer(opts.native === true);
   const firstVertexAligned = !opts.native && alignProvokingVertexWithWebGPU(renderer);
-  // Mirror MeshElementIdNode: only an explicit core mode selects `first`.
   const meshPickMembershipOnly =
     opts.native === true &&
-    (renderer.backend as { compatibilityMode?: boolean | null }).compatibilityMode !== false;
+    !meshPickSamplesFirstCorner(renderer.backend as { compatibilityMode?: boolean | null });
 
   // Capture the generated GLSL / WGSL strings by patching the renderer's
   // NodeManager. `_createNodeBuilderState(nodeBuilder)` is called by
