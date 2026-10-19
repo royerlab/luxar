@@ -80,9 +80,10 @@ export default defineConfig(({ command }) => ({
     // lazy (that is the assertion with teeth — see scripts/check-eager-chunks.mjs).
     chunkSizeWarningLimit: 1700,
     rolldownOptions: {
-      // TWO html entries, and both must be named. Vite's implicit default is
-      // `index.html` alone; the moment `input` is set that default is gone, so
-      // omitting `index` here would silently build only the control panel.
+      // Both HTML entries and the tiny WebGPU prefetch script are separate
+      // inputs. Vite's implicit default is `index.html` alone; setting input
+      // removes that default. The prefetch must remain a separate chunk so it
+      // can start the lazy WebGPU download before the viewer entry runs.
       //
       // `control.html` is the kiosk touch panel. It shares this build (rather
       // than living in its own package) so it rides into `dist`, `luxar export`

@@ -55,6 +55,7 @@ import {
 } from '../../../types/hdr-output';
 import { notifier } from '../../../utils/cross-layer/notifier';
 export { selectBackend } from './backend-selection';
+export type { BackendSelection } from './backend-selection';
 
 /**
  * Point the backend-dependent rendering paths at `renderer`. Every renderer

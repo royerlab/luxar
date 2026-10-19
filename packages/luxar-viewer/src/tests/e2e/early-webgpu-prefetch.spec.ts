@@ -49,9 +49,9 @@ test('does not request the WebGPU chunk for WebGL', async ({ page }) => {
     release();
     await page.waitForLoadState('domcontentloaded');
     expect(requested.some((url) => url.includes('/rendering/tsl/registry.ts'))).toBe(false);
-    expect(await page.evaluate(() => (window as Window & { gpuReads?: number }).gpuReads ?? 0)).toBe(
-      0
-    );
+    expect(
+      await page.evaluate(() => (window as Window & { gpuReads?: number }).gpuReads ?? 0)
+    ).toBe(0);
   } finally {
     release();
   }
