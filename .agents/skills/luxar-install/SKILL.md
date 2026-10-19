@@ -59,8 +59,7 @@ pip install "luxar[gsplats,io]"      # + splat FITTING (PyTorch, scipy) and TIFF
 
 Extras: `[gsplats]` = PyTorch + scipy (needed by `gsplat fit/cal/compare/...`);
 `[io]` = tifffile + imagecodecs + imageio (TIFF, including compressed LZW/zstd
-TIFF and OME-TIFF; other image formats — older releases, including 2026.9.22,
-lack imagecodecs in `[io]`: `pip install imagecodecs`); `[demos]` = the heavy science-demo
+TIFF and OME-TIFF; other image formats — 2026.10.19 ships imagecodecs in `[io]`; older releases (2026.9.22 and earlier) need `pip install imagecodecs`); `[demos]` = the heavy science-demo
 stack (pandas, astropy, esm, cellxgene-census, ...) — skip it and let
 `luxar demo deps --install` add only what a chosen demo reports missing. OME-Zarr
 / `.zarr` / `.npy` need no extra. A missing extra raises an error naming the

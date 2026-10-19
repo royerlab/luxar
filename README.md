@@ -111,8 +111,7 @@ To fit your own image volumes, install the fitting and image-reading extras:
 brings PyTorch; `[io]` reads TIFF, including compressed TIFF — on older releases
 also `pip install imagecodecs`). Some demos need extra packages; `luxar demo deps
 --install` fetches what a demo reports missing (it runs `python -m pip`, so the
-environment needs pip). `luxar demo run` needs a release newer than 2026.9.22: that
-release fails with "Could not find project root" when installed from PyPI.
+environment needs pip). `luxar demo run` needs 2026.10.19 or newer: the 2026.9.22 release fails with "Could not find project root" when installed from PyPI.
 
 **Getting a Python 3.12 first.** A fresh machine often lacks one:
 
