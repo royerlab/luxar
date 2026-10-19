@@ -15,6 +15,27 @@ const viewerRoot = fileURLToPath(new URL('.', import.meta.url));
 const projectRoot = resolve(viewerRoot, '../..');
 const identity = buildIdentity();
 
+function earlyWebgpuPrefetchHtmlPlugin(): Plugin {
+  const entry = resolve(viewerRoot, 'src/core/early-webgpu-prefetch.ts');
+  return {
+    name: 'early-webgpu-prefetch',
+    transformIndexHtml: {
+      order: 'post',
+      handler(html, ctx) {
+        if (ctx.filename !== resolve(viewerRoot, 'index.html')) return;
+        const chunk = Object.values(ctx.bundle ?? {}).find(
+          (asset) => asset.type === 'chunk' && asset.facadeModuleId === entry
+        );
+        const src = chunk ? `./${chunk.fileName}` : '/src/core/early-webgpu-prefetch.ts';
+        return html.replace(
+          '<script type="module"',
+          `<script type="module" src="${src}" data-webgpu-prefetch></script>\n    <script type="module"`
+        );
+      },
+    },
+  };
+}
+
 export default defineConfig(({ command }) => ({
   // Stamp the bundle with version + commit + build time. Reaches `dist/` and
   // therefore the wheel, `luxar export` folders and the hosted site in one
@@ -22,6 +43,7 @@ export default defineConfig(({ command }) => ({
   // bare package version rides along as `VIEWER_VERSION` (src/version.ts).
   define: { ...buildDefine(identity), ...viewerVersionDefine() },
   plugins: [
+    earlyWebgpuPrefetchHtmlPlugin(),
     buildIdentityHtmlPlugin(identity),
     ...(command === 'serve'
       ? [
@@ -72,6 +94,7 @@ export default defineConfig(({ command }) => ({
       input: {
         index: resolve(viewerRoot, 'index.html'),
         control: resolve(viewerRoot, 'control.html'),
+        earlyWebgpuPrefetch: resolve(viewerRoot, 'src/core/early-webgpu-prefetch.ts'),
       },
       output: {
         // Split the `three` package into core / tsl / webgpu so each

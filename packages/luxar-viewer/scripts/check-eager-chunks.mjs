@@ -162,17 +162,19 @@ function auditEntry({ html: htmlName, forbid }) {
     }
   }
 
-  // ── 2. The entry chunk must not STATICALLY import a forbidden chunk ──────
-  const entryHref = html.match(/<script[^>]+type="module"[^>]+src="([^"]+)"/)?.[1];
-  if (!entryHref) {
+  // ── 2. Every entry script must keep forbidden chunks behind import() ─────
+  const scripts = [...html.matchAll(/<script[^>]+type="module"[^>]+src="([^"]+)"[^>]*>/g)];
+  if (scripts.length === 0) {
     fail(`Could not find the entry <script type="module"> in dist/${htmlName}.`);
     return;
   }
-  const entryName = entryHref.split('/').pop();
+  if (htmlName === 'index.html' && !scripts[0][0].includes('data-webgpu-prefetch')) {
+    fail('dist/index.html must start the WebGPU prefetch before the viewer entry script.');
+  }
 
-  // ── 3. …and nothing it reaches statically may import one either ──────────
+  // ── 3. …and nothing they reach statically may import one either ──────────
   const visited = new Set();
-  const queue = [entryName];
+  const queue = scripts.map((script) => script[1].split('/').pop());
   while (queue.length > 0) {
     const name = queue.shift();
     if (visited.has(name)) continue;
