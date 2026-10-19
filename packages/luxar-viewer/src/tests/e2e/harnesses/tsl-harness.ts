@@ -28,10 +28,13 @@
  * - The TSL path drives `GLSLNodeBuilder` directly so the generated
  *   GLSL strings are recoverable for snapshot-diff.
  *
- * Not in scope: real WebGPU dispatch. That requires Chrome stable +
- * `?renderer=webgpu` and runs in a separate spec. This harness
- * validates the WebGL2 fallback parity, which is what
- * `forceWebGL: true` covers.
+ * Two TSL arms. By default the TSL side runs on `forceWebGL: true` — the
+ * WebGL2 fallback parity, all a headless Chromium without a WebGPU adapter
+ * can execute. `{ native: true }` (on `renderTSL` and
+ * `renderBloomChainTSL`) runs the same graphs as WGSL on the real WebGPU
+ * backend, failing closed when no hardware adapter is available;
+ * `tsl-shader-parity.spec.ts` selects it in the `chromium-webgpu`
+ * Playwright project, so that project compares GLSL against native WGSL.
  *
  * @module tests/e2e/harnesses/tsl-harness
  */
@@ -59,8 +62,18 @@ declare global {
         opts?: { native?: boolean; uniforms?: Readonly<Record<string, number>> }
       ) => Promise<{ pixels: Uint8Array; vertexShader: string; fragmentShader: string }>;
       renderBloomChainGLSL: (fixture?: BloomChainFixture) => Promise<BloomChainRenderResult>;
-      renderBloomChainTSL: (fixture?: BloomChainFixture) => Promise<BloomChainRenderResult>;
+      renderBloomChainTSL: (
+        fixture?: BloomChainFixture,
+        opts?: { native?: boolean }
+      ) => Promise<BloomChainRenderResult>;
       listShaders: () => string[];
+      /**
+       * Whether this browser's WebGL2 has `WEBGL_provoking_vertex`, i.e.
+       * whether the GLSL arm can adopt WebGPU's first-vertex `flat`
+       * convention (MESH_NODE_SPEC §6.5). When it cannot, a mesh pick's
+       * per-vertex id legitimately differs between WebGL and native WebGPU.
+       */
+      provokingVertexAlignable: () => boolean;
     };
   }
 }
@@ -81,4 +94,7 @@ window.__tslHarness = {
   renderBloomChainGLSL,
   renderBloomChainTSL,
   listShaders: () => Object.keys(SHADER_REGISTRY),
+  provokingVertexAlignable: () =>
+    document.createElement('canvas').getContext('webgl2')?.getExtension('WEBGL_provoking_vertex') !=
+    null,
 };

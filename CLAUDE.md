@@ -101,6 +101,7 @@ make test-cov-all # Coverage: Python (minus `-m slow`) + TypeScript
 make test-python  # Python tests only
 make test-e2e     # Full Playwright E2E suite (~17 min)
 make test-e2e-browsers  # Cross-browser Playwright subset
+make test-e2e-webgpu    # Playwright suite on native WebGPU (needs a real GPU adapter)
 make test-e2e-mobile  # Mobile/touch Playwright suite used by PR CI
 make test-e2e-smoke  # E2E smoke subset
 make test-e2e-smoke-strict  # Smoke subset with strict console handling
