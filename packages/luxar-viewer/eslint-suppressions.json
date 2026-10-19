@@ -766,10 +766,10 @@
   },
   "src/rendering/materials/gsplat/shader-tsl.ts": {
     "complexity": {
-      "count": 3
+      "count": 2
     },
     "max-lines-per-function": {
-      "count": 2
+      "count": 1
     }
   },
   "src/rendering/materials/line/material-glsl.ts": {
