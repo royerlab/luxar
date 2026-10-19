@@ -64,7 +64,7 @@ declare global {
         pixels: Uint8Array;
         vertexShader: string;
         fragmentShader: string;
-        compatibilityMode: boolean;
+        meshPickMembershipOnly: boolean;
       }>;
       renderBloomChainGLSL: (fixture?: BloomChainFixture) => Promise<BloomChainRenderResult>;
       renderBloomChainTSL: (

@@ -659,7 +659,7 @@ window.__tslHarness = {
     pixels: Uint8Array;
     vertexShader: string;
     fragmentShader: string;
-    compatibilityMode: boolean;
+    meshPickMembershipOnly: boolean;
   }>,
   renderBloomChainGLSL: (fixture?: 'radial' | 'ramp-y') => Promise<{
     pixels: Uint8Array;
@@ -672,6 +672,10 @@ window.__tslHarness = {
   listShaders: () => string[],
 };
 ```
+
+`meshPickMembershipOnly` is true when the native backend does not explicitly
+select core WebGPU's `first` interpolation. It follows the mesh pick shader's
+selector, including a backend that has not reported its mode yet.
 
 The bloom methods render the production multi-pass pyramid rather than a
 shader-registry entry, including additive upsample accumulation onto existing mips.

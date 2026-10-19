@@ -47,7 +47,7 @@ type TSLResult = {
   pixels: number[];
   vertexShader: string;
   fragmentShader: string;
-  compatibilityMode: boolean;
+  meshPickMembershipOnly: boolean;
 };
 
 type BloomChainResult = {
@@ -88,7 +88,7 @@ async function runTSL(
         pixels: Array.from(result.pixels),
         vertexShader: result.vertexShader,
         fragmentShader: result.fragmentShader,
-        compatibilityMode: result.compatibilityMode,
+        meshPickMembershipOnly: result.meshPickMembershipOnly,
       };
     },
     [shaderName, uniforms, isWebGPUProject()] as const
@@ -96,9 +96,9 @@ async function runTSL(
   return result;
 }
 
-/** Core WebGPU compares the exact ID; compatibility mode permits any face corner. */
+/** Core WebGPU compares the exact ID; other native modes permit any face corner. */
 function comparableMeshPickPixels(glsl: number[], tsl: TSLResult): [number[], number[]] {
-  if (!tsl.compatibilityMode) return [glsl, tsl.pixels];
+  if (!tsl.meshPickMembershipOnly) return [glsl, tsl.pixels];
   // This harness uses RGBA8: vertex 0 encodes as 0, and vertices 1–3
   // saturate to 255. Check that the sampled ID is a fixture corner before
   // excluding that channel from the pixel comparison on compatibility devices.
@@ -2896,7 +2896,12 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     expect(meanAbsDiff(comparableGLSL, comparableTSL), 'mesh-pick: parity').toBeLessThan(2.0);
     const centreIdByte = (32 * 64 + 32) * 4 + 1;
     expect(glslPixels[centreIdByte], 'WebGL must report the original first corner').toBe(0);
-    if (!tslResult.compatibilityMode) {
+    if (isWebGPUProject()) {
+      expect(/@interpolate\(\s*flat,\s*first\s*\)/.test(tslResult.vertexShader)).toBe(
+        !tslResult.meshPickMembershipOnly
+      );
+    }
+    if (!tslResult.meshPickMembershipOnly) {
       expect(tslResult.pixels[centreIdByte], 'core WebGPU must report first').toBe(0);
     }
   });

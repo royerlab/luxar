@@ -553,7 +553,7 @@ export async function renderTSL(
   pixels: Uint8Array;
   vertexShader: string;
   fragmentShader: string;
-  compatibilityMode: boolean;
+  meshPickMembershipOnly: boolean;
 }> {
   const entry = SHADER_REGISTRY[shaderName];
   if (!entry) throw new Error(`Unknown shader: ${shaderName}`);
@@ -586,9 +586,10 @@ export async function renderTSL(
   // render EXACTLY — mean-covered diff 0.000).
   const renderer = await createHarnessWebGPURenderer(opts.native === true);
   const firstVertexAligned = !opts.native && alignProvokingVertexWithWebGPU(renderer);
-  const compatibilityMode =
+  // Mirror MeshElementIdNode: only an explicit core mode selects `first`.
+  const meshPickMembershipOnly =
     opts.native === true &&
-    (renderer.backend as { compatibilityMode?: boolean }).compatibilityMode === true;
+    (renderer.backend as { compatibilityMode?: boolean | null }).compatibilityMode !== false;
 
   // Capture the generated GLSL / WGSL strings by patching the renderer's
   // NodeManager. `_createNodeBuilderState(nodeBuilder)` is called by
@@ -668,5 +669,5 @@ export async function renderTSL(
   (uniforms.uInput?.value as THREE.Texture | null | undefined)?.dispose();
   renderer.dispose();
 
-  return { pixels, vertexShader, fragmentShader, compatibilityMode };
+  return { pixels, vertexShader, fragmentShader, meshPickMembershipOnly };
 }
