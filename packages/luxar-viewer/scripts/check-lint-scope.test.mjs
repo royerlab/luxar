@@ -83,9 +83,10 @@ const FILES = authoredFiles();
 
 /** One ESLint pass from a package script. */
 function lintPass(command) {
-  const target = /^\s*(?:NODE_OPTIONS=--max-old-space-size=\d+\s+)?eslint\s+("[^"]+"|\S+)/
-    .exec(command)?.[1]
-    ?.replaceAll('"', '');
+  const target =
+    /^\s*(?:NODE_OPTIONS="--max-old-space-size=\d+ \$\{NODE_OPTIONS:-\}"\s+)?eslint\s+("[^"]+"|\S+)/
+      .exec(command)?.[1]
+      ?.replaceAll('"', '');
   expect(target, `could not read eslint target from: ${command}`).toBeDefined();
   const ignores = [...command.matchAll(/--ignore-pattern\s+"([^"]+)"/g)].map((match) => match[1]);
   const ignoreFlags = [...command.matchAll(/--ignore-pattern\b/g)];
@@ -376,14 +377,20 @@ describe('lint contract', () => {
   });
 
   it('gives the type-aware test pass enough heap on a cold cache', () => {
+    const pkg = JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8'));
     for (const scriptName of ['lint', 'lint:prune']) {
-      const pkg = JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8'));
       const passes = pkg.scripts[scriptName].split('&&');
       const testPass = passes.find((pass) => /\beslint src\/tests\b/.test(pass));
       expect(testPass, `${scriptName} must lint src/tests`).toBeDefined();
-      expect(testPass.trim()).toMatch(
-        /^NODE_OPTIONS=--max-old-space-size=4096 eslint src\/tests\b/
-      );
+      const heap =
+        /^NODE_OPTIONS="--max-old-space-size=(\d+) \$\{NODE_OPTIONS:-\}" eslint src\/tests\b/.exec(
+          testPass.trim()
+        );
+      expect(
+        heap,
+        `${scriptName} must preserve caller options after its heap floor`
+      ).not.toBeNull();
+      expect(Number(heap[1])).toBeGreaterThanOrEqual(4096);
     }
   });
 });
