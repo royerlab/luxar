@@ -7,7 +7,8 @@ explicit `default_rng(seed)`) inherit determinism for free. Tests that
 already create their own seeded `default_rng` are unaffected.
 
 Also pins zarr's ambient default format to whatever Luxar writes for the whole
-session (see ``_zarr_format_follows_luxar``), clears the CLI traceback opt-in
+session (see ``_zarr_format_follows_luxar``), sets ``LUXAR_CPU_THREADS=0`` so
+the CLI's automatic CPU thread widening never overrides the test pin, clears the CLI traceback opt-in
 before each test, and holds a few small shared test helpers:
 ``confine_temp_dirs`` isolates in-process temporary files,
 ``array_compressor`` reads an array's compressor without the caller knowing
@@ -21,6 +22,7 @@ large guard block is refactored.
 
 from __future__ import annotations
 
+import os
 import re
 import tempfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -30,6 +32,18 @@ from typing import Any, NamedTuple
 import numpy as np
 import pytest
 import zarr
+
+# Keep the hatch single-thread pin in force for CLI-level tests: `luxar gsplat
+# fit`/`cal` otherwise widen torch's intra-op threads on CPU (see
+# luxar.gsplats.utils.cpu_threads), which under xdist would oversubscribe the
+# host. `0` = leave torch alone. Set in the environment, not per test, so the
+# subprocesses some tests spawn (`fit --tile`, `-j 2` pools) inherit it too.
+os.environ.setdefault("LUXAR_CPU_THREADS", "0")
+# The native CPU kernels' numba pool would otherwise be sized from the host's
+# CPUs, and two xdist workers inside a CPU-quota'd CI container oversubscribe
+# the quota. Two threads keep the kernels' parallel (prange) path exercised --
+# a race only shows with more than one thread -- without the oversubscription.
+os.environ.setdefault("NUMBA_NUM_THREADS", "2")
 
 
 def confine_temp_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

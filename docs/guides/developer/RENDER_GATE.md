@@ -52,7 +52,11 @@ those fields.
    by `scripts/render-gate/generate_gate_scenes.py` into `datasets/gate/`:
    `mixed` (all four geometry types, pickable), `env_splats` (splats reflected in a
    scene-captured environment), `partition_normal`, `glass` (`refract_data`),
-   `lod_ladder` (one copy under a rotated parent) and `tiny_units_ortho`. Every
+   `lod_ladder` (one copy under a rotated parent) and `tiny_units_ortho`.
+   `make render-gate` runs the generator with `--missing`, which writes only the
+   stores not on disk yet, so a scene added after `datasets/gate` was first
+   generated appears on the next run (`REGEN=1` rewrites them all). A suite case
+   whose store is still missing errors with the command that writes it. Every
    exact case runs per renderer path (WebGLRenderer, native WebGPURenderer,
    WebGPURenderer forced onto WebGL2), per device scale factor (1 and 2;
    an odd 1277×719 viewport at 1.5 for two cases), per projection and per pose.
@@ -229,16 +233,26 @@ between rounds. Each arm records:
   0/0 or x/0 ratio would otherwise decide the verdict).
 
 A metric fails when its point ratio `median(candidate) / median(baseline)`
-exceeds `1 + floor`, and is reported as a win below `1 − floor`. `floor` is the
-band a no-change comparison spans: the bootstrap 95% CI of the two baseline arms'
-ratio, never below 1%. The candidate's own CI is reported but does not decide,
+exceeds `1 + floor`, and is reported as a win below the matching lower bound.
+The raw `aaFloor` is the band a single no-change comparison spans: the
+bootstrap 95% CI of the two baseline arms' ratio, never below 1%. The judged
+`floor` widens that band for all selected perf and gating workload timing
+judgements in the run (cases × eligible backends × metrics), including a
+`--suite all` run. Report-only metrics do not add to that count; counters keep
+their own comparison. The family is sized for the planned run, so cases that
+later error still count. `report.json` records this count as `meta.timingTests`,
+along with both floors and the raw per-arm samples. The candidate's own CI is
+reported but does not decide,
 because testing one CI edge against another CI's half-width counts the sampling
 noise twice and fails unchanged builds at small round counts.
 The unpaced orbit adds 30 warm-up animation frames and one 180-step render batch
 per arm. A metric missing from either build reads `n/a` and does not decide the row.
 
 Run the perf suite on the machine whose numbers you care about, with nothing else
-heavy on its GPU. In headless Chrome with vsync off, rAF does not wait for the
+heavy on its GPU. Every measured arm records the host's 1-minute load
+average (`load1` in its sample); the report header gives each arm's median and
+maximum and warns when the median exceeds half the logical CPUs
+(`HIGH_LOAD_PER_CPU`), so a run that shared the machine says so. In headless Chrome with vsync off, rAF does not wait for the
 GPU: without the per-frame sync an orbit frame times only the CPU submitting it
 (0.1-0.3 ms against a 20-110 ms `gpuMs`), a GPU-bound change is invisible, and a
 CPU stall on a resource the GPU still holds (a blocking `bufferSubData`) moves the
@@ -314,7 +328,7 @@ the mixed drag case requires zero renders and uploads in its idle window.
 one single value, the medians are compared EXACTLY (`|delta| <= tol` passes; a
 move in the `better` direction is a win, the other way a fail). A counter that
 varies between baseline arms falls back to the A/A floor. `kind: "timing"` is
-judged by `judgePerf` against the A/A floor, in the declared `better`
+judged by `judgePerf` against the run-wide floor, in the declared `better`
 direction. A metric an arm does not report (an older baseline has no viewer
 counters) reads `n/a`: never a pass for an expected metric.
 
@@ -364,14 +378,13 @@ Notes on method:
   after moving the axis to its minimum; `dim` defaults to the first hidden
   dimension. Ticks come from the `playback.tick` records when the build has
   them, else from the axis value observed each animation frame.
-  `lastTimepointShown` is 1 when the range maximum was ever applied.
-  In `playback_lod_timelapse`, a late fine LOD can cause an extra coarse-to-fine
-  swap on a wall-clock tick. Upload bytes per tick, texture upload bytes per
-  tick, renders per tick, and `lod.levelSwaps` therefore remain in the report
-  but do not fail the case: identical builds can differ under host load.
-  `achievedFps`, `lastTimepointShown`, and `decode.duplicates` still gate it.
-  See [#3187](https://github.com/royerlab/luxar/issues/3187) for restoring
-  the upload-work gate once playback timing is deterministic.
+  `lastTimepointShown` is 1 when the range maximum was ever applied. The LOD
+  timelapse case first visits every discrete timepoint and waits for final LOD
+  quality, then returns to the first timepoint and resets counters. Every fine
+  level is resident before the clock starts: the measured window uses the
+  viewer's playback clock and covers warm-cache GPU uploads and level selection.
+  Cold lazy fetches during playback are not gated by this case. Gated fetch and
+  decode counters catch a loss of residency during the measured window.
 - `scrub` in drag mode counts the frames in which committed geometry changed,
   from a build-independent signature of every geometry node (effective
   visibility, geometry id, attribute and index `version`s, drawn count, draw

@@ -21,8 +21,9 @@ of `fit` / `batch-fit`). For fitting a volume, calibration, and LOD recipes, use
 
 The read-only inspection commands (`info` / `render` / `compare` / `view` /
 `napari`) accept flat, partition, or nested LOD stores. `partition`, `cull`,
-`filter`, `slice`, `decimate`, and `merge` require a flat (matrix-shaped) store;
-run `luxar gsplat flatten` first for partition or nested inputs. Most *editing*
+`filter`, `slice`, and `decimate` require a flat (matrix-shaped) store; run
+`luxar gsplat flatten` first for partition or nested inputs. `merge` flattens such
+an input itself (same code as `flatten`, staged in a temporary store) and says so. Most *editing*
 commands accept `--encoding`/`-e` and usually `--compress`, and write a new
 dataset (non-destructive). Exception: `annotate-quality` stamps the input IN
 PLACE (no `-e`).
@@ -47,15 +48,16 @@ PLACE (no `-e`).
 | Upgrade an old-format file | `migrate-format` |
 | Look at stats / quality | `info` / `render` / `compare` / `view` / `napari` |
 
-## Amplitudes: normalisation now happens on INSERTION, not here
+## Amplitudes: brightness is a display gain or an insertion-time factor, not an edit here
 
-A fitted `.gsplats.zarr` stores amplitudes in **raw source units** — the fitter
+A fitted `.gsplats.zarr` stores amplitudes in **source data units** — the fitter
 multiplies its `[0,1]` working copy back out by the volume's intensity range, so
-a fit from a uint16 detector stack carries detector counts, in the hundreds or
-thousands. Those units cannot be corrected at display time: the colormap window
-only feeds the LUT index (`t = clamp((A-min)*scale, 0, 1)`, clamped, so it picks
-a *colour*), while emitted radiance and volumetric optical depth are both LINEAR
-in the raw stored amplitude and nothing windows them.
+a fit from a uint16 detector stack carries detector counts. The colormap window
+cannot correct that (it only feeds the clamped LUT index, so it picks a
+*colour*); emitted radiance and volumetric optical depth are LINEAR in the stored
+amplitude. What does correct it: the per-node `display_gain` (unbounded, unlike
+`opacity`), which `gsplat convert` sets while keeping the data units, or the
+Python adders' default insertion-time normalisation.
 
 **Since #2211 the scene adders normalise by default** — `add_gsplats_from_data`,
 `add_gsplats_from_file` and the graft path scale a robust p99.9 to 1.0, with ONE
@@ -66,16 +68,16 @@ So `transform --normalize-intensity` is now for the cases the default does not
 cover: pinning an explicit target across SEVERAL archives that must share an
 exposure (multichannel, or a timelapse fitted in separate batches), or preparing
 an archive for a consumer that is not the Luxar scene compiler. **`--scale-intensity`
-on `gsplat convert` implies opting out of the automatic normalisation** (and auto
-exposure), since normalising straight after an explicit scale would cancel it
-exactly; it now works on partition/LOD stores too and stamps
-`amplitude_normalization_mode="manual"`.
+on `gsplat convert` is a display gain, not a data edit**: the scene keeps the
+fit's amplitudes in data units and stamps `display_gain=S` (mode `"manual"`,
+replacing auto exposure), on partition/LOD stores too.
 
-**`gsplat convert` auto-exposes by default**: it predicts the opening view's
-additive per-pixel sum and dims amplitudes (never brightens) so its p99.9 is
+**`gsplat convert` keeps data units and auto-exposes the `display_gain`**: it
+predicts the opening view's additive per-pixel sum and dims the gain (never
+brightens; the Layers panel reads splat amplitudes in data units, the data's own range, and a Brightness control) so its p99.9 is
 `--target-brightness` (2.0; 0.9 under a clipping `None`/`Linear` tone mapping), dimming further if a side view or another timepoint would exceed 4x that.
 Too dim/bright? Tune `--target-brightness`;
-`--no-auto-exposure` = per-splat normalisation only.
+`--no-auto-exposure` = gain from per-splat normalisation only.
 
 ## `cull --method cumulative` ranks by PEAK, and that is not what you see
 
@@ -209,7 +211,8 @@ luxar gsplat annotate-quality in.gsplats.zarr                # e(k) + w only (fa
 luxar gsplat annotate-quality in.gsplats.zarr --with-quality # + measured per-level Q
 luxar gsplat annotate-quality in.gsplats.zarr --dry-run      # print stamps, write nothing
 
-# Merge: stack two channels with colors, or stack timepoints as a new dimension
+# Merge: stack two channels with colors, or stack timepoints as a new dimension.
+# Tiled fit outputs (kind=partition) are flattened automatically first.
 luxar gsplat merge ch0.gsplats.zarr ch1.gsplats.zarr -o multi.gsplats.zarr \
     --channel-colors "#ff0080,#00ff00"
 # --as-dimension quantises the stacked coordinate under the default `auto`
@@ -235,7 +238,26 @@ luxar gsplat napari in.gsplats.zarr                    # napari + centers overla
 
 Before scoring a stacked or transformed archive, read "Scoring a STACKED or
 TRANSFORMED archive" in the `luxar-gsplat-pipeline` skill; `compare --timepoint`
-slices the reference, not the splat archive.
+slices the reference, not the splat archive. `transform --scale-intensity` and
+`--normalize-intensity` are safe to score: the store records the cumulative
+`intensity_scale`, `compare` / `render` divide the render by it and `cull
+--target` multiplies the target by it, so the numbers match the unedited fit. An
+offset, clamp or per-splat reweight drops the basis (`compare` warns); score
+before it.
+
+`compare` also prints a **noise ceiling**: the foreground PSNR a noise-free model
+would score against this noisy reference (`20 log10(peak / sigma)`, sigma measured
+in the foreground), with a verdict. On noise-limited data ~20 dB foreground can
+be the best possible: within 1 dB below the ceiling is "at the noise floor".
+Above it is never proof of fitted noise: 1-3 dB above is "ambiguous", >3 dB
+"undetermined", because sub-voxel structure (sparse puncta, hot pixels) inflates
+the noise estimate unseen. A scale check marks the ceiling UNRELIABLE when the
+finest band is not white (voxel-scale structure, or correlated noise from a
+deconvolved/upsampled/downscaled reference); by design that withholds the
+verdict on many clean, high-SNR volumes. JSON: `foreground_psnr_noise_ceiling_db`,
+`noise_ceiling_reliable`, `noise_sigma`, `noise_verdict`. A `--region` crop fit
+compared against its full source volume is scored on the region it fitted (the
+fit stamp's mask); `--whole-volume` scores all of it.
 
 ### Physical-unit fits: `render`/`compare` map them back to voxels
 
@@ -283,7 +305,7 @@ the pedestal is gone by design.
 
 - **Full flag tables** for every command (cull methods, filter criteria, transform
   order, merge modes, partition/flatten rules, inspect options) are in
-  `references/edit-commands.md`.
+  [references/edit-commands.md](references/edit-commands.md).
 - The old `split` command is gone — use `partition`.
 - `transform` applies operations in a fixed order: scale → rotate → translate → center
   → scale-intensity → normalize-intensity. It composes to `p → R·S·p + (t − c)`, so **a

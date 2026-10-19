@@ -8,7 +8,7 @@
  *     [--suite exact|perf|counters|playback|scrub|hosted|trees|cache|all] \
  *     [--class IDENTICAL|ULP] [--intended id,id] [--only id,id] \
  *     [--backends webgl,webgpu,webgpu-gl] [--rounds 7] [--heavy] [--expect <file.json>] \
- *     [--server-profile local|hosted] [--out <dir>]
+ *     [--server-profile local|hosted] [--chrome-args=--flag,...] [--out <dir>]
  *   node scripts/render-gate/run-gate.mjs --from-json <dir>/report.json
  *     (rewrite <dir>/report.md from a saved report, measuring nothing)
  *
@@ -31,19 +31,27 @@
 
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { availableParallelism, loadavg } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { browserKit, selectBackends } from './browser.mjs';
 import { ensureBuild } from './builds.mjs';
+import { optionHelp, parseOptions } from '../cli-options.mjs';
 import { classifyRow, sameCounts, scoreControlPick, strip } from './classify.mjs';
 import { pickWithinDraw, scoreBlocks, scoreFloatBuffers, scorePickBuffers } from './exactness.mjs';
 import { writeUlpHeatmap } from './heatmap.mjs';
 import * as ops from './page-ops.mjs';
 import { perfRowStatus, scorePerfMetric } from './perf-row.mjs';
-import { ROTATIONS } from './perf-stats.mjs';
+import { loadSummary, ROTATIONS } from './perf-stats.mjs';
 import { startServer } from './server.mjs';
-import { loadExpectations, runSuite, suiteMarkdown, validateMetricDirections } from './suites.mjs';
+import {
+  countTimingJudgements,
+  loadExpectations,
+  runSuite,
+  suiteMarkdown,
+  validateMetricDirections,
+} from './suites.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const viewerRoot = resolve(here, '../..');
@@ -52,46 +60,72 @@ const viewerRoot = resolve(here, '../..');
 // Arguments
 // ---------------------------------------------------------------------------
 
-function arg(name, fallback) {
-  const i = process.argv.indexOf(`--${name}`);
-  if (i < 0) return fallback;
-  const next = process.argv[i + 1];
-  return next === undefined || next.startsWith('--') ? true : next;
-}
-const list = (v) => (typeof v === 'string' && v.length ? v.split(',').map((s) => s.trim()) : null);
-
-const opts = {
-  base: arg('base', 'origin/main'),
-  cand: arg('cand', 'HEAD'),
-  suite: arg('suite', 'exact'),
-  cls: arg('class', 'IDENTICAL'),
-  intended: list(arg('intended', '')) ?? [],
-  only: list(arg('only', '')),
-  backends: list(arg('backends', '')),
-  dsf: list(arg('dsf', ''))?.map(Number) ?? null,
-  rounds: Number(arg('rounds', 0)) || null,
-  basePort: Number(arg('base-port', 4801)),
-  channel: arg('channel', 'chrome'),
-  headless: arg('headed', false) !== true,
-  chromeArgs: list(arg('chrome-args', '')) ?? [],
-  label: arg('label', null),
-  scenes: arg('scenes', join(here, 'gate-scenes.json')),
-  // Prebuilt dist/ for an arm (calibration: a baseline patched by hand).
-  baseDist: arg('base-dist', null),
-  candDist: arg('cand-dist', null),
-  // Re-render report.md from a saved report.json, measuring nothing.
-  fromJson: arg('from-json', null),
-  // Manifest suites: include `heavy: true` cases, check declared expectations,
-  // and override the suites' server profile.
-  heavy: arg('heavy', false) === true,
-  expect: arg('expect', null),
-  serverProfile: arg('server-profile', null),
-};
+const value = (name, defaultValue = null) => ({ name, takesValue: true, defaultValue });
+const flag = (name) => ({ name, takesValue: false, defaultValue: false });
+const cliOptions = [
+  value('base', 'origin/main'),
+  value('cand', 'HEAD'),
+  value('suite', 'exact'),
+  value('class', 'IDENTICAL'),
+  value('intended', ''),
+  value('only', ''),
+  value('backends', ''),
+  value('dsf', ''),
+  value('rounds', 0),
+  value('base-port', 4801),
+  value('channel', 'chrome'),
+  flag('headed'),
+  value('chrome-args', ''),
+  value('label'),
+  value('scenes', join(here, 'gate-scenes.json')),
+  value('base-dist'),
+  value('cand-dist'),
+  value('from-json'),
+  flag('heavy'),
+  value('expect'),
+  value('server-profile'),
+  value('out'),
+  flag('help'),
+];
 /** A bad invocation is a harness error (exit 2), never a FAIL verdict (exit 1). */
 function configError(message) {
   console.error(`[render-gate] ${message}`);
   process.exit(2);
 }
+const cli = parseOptions(cliOptions, process.argv.slice(2), configError);
+if (cli.help) {
+  console.log(optionHelp('scripts/render-gate/run-gate.mjs', cliOptions));
+  process.exit(0);
+}
+const list = (v) => (typeof v === 'string' && v.length ? v.split(',').map((s) => s.trim()) : null);
+
+const opts = {
+  base: cli.base,
+  cand: cli.cand,
+  suite: cli.suite,
+  cls: cli.class,
+  intended: list(cli.intended) ?? [],
+  only: list(cli.only),
+  backends: list(cli.backends),
+  dsf: list(cli.dsf)?.map(Number) ?? null,
+  rounds: Number(cli.rounds) || null,
+  basePort: Number(cli['base-port']),
+  channel: cli.channel,
+  headless: !cli.headed,
+  chromeArgs: list(cli['chrome-args']) ?? [],
+  label: cli.label,
+  scenes: cli.scenes,
+  // Prebuilt dist/ for an arm (calibration: a baseline patched by hand).
+  baseDist: cli['base-dist'],
+  candDist: cli['cand-dist'],
+  // Re-render report.md from a saved report.json, measuring nothing.
+  fromJson: cli['from-json'],
+  // Manifest suites: include `heavy: true` cases, check declared expectations,
+  // and override the suites' server profile.
+  heavy: cli.heavy,
+  expect: cli.expect,
+  serverProfile: cli['server-profile'],
+};
 if (!['IDENTICAL', 'ULP'].includes(opts.cls)) configError(`bad --class ${opts.cls}`);
 
 const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
@@ -370,6 +404,8 @@ async function measureArm(browser, origin, c, backend) {
       rendersPerFrame: mo.rendersPerFrame,
       wakeRenders: wk.renders,
       wakeBlockMs: wk.blockMs,
+      // Reported, not judged: the host load this arm ran under (`loadSummary`).
+      load1: loadavg()[0],
     };
   } finally {
     await context.close();
@@ -395,7 +431,7 @@ const PERF_METRICS = [
  */
 const PERF_ABS_TOLERANCE = { wakeBlockMs: 0.2 };
 
-async function runPerf(session, servers) {
+async function runPerf(session, servers, timingTests) {
   const d = manifest.perfDefaults;
   const rounds = opts.rounds ?? d.rounds;
   const results = [];
@@ -417,12 +453,20 @@ async function runPerf(session, servers) {
         results.push({ case: c.id, backend, status: 'error', failures: [String(e.message ?? e)] });
         continue;
       }
-      const row = { case: c.id, backend, metrics: {} };
+      const row = { case: c.id, backend, metrics: {}, samples };
       for (const m of PERF_METRICS) {
         const base = samples.base.map((s) => s[m]);
         const base2 = samples.base2.map((s) => s[m]);
         const cand = samples.cand.map((s) => s[m]);
-        row.metrics[m] = scorePerfMetric(m, backend, base, cand, base2, PERF_ABS_TOLERANCE[m] ?? 0);
+        row.metrics[m] = scorePerfMetric(
+          m,
+          backend,
+          base,
+          cand,
+          base2,
+          PERF_ABS_TOLERANCE[m] ?? 0,
+          timingTests
+        );
       }
       row.status = perfRowStatus(row.metrics);
       results.push(row);
@@ -483,6 +527,19 @@ function markdown(meta, exact, perf, suites) {
     `- class: ${opts.cls}; intended: ${opts.intended.join(', ') || '-'}`
   );
   lines.push(`- host: ${meta.host}; GPU: ${meta.gpu ?? '?'}`);
+  const load = meta.hostLoad;
+  if (load) {
+    const arms = Object.entries(load.arms)
+      .map(([arm, v]) => `${arm} ${v.median.toFixed(1)} (max ${v.max.toFixed(1)})`)
+      .join(', ');
+    lines.push(`- host load (1-min average, ${load.cpus} CPUs): ${arms}`);
+    if (load.high) {
+      lines.push(
+        `- **warning: the host was busy** (median load ${load.medianPerCpu.toFixed(2)} per CPU). ` +
+          'Timings shared the machine with other work; read perf verdicts with care and rerun on an idle host.'
+      );
+    }
+  }
   if (meta.browserRelaunches > 0) {
     lines.push(
       `- browser relaunched ${meta.browserRelaunches}x after disconnecting (cases retried once)`
@@ -518,7 +575,7 @@ function markdown(meta, exact, perf, suites) {
   }
   if (perf) {
     lines.push(
-      '## Performance (ratio cand/base, 95% CI, A/A floor)',
+      '## Performance (ratio cand/base, 95% CI, run-wide A/A floor)',
       '',
       '`frameMs` / `frameP95Ms` INCLUDE GPU completion: each orbit frame ends with a GPU sync, so a ' +
         'frame costs its CPU plus GPU work, serialized. `throughputMs` syncs once after the rAF ' +
@@ -568,13 +625,19 @@ async function main() {
     ? prebuilt(opts.candDist, 'cand-dist')
     : ensureBuild({ repoRoot, cacheRoot, ref: opts.cand, log });
   const label = opts.label ?? `${base.sha.slice(0, 8)}-vs-${cand.sha.slice(0, 8)}-${opts.suite}`;
-  const outDir = resolve(arg('out', join(repoRoot, 'delme', 'gate', label)));
+  const outDir = resolve(cli.out ?? join(repoRoot, 'delme', 'gate', label));
   mkdirSync(outDir, { recursive: true });
 
   const dataRoot = join(repoRoot, 'datasets');
   let exact = null;
   let perf = null;
   const suites = {};
+  const timingTests =
+    (runsBuiltIn('perf')
+      ? manifest.perf.filter((c) => !opts.only || opts.only.includes(c.id)).length *
+        selectBackends(opts.backends, manifest.perfDefaults.backends).length *
+        PERF_METRICS.length
+      : 0) + countTimingJudgements(manifestSuites, selectedSuites, opts);
   let browserRelaunches = 0;
 
   if (runsBuiltIn('exact') || runsBuiltIn('perf')) {
@@ -595,7 +658,7 @@ async function main() {
       if (runsBuiltIn('perf')) {
         const session = browserSession(true);
         try {
-          perf = await runPerf(session, servers);
+          perf = await runPerf(session, servers, timingTests);
         } finally {
           browserRelaunches += session.relaunches();
           await session.close();
@@ -643,6 +706,7 @@ async function main() {
         dataRoot,
         opts,
         expectations,
+        timingTests,
         log,
       });
     } finally {
@@ -666,7 +730,9 @@ async function main() {
     cand: { ref: cand.ref, sha: cand.sha },
     host: `${process.platform}/${process.arch}`,
     gpu: [...seenGpus].join(' | '),
+    hostLoad: loadSummary(rows, availableParallelism()),
     browserRelaunches,
+    timingTests,
     verdict,
     options: opts,
   };

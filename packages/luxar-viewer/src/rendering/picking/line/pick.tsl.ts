@@ -184,11 +184,12 @@ export function linePickWebGPUFactory(
   // Varyings declared up front, `.assign()`ed inside the vertex body.
   // Per-segment-constant values (segment length, cap suppression, node
   // id, element id) use `flat` interpolation — matches the GLSL3
-  // `flat` qualifier on the same fields.
+  // `flat` qualifier on the same fields. `either` is exact for every
+  // per-segment value and valid on compatibility-mode WebGPU.
   const vSharpness: TSLNode = varying(float(0.0));
   const vPerpNorm: TSLNode = varying(float(0.0));
   const vT: TSLNode = varying(float(0.0));
-  const vSegmentLength: TSLNode = varying(float(0.0)).setInterpolation('flat');
+  const vSegmentLength: TSLNode = varying(float(0.0)).setInterpolation('flat', 'either');
   const vWidthAtT: TSLNode = varying(float(0.0));
   const vPixelWidth: TSLNode = varying(float(0.0));
   const vWidthFade: TSLNode = varying(float(0.0));
@@ -199,9 +200,9 @@ export function linePickWebGPUFactory(
   const fixedOrtho: boolean | undefined =
     config.projection === undefined ? undefined : config.projection === 'ortho';
   const vViewZ: TSLNode | null = fixedOrtho === true ? null : varying(float(0.0));
-  const vCapSuppressStart: TSLNode = varying(float(0.0)).setInterpolation('flat');
-  const vCapSuppressEnd: TSLNode = varying(float(0.0)).setInterpolation('flat');
-  const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat');
+  const vCapSuppressStart: TSLNode = varying(float(0.0)).setInterpolation('flat', 'either');
+  const vCapSuppressEnd: TSLNode = varying(float(0.0)).setInterpolation('flat', 'either');
+  const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat', 'either');
   // Storage slot, NOT instanceIndex (the draw slot): identical under
   // identity ordering, and stays correct once the sort worker permutes
   // draw order.
@@ -218,7 +219,7 @@ export function linePickWebGPUFactory(
   const elementIdLo: TSLNode = elementIdInt.sub(elementIdHi.mul(int(65536)));
   const vElementId: TSLNode = varying(
     vec2(float(elementIdLo), float(elementIdHi))
-  ).setInterpolation('flat');
+  ).setInterpolation('flat', 'either');
 
   const vertexBody = Fn(() => {
     // === Line-texture fetch prologue (visual-shader parity) ===

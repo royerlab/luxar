@@ -244,7 +244,11 @@ class CompositionMixin(_GSplatDataOps):
                 "concatenated_from": len(datasets),
                 "splats_per_source": [0 for _ in datasets],
             }
-            empty_stats.update(agreed_normalization_stats([x.stats for x in datasets]))
+            empty_stats.update(
+                agreed_normalization_stats(
+                    [x.stats for x in datasets], [x.n_splats for x in datasets]
+                )
+            )
             empty_stats.update(_agreed_frame_stats([x.stats for x in datasets]))
             empty_stats.update(_agreed_source_dtype([x.stats for x in datasets]))
             label_ids, label_vocabulary = _concatenate_label_channel(datasets)
@@ -297,7 +301,11 @@ class CompositionMixin(_GSplatDataOps):
         # result then says nothing rather than claiming the first input's.
         from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
 
-        merged_stats.update(agreed_normalization_stats([d.stats for d in datasets]))
+        merged_stats.update(
+            agreed_normalization_stats(
+                [d.stats for d in datasets], [d.n_splats for d in datasets]
+            )
+        )
         merged_stats.update(_agreed_frame_stats([d.stats for d in datasets]))
         merged_stats.update(_agreed_source_dtype([d.stats for d in datasets]))
         total_time = sum(d.stats.get("time_seconds", 0) for d in non_empty)
@@ -602,14 +610,16 @@ class CompositionMixin(_GSplatDataOps):
         def _part_node(label: int, region: "GSplatData") -> "GSplatNode":
             if recipe is None:
                 return region.tree
-            from dataclasses import replace
+            from luxar.gsplats.lod.recipes import (
+                RecipeParams,
+                build_part_lod,
+                with_input_basis,
+            )
 
-            from luxar.gsplats.fit_basis import fit_image_min
-            from luxar.gsplats.lod.recipes import RecipeParams, build_part_lod
-
-            params = recipe_params if recipe_params is not None else RecipeParams()
-            if params.image_min is None:
-                params = replace(params, image_min=fit_image_min(region.stats))
+            params = with_input_basis(
+                recipe_params if recipe_params is not None else RecipeParams(),
+                region.stats,
+            )
             return build_part_lod(
                 region.tree, recipe, params, cell=cells.get(int(label))
             )

@@ -37,6 +37,62 @@ const serverMetadata = createE2EServerMetadata(checkoutIdentity, viewerBaseURL, 
 // actually use after `--workers=N` / `--debug` have had their say.
 const workerPlan = e2eWorkerPlan();
 
+// The native-WebGPU project (`chromium-webgpu`) is OPT-IN, like Firefox/WebKit
+// below: Playwright runs every declared project, and declaring it always would
+// double the default suite — and red it on any box without a WebGPU adapter,
+// since the project fails closed there. It is enabled by LUXAR_E2E_WEBGPU=1
+// (what `pnpm test:e2e:webgpu` sets) or by naming it with `--project`. The
+// `--project` form has to be written back into the environment: Playwright's
+// worker processes re-evaluate this file with their own argv, so a project
+// declared only because of the runner's argv would be missing in the workers.
+const WEBGPU_PROJECT = 'chromium-webgpu';
+const argv = process.argv.slice(2);
+const webgpuProjectNamed = argv.some(
+  (arg, i) =>
+    arg === `--project=${WEBGPU_PROJECT}` || (arg === '--project' && argv[i + 1] === WEBGPU_PROJECT)
+);
+if (webgpuProjectNamed) process.env.LUXAR_E2E_WEBGPU = '1';
+const webgpuProjectEnabled = process.env.LUXAR_E2E_WEBGPU === '1';
+
+// The WebGPU project compares against the chromium project's (WebGL-recorded)
+// visual baselines — see its `snapshotPathTemplate`. Updating snapshots from it
+// would overwrite those baselines with WebGPU pixels, so refuse outright.
+if (
+  webgpuProjectEnabled &&
+  argv.some((arg) => arg === '-u' || arg.startsWith('--update-snapshots'))
+) {
+  throw new Error(
+    `${WEBGPU_PROJECT}: refusing --update-snapshots — this project reads the chromium project's ` +
+      'baselines. Update them from the chromium project only.'
+  );
+}
+
+/**
+ * Launch flags for the native-WebGPU project.
+ *
+ * No `--use-gl=egl`: headless, that flag yields no GL context at all and
+ * Chrome falls back to SwiftShader (see playwright.perf.config.ts). On Linux
+ * ANGLE-on-Vulkan puts WebGL on the discrete GPU, and `--enable-features=WebGPU`
+ * exposes the hardware adapter — but NOT the `Vulkan` feature: that moves
+ * Chrome's own compositor onto Skia-Vulkan, which has no window surface
+ * headless, and the first composited WebGL frame then loses its context.
+ * Measured on obsidian (Chrome 146, RTX 3070); see the `browserArgs` comment in
+ * scripts/render-gate/browser.mjs.
+ */
+const webgpuLaunchArgs = [
+  '--enable-unsafe-webgpu',
+  '--enable-webgpu-developer-features',
+  '--ignore-gpu-blocklist',
+  '--enable-webgl-developer-extensions',
+  '--enable-webgl-draft-extensions',
+  '--disable-web-security',
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  ...(process.platform === 'linux'
+    ? ['--use-angle=vulkan', '--enable-features=WebGPU', '--disable-dev-shm-usage']
+    : []),
+];
+
 type ScreenshotOptionsWithRuntimeTimeout = NonNullable<
   NonNullable<PlaywrightTestConfig['expect']>['toHaveScreenshot']
 > & { timeout: number };
@@ -182,6 +238,37 @@ export default defineConfig({
         // channel: 'chrome',
       },
     },
+
+    // Native WebGPU: every viewer page on `renderer=webgpu` over a real
+    // adapter. OPT-IN (see `webgpuProjectEnabled` above).
+    //
+    //   pnpm test:e2e:webgpu [spec ...]
+    //
+    // System Chrome, not the bundled Chromium: Playwright's bundled headless
+    // build offers only a SwiftShader WebGPU adapter (`isFallbackAdapter`) — on
+    // obsidian with or without the Linux flags below, while system Chrome 146
+    // with them gets the NVIDIA card. `LUXAR_E2E_WEBGPU_BROWSER=chromium` tries
+    // the bundled build anyway. What the project changes per test lives in
+    // src/tests/e2e/webgpu-project.ts: the `renderer=webgpu` URL rewrite, the
+    // native-backend assertion in `waitForLuxarReady`, and `skipUnlessWebGL`.
+    ...(webgpuProjectEnabled
+      ? [
+          {
+            name: WEBGPU_PROJECT,
+            use: {
+              ...devices['Desktop Chrome'],
+              channel: process.env.LUXAR_E2E_WEBGPU_BROWSER === 'chromium' ? undefined : 'chrome',
+              launchOptions: { args: webgpuLaunchArgs },
+            },
+            // Read the chromium project's visual baselines (the default
+            // template's `{-projectName}` would look for a nonexistent
+            // `-chromium-webgpu-linux.png`), so `@visual` cases become
+            // WebGPU-against-WebGL comparisons at the shared tolerance.
+            snapshotPathTemplate:
+              '{snapshotDir}/{testFileDir}/{testFileName}-snapshots/{arg}-chromium{-snapshotSuffix}{ext}',
+          },
+        ]
+      : []),
 
     // Firefox and WebKit are OPT-IN, behind LUXAR_E2E_BROWSERS=all.
     //

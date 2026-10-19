@@ -16,12 +16,15 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
+import { loadavg } from 'node:os';
 import { join } from 'node:path';
 
+import { selectBackends } from './browser.mjs';
 import { installExtCounters } from './ext-counters.mjs';
 import * as ops from './page-ops.mjs';
 import {
   anyMissing,
+  familyFloor,
   judgeCounter,
   judgePerf,
   median,
@@ -71,6 +74,7 @@ export const METRIC_DIRECTIONS = Object.freeze({
   'decode.count': 'lower',
   'decode.count.lookahead': 'lower',
   'decode.duplicates': 'lower',
+  'fetch.data.requests': 'lower',
   'lod.levelSwaps': 'lower',
   levelFlips: 'lower',
   'scene.getObjectByName': 'lower',
@@ -189,8 +193,9 @@ export function meetsExpectation(want, judged, kind) {
  * @param {{ name: string, of?: string, per?: string, better?: 'lower'|'higher', kind?: 'counter'|'timing', tol?: number, relTol?: number }} m
  *   With `of` and `per`, the judged value is `sample[of] / sample[per]`.
  * @param {{ base: object[], base2: object[], cand: object[] }} samples
+ * @param {number} [tests=1] Gating timing judgments across the run.
  */
-export function judgeMetric(m, samples) {
+export function judgeMetric(m, samples, tests = 1) {
   const better = m.better ?? 'lower';
   const kind = m.kind ?? 'counter';
   // `of`/`per` judge a ratio of two sample fields, e.g. upload bytes per
@@ -213,11 +218,13 @@ export function judgeMetric(m, samples) {
       ...judgeCounter(base, cand, base2, { better, tol: m.tol ?? 0, relTol: m.relTol ?? 0 }),
     };
   if (anyMissing(base, cand, base2)) return { ...common, verdict: 'n/a' };
+  const aaFloor = noiseFloor(base, base2);
   return {
     ...common,
     baseMedian: median(base),
     candMedian: median(cand),
-    ...judgePerf(base, cand, noiseFloor(base, base2), m.tol ?? 0, { better }),
+    aaFloor,
+    ...judgePerf(base, cand, familyFloor(aaFloor, tests), m.tol ?? 0, { better }),
   };
 }
 
@@ -402,6 +409,8 @@ async function measureArm(browser, server, c, backend, { defaults, profile, open
       })
     );
     if (c.staleFrameCheck) metrics.staleFrame = (await staleFrameCheck(page)) ? 0 : 1;
+    // Reported, not judged: the host load this arm ran under (`loadSummary`).
+    metrics.load1 = loadavg()[0];
     return metrics;
   } finally {
     await context.close();
@@ -425,6 +434,41 @@ function applyExpectations(row, c, expected) {
   }
 }
 
+/**
+ * The error of a case whose store is not on disk, naming the command that
+ * writes it when the store is a render-gate scene.
+ *
+ * @param {string} store Path under `datasets/`.
+ * @returns {string}
+ */
+export function missingStoreMessage(store) {
+  const m = /^gate\/(.+?)\.luxar\.zarr(\.zip)?$/.exec(store);
+  const fix = m
+    ? `; write it with \`hatch run python packages/luxar-viewer/scripts/render-gate/generate_gate_scenes.py --out datasets/gate --only ${m[1]}\` from the repository root`
+    : '';
+  return `store missing: datasets/${store}${fix}`;
+}
+
+/** Backends selected for one manifest case. */
+function caseBackends(c, defaults, requested) {
+  return selectBackends(requested, c.backends ?? defaults.backends ?? ['webgl', 'webgpu']);
+}
+
+/** Count gating timing judgments over every selected manifest suite. */
+export function countTimingJudgements(suites, selected, opts) {
+  let count = 0;
+  for (const name of selected) {
+    const suite = suites[name];
+    const defaults = suite.defaults ?? {};
+    for (const c of suite.cases ?? []) {
+      if ((opts.only && !opts.only.includes(c.id)) || (c.heavy && !opts.heavy)) continue;
+      const metrics = (c.metrics ?? []).filter((m) => m.kind === 'timing' && !m.report).length;
+      count += metrics * caseBackends(c, defaults, opts.backends).length;
+    }
+  }
+  return count;
+}
+
 /** Whether any metric that contributes to the case verdict regressed. */
 export function rowRegressed(caseMetrics, judged) {
   return caseMetrics.some((m) => !m.report && judged[m.name].verdict === 'fail');
@@ -443,6 +487,7 @@ export function rowRegressed(caseMetrics, judged) {
  * @param {string} p.dataRoot Datasets root (a missing store is an error row).
  * @param {object} p.opts Run options (`only`, `backends`, `rounds`, `heavy`).
  * @param {object|null} p.expectations Validated `--expect` content.
+ * @param {number} p.timingTests Gating timing judgments across the run.
  * @param {(m: string) => void} p.log
  * @returns {Promise<object[]>} Rows.
  */
@@ -456,6 +501,7 @@ export async function runSuite({
   dataRoot,
   opts,
   expectations,
+  timingTests = 1,
   log,
 }) {
   const defaults = suite.defaults ?? {};
@@ -464,8 +510,7 @@ export async function runSuite({
   const cases = (suite.cases ?? []).filter((c) => !opts.only || opts.only.includes(c.id));
   for (const c of cases) {
     const expected = { ...expectations?.[c.id], ...c.expectations };
-    const allowed = c.backends ?? defaults.backends ?? ['webgl', 'webgpu'];
-    const backends = (opts.backends ?? allowed).filter((b) => allowed.includes(b));
+    const backends = caseBackends(c, defaults, opts.backends);
     if (c.heavy && !opts.heavy) {
       const row = {
         suite: name,
@@ -496,7 +541,7 @@ export async function runSuite({
         reasons: [],
       };
       if (c.store && !existsSync(join(dataRoot, c.store))) {
-        rows.push({ ...row, status: 'error', failures: [`store missing: datasets/${c.store}`] });
+        rows.push({ ...row, status: 'error', failures: [missingStoreMessage(c.store)] });
         continue;
       }
       const samples = { base: [], base2: [], cand: [] };
@@ -515,7 +560,9 @@ export async function runSuite({
         rows.push({ ...row, status: 'error', failures: [String(e.message ?? e)] });
         continue;
       }
-      for (const m of c.metrics ?? []) row.metrics[m.name] = judgeMetric(m, samples);
+      row.samples = samples;
+      for (const m of c.metrics ?? [])
+        row.metrics[m.name] = judgeMetric(m, samples, m.report ? 1 : timingTests);
       // A `report` metric is judged and shown but does not enter the row verdict.
       if (rowRegressed(c.metrics ?? [], row.metrics)) {
         row.status = 'fail';

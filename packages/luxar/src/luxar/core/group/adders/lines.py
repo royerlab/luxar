@@ -37,6 +37,7 @@ from ..compositing import (
     is_broadcast_color,
     position_bounds_from_array,
     preflight_extend_to_all,
+    reject_gsplats_only_amplitude_attrs,
     reject_layer_order_inside_specialized_group,
     reject_mesh_only_appearance,
     slice_optional_array,
@@ -208,6 +209,7 @@ def add_lines_impl(
             "lines", name, attrs, parent or group
         )
         reject_mesh_only_appearance("lines", name, attrs)
+        reject_gsplats_only_amplitude_attrs("lines", name, attrs)
 
         scene = group._find_scene()
 

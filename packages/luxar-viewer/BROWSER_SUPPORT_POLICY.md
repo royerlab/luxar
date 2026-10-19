@@ -31,7 +31,14 @@ highest precedence first:
 2. **Environment variable**: `VITE_LUXAR_USE_WEBGPU=1` selects the WebGPU path
    at dev-server/build time. `VITE_LUXAR_USE_WEBGPU_RENDERER=1` is accepted as
    an alias.
-3. **Default**: WebGL2.
+3. **Default**: WebGL2 (`DEFAULT_BACKEND` in `renderer-setup.ts`).
+
+Only an explicit `?renderer=webgpu` (or the Settings › Advanced › Renderer
+choice) may run TSL on Three.js's internal WebGL2 backend when the browser has
+no WebGPU adapter. Every other WebGPU selection (the env var, or a WebGPU
+default) requires a native device: without `navigator.gpu`, an adapter, or a
+successful `requestDevice`, the session uses `THREE.WebGLRenderer` instead, and
+never downloads the `three-webgpu` chunk.
 
 `VITE_LUXAR_USE_LEGACY_WEBGL=1` is harmless because WebGL2 is already the
 default; it is accepted so older local scripts do not fail.
@@ -86,6 +93,9 @@ physical GPU backend:
 
 Branch on `apiSurface` to pick method signatures and resource layout rules
 (readback shape, row padding, render target behavior).
+`RendererCapabilities.backendKind` names the GPU API that actually runs:
+`'webgl'`, `'webgpu-native'` or `'webgpu-gl'` (WebGPURenderer on the WebGL2
+backend).
 
 ## Runtime detection
 

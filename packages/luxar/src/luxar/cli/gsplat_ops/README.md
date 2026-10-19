@@ -19,10 +19,10 @@ importers name the owning module directly, never a re-export root.
 
 - `scene_commands.py` — Typer command signatures + registration for convert/migrate-format/reencode
 - `scene_build.py` — `build_gsplat_scene` / `SceneBuildOptions`: the one scene-building path shared by `convert` and `view` (`view` writes it to a temp dir; `--raw` skips it)
-- `scene_exposure.py` — `resolve_convert_exposure`: auto exposure (projected-sum prediction from `luxar.gsplats.exposure`, side views capped at 4x the target), `--scale-intensity` as an exact manual factor, and the Exposure narration line
+- `scene_exposure.py` — `resolve_convert_exposure`: the `display_gain` convert stamps (amplitudes stay in data units) — auto exposure (projected-sum prediction from `luxar.gsplats.exposure`, side views capped at 4x the target), `--display-gain` (alias `--scale-intensity`) as an exact manual gain, the `amplitude_unit` / `amplitude_offset` labels from the store's fit basis (`amplitude_unit_attrs`), and the Exposure narration line. The opening-view geometry (`opening_view_columns` / `opening_hidden_axes`) lives in `luxar.gsplats.exposure`, shared with the Python `auto_exposure_attrs`
 - `scene_orientation.py` — `resolve_convert_orientation`: names the fitted center columns (stored `dimension_metadata` > `--dim-order` > array order), maps them onto x, y, z-ordered scene dims via `dim_order`, and builds convert's image-convention camera (`view_axis` + `up = -y`; the flip is a camera choice, not a mirror)
 - `inspect_commands.py` — Typer command signatures + registration for inspect commands
-- `compare_ops.py` — `compare` implementation: scoring grid, basis, foreground, report/JSON
+- `compare_ops.py` — `compare` implementation: scoring grid, basis, `--region` crop scoring (`--whole-volume`), foreground, noise ceiling + verdict, report/JSON
 - `interchange_commands.py` — Typer command signatures + registration for `import` / `export`
 - `benchmark.py` — GPU benchmark helpers
 - `recipe_shared.py` — `--recipe` names/methods/validators shared by the CLI and `cli/lod.py`

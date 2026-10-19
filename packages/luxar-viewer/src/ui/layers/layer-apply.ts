@@ -24,7 +24,7 @@ import type { SceneNode } from '../../data/data-loader-types';
 import type { SceneNodeIndex } from '../../data/scene-loader/view-state/scene-node-index';
 import type { BlendingMode } from '../../rendering';
 import { materialManager } from '../../rendering';
-import { scheduleBlendModeProgramWarmupForObject } from '../../rendering/webgl-blend-warmup';
+import { scheduleBlendModeProgramWarmupForObject } from '../../rendering/blend-warmup';
 import { log, Modules } from '../../utils/log';
 import { getColormapTexture } from '../../rendering/colormap-textures';
 import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';
@@ -56,6 +56,7 @@ import {
 } from './layer-state';
 import { remapWindowToLeafRange } from '../../rendering/display-range';
 import { rebaseLodFade } from '../../scene/lod-fade';
+import { isStandardGSplats3D } from '../../workers/data-worker/projection/gsplats';
 import {
   applyColorAdjustments,
   isColormapActive,
@@ -101,6 +102,7 @@ export type PushedKind = (typeof PUSHED_KINDS)[number];
 export interface LayerApplyEngineDeps {
   getRootGroup: () => THREE.Group | null;
   getSceneNodeIndex: () => SceneNodeIndex | null;
+  getDisplayDims?: () => readonly number[] | null;
   state: LayerStateManager;
   requestRender: () => void;
   requestReprocess: (paths: readonly string[]) => void;
@@ -359,6 +361,7 @@ export class LayerApplyEngine {
         gamma: node.attrs.gamma as number | undefined,
         intensity: node.attrs.intensity as number | undefined,
         offset: node.attrs.offset as number | undefined,
+        display_gain: node.attrs.display_gain as number | undefined,
         blending_mode:
           insideLayerSubtree && editedLayerOwnsMode
             ? undefined
@@ -696,11 +699,16 @@ export class LayerApplyEngine {
     if (!eff) return;
     const pickUniforms = (
       mat as LuxarMaterial & {
-        uniforms?: { uOpacity?: { value: number }; uIntensity?: { value: number } };
+        uniforms?: {
+          uOpacity?: { value: number };
+          uIntensity?: { value: number };
+          uDisplayGain?: { value: number };
+        };
       }
     ).uniforms;
     const previousOpacity = pickUniforms?.uOpacity?.value;
     const previousIntensity = pickUniforms?.uIntensity?.value;
+    const previousGain = pickUniforms?.uDisplayGain?.value;
     // A live LOD fade (cross-fade, streaming energy or density-guard
     // compensation) owns the live opacity uniform as `_lodFadeBase × product`
     // (scene/lod-fade.ts), so a direct write of the authored value would be
@@ -722,6 +730,9 @@ export class LayerApplyEngine {
     // phase 1, points phase 3, lines phase 4); optional-chained for a mesh
     // material, which has none (a surface resolves `volumetric` to `opaque`).
     mat.updateAbsorption?.(eff.absorption);
+    // Gsplats only (the optional call is the type gate): the data-unit
+    // brightness. Never part of the scalar window below.
+    mat.updateDisplayGain?.(eff.display_gain);
     // A colormap-active leaf windows a SCALAR, and (when the composed window
     // really is stated on the layer's reference range — see
     // `composedWindowIsInReferenceBasis`) it is re-expressed in this leaf's
@@ -736,7 +747,8 @@ export class LayerApplyEngine {
       meshPickDirty ||
       (obj.userData.pickNode &&
         (previousOpacity !== pickUniforms?.uOpacity?.value ||
-          previousIntensity !== pickUniforms?.uIntensity?.value))
+          previousIntensity !== pickUniforms?.uIntensity?.value ||
+          previousGain !== pickUniforms?.uDisplayGain?.value))
     ) {
       this.deps.invalidatePickBuffer?.();
     }
@@ -810,6 +822,20 @@ export class LayerApplyEngine {
 
   applyAbsorption(layer: LayerInfo): void {
     this.applyComposed(layer);
+  }
+
+  applyBrightness(layer: LayerInfo): void {
+    this.applyComposed(layer);
+    // Projected gsplats use a visibility gate of MIN_AMPLITUDE / gain;
+    // only standard 3D leaves take the unfiltered fast path.
+    const displayDims = this.deps.getDisplayDims?.() ?? [];
+    const nd = this.getAffectedDataLeaves(layer.path)
+      .filter(
+        (leaf) =>
+          leaf.type === 'gsplats' && !isStandardGSplats3D(Number(leaf.attrs.ndim), displayDims)
+      )
+      .map((leaf) => leaf.path);
+    if (nd.length > 0) this.deps.requestReprocess(nd);
   }
 
   /**

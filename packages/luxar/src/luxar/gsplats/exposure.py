@@ -41,13 +41,22 @@ subsampling), i.e. toward a dimmer, never a more saturated, view. Pure NumPy.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
+from luxar.gsplats.amplitude_reference import automatic_factor, sample_reference
+from luxar.gsplats.exposure_attrs import (
+    NORMALIZATION_MODE_ATTR,
+    PROJECTED_SUM_AXIS_ATTR,
+    PROJECTED_SUM_P999_ATTR,
+    PROJECTED_SUM_TARGET_ATTR,
+)
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from luxar.core.dimensions import Dimensions
+    from luxar.core.viewer_config import CameraConfig
     from luxar.gsplats.tree import GSplatNode
 
 __all__ = [
@@ -58,9 +67,15 @@ __all__ = [
     "ProjectedSumStats",
     "SIDE_CAP",
     "SUMMING_BLENDING_MODES",
+    "amplitude_unit_attrs",
+    "auto_exposure_attrs",
     "collect_default_splats",
+    "data_unit_display_attrs",
     "default_target_brightness",
     "emission_weights",
+    "opening_hidden_axes",
+    "opening_truncation_radius",
+    "opening_view_columns",
     "plan_projected_exposure",
     "predict_projected_sum",
     "stamped_amplitude_window",
@@ -782,8 +797,10 @@ def plan_projected_exposure(
 ) -> ExposurePlan:
     """Choose a dimming factor so the opening view's projected p99.9 <= target.
 
-    ``amplitudes`` are the values the scene would store (already per-splat
-    normalised). Hidden axes (``hidden``) are weighted at the viewer's opening
+    ``amplitudes`` are the values the scene would render at gain 1: the
+    stored data-unit amplitudes (``gsplat convert``, where the factor becomes
+    the node's ``display_gain``) or per-splat normalised ones (the Python
+    adders, where it multiplies the stored values). Hidden axes (``hidden``) are weighted at the viewer's opening
     position. The factor is
     ``min(1, target / p999_open, SIDE_CAP * target / max(cap views))``, the cap
     views being the other two displayed axes and up to four more timepoints of
@@ -835,3 +852,342 @@ def plan_projected_exposure(
         side_capped=capped,
         cap_source=source if capped else None,
     )
+
+
+def amplitude_unit_attrs(stats: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """``amplitude_unit`` (+ ``amplitude_offset``) for a store's amplitudes.
+
+    A fit records its normalisation basis (``intensity_range``), and its
+    amplitudes are then in source data units above the subtracted level
+    (``image_min``, see :mod:`luxar.gsplats.fit_basis`): ``counts`` for an
+    integer source, ``data units`` otherwise, then ``above background`` when a
+    resolved background floor was subtracted or ``above minimum`` when the level
+    is the data's own minimum (``--floor none``; it may be negative for a float
+    source), with that level as ``amplitude_offset`` (omitted when it is below
+    1e-6 of the range). A store recording
+    no basis — an imported classical splat file, a merge of disagreeing fits —
+    gets ``a.u.`` and no offset: nothing says what its numbers mean.
+
+    With a basis, ``source_data_range`` records ``[0, intensity_range]`` in
+    amplitude units. After intensity scaling the amplitudes and range are in
+    arbitrary units; the raw source floor is then omitted from the scene.
+    """
+    import numpy as np
+
+    from luxar.gsplats.fit_basis import source_intensity_span
+
+    stats = stats or {}
+    if stats.get("intensity_range") is None:
+        return {"amplitude_unit": "a.u."}
+    try:
+        integer = np.dtype(stats.get("source_dtype")).kind in "iu"
+    except (TypeError, ValueError):
+        integer = False
+    scaled = stats.get("intensity_scale", 1.0) != 1.0
+    unit = "a.u." if scaled else ("counts" if integer else "data units")
+    level = _subtracted_level(stats)
+    attrs: Dict[str, Any] = {}
+    width = float(stats["intensity_range"])
+    if not scaled and level is not None and abs(level) >= 1e-6 * abs(width):
+        # `floor` is a number exactly when a background level was RESOLVED and
+        # subtracted; otherwise the subtracted level is the data's own minimum
+        # (or a low percentile) — which a float source may put below zero.
+        background = isinstance(stats.get("floor"), (int, float)) and not isinstance(
+            stats.get("floor"), bool
+        )
+        unit += " above background" if background else " above minimum"
+        attrs["amplitude_offset"] = float(level)
+    attrs["amplitude_unit"] = unit
+    span = source_intensity_span(stats)
+    if span is not None:
+        attrs["source_data_range"] = [0.0, float(span)]
+    return attrs
+
+
+def _subtracted_level(stats: Mapping[str, Any]) -> Optional[float]:
+    """The level the fit subtracted, for LABELLING: ``image_min``, else ``floor``.
+
+    Unlike :func:`~luxar.gsplats.fit_basis.fit_image_min` (which reverses the
+    shift on a raw volume and treats a negative level as unrecorded), any FINITE
+    level is accepted: a float source whose minimum is negative still had that
+    minimum subtracted, and its amplitudes are "above minimum" by that much.
+    """
+    import math
+
+    for key in ("image_min", "floor"):
+        value = stats.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if math.isfinite(float(value)):
+            return float(value)
+    return None
+
+
+def data_unit_display_attrs(
+    stats: Optional[Mapping[str, Any]],
+    *,
+    gain: Optional[float] = None,
+    amplitudes: Optional[np.ndarray] = None,
+    plan: Optional["ExposurePlan"] = None,
+) -> Dict[str, Any]:
+    """The data-unit display attrs ``luxar gsplat convert`` stamps, for Python.
+
+    Returns ``display_gain``, ``amplitude_unit`` and — when the store records
+    them — ``amplitude_offset`` and ``source_data_range``, ready to pass to
+    ``add_gsplats_from_data`` / ``add_gsplats_from_file`` together with
+    ``normalize_amplitudes=False`` so the scene keeps the fit's data units.
+
+    The gain is ``gain`` when given; otherwise the legacy per-splat
+    normalisation of ``amplitudes`` (their p99.9 → 1.0 when above 1.0) times
+    ``plan.factor`` from :func:`plan_projected_exposure` (pass ``amplitudes ×
+    per-splat factor`` to the planner, as convert does), else 1.0.
+
+    Example:
+        >>> from luxar.gsplats.exposure import data_unit_display_attrs
+        >>> node, stats = load_gsplat_node(path, include_stats=True)
+        >>> attrs = data_unit_display_attrs(stats, amplitudes=amps, plan=plan)
+        >>> scene.add_gsplats_from_file("g", path, normalize_amplitudes=False, **attrs)
+    """
+    if gain is None:
+        gain = 1.0
+        if amplitudes is not None:
+            flat = np.asarray(amplitudes, dtype=np.float64).ravel()
+            gain = automatic_factor(sample_reference(flat)) or 1.0
+        if plan is not None:
+            gain *= float(plan.factor)
+    if not (np.isfinite(gain) and gain > 0.0):
+        raise ValueError(f"display gain must be positive and finite, got {gain!r}")
+    return {"display_gain": float(gain), **amplitude_unit_attrs(stats)}
+
+
+# ---------------------------------------------------------------------------
+# Opening view of a scene (shared by `gsplat convert` and the Python helper)
+# ---------------------------------------------------------------------------
+
+
+def _column_names(
+    dimensions: "Dimensions", dim_order: Optional[Sequence[str]]
+) -> List[str]:
+    """Scene-dimension name of each center column (``dim_order``, else scene order)."""
+    return list(dim_order) if dim_order is not None else list(dimensions.names)
+
+
+def _world_index(letter: str, displayed: List[str]) -> int:
+    """Displayed position of the dimension named ``letter`` (as the camera does)."""
+    lowered = [name.lower() for name in displayed]
+    return lowered.index(letter) if letter in lowered else "xyz".index(letter)
+
+
+def opening_view_columns(
+    dimensions: Optional["Dimensions"],
+    dim_order: Optional[Sequence[str]] = None,
+    camera: Optional["CameraConfig"] = None,
+) -> Tuple[List[int], Optional[int], Optional[str]]:
+    """Displayed center columns, the view-axis column and its scene name.
+
+    The camera's ``view_axis`` (``xy`` faces the XY plane, looking along the
+    third displayed axis); without one, the viewer's default looks along the
+    third displayed dimension. A planar scene has no view axis. Raises
+    ``ValueError`` when a displayed dimension has no center column.
+    """
+    if dimensions is None:
+        names = list(dim_order) if dim_order is not None else ["x", "y", "z"]
+        displayed = ["x", "y", "z"]
+    else:
+        names = _column_names(dimensions, dim_order)
+        displayed = [dimensions.dimensions[i].name for i in dimensions.displayed]
+    columns = [names.index(name) for name in displayed]
+    if len(displayed) != 3:
+        return columns, None, None
+    depth = 2
+    if camera is not None and camera.view_axis is not None:
+        plane = {_world_index(c, displayed) for c in camera.view_axis}
+        depth = ({0, 1, 2} - plane).pop()
+    return columns, columns[depth], displayed[depth]
+
+
+def opening_hidden_axes(
+    dimensions: "Dimensions",
+    centers: np.ndarray,
+    dim_order: Optional[Sequence[str]] = None,
+) -> List[HiddenAxis]:
+    """Each hidden scene dimension as a :class:`HiddenAxis` at its opening position.
+
+    The viewer's ``SceneDimsManager.defaultPosition``: a discrete (or
+    categorical) axis opens at its range minimum, a continuous one at its centre.
+    Raises ``ValueError`` for a hidden dimension with no center column (one
+    filled at insertion): its opening weight is unknown.
+    """
+    names = _column_names(dimensions, dim_order)
+    axes: List[HiddenAxis] = []
+    for dim in dimensions.dimensions:
+        if dim.display:
+            continue
+        if dim.name not in names:
+            raise ValueError(
+                f"hidden dimension {dim.name!r} has no center column (dim_order "
+                f"{names})"
+            )
+        column = names.index(dim.name)
+        values = np.asarray(centers[:, column], dtype=np.float64)
+        if dim.range is not None:
+            lo, hi = float(dim.range[0]), float(dim.range[1])
+        else:
+            lo, hi = float(values.min()), float(values.max())
+        discrete = bool(dim.discrete or dim.categories)
+        step = float(dim.step or 1.0)
+        position = lo if discrete else 0.5 * (lo + hi)
+        axes.append(HiddenAxis(column, position, discrete, step, (lo, hi)))
+    return axes
+
+
+def opening_truncation_radius(node: "GSplatNode") -> float:
+    """The truncation radius the opening leaves render with."""
+    from luxar.gsplats.tree import iter_default_leaves
+
+    for leaf in iter_default_leaves(node):
+        for sub in leaf.additive_sublods:
+            radius = getattr(sub, "truncation_radius", None)
+            if radius:
+                return float(radius)
+    return DEFAULT_TRUNCATION_RADIUS
+
+
+def _check_default_dimensions(ndim: int, dim_order: Optional[Sequence[str]]) -> None:
+    """Only xyz 3-column stores can use the viewer's default dimensions."""
+    names = list(dim_order) if dim_order is not None else ["x", "y", "z"][:ndim]
+    if ndim != 3 or sorted(n.lower() for n in names) != ["x", "y", "z"]:
+        raise ValueError(
+            f"a {ndim}-column store needs dimensions= (the scene's Dimensions) "
+            "to know which columns are displayed"
+        )
+
+
+def auto_exposure_attrs(
+    source: Any,
+    *,
+    dim_order: Optional[Sequence[str]] = None,
+    dimensions: Optional["Dimensions"] = None,
+    camera: Optional["CameraConfig"] = None,
+    colormap: Optional[str] = None,
+    opacity: float = 1.0,
+    blending_mode: str = "additive",
+    tone_mapping: Optional[str] = None,
+    target: Optional[float] = None,
+    stats: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """``luxar gsplat convert``'s auto exposure, as kwargs for the Python adders.
+
+    The Python adders normalise each splat (p99.9 splat amplitude → 1.0) but,
+    unlike ``gsplat convert``, do not dim for how many splats SUM along a ray,
+    so a dense fit under ``additive`` blending opens as a saturated white blob.
+    This runs convert's prediction (:func:`plan_projected_exposure`) on
+    ``source`` and returns ``normalize_amplitudes=False`` plus the
+    ``display_gain`` and unit labels convert would stamp, ready to splat into
+    ``add_gsplats_from_file`` / ``add_gsplats_from_data``. Pass the same
+    ``dim_order``, ``colormap``, ``opacity`` and ``blending_mode`` you pass the
+    adder, and the scene's ``dimensions`` / ``camera`` / ``tone_mapping`` when
+    they are not the defaults (``Dimensions.default_3d()``, the viewer's
+    default view, ACES).
+
+    Pass the ``.gsplats.zarr`` PATH. It works for every store shape (a tiled
+    ``kind=partition`` fit included) and reads the store's root stats, which
+    decide the unit labels (``counts above background`` needs the recorded
+    ``source_dtype``). An in-memory :class:`GSplatData` or
+    :class:`~luxar.gsplats.tree.GSplatNode` gives the same gain, but carries
+    less (a node none, a ``GSplatData`` no ``source_dtype``), so its labels
+    fall back to ``a.u.`` / ``data units`` unless ``stats=`` supplies the root
+    stats (``load_gsplat_node(path, include_stats=True)``).
+
+    The gain only ever DIMS below per-splat normalisation. Each call exposes one
+    node on its own: in a multichannel scene every channel lands at the target,
+    and where channels overlap their colours add. Under a non-summing blending
+    mode (``max``, ``volumetric``, ...) the gain is the per-splat normalisation
+    alone, as in convert, which is also the fallback (with a warning) when the
+    opening view cannot be predicted, e.g. a hidden scene dimension with no
+    center column.
+
+    Raises:
+        ValueError: A store with other than three ``x``/``y``/``z`` columns
+            and no ``dimensions=`` (which columns are displayed is unknown).
+
+    Example:
+        >>> from luxar.gsplats.exposure import auto_exposure_attrs
+        >>> for name, path, cmap in [("nuclei", nuc, "bop_blue"), ...]:
+        ...     scene.add_gsplats_from_file(
+        ...         name, path, dim_order=["z", "y", "x"], colormap=cmap,
+        ...         blending_mode="additive",
+        ...         **auto_exposure_attrs(path, dim_order=["z", "y", "x"],
+        ...                               colormap=cmap),
+        ...     )
+    """
+    node, source_stats = _exposure_source(source)
+    if stats is None:
+        stats = source_stats
+    centers, chol, amps, colors = collect_default_splats(node)
+    per_splat = automatic_factor(sample_reference(amps)) or 1.0
+    attrs: Dict[str, Any] = {"normalize_amplitudes": False}
+
+    def per_splat_only() -> Dict[str, Any]:
+        attrs.update(data_unit_display_attrs(stats, gain=per_splat))
+        attrs[NORMALIZATION_MODE_ATTR] = "per_splat"
+        return attrs
+
+    if blending_mode not in SUMMING_BLENDING_MODES or centers.shape[0] == 0:
+        return per_splat_only()
+    if dimensions is None:
+        _check_default_dimensions(centers.shape[1], dim_order)
+    if target is None:
+        target = default_target_brightness(tone_mapping)
+    try:
+        columns, axis_col, axis_name = opening_view_columns(
+            dimensions, dim_order, camera
+        )
+        plan = plan_projected_exposure(
+            centers,
+            chol,
+            amps * per_splat,
+            colors,
+            view_axis=axis_col,
+            display_dims=columns,
+            hidden=opening_hidden_axes(dimensions, centers, dim_order)
+            if dimensions is not None
+            else [],
+            colormap=colormap,
+            opacity=opacity,
+            data_range=stamped_amplitude_window(node, per_splat),
+            target=target,
+            trunc=opening_truncation_radius(node),
+        )
+    except ValueError as exc:
+        import warnings
+
+        warnings.warn(
+            f"auto exposure could not predict the opening view ({exc}); using "
+            "per-splat normalisation",
+            stacklevel=2,
+        )
+        return per_splat_only()
+    attrs.update(data_unit_display_attrs(stats, gain=per_splat * plan.factor))
+    attrs[NORMALIZATION_MODE_ATTR] = "projected"
+    attrs[PROJECTED_SUM_P999_ATTR] = float(plan.predicted_after)
+    attrs[PROJECTED_SUM_TARGET_ATTR] = float(target)
+    if axis_name is not None:
+        attrs[PROJECTED_SUM_AXIS_ATTR] = axis_name
+    return attrs
+
+
+def _exposure_source(source: Any) -> Tuple["GSplatNode", Mapping[str, Any]]:
+    """``(node, root stats)`` from a path, a :class:`GSplatNode` or a ``GSplatData``."""
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
+
+    if isinstance(source, GSplatData):
+        return source.tree, dict(source.stats or {})
+    if isinstance(source, (GSplatLeaf, GSplatLodGroup, GSplatPartition)):
+        meta = source.meta or {}
+        return source, dict(meta.get("fit_stats") or meta.get("stats") or {})
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+    node, stats = load_gsplat_node(source, include_stats=True)
+    return node, stats or {}

@@ -39,6 +39,7 @@ from ..compositing import (
     is_broadcast_color,
     position_bounds_from_array,
     preflight_extend_to_all,
+    reject_gsplats_only_amplitude_attrs,
     reject_layer_order_inside_specialized_group,
     reject_lines_only_join,
     reject_mesh_only_appearance,
@@ -112,6 +113,7 @@ def add_points_impl(
         )
         reject_lines_only_join("points", name, attrs)
         reject_mesh_only_appearance("points", name, attrs)
+        reject_gsplats_only_amplitude_attrs("points", name, attrs)
 
         scene = group._find_scene()
 

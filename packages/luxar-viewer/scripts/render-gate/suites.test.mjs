@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import * as ops from './page-ops.mjs';
 import {
+  countTimingJudgements,
   dragWorkload,
   judgeMetric,
   meetsExpectation,
+  missingStoreMessage,
   METRIC_DIRECTIONS,
   runSuite,
   serverMetrics,
@@ -395,6 +397,58 @@ describe('judgeMetric', () => {
     );
     expect(timing.verdict).toBe('n/a');
   });
+
+  it('passes an A/A fluctuation at the run-wide floor and preserves the raw floor', () => {
+    const samples = {
+      base: arm([100, 100, 100, 100, 100], 'firstFrameMs'),
+      base2: arm([100, 100, 100, 100, 100], 'firstFrameMs'),
+      cand: arm([101.2, 101.2, 101.2, 101.2, 101.2], 'firstFrameMs'),
+    };
+    const timing = { name: 'firstFrameMs', kind: 'timing' };
+    expect(judgeMetric(timing, samples, 1).verdict).toBe('fail');
+    expect(judgeMetric(timing, samples, 4)).toMatchObject({ verdict: 'pass', aaFloor: 0.01 });
+    expect(judgeMetric(timing, samples, 4).floor).toBeGreaterThan(0.01);
+    expect(judgeMetric({ name: 'firstFrameMs', kind: 'counter' }, samples, 4).verdict).toBe('fail');
+  });
+});
+
+describe('countTimingJudgements', () => {
+  it('counts only selected gating timings across eligible backends and suites', () => {
+    const suites = {
+      hosted: {
+        defaults: { backends: ['webgl'] },
+        cases: [
+          {
+            id: 'load',
+            metrics: [
+              { name: 'firstFrameMs', kind: 'timing' },
+              { name: 'settledMs', kind: 'timing' },
+              { name: 'bytes', kind: 'counter' },
+              { name: 'totalMs', kind: 'timing', report: true },
+            ],
+          },
+          { id: 'heavy', heavy: true, metrics: [{ name: 'stepMs', kind: 'timing' }] },
+        ],
+      },
+      playback: {
+        cases: [
+          { id: 'play', backends: ['webgpu'], metrics: [{ name: 'achievedFps', kind: 'timing' }] },
+        ],
+      },
+    };
+    expect(
+      countTimingJudgements(suites, ['hosted', 'playback'], { backends: ['webgl', 'webgpu'] })
+    ).toBe(3);
+    expect(
+      countTimingJudgements(suites, ['hosted'], { backends: ['webgl', 'webgpu'], only: ['load'] })
+    ).toBe(2);
+    expect(
+      countTimingJudgements(suites, ['hosted', 'playback'], {
+        backends: ['webgl', 'webgpu'],
+        heavy: true,
+      })
+    ).toBe(4);
+  });
 });
 
 describe('validateMetricDirections', () => {
@@ -467,5 +521,22 @@ describe('serverMetrics', () => {
   it('omits the first-frame figures when the workload reported no first frame', () => {
     const m = serverMetrics([], { navT: 0, firstFrameMs: undefined, maxInflight: 0 });
     expect(m).toEqual({ serverRequests: 0, serverBytes: 0, maxInflight: 0 });
+  });
+});
+
+describe('missingStoreMessage', () => {
+  it('names the generator command for a render-gate store', () => {
+    expect(missingStoreMessage('gate/sp64_closeup_authored.luxar.zarr')).toBe(
+      'store missing: datasets/gate/sp64_closeup_authored.luxar.zarr; write it with ' +
+        '`hatch run python packages/luxar-viewer/scripts/render-gate/generate_gate_scenes.py ' +
+        '--out datasets/gate --only sp64_closeup_authored` from the repository root'
+    );
+    expect(missingStoreMessage('gate/zip_mixed.luxar.zarr.zip')).toContain('--only zip_mixed`');
+  });
+
+  it('only reports the path for a store outside the gate set', () => {
+    expect(missingStoreMessage('demos/x.luxar.zarr')).toBe(
+      'store missing: datasets/demos/x.luxar.zarr'
+    );
   });
 });

@@ -340,6 +340,7 @@ def test_linux_available_memory_parses_memavailable_kib(monkeypatch) -> None:
 
 def test_effective_cpu_count_uses_affinity(monkeypatch) -> None:
     monkeypatch.delattr(device_mod.os, "process_cpu_count", raising=False)
+    monkeypatch.setattr(device_mod, "_cgroup_cpu_limit", lambda: None)
     # raising=False because `os.sched_getaffinity` is Linux-only: without it
     # this test did not exercise the affinity path on macOS, it ERRORED on the
     # setattr before reaching the assertion.
@@ -358,6 +359,7 @@ def test_effective_cpu_count_falls_back_without_affinity(monkeypatch) -> None:
     the affinity test above could not run here at all.
     """
     monkeypatch.delattr(device_mod.os, "process_cpu_count", raising=False)
+    monkeypatch.setattr(device_mod, "_cgroup_cpu_limit", lambda: None)
     monkeypatch.delattr(device_mod.os, "sched_getaffinity", raising=False)
     monkeypatch.setattr(device_mod.os, "cpu_count", lambda: 64)
 
@@ -367,6 +369,7 @@ def test_effective_cpu_count_falls_back_without_affinity(monkeypatch) -> None:
 def test_effective_cpu_count_survives_an_affinity_error(monkeypatch) -> None:
     """A present-but-failing sched_getaffinity must not propagate."""
     monkeypatch.delattr(device_mod.os, "process_cpu_count", raising=False)
+    monkeypatch.setattr(device_mod, "_cgroup_cpu_limit", lambda: None)
 
     def _boom(pid: int) -> set[int]:
         raise OSError("no affinity for you")
@@ -453,3 +456,58 @@ class TestCpuFallbackHint:
                 device_mod.warn_cpu_fitting()
         with pytest.warns(UserWarning, match="running on CPU"):
             device_mod.warn_cpu_fitting()
+
+
+def _write(path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def test_cgroup_v2_quota_takes_the_tightest_ancestor(tmp_path) -> None:
+    """A ``--cpus 2.5`` container nested in a 6-CPU slice is granted 3 CPUs."""
+    root = tmp_path / "cgroup"
+    _write(tmp_path / "self", "0::/slice/ctr\n")
+    _write(root / "cpu.max", "max 100000\n")
+    _write(root / "slice" / "cpu.max", "600000 100000\n")
+    _write(root / "slice" / "ctr" / "cpu.max", "250000 100000\n")
+
+    assert device_mod._cgroup_cpu_limit(root, tmp_path / "self") == 3
+
+
+def test_cgroup_v2_without_a_quota_is_unlimited(tmp_path) -> None:
+    root = tmp_path / "cgroup"
+    _write(tmp_path / "self", "0::/\n")
+    _write(root / "cpu.max", "max 100000\n")
+
+    assert device_mod._cgroup_cpu_limit(root, tmp_path / "self") is None
+
+
+def test_cgroup_v1_quota_is_read(tmp_path) -> None:
+    root = tmp_path / "cgroup"
+    _write(tmp_path / "self", "4:cpu,cpuacct:/docker/abc\n2:memory:/docker/abc\n")
+    _write(root / "cpu" / "docker" / "abc" / "cpu.cfs_quota_us", "400000\n")
+    _write(root / "cpu" / "docker" / "abc" / "cpu.cfs_period_us", "100000\n")
+
+    assert device_mod._cgroup_cpu_limit(root, tmp_path / "self") == 4
+
+
+def test_cgroup_v1_unlimited_quota_is_ignored(tmp_path) -> None:
+    root = tmp_path / "cgroup"
+    _write(tmp_path / "self", "4:cpu,cpuacct:/\n")
+    _write(root / "cpu" / "cpu.cfs_quota_us", "-1\n")
+    _write(root / "cpu" / "cpu.cfs_period_us", "100000\n")
+
+    assert device_mod._cgroup_cpu_limit(root, tmp_path / "self") is None
+
+
+def test_cgroup_limit_survives_a_missing_proc_file(tmp_path) -> None:
+    assert device_mod._cgroup_cpu_limit(tmp_path, tmp_path / "missing") is None
+
+
+def test_effective_cpu_count_is_capped_by_a_cgroup_quota(monkeypatch) -> None:
+    """A ``--cpus 4`` container still shows every host CPU in its affinity mask."""
+    monkeypatch.setattr(device_mod, "_affinity_cpu_count", lambda: 16)
+    monkeypatch.setattr(device_mod, "_cgroup_cpu_limit", lambda: 4)
+    monkeypatch.setattr(device_mod.sys, "platform", "linux")
+
+    assert device_mod._effective_cpu_count() == 4

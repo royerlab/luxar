@@ -33,13 +33,20 @@ make type-check-python            # Type check for the host, Darwin, and Python 
 The hatch env pins `OMP/OPENBLAS/MKL/NUMEXPR_NUM_THREADS=1` (see the note in
 `pyproject.toml`) — the test suite is thousands of tiny tensor ops and loses
 several-fold to fork-join overhead otherwise. That pin also applies to real work
-run through hatch, so for a CPU fit, a demo, or a benchmark, export the width
-you want — an explicit value wins. Set `MKL_NUM_THREADS` too, not just
-`OMP_NUM_THREADS`: torch takes its intra-op count from MKL here, so overriding
-OMP alone still leaves `torch.get_num_threads() == 1`.
+run through hatch. CPU `gsplat fit` and `gsplat cal` widen a one-thread torch
+count automatically (except in `--tile`/`--plan-box` workers). A parent-provided
+`LUXAR_CPU_THREADS` share sets torch's count in those workers too; the numba
+kernels of a 3D CPU fit use the physical cores by default. `LUXAR_CPU_THREADS=N`
+sets the width explicitly, and `0` disables the torch adjustment. For a demo,
+a benchmark or a library call, export the width you want. Set `MKL_NUM_THREADS`
+too, not just `OMP_NUM_THREADS`: torch takes its intra-op count from MKL here,
+so overriding OMP alone still leaves `torch.get_num_threads() == 1` before the
+CLI adjustment. Outside the CLI the
+numba kernel width comes from `LUXAR_CPU_THREADS` only.
 ```bash
-OMP_NUM_THREADS=16 MKL_NUM_THREADS=16 \
-  hatch run luxar gsplat fit vol.tiff out.gsplats.zarr --device cpu
+LUXAR_CPU_THREADS=8 hatch run luxar gsplat fit vol.tiff out.gsplats.zarr --device cpu
+OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 LUXAR_CPU_THREADS=8 \
+  hatch run python scripts/benchmarks/<bench>.py
 ```
 
 ### TypeScript (use pnpm, from packages/luxar-viewer/)
@@ -82,8 +89,11 @@ make install-demo-deps  # Install the demo extras (demos + gsplats + io)
 
 # Quality & Testing
 make test-fast    # INNER LOOP: Python (-m 'not slow', xdist) + TS units, no coverage.
-                  # ~6-7 min whole-suite; SCOPE it for a real loop:
+                  # Python half alone ~22.5 min (~20k tests) on a fresh 20-core box
+                  # (tester-measured), then ~18k vitest tests; SCOPE it:
                   #   make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'
+                  #   make test-fast TS_ARGS='src/rendering'   # vitest only
+                  # Scoping one half skips the other; pass both to run both.
                   # Not a gate — no slow tests, no coverage thresholds, no E2E.
                   # LUXAR_PYTEST_JOBS=12 to tune (I/O-bound, so it buys little).
 make test-all     # All tests (Python incl. CUDA + WASM/Rust + TypeScript + Go launcher)
@@ -91,6 +101,7 @@ make test-cov-all # Coverage: Python (minus `-m slow`) + TypeScript
 make test-python  # Python tests only
 make test-e2e     # Full Playwright E2E suite (~17 min)
 make test-e2e-browsers  # Cross-browser Playwright subset
+make test-e2e-webgpu    # Playwright suite on native WebGPU (needs a real GPU adapter)
 make test-e2e-mobile  # Mobile/touch Playwright suite used by PR CI
 make test-e2e-smoke  # E2E smoke subset
 make test-e2e-smoke-strict  # Smoke subset with strict console handling
@@ -506,8 +517,12 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 
 # Tiling: `--tiling auto` (default) picks none/uniform/content automatically
 # (none if the volume fits one tile — a total voxel budget, so small/medium
-# stacks stay whole and avoid tile seams; content if a density is supplied;
-# else uniform). A tiled fit (`--tiling uniform` or `--tiling content`) emits a
+# stacks stay whole and avoid tile seams: 64 Mvoxel on the CPU, sized from the
+# GPU's free memory up to 256 Mvoxel on CUDA/MPS — so the choice is
+# MACHINE-DEPENDENT — where a whole fit was also ~2x faster than uniform tiles
+# at equal --seeds on a GB10; `--recipe` / `-j` > 1 keep a volume over 64 Mvoxel
+# tiled; content if a density is supplied; else uniform). Uniform tiles are Hann-blended: seamless under additive, but
+# `max` blending shows a dark seam cross (convert warns; fit --tiling none). A tiled fit (`--tiling uniform` or `--tiling content`) emits a
 # `kind=partition` by default (one part per tile/box, for viewer frustum
 # culling); pass `--flat` for a single flat leaf. Whole-volume fits
 # (`--tiling none`/small auto) stay a single leaf.
@@ -670,6 +685,11 @@ luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --center
 # Appearance is baked at convert time: --colormap (builtin/matplotlib/colorcet,
 # default gray), --tone-mapping (None/Linear/Reinhard/Cineon/ACES/AgX/Neutral;
 # default = viewer default ACES), --gamma, --intensity, --absorption (volumetric kappa), --layer/--no-layer.
+# Amplitudes stay in the SOURCE'S DATA UNITS (`amplitude_unit`, e.g. "counts above
+# background"); brightness is a separate per-node `display_gain` that auto exposure
+# sets (`--target-brightness`, `--no-auto-exposure`, or an explicit `--display-gain`).
+# On a colormapped node `--intensity I` is a colormap WINDOW ([0, 1/I] of the
+# gained amplitudes), stored restated in data units; the gain is what scales emission.
 # ACES is the right choice for almost every scene (its filmic rolloff keeps
 # bright structure from clipping flat) — prefer it, and set it EXPLICITLY so the
 # compiler's LUT notice (which only fires when nothing was chosen) stays quiet:
@@ -688,7 +708,7 @@ luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --to
 # already 0 ((100, 0, 0) -> (1, 0, 0); (2, 0.5, 0.5) -> (1, 0.5, 0.5) drops
 # saturation 0.75 -> 0.5), SHIFTS hue when channels clip unequally ((2, 1, 0)
 # goes hue 30deg -> 60deg) and flattens everything above 1.0. Bring the scene
-# back into [0, 1] with --intensity/exposure and use `None`, or accept ACES's
+# back into [0, 1] with --display-gain / --target-brightness and use `None`, or accept ACES's
 # filmic rolloff. Decide with an actual render, not from first principles.
 
 # Render gsplats back to a background-relative volume. Partition and nested
@@ -703,7 +723,13 @@ luxar gsplat compare fitted.gsplats.zarr original.npy --output-json metrics.json
 # Sweeps K, identifies the held-out PSNR peak (K*), and reports the noise floor.
 # Uses the manuscript's Noise2Self protocol: 5% donut-median masking; held-out
 # evaluation against the original (pre-mask) values at masked voxels.
-luxar gsplat cal volume.tiff cal.json                            # 10-point sweep, [1K, 512K]
+# Defaults: bounds sized from the foreground voxel count (k_max = fg voxels / 2,
+# <= 512K), early stop after 2 points with no > 0.1 dB gain (or 1 point >= 0.2 dB
+# below the best), one extension below a
+# bottom-edge K*, K* on the FOREGROUND held-out curve; cal.json rewritten after every
+# point (Ctrl-C keeps them). Opt out: explicit bounds / --no-early-stop /
+# --no-extend-below / --k-star-metric psnr_minmax.
+luxar gsplat cal volume.tiff cal.json                            # 10 points, bounds from the foreground
 luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000  # Faster: 5-point sweep
 luxar gsplat cal volume.zarr cal.json --k-grid '1000,4000,16000,64000,256000'  # Explicit
 luxar gsplat cal volume.tiff cal.json --pdf cal_report.pdf       # Multi-page PDF report
@@ -717,12 +743,16 @@ luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomia
 luxar gsplat cal volume.zarr cal.json --fit-exponent --exponent-scales 128,192,256
 # `cal` applies the SAME `--floor` (default auto) as `fit`, subtracting the floor
 # ONCE up front so K* is measured on floor-suppressed data (matching how you fit).
-# Pass `--floor none` to reproduce the legacy hard-min manuscript numbers.
-luxar gsplat cal volume.tiff cal.json --floor none               # legacy (no floor)
+# The legacy hard-min manuscript numbers need the manuscript sweep too:
+luxar gsplat cal volume.tiff cal.json --floor none --k-star-metric psnr_minmax \
+    --k-min 1000 --k-max 512000 --no-early-stop --no-extend-below  # legacy
 # Output: K* + curve type {peak | plateau | signal_limited | low_k_optimal} + noise-floor σ̂ + PSNR ceiling.
 # A K* on the smallest/largest grid point, or a curve moving < 1 dB over the whole grid,
 # prints a ⚠ (also under --quiet) and lands in cal.json `held_out_peak.warnings`:
 # the sweep did not bracket the optimum, so extend --k-min / --k-max / --k-grid.
+# K* is a SEEDING budget: cal prints what `fit --seeds K*` will store after the
+# default cull. A --region/--auto-region K* is a crop budget: cal also prints a
+# whole-volume --seeds (cal.json `whole_volume_seeds`).
 # Then re-run fit at the recommended K: luxar gsplat fit volume.zarr out.zarr --seeds <K*>
 
 # Canonical end-to-end pipeline: cal → fit (at K*) → lod (--recipe flat|stream|tiles|overview|adaptive|levels)
@@ -983,7 +1013,7 @@ luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --parts 4          
 luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --max-elements 100000   # per-part cap
 luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --parts 4 --rule sah    # median|midpoint|sah
 
-# Merge multiple datasets. A partition must be `flatten`ed first.
+# Merge multiple datasets. A partition input is flattened automatically first.
 luxar gsplat merge a.gsplats.zarr b.gsplats.zarr -o merged.gsplats.zarr
 luxar gsplat merge t0.zarr t1.zarr -o 4d.zarr --as-dimension --values 0,1
 luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00ff00"
@@ -1624,9 +1654,10 @@ While iterating, use the fast loop — it deselects `slow`, runs pytest under
 xdist and skips coverage:
 
 ```bash
-make test-fast                                                  # whole suite, ~6-7 min
-make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'  # scoped, ~35 s
+make test-fast                                                  # Python half alone ~22.5 min
+make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'  # scoped, Python only
 make test-fast PYTEST_ARGS='-k colormap'
+make test-fast TS_ARGS='src/rendering'                          # scoped, vitest only
 ```
 
 Scope it if you want a real edit-run-edit loop: with `slow` deselected the

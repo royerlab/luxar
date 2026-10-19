@@ -61,7 +61,7 @@ describe('SceneManager setupContextLossHandling — WebGPU device.lost observer'
     // state setupContextLossHandling() reads, then invokes it via
     // bracket access (the method is private).
     const sm = new SceneManager();
-    const lostInfo = { reason: 'destroyed' as const, message: 'synthetic test loss' };
+    const lostInfo = { reason: 'unknown' as const, message: 'synthetic test loss' };
     const fakeRenderer = {
       backend: {
         device: {
@@ -89,7 +89,7 @@ describe('SceneManager setupContextLossHandling — WebGPU device.lost observer'
     expect(listener).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'webgpu-device-lost',
-        reason: 'destroyed',
+        reason: 'unknown',
         message: 'synthetic test loss',
       })
     );
@@ -111,11 +111,24 @@ describe('SceneManager setupContextLossHandling — WebGPU device.lost observer'
     await Promise.resolve();
 
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener.mock.calls[0][0]).toMatchObject({
-      type: 'webgpu-device-lost',
-      reason: undefined,
-      message: undefined,
-    });
+    expect(listener.mock.calls[0][0]).toMatchObject({ type: 'webgpu-device-lost' });
+    expect(listener.mock.calls[0][0].reason).toBeUndefined();
+    expect(listener.mock.calls[0][0].message).toBeUndefined();
+  });
+
+  it('ignores an explicitly destroyed device', async () => {
+    const sm = new SceneManager();
+    (sm as unknown as { renderer: unknown }).renderer = {
+      backend: { device: { lost: Promise.resolve({ reason: 'destroyed' }) } },
+    };
+    (sm as unknown as { capabilities: unknown }).capabilities = { apiSurface: 'webgpu' };
+    const listener = vi.fn();
+    sm.addEventListener('webgpu-device-lost', listener);
+    (sm as unknown as { setupContextLossHandling(): void }).setupContextLossHandling();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(listener).not.toHaveBeenCalled();
+    expect(sm.isGpuContextLost()).toBe(false);
   });
 
   it('is a no-op when renderer.backend.device is absent (build without device-loss reporting)', async () => {
