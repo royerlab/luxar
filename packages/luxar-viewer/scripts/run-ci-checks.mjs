@@ -70,9 +70,21 @@ function signalFromStatus(status, check) {
 
 function runPnpmCheck(check) {
   console.log(`\n=== pnpm run ${check} ===\n`);
-  const result = spawnSync('pnpm', ['run', check], { stdio: 'inherit' });
+  const result = spawnSync('pnpm', ['run', check], {
+    stdio: 'inherit',
+    env: checkEnvironment(check, process.env),
+  });
   if (result.error) console.error(`Failed to run ${check}: ${result.error.message}`);
   return { status: result.status ?? 1, signal: result.signal };
+}
+
+/** Give ESLint enough heap without raising other checks' limits. */
+export function checkEnvironment(check, env) {
+  if (check !== 'lint') return env;
+  return {
+    ...env,
+    NODE_OPTIONS: [env.NODE_OPTIONS, '--max-old-space-size=4096'].filter(Boolean).join(' '),
+  };
 }
 
 /** Report an aggregated result and return whether every check passed. */
