@@ -21,13 +21,13 @@ from typer.testing import CliRunner
 from luxar._zarr_compat import consolidate as zc_consolidate
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar.cli import app
-from luxar.cli.gsplat_ops.scene_orientation import (
-    parse_dim_order,
-    resolve_convert_orientation,
-)
 from luxar.cli.tests._testing import normalized_cli_output
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.save_gsplats import fit_axis_dimension_metadata
+from luxar.gsplats.scene_orientation import (
+    parse_dim_order,
+    resolve_convert_orientation,
+)
 from luxar.io._compiler.gsplat_tree import read_gsplat_node
 
 # Column order is (z, y, x): z spans 0..4, y 0..20, x 0..100, so a positional

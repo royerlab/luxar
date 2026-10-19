@@ -46,12 +46,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, 
 import numpy as np
 
 from luxar.gsplats.amplitude_reference import automatic_factor, sample_reference
-from luxar.gsplats.exposure_attrs import (
-    NORMALIZATION_MODE_ATTR,
-    PROJECTED_SUM_AXIS_ATTR,
-    PROJECTED_SUM_P999_ATTR,
-    PROJECTED_SUM_TARGET_ATTR,
-)
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -1053,16 +1047,6 @@ def opening_truncation_radius(node: "GSplatNode") -> float:
     return DEFAULT_TRUNCATION_RADIUS
 
 
-def _check_default_dimensions(ndim: int, dim_order: Optional[Sequence[str]]) -> None:
-    """Only xyz 3-column stores can use the viewer's default dimensions."""
-    names = list(dim_order) if dim_order is not None else ["x", "y", "z"][:ndim]
-    if ndim != 3 or sorted(n.lower() for n in names) != ["x", "y", "z"]:
-        raise ValueError(
-            f"a {ndim}-column store needs dimensions= (the scene's Dimensions) "
-            "to know which columns are displayed"
-        )
-
-
 def auto_exposure_attrs(
     source: Any,
     *,
@@ -1078,103 +1062,88 @@ def auto_exposure_attrs(
 ) -> Dict[str, Any]:
     """``luxar gsplat convert``'s auto exposure, as kwargs for the Python adders.
 
-    The Python adders normalise each splat (p99.9 splat amplitude → 1.0) but,
-    unlike ``gsplat convert``, do not dim for how many splats SUM along a ray,
-    so a dense fit under ``additive`` blending opens as a saturated white blob.
-    This runs convert's prediction (:func:`plan_projected_exposure`) on
-    ``source`` and returns ``normalize_amplitudes=False`` plus the
-    ``display_gain`` and unit labels convert would stamp, ready to splat into
-    ``add_gsplats_from_file`` / ``add_gsplats_from_data``. Pass the same
-    ``dim_order``, ``colormap``, ``opacity`` and ``blending_mode`` you pass the
-    adder, and the scene's ``dimensions`` / ``camera`` / ``tone_mapping`` when
-    they are not the defaults (``Dimensions.default_3d()``, the viewer's
-    default view, ACES).
+    Returns ``normalize_amplitudes=False`` plus the ``display_gain``, unit labels
+    and provenance attrs convert would stamp, computed by convert's own
+    resolver (:func:`luxar.gsplats.scene_exposure.resolve_convert_exposure`), so
+    the two cannot disagree. ``add_gsplats_from_file`` already applies this by
+    default to a fitted store; call it for a scene you lay out yourself.
 
-    Pass the ``.gsplats.zarr`` PATH. It works for every store shape (a tiled
-    ``kind=partition`` fit included) and reads the store's root stats, which
-    decide the unit labels (``counts above background`` needs the recorded
-    ``source_dtype``). An in-memory :class:`GSplatData` or
-    :class:`~luxar.gsplats.tree.GSplatNode` gives the same gain, but carries
-    less (a node none, a ``GSplatData`` no ``source_dtype``), so its labels
-    fall back to ``a.u.`` / ``data units`` unless ``stats=`` supplies the root
-    stats (``load_gsplat_node(path, include_stats=True)``).
+    The layout the exposure is predicted for:
 
-    The gain only ever DIMS below per-splat normalisation. Each call exposes one
-    node on its own: in a multichannel scene every channel lands at the target,
-    and where channels overlap their colours add. Under a non-summing blending
-    mode (``max``, ``volumetric``, ...) the gain is the per-splat normalisation
-    alone, as in convert, which is also the fallback (with a warning) when the
-    opening view cannot be predicted, e.g. a hidden scene dimension with no
-    center column.
+    * ``dimensions=None`` (default): convert's own scene for the store, from
+      :func:`luxar.gsplats.scene_orientation.resolve_convert_orientation`
+      (the store's axis names, the y-down XY camera; a partition keeps column
+      order). ``dim_order`` then NAMES the columns as ``--dim-order`` does and
+      ``camera`` replaces convert's opening camera. Any column count works.
+    * ``dimensions=`` given: that scene, with the columns mapped by ``dim_order``
+      and the opening view ``camera`` (``None`` = the viewer default).
+
+    Pass the ``.gsplats.zarr`` PATH: it works for every store shape and reads
+    the root stats that decide the unit labels. An in-memory
+    :class:`GSplatData` or :class:`~luxar.gsplats.tree.GSplatNode` gives the
+    same gain, but its labels fall back to ``a.u.`` / ``data units`` unless
+    ``stats=`` supplies the root stats.
+
+    The gain only ever DIMS below per-splat normalisation, one node at a time.
+    Under a non-summing blending mode it is the per-splat normalisation alone,
+    which is also the fallback (with a warning) when the opening view cannot be
+    predicted, e.g. a hidden scene dimension with no center column.
 
     Raises:
-        ValueError: A store with other than three ``x``/``y``/``z`` columns
-            and no ``dimensions=`` (which columns are displayed is unknown).
-
-    Example:
-        >>> from luxar.gsplats.exposure import auto_exposure_attrs
-        >>> for name, path, cmap in [("nuclei", nuc, "bop_blue"), ...]:
-        ...     scene.add_gsplats_from_file(
-        ...         name, path, dim_order=["z", "y", "x"], colormap=cmap,
-        ...         blending_mode="additive",
-        ...         **auto_exposure_attrs(path, dim_order=["z", "y", "x"],
-        ...                               colormap=cmap),
-        ...     )
+        ValueError: A malformed ``dim_order``.
     """
+    from dataclasses import replace
+
+    from luxar.gsplats.scene_exposure import resolve_convert_exposure
+    from luxar.gsplats.scene_orientation import ConvertOrientation
+
     node, source_stats = _exposure_source(source)
     if stats is None:
         stats = source_stats
-    centers, chol, amps, colors = collect_default_splats(node)
-    per_splat = automatic_factor(sample_reference(amps)) or 1.0
-    attrs: Dict[str, Any] = {"normalize_amplitudes": False}
-
-    def per_splat_only() -> Dict[str, Any]:
-        attrs.update(data_unit_display_attrs(stats, gain=per_splat))
-        attrs[NORMALIZATION_MODE_ATTR] = "per_splat"
-        return attrs
-
-    if blending_mode not in SUMMING_BLENDING_MODES or centers.shape[0] == 0:
-        return per_splat_only()
     if dimensions is None:
-        _check_default_dimensions(centers.shape[1], dim_order)
-    if target is None:
-        target = default_target_brightness(tone_mapping)
-    try:
-        columns, axis_col, axis_name = opening_view_columns(
-            dimensions, dim_order, camera
+        orientation = _store_orientation(node, stats, dim_order)
+        if camera is not None:
+            orientation = replace(orientation, camera=camera)
+    else:
+        orientation = ConvertOrientation(
+            dimensions, list(dim_order) if dim_order else None, camera, ""
         )
-        plan = plan_projected_exposure(
-            centers,
-            chol,
-            amps * per_splat,
-            colors,
-            view_axis=axis_col,
-            display_dims=columns,
-            hidden=opening_hidden_axes(dimensions, centers, dim_order)
-            if dimensions is not None
-            else [],
-            colormap=colormap,
-            opacity=opacity,
-            data_range=stamped_amplitude_window(node, per_splat),
-            target=target,
-            trunc=opening_truncation_radius(node),
-        )
-    except ValueError as exc:
+    exposure = resolve_convert_exposure(
+        node,
+        orientation,
+        auto_exposure=True,
+        target=target,
+        scale_intensity=None,
+        colormap=colormap,
+        opacity=opacity,
+        blending_mode=blending_mode,
+        tone_mapping=tone_mapping,
+        stats=stats,
+    )
+    if exposure.line and exposure.line.startswith("Exposure: could not predict"):
         import warnings
 
-        warnings.warn(
-            f"auto exposure could not predict the opening view ({exc}); using "
-            "per-splat normalisation",
-            stacklevel=2,
-        )
-        return per_splat_only()
-    attrs.update(data_unit_display_attrs(stats, gain=per_splat * plan.factor))
-    attrs[NORMALIZATION_MODE_ATTR] = "projected"
-    attrs[PROJECTED_SUM_P999_ATTR] = float(plan.predicted_after)
-    attrs[PROJECTED_SUM_TARGET_ATTR] = float(target)
-    if axis_name is not None:
-        attrs[PROJECTED_SUM_AXIS_ATTR] = axis_name
-    return attrs
+        warnings.warn(exposure.line, stacklevel=2)
+    return {"normalize_amplitudes": exposure.normalize, **exposure.attrs}
+
+
+def _store_orientation(
+    node: "GSplatNode",
+    stats: Mapping[str, Any],
+    dim_order: Optional[Sequence[str]],
+) -> Any:
+    """Convert's orientation for ``node`` (a matrix-shaped tree is remapped)."""
+    from luxar.gsplats.scene_defaults import source_extent
+    from luxar.gsplats.scene_orientation import resolve_convert_orientation
+
+    extent, remap = source_extent(node, stats)
+    return resolve_convert_orientation(
+        extent,
+        (node.meta or {}).get("dimension_metadata"),
+        dim_order=",".join(dim_order) if dim_order else None,
+        fitting_info=stats,
+        remap=remap,
+    )
 
 
 def _exposure_source(source: Any) -> Tuple["GSplatNode", Mapping[str, Any]]:

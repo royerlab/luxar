@@ -698,6 +698,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                     scene.add_gsplats_from_file(
                         name=ch["name"],
                         path=str(path),
+                        fitted_defaults=False,
                         opacity=ch.get("opacity", 1.0),
                         # Cross-layer draw order, stated rather than inferred
                         # from bounding-sphere radii (see CHANNELS above). Kept

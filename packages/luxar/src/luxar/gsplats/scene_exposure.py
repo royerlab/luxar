@@ -30,7 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 
-from ...core.group.gsplats_pipeline.amplitude_norm import (
+from ..core.group.gsplats_pipeline.amplitude_norm import (
     NORMALIZATION_MODE_ATTR,
     PROJECTED_SUM_AXIS_ATTR,
     PROJECTED_SUM_P999_ATTR,
@@ -38,18 +38,19 @@ from ...core.group.gsplats_pipeline.amplitude_norm import (
     NormalizeSpec,
     resolve_factor,
 )
-from ...gsplats.amplitude_reference import sample_reference as _sample_reference
+from .amplitude_reference import sample_reference as _sample_reference
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from ...gsplats.exposure import ExposurePlan, HiddenAxis
-    from ...gsplats.tree import GSplatNode
+    from .exposure import ExposurePlan, HiddenAxis
     from .scene_orientation import ConvertOrientation
+    from .tree import GSplatNode
 
 __all__ = [
     "ConvertExposure",
     "predict_volumetric_ray_mass",
     "resolve_convert_exposure",
     "volumetric_depth_line",
+    "volumetric_gain_line",
 ]
 
 
@@ -76,7 +77,7 @@ def opening_view_columns(
     orientation: "ConvertOrientation",
 ) -> Tuple[List[int], Optional[int], Optional[str]]:
     """:func:`luxar.gsplats.exposure.opening_view_columns` for convert's layout."""
-    from ...gsplats.exposure import opening_view_columns as _columns
+    from .exposure import opening_view_columns as _columns
 
     return _columns(orientation.dimensions, orientation.dim_order, orientation.camera)
 
@@ -85,7 +86,7 @@ def opening_hidden_axes(
     orientation: "ConvertOrientation", centers: Any
 ) -> List["HiddenAxis"]:
     """:func:`luxar.gsplats.exposure.opening_hidden_axes` for convert's layout."""
-    from ...gsplats.exposure import opening_hidden_axes as _hidden
+    from .exposure import opening_hidden_axes as _hidden
 
     return _hidden(orientation.dimensions, centers, orientation.dim_order)
 
@@ -95,7 +96,7 @@ def _gain_attrs(
 ) -> Dict[str, Any]:
     """The public :func:`~luxar.gsplats.exposure.data_unit_display_attrs` set
     (gain + unit labels — what a Python caller gets too) + the provenance mode."""
-    from ...gsplats.exposure import data_unit_display_attrs
+    from .exposure import data_unit_display_attrs
 
     return {**data_unit_display_attrs(stats, gain=gain), NORMALIZATION_MODE_ATTR: mode}
 
@@ -199,7 +200,7 @@ def resolve_convert_exposure(
     (:func:`~luxar.gsplats.exposure.default_target_brightness`). ``stats`` is the
     store's root stats, which decide the unit labels.
     """
-    from ...gsplats.exposure import (
+    from .exposure import (
         SUMMING_BLENDING_MODES,
         collect_default_splats,
         default_target_brightness,
@@ -288,7 +289,7 @@ def predict_volumetric_ray_mass(
     """
     import numpy as np
 
-    from ...gsplats.exposure import (
+    from .exposure import (
         collect_default_splats,
         opening_truncation_radius,
         plan_projected_exposure,
@@ -325,4 +326,19 @@ def volumetric_depth_line(ray_mass: float, absorption: float) -> str:
         f"{ray_mass:.3g}, so --absorption {absorption:g} gives optical depth "
         f"~{tau:.3g} there ({100 * math.exp(-tau):.0f}% transmitted); "
         f"--absorption {1.0 / ray_mass:.2g} would give ~1 (37%)"
+    )
+
+
+def volumetric_gain_line(gain: float, ray_mass: float) -> str:
+    """Suggest additive auto exposure's ``--display-gain`` for a volumetric scene.
+
+    ``ray_mass`` is the brightest rays' density at ``gain``; the kappa named
+    gives about one optical depth there.
+    """
+    return (
+        f"Volumetric: no auto exposure, so emission keeps per-splat "
+        f"normalization and a small --absorption opens saturated. Additive auto "
+        f"exposure would use --display-gain {gain:.2g} (an absolute gain, not a "
+        f"multiplier); with it the brightest rays carry density {ray_mass:.3g} "
+        f"and --absorption {1.0 / ray_mass:.2g} gives ~1 optical depth"
     )

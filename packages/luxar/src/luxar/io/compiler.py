@@ -1000,6 +1000,24 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             self._scene._has_labels, self._scene._has_image_labels = scene_label_state
 
     @contextmanager
+    def default_gsplat_amplitude_bits(self, bits: Literal[8, 16]) -> Iterator[None]:
+        """Write GSplats with ``bits`` inside the block, unless a tier was set.
+
+        ``add_gsplats_from_file``'s fitted default uses it to match
+        ``gsplat convert``, which configures the tier from the source dtype. A
+        ``gsplat_amplitude_bits`` given to the compiler always wins. Not
+        thread-safe: it swaps compiler state for the duration of the block.
+        """
+        if self._gsplat_amplitude_bits is not None:
+            yield
+            return
+        self._gsplat_amplitude_bits = bits
+        try:
+            yield
+        finally:
+            self._gsplat_amplitude_bits = None
+
+    @contextmanager
     def transaction(self, path: NodePath) -> Iterator[None]:
         """Roll back writes below ``path`` while preserving the original error."""
         if self._transaction_depth:

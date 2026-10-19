@@ -1045,11 +1045,22 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     print(f"Loaded {gsplats.n_splats} splats")
 ```
 
-> **Exposure.** The adders normalise each splat (p99.9 amplitude → 1.0) but do
+> **The scene `gsplat convert` builds.** For a FITTED store (a root
+> `dimension_metadata` or fitting provenance), `add_gsplats_from_file` applies
+> convert's defaults itself (`fitted_defaults=None`): auto exposure,
+> `layer=True`, the 8-bit tier for a uint8 source, and on a fresh
+> `default_3d()` scene the dims, `dim_order` and y-down XY camera, all resolved by
+> `luxar.gsplats.scene_defaults.resolve_fitted_scene`, the function convert
+> uses. `fitted_scene_defaults(path, colormap=..., tone_mapping=...)` returns the
+> same scene as values (`dimensions`, `viewer_config`, `amplitude_bits`,
+> `attrs`) for a scene laid out by hand.
+>
+> **Exposure.** Outside that default the adders normalise each splat (p99.9 amplitude → 1.0) but do
 > not dim for how many splats sum along a ray, so a dense fit under `additive`
 > blending opens white — `luxar gsplat convert` auto-exposes, the adders do
 > not. `luxar.gsplats.exposure.auto_exposure_attrs(path, dim_order=...,
-> colormap=...)` returns convert's exposure as adder kwargs
+> colormap=...)` returns convert's exposure (computed by convert's own resolver;
+> pass `dimensions=` / `camera=` for your scene, or none for convert's layout) as adder kwargs
 > (`normalize_amplitudes=False`, `display_gain`, unit labels):
 > `scene.add_gsplats_from_file("nuclei", path, dim_order=zyx, colormap="bop_blue",
 > **auto_exposure_attrs(path, dim_order=zyx, colormap="bop_blue"))`. Call it per
@@ -1339,6 +1350,14 @@ gsplats/
 │                                  #   an add_gsplats_* call passes with normalize_amplitudes=False
 │                                  #   to keep data units, as convert does) + auto_exposure_attrs
 │                                  #   (convert's whole auto exposure, as add_gsplats_* kwargs)
+├── scene_orientation.py           # resolve_convert_orientation: names fitted center columns
+│                                  #   (--dim-order > stored dimension_metadata > array order),
+│                                  #   maps them onto x, y, z scene dims, y-down XY camera
+├── scene_exposure.py              # resolve_convert_exposure: convert's display_gain (auto
+│                                  #   exposure / per-splat / manual) + its narration lines
+├── scene_defaults.py              # fitted_scene_defaults / resolve_fitted_scene: the scene
+│                                  #   `gsplat convert` builds (dimensions, viewer_config, adder
+│                                  #   kwargs) for Python callers; convert resolves through it
 │
 ├── lod/                            # Level-of-Detail post-processing (additive + substitutive)
 │   ├── additive.py                 # compute_additive_order, make_additive_lod

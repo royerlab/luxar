@@ -445,6 +445,16 @@ with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
     print(f"Loaded {gsplats.n_elements} splats")
 ```
 
+For a FITTED store (axis names or fitting provenance recorded) the call above
+applies what `luxar gsplat convert` does: auto exposure with the amplitudes in
+data units, `layer=True`, the 8-bit tier for a uint8 source, and, on a fresh
+`default_3d()` scene, convert's dimensions, `dim_order` and the y-down XY camera
+(any other scene keeps its layout and the positional column mapping).
+Explicit arguments win; `fitted_defaults=False` gives the plain adder. See
+`gsplats_pipeline/fitted_defaults.py` and
+`luxar.gsplats.scene_defaults.fitted_scene_defaults(path)` (the same scene as
+values, for a scene you lay out yourself).
+
 These methods automatically handle:
 - Extracting arrays from GSplatData objects
 - Loading data from .gsplats.zarr archives

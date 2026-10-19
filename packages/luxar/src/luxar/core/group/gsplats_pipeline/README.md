@@ -31,6 +31,9 @@ gsplats_pipeline/
 ├── amplitude_norm.py  # one insertion-time amplitude scale per structure
 ├── from_data.py       # add_gsplats_from_data_impl — top-level dispatch
 ├── from_io.py         # add_gsplats_from_file_impl / add_gsplats_from_volume_impl
+├── fitted_defaults.py # add_gsplats_from_file's fitted-store default: convert's
+│                      #   dim_order / exposure / layer / amplitude tier (+ scene
+│                      #   dims and camera on a fresh root scene); fitted_defaults=False opts out
 └── lod_dispatch.py    # add_gsplats_as_lod_group_impl / add_gsplats_multi_lod_impl
 ```
 

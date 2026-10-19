@@ -777,7 +777,13 @@ luxar gsplat cal volume.tiff cal.json --floor none --k-star-metric psnr_minmax \
 # partitioned→tiles, multiscale→overview, mosaic→adaptive. Old names error with
 # a pointer; stored batch manifests translate silently.
 # Output is a standalone .gsplats.zarr (loadable with `luxar gsplat info`);
-# graft it into a scene from Python via `add_gsplats_from_file` or `gsplat convert`.
+# graft it into a scene with `gsplat convert`, or from Python with a bare
+# `scene.add_gsplats_from_file(name, path)`: on a FITTED store it applies convert's
+# defaults (auto exposure in data units, layer, 8-bit tier for uint8, and on a fresh
+# default_3d scene the dims + dim_order + y-down XY camera), matching
+# `convert --no-center`; `fitted_defaults=False` = the plain adder, which opens a
+# fit edge-on and saturated. `luxar.gsplats.scene_defaults.fitted_scene_defaults`
+# returns the same scene as values for a scene you lay out yourself.
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe flat
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream \

@@ -616,6 +616,7 @@ Controls:
                     scene.add_gsplats_from_file(
                         name=f"gsplats_{ch_name.lower().replace(' ', '_').replace('(', '').replace(')', '')}",
                         path=str(cache_path),
+                        fitted_defaults=False,
                         # No `dim_order`: grafting a multi-part subtree refuses
                         # it. The fit already ran on the transposed plane, so
                         # the stored columns are the scene's (x, y) order.

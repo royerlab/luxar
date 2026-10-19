@@ -84,8 +84,11 @@ scene.add_lines(
 # raw arrays — cholesky_factors packed lower-triangular; 3D=(N,6) [L00,L10,L11,L20,L21,L22]
 scene.add_gsplats(name, centers, amplitudes, cholesky_factors, colors=None, **attrs)
 
-# from a fitted .gsplats.zarr file (auto-lowers multi-level LOD to a kind=lod group)
-scene.add_gsplats_from_file(name, path, **attrs)
+# from a fitted .gsplats.zarr file (auto-lowers multi-level LOD to a kind=lod group);
+# a FITTED store gets gsplat convert's defaults (dim_order, auto exposure, layer,
+# and dims + y-down camera on a fresh default_3d scene); fitted_defaults=False
+# gives the plain adder
+scene.add_gsplats_from_file(name, path, fitted_defaults=None, **attrs)
 
 # from an in-memory GSplatData (output of fit_gaussian_splats / make_additive_lod)
 scene.add_gsplats_from_data(name, result, **attrs)

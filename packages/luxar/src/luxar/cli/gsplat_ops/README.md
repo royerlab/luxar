@@ -18,9 +18,8 @@ importers name the owning module directly, never a re-export root.
 ### Package root
 
 - `scene_commands.py` — Typer command signatures + registration for convert/migrate-format/reencode
-- `scene_build.py` — `build_gsplat_scene` / `SceneBuildOptions`: the one scene-building path shared by `convert` and `view` (`view` writes it to a temp dir; `--raw` skips it)
-- `scene_exposure.py` — `resolve_convert_exposure`: the `display_gain` convert stamps (amplitudes stay in data units) — auto exposure (projected-sum prediction from `luxar.gsplats.exposure`, side views capped at 4x the target), `--display-gain` (alias `--scale-intensity`) as an exact manual gain, the `amplitude_unit` / `amplitude_offset` labels from the store's fit basis (`amplitude_unit_attrs`), and the Exposure narration line. The opening-view geometry (`opening_view_columns` / `opening_hidden_axes`) lives in `luxar.gsplats.exposure`, shared with the Python `auto_exposure_attrs`
-- `scene_orientation.py` — `resolve_convert_orientation`: names the fitted center columns (stored `dimension_metadata` > `--dim-order` > array order), maps them onto x, y, z-ordered scene dims via `dim_order`, and builds convert's image-convention camera (`view_axis` + `up = -y`; the flip is a camera choice, not a mirror)
+- `scene_build.py` — `build_gsplat_scene` / `SceneBuildOptions`: the one scene-building path shared by `convert` and `view` (`view` writes it to a temp dir; `--raw` skips it). Under `--blending-mode volumetric` it also prints the `--display-gain` additive auto exposure would use and the matching `--absorption`
+- Convert's orientation and exposure resolvers live in the library, not here: `luxar.gsplats.scene_orientation`, `luxar.gsplats.scene_exposure`, and `luxar.gsplats.scene_defaults.resolve_fitted_scene`, which `scene_build.py` calls and Python callers reach through `fitted_scene_defaults`, so the CLI and Python scenes cannot drift
 - `inspect_commands.py` — Typer command signatures + registration for inspect commands
 - `compare_ops.py` — `compare` implementation: scoring grid, basis, `--region` crop scoring (`--whole-volume`), foreground, noise ceiling + verdict, report/JSON
 - `interchange_commands.py` — Typer command signatures + registration for `import` / `export`

@@ -60,6 +60,13 @@ skill, then `add_gsplats_from_file` / `add_gsplats_from_volume` here.
 
 ## Fitted volumes: axis order and the first view
 
+For a FITTED store (axis names or fitting provenance recorded), a bare
+`scene.add_gsplats_from_file(name, path)` on a fresh `Dimensions.default_3d()`
+scene already handles everything below, as `luxar gsplat convert --no-center`
+does (`fitted_defaults=False` turns it off; rules in the pipeline skill's
+`references/scene-from-a-fit.md`). The bullets matter for a scene you lay out
+yourself, a non-fitted store, or `fitted_defaults=False`.
+
 Two things trip up nearly everyone who views their own fitted volume:
 
 - **Axis order.** A fit's centre columns follow the ARRAY's axis order — `(z, y, x)`
@@ -89,37 +96,23 @@ Two things trip up nearly everyone who views their own fitted volume:
   session. From Python, set the same thing yourself:
   `ViewerConfig(camera=CameraConfig(up=(0, -1, 0), view_axis="xy"))`.
 
-- **A dense fluorescence volume under `additive` blending saturates to a white blob**,
-  because every splat along a ray adds. Pick the blending for the data:
-  `blending_mode="max"`, or `"volumetric"` with `absorption=` for emission–absorption
-  depth; then set exposure with `opacity` (see "Appearance is authored" below). The
-  modes are `normal`, `additive`, `max`, `opaque`, `luminous`, `volumetric`.
-  `luxar gsplat convert` keeps the amplitudes in source data units and auto-exposes a
-  separate `display_gain` (dimmed, never brightened, so the opening view is not
-  saturated; `--display-gain`, `--target-brightness`, `--no-auto-exposure`).
-  **The Python adders do NOT auto-expose** (they normalise each splat, not the sum
-  along a ray), so a multichannel scene built with `add_gsplats_from_file` per channel
-  opens white. Get convert's exposure per node with `auto_exposure_attrs`, passing the
-  same `dim_order` / `colormap` (and your `camera` / `tone_mapping` if not defaults):
-
-  ```python
-  from luxar import CameraConfig, Dimensions, LuxarZarrCompiler, ViewerConfig
-  from luxar.gsplats.exposure import auto_exposure_attrs
-  camera = CameraConfig(up=(0, -1, 0), view_axis="xy")  # also handed to the scene
-  zyx = ["z", "y", "x"]
-  with LuxarZarrCompiler("cells.luxar.zarr") as compiler:
-      scene = compiler.create_scene(dimensions=Dimensions.default_3d(),
-                                    viewer_config=ViewerConfig(camera=camera))
-      for name, path, cmap in [("membrane", "mem.gsplats.zarr", "bop_orange"),
-                               ("nuclei", "nuc.gsplats.zarr", "bop_blue")]:
-          scene.add_gsplats_from_file(
-              name, path, dim_order=zyx, colormap=cmap, layer=True,
-              blending_mode="additive",
-              **auto_exposure_attrs(path, dim_order=zyx, colormap=cmap, camera=camera))
-  ```
-
-  Pass the store PATH (it reads the unit labels' stats and takes tiled fits). Each
-  channel is exposed on its own; where channels overlap their colours add.
+- **A dense fluorescence volume under `additive` blending saturates to a white
+  blob**, because every splat along a ray adds. Pick the blending for the data:
+  `blending_mode="max"`, or `"volumetric"` with `absorption=` for
+  emission–absorption depth; then set exposure with `opacity`
+  (see "Appearance is authored" below). The modes are `normal`, `additive`, `max`,
+  `opaque`, `luminous`, `volumetric`. `luxar gsplat convert` keeps the
+  amplitudes in source data units and auto-exposes a separate `display_gain`
+  (dimmed, never brightened, so the opening view is not saturated;
+  `--display-gain`, `--target-brightness`, `--no-auto-exposure`).
+  Outside the fitted default the Python adders do NOT auto-expose (they
+  normalise each splat, not the sum along a ray), so a multichannel scene opens
+  white. For a scene you laid out yourself use
+  `luxar.gsplats.exposure.auto_exposure_attrs(path, dimensions=scene.dimensions,
+  dim_order=..., camera=..., colormap=...)` (convert's resolver; without
+  `dimensions=` it predicts for convert's own layout), or
+  `luxar.gsplats.scene_defaults.fitted_scene_defaults(path)` for the whole scene.
+  Each channel is exposed on its own; where channels overlap their colours add.
 
   **`max` is not a MIP.** It keeps the brightest SINGLE splat per ray, and a structure
   many splats share (any splat fit) reads dimmer than its voxel MIP. On a UNIFORM TILED
