@@ -48,27 +48,24 @@ layout( std140 ) uniform render {
 
 layout( std140 ) uniform object {
 	float nodeUniform1;
-	mat3 nodeUniform3;
+	uint nodeUniform3;
 	uint nodeUniform4;
-	mat3 nodeUniform5;
-	uint nodeUniform6;
-	mat3 nodeUniform7;
-	uint nodeUniform8;
-	float nodeUniform9;
-	mat4 nodeUniform11;
-	vec2 nodeUniform13;
+	uint nodeUniform5;
+	float nodeUniform6;
+	mat4 nodeUniform8;
+	vec2 nodeUniform10;
+	float nodeUniform11;
+	float nodeUniform12;
+	float nodeUniform13;
 	float nodeUniform14;
 	float nodeUniform15;
 	float nodeUniform16;
 	float nodeUniform17;
 	float nodeUniform18;
 	float nodeUniform19;
-	float nodeUniform20;
-	float nodeUniform21;
-	float nodeUniform22;
-	float nodeUniform26;
-	float nodeUniform27;
-	float nodeUniform28;
+	float nodeUniform23;
+	float nodeUniform24;
+	float nodeUniform25;
 };
 
 
@@ -110,9 +107,9 @@ void main() {
 	nodeVar45 = positionView.z;
 	nodeVar46 = dot( ( nodeVarying0 - vec2( 0.5 ) ), ( nodeVarying0 - vec2( 0.5 ) ) );
 
-	if ( ( int( nodeUniform19 ) == 1 ) ) {
+	if ( ( int( nodeUniform16 ) == 1 ) ) {
 
-		nodeVar47 = mix( 1.0, ( - log( ( 1.0 - min( nodeVarying5, 0.998046875 ) ) ) ), nodeUniform20 );
+		nodeVar47 = mix( 1.0, ( - log( ( 1.0 - min( nodeVarying5, 0.998046875 ) ) ) ), nodeUniform17 );
 
 	} else {
 
@@ -120,7 +117,7 @@ void main() {
 
 	}
 
-	nodeVar48 = ( ( ( ( max( ( exp( ( pow( sqrt( ( nodeVar46 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeVarying3 ) * pow( min( ( nodeVarying4 / ( max( nodeUniform18, 1.0 ) * 1.5 ) ), 1.0 ), 2.0 ) ) * ( ( nodeVar47 * nodeUniform21 ) * max( nodeUniform22, 1.0 ) ) );
+	nodeVar48 = ( ( ( ( max( ( exp( ( pow( sqrt( ( nodeVar46 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeVarying3 ) * pow( min( ( nodeVarying4 / ( max( nodeUniform15, 1.0 ) * 1.5 ) ), 1.0 ), 2.0 ) ) * ( ( nodeVar47 * nodeUniform18 ) * max( nodeUniform19, 1.0 ) ) );
 
 	if ( ( cameraProjectionMatrix[ 3 ].w > 0.5 ) ) {
 
@@ -143,7 +140,7 @@ void main() {
 
 	}
 
-	gl_FragDepth = mix( ( 1.0 / ( 1.0 + nodeVar48 ) ), nodeVar49, nodeUniform26 );
+	gl_FragDepth = mix( ( 1.0 / ( 1.0 + nodeVar48 ) ), nodeVar49, nodeUniform23 );
 
 	if ( ( nodeVarying1 <= 0.0 ) ) {
 
@@ -169,7 +166,7 @@ void main() {
 	}
 
 	DiffuseColor = vec4( nodeVarying7, nodeVarying8.x, nodeVar48, nodeVarying8.y );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform28 );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform25 );
 	nodeVar53 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
 	Output = nodeVar53;
 
