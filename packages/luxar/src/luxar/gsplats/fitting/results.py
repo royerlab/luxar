@@ -836,6 +836,7 @@ def finalize_results(
         stats["psnr_db"] = quality["psnr_db"]
         stats["psnr_robust_db"] = quality["psnr_robust_db"]
         stats["ssim"] = quality["ssim"]
+        stats["ssim_robust"] = quality["ssim_robust"]
         # Foreground PSNR is the honest score on sparse volumes, where the
         # global figure is mostly a report on reconstructed emptiness.
         stats["foreground_psnr_db"] = quality["foreground_psnr_db"]
@@ -845,13 +846,15 @@ def finalize_results(
         if config.verbose:
             # Headline = robust peak (reference p99.99 - floor), which one hot
             # pixel cannot move; the classical full-range figure rides along.
+            # SSIM follows the same peak (its constants scale with the range).
             aprint(
                 f"Quality (fitted, before post-fit pruning/cull): "
                 f"PSNR={quality['psnr_robust_db']:.1f} dB robust peak "
                 f"({quality['psnr_db']:.1f} dB full range), foreground PSNR="
                 f"{quality['foreground_psnr_robust_db']:.1f} dB "
                 f"(over {quality['foreground_fraction'] * 100:.2f}% of voxels), "
-                f"SSIM={quality['ssim']:.4f}, MSE={quality['mse']:.2e}"
+                f"SSIM={quality['ssim_robust']:.4f} robust peak "
+                f"({quality['ssim']:.4f} full range), MSE={quality['mse']:.2e}"
             )
     except Exception as exc:  # scoring must never fail a fit
         # Always say so: a store without PSNR is a silent hole in the record

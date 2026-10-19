@@ -126,6 +126,15 @@ def _per_k_metrics(
     """
     numel = rendered.numel()
     full_ssim = float(compute_ssim(rendered, ref, data_range=data_range))
+    # The robust-peak SSIM `fit` / `compare` headline (one hot pixel stretches
+    # the full range, and SSIM's constants with it, towards SSIM = 1).
+    # The two ranges arrive as float32- and float64-derived floats; equal to
+    # float32 precision means the same constants, so skip the redundant pass.
+    full_ssim_robust = (
+        full_ssim
+        if robust_range is None or math.isclose(robust_range, data_range, rel_tol=1e-6)
+        else float(compute_ssim(rendered, ref, data_range=robust_range))
+    )
     err = rendered.sub_(ref).square_()
     total_sse = _sum_float(err)
     held_err = err[held_mask]
@@ -162,6 +171,7 @@ def _per_k_metrics(
         "train_psnr": _psnr_db(train_mse, data_range),
         "full_psnr": full_psnr,
         "full_ssim": full_ssim,
+        "full_ssim_robust": full_ssim_robust,
     }
 
 
@@ -343,6 +353,7 @@ def _assemble(
         held_out_mse=list(curve["held_mse"]),
         full_psnr_db=list(curve["full_psnr"]),
         full_ssim=list(curve["full_ssim"]),
+        full_ssim_robust=list(curve["full_ssim_robust"]),
         held_out_peak=peak,
         noise_floor=parts.noise_floor,
         fit_times_seconds=list(curve["fit_s"]),

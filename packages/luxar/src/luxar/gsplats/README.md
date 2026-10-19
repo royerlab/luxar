@@ -701,7 +701,8 @@ print(f"PSNR: {metrics['psnr_robust_db']:.2f} dB (robust peak; "
       f"full range {metrics['psnr_db']:.2f} dB)")
 print(f"PSNR (foreground): {metrics['foreground_psnr_robust_db']:.2f} dB "
       f"over {metrics['foreground_fraction'] * 100:.2f}% of voxels")
-print(f"SSIM: {metrics['ssim']:.4f}")
+print(f"SSIM: {metrics['ssim_robust']:.4f} (robust peak; "
+      f"full range {metrics['ssim']:.4f})")
 print(f"MSE:  {metrics['mse']:.6e}")
 print(f"Relative L2: {metrics['rel_l2']:.4f}")
 print(f"Max absolute error: {metrics['max_abs_error']:.4f}")
@@ -739,7 +740,7 @@ the result. `foreground_fraction` is reported alongside because a PSNR over
 - `otsu_threshold(target, bins=256, upper=None)` -- Otsu's threshold (`upper` caps the histogram range). Reimplemented rather than delegating to scikit-image (a `demos` extra) so the foreground definition does not depend on which extras are installed; pinned to match `skimage.filters.threshold_otsu` exactly. The min/max run on the input device; the histogram is counted with `bincount` on the CPU over at most 5 M fixed-seed uniform random samples (bin edges still from the full range; random, not strided, because a stride sharing a factor with the fastest axis aliases onto a few columns), because MPS `torch.histc` allocates ~numel x bins x 4 B and fails above ~16 Mvox.
 - `compute_ssim(pred, target, window_size=11, data_range=None)` -- Structural Similarity Index using nD Gaussian-weighted convolution. Supports 2D, 3D, and higher (averages over 3D sub-volumes for >3D).
 - `robust_peak(target, quantile=0.9999)` -- The exact 99.99th-percentile value, streamed (the robust PSNR peak is this minus the target minimum).
-- `compute_quality_metrics(pred, target, data_range=None, ssim_window_size=11, *, foreground_field=None, foreground_threshold=None, robust_quantile=ROBUST_PEAK_QUANTILE)` -- Computes all metrics in one call. Returns a dict with keys: `mse`, `psnr_db` (full range `max - min`), `psnr_robust_db` (the headline: robust peak), `ssim`, `foreground_ssim`, `rel_l2`, `max_abs_error`, `foreground_psnr_db`, `foreground_psnr_robust_db`, `foreground_threshold`, `foreground_fraction`, `data_range`, `robust_data_range`.
+- `compute_quality_metrics(pred, target, data_range=None, ssim_window_size=11, *, foreground_field=None, foreground_threshold=None, robust_quantile=ROBUST_PEAK_QUANTILE)` -- Computes all metrics in one call. Returns a dict with keys: `mse`, `psnr_db` (full range `max - min`), `psnr_robust_db` (the headline: robust peak), `ssim` (full range), `ssim_robust` (headline), `foreground_ssim` (full range), `foreground_ssim_robust` (headline), `rel_l2`, `max_abs_error`, `foreground_psnr_db`, `foreground_psnr_robust_db`, `foreground_threshold`, `foreground_fraction`, `data_range`, `robust_data_range`.
 
 ### Quality Metrics in GSplatData.stats
 
@@ -747,7 +748,7 @@ When fitting completes, quality metrics may be stored in the `stats` dict of the
 
 - `stats['psnr_db']` -- full-range PSNR of the reconstruction vs. original volume (dB)
 - `stats['psnr_robust_db']`, `stats['foreground_psnr_robust_db']` -- the robust-peak (headline) PSNRs
-- `stats['ssim']` -- SSIM of the reconstruction vs. original volume
+- `stats['ssim']`, `stats['ssim_robust']` -- SSIM of the reconstruction vs. original volume on the full range and on the robust peak (the headline: SSIM's constants scale with the range, so a hot pixel inflates the full-range figure)
 - `stats['mse']` -- Mean squared error of the reconstruction
 
 These fields are populated automatically when metrics are computed during or after fitting, enabling easy comparison across fitting runs.

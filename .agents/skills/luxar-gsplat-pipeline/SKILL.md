@@ -143,9 +143,10 @@ luxar gsplat compare fitted.gsplats.zarr original.tiff --output-json metrics.jso
 #   --fg-threshold, --at-fit-resolution, --device (--shape must equal the reference)
 ```
 
-Headline PSNR = robust peak (reference p99.99 − floor; full-range `psnr_db` beside
-it), plus SSIM, foreground SSIM, `mse`, `rel_l2`, `max_abs_error` and the
-**foreground trio**. **Read the foreground number** (smoothed-Otsu mask on the
+Headline PSNR and SSIM = robust peak (reference p99.99 − floor; full-range
+`psnr_db` / `ssim` / `foreground_ssim` beside them), plus foreground SSIM,
+`mse`, `rel_l2`, `max_abs_error` and the **foreground trio**. The noise verdict
+is an estimate, not a pass mark (how to read it is in the reference below). **Read the foreground number** (smoothed-Otsu mask on the
 target), always with `foreground_fraction`. It is not interchangeable with `cal.json`'s
 `held_out_psnr_fg_db`, and neither covers the dim band — details in
 [references/foreground-metrics.md](references/foreground-metrics.md).
@@ -176,6 +177,8 @@ noise a connected-component SIZE filter beat NLM outright (it cannot damage what
 it keeps). Set `--h` / `--denoise-h` explicitly: Noise2Self calibration is defeated
 by very sparse data and answers at the edge of its grid. Measurements and the
 scipy recipe: [references/denoising-before-a-fit.md](references/denoising-before-a-fit.md).
+`fit --denoise` scores its own quality summary against the DENOISED input and
+says so; run `gsplat compare` against the raw volume for the number that counts.
 
 ### Symptom → knob
 

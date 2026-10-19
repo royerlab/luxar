@@ -13,9 +13,10 @@ reconciliations, each of which used to be the user's problem:
   divided back by the stored ``voxel_size`` (or ``--voxel-size``) so they land on
   the reference's voxel grid. ``--at-fit-resolution`` additionally undoes a
   ``--downscale`` fit's rescale and decimates the reference the way the fit did.
-* **Peak.** The headline PSNR uses a robust peak (reference p99.99 minus the
-  floor) that one hot pixel cannot move; the classical full-range figure is
-  reported beside it, labelled.
+* **Peak.** The headline PSNR and SSIM use a robust peak (reference p99.99
+  minus the floor) that one hot pixel cannot move; the classical full-range
+  figures are reported beside them, labelled. (SSIM's constants scale with the
+  range, so a hot-pixel full range pushes it towards 1 for almost any fit.)
 * **Foreground.** Foreground PSNR/SSIM are taken over a smoothed-Otsu mask by
   default, or over ``--mask`` / ``--fg-threshold``.
 * **Region.** A ``--region`` crop fit is scored on the region it fitted when the
@@ -577,17 +578,30 @@ def noise_reference(
 
 
 _UNRELIABLE_VERDICT = (
-    "undetermined: the finest band is not white (voxel-scale structure or "
-    "spatially correlated noise, e.g. a deconvolved, upsampled or "
-    "--at-fit-resolution downscaled reference), so the ceiling is unreliable"
+    "undetermined: the noise estimate failed its scale check (the reference's "
+    "finest-scale band is not white noise: structure at the voxel scale, or "
+    "spatially correlated noise as in a deconvolved, upsampled or "
+    "--at-fit-resolution downscaled reference), so no ceiling is trusted and no "
+    "verdict is given"
+)
+
+#: Appended to the verdicts that read as "close to the best possible". The
+#: estimate takes sigma from the finest in-plane band, so real texture at that
+#: scale (chromatin, fine processes) is counted as noise: sigma reads high, the
+#: ceiling low, and a fit that smoothed that texture away still looks close to it.
+_TEXTURE_CAVEAT = (
+    ". Real texture at the finest scale is counted as noise by this estimate, "
+    "which makes a smoothed fit look closer than it is: confirm on slices"
 )
 
 #: Above the ceiling by more than this the score is ambiguous: the model may be
 #: reproducing noise, or the reference may have sub-voxel structure the scale
 #: check cannot see and the estimate counts as noise. Never a definite call.
 _ABOVE_CEILING_DB = 1.0
-#: Above the ceiling by more than this, the ceiling itself is the likelier error
-#: (sub-voxel structure put sigma 9-20x high in probes), so no verdict at all.
+#: Above the ceiling by more than this, the estimate's own error cannot explain
+#: the gap: either sigma is wrong (sub-voxel structure put it 9-20x high in
+#: probes) or the model fits noise (an over-provisioned fit of a noisy confocal
+#: channel landed 8 dB above). The verdict names both and picks neither.
 _UNDETERMINED_ABOVE_DB = 3.0
 #: Within this many dB below the ceiling, a fit is "at the noise floor": the
 #: model error is at most ~half the noise sigma (MSE = sigma^2 * 10^0.1).
@@ -614,35 +628,44 @@ def model_error_over_noise(gap_db: float) -> Optional[float]:
 
 
 def noise_verdict(gap_db: float, ceiling_db: float) -> str:
-    """One line on where a foreground PSNR sits against the noise ceiling."""
+    """One line on where a foreground PSNR sits against the noise ceiling.
+
+    It states what was measured (the gap to an ESTIMATED ceiling) and what that
+    may mean, never more: the ceiling rests on a noise sigma that fine real
+    structure inflates and that correlated noise deflates.
+    """
     if ceiling_db >= _NOISE_FREE_CEILING_DB:
         return (
             "the reference is nearly noise-free here: noise does not limit this score"
         )
     if gap_db > _UNDETERMINED_ABOVE_DB:
         return (
-            f"undetermined: {gap_db:.1f} dB above the estimated ceiling, more than "
-            "the estimate's error allows, so the reference likely has sub-voxel "
-            "or voxel-scale structure the estimate counts as noise"
+            f"undetermined: {gap_db:.1f} dB above the estimated ceiling (over "
+            f"{_UNDETERMINED_ABOVE_DB:g} dB), so the residual is smaller than the "
+            "estimated noise by more than the estimate's own error explains. Either the model is reproducing noise (more "
+            "splats than the signal needs; `gsplat cal` tests this on held-out "
+            "voxels) or the reference has fine structure the estimate counts as "
+            "noise. Slices tell the two apart"
         )
     if gap_db > _ABOVE_CEILING_DB:
         return (
-            f"above the estimated ceiling ({gap_db:.1f} dB): ambiguous — the "
-            "reference may have sub-voxel or voxel-scale structure the estimate "
-            "counts as noise, or the model may be reproducing noise"
+            f"above the estimated ceiling ({gap_db:.1f} dB): ambiguous. The model "
+            "may be reproducing noise, or the reference may have fine structure "
+            "the estimate counts as noise"
         )
     ratio = model_error_over_noise(gap_db)
     if gap_db >= -_AT_FLOOR_DB:
         size = "below the noise" if ratio is None else f"~{ratio:.2f} x the noise sigma"
         return (
-            f"at the noise floor: the model error is {size}; a better model "
-            f"can gain at most ~{max(0.0, -gap_db):.1f} dB against this noisy "
-            "reference"
+            f"at the noise floor by this estimate: the model error is {size}; a "
+            f"better model could gain at most ~{max(0.0, -gap_db):.1f} dB against "
+            f"this noisy reference{_TEXTURE_CAVEAT}"
         )
     if gap_db >= -_NEAR_FLOOR_DB:
         return (
-            f"near the noise floor: {-gap_db:.1f} dB below the ceiling, the model "
-            f"error is ~{ratio:.2f} x the noise sigma"
+            f"near the noise floor by this estimate: {-gap_db:.1f} dB below the "
+            f"ceiling, the model error is ~{ratio:.2f} x the noise sigma"
+            f"{_TEXTURE_CAVEAT}"
         )
     return (
         f"{-gap_db:.1f} dB below the noise ceiling: the model error is "
@@ -857,8 +880,14 @@ def print_quality_comparison(
     )
     _print_noise_reference(metrics)
     aprint(f"  MSE:               {metrics['mse']:.6g}")
-    aprint(f"  SSIM:              {metrics['ssim']:.4f}")
-    aprint(f"  SSIM foreground:   {metrics['foreground_ssim']:.4f}")
+    aprint(
+        f"  SSIM:              {metrics['ssim_robust']:.4f}  (robust peak; full "
+        f"range {metrics['ssim']:.4f})"
+    )
+    aprint(
+        f"  SSIM foreground:   {metrics['foreground_ssim_robust']:.4f}  (robust "
+        f"peak; full range {metrics['foreground_ssim']:.4f})"
+    )
     aprint(f"  Rel L2:            {metrics['rel_l2']:.6g}")
     aprint(f"  Max Abs Error:     {metrics['max_abs_error']:.6g}")
     if "compression_ratio" in metrics:
@@ -903,6 +932,8 @@ def _json_record(
         # Which PSNR is the headline, and what its peak was: `psnr_db` keeps the
         # classical full-range meaning every stored fit uses.
         "psnr_headline": "psnr_robust_db",
+        # Same for SSIM: `ssim` / `foreground_ssim` keep the full-range peak.
+        "ssim_headline": "ssim_robust",
         "robust_peak_quantile": ROBUST_PEAK_QUANTILE,
         "image_min": ctx.image_min,
         "voxel_size": list(ctx.grid.voxel_size) if ctx.grid.voxel_size else None,

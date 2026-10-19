@@ -268,3 +268,57 @@ class TestRenderReport:
         out = tmp_path / "report.pdf"
         render_calibration_report(res, np.zeros((32, 32, 32), dtype=np.float32), out)
         assert out.exists() and out.stat().st_size > 0
+
+
+class TestRobustSSIMField:
+    """``full_ssim_robust``: persisted, and old files fall back to ``full_ssim``."""
+
+    def test_round_trips_through_json_and_old_files_load(self, tmp_path) -> None:
+        import json
+
+        res = _make_result([1, 2, 4], [20.0, 21.0, 22.0])
+        res.full_ssim_robust = [0.4, 0.5, 0.6]
+        path = tmp_path / "cal.json"
+        res.to_json(path)
+        assert CalibrationResult.from_json(path).full_ssim_robust == [0.4, 0.5, 0.6]
+        raw = json.loads(path.read_text())
+        del raw["full_ssim_robust"]
+        path.write_text(json.dumps(raw))
+        assert CalibrationResult.from_json(path).full_ssim_robust == []
+
+    @pytest.mark.parametrize("robust", [True, False])
+    def test_cal_table_uses_robust_ssim_or_says_it_fell_back(
+        self, robust: bool, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from luxar.cli.gsplat_ops.fitting.calibrate import _print_cal_table
+
+        res = _make_result([1, 2, 4], [20.0, 21.0, 22.0])
+        res.full_ssim = [0.981, 0.982, 0.983]
+        if robust:
+            res.full_ssim_robust = [0.311, 0.312, 0.313]
+        _print_cal_table(res)
+        out = capsys.readouterr().out
+        if robust:
+            assert "0.311" in out and "0.981" not in out
+            assert "PSNR and SSIM on the robust peak" in out
+        else:
+            assert "0.981" in out
+            assert "PSNR (SSIM on the full range) on the robust peak" in out
+
+    @pytest.mark.parametrize(
+        ("robust", "label"), [(True, "SSIM (robust peak)"), (False, "SSIM")]
+    )
+    def test_pdf_ssim_panel_label(self, robust: bool, label: str) -> None:
+        import matplotlib.pyplot as plt
+
+        from luxar.gsplats.calibration_report import _plot_rate_distortion
+
+        res = _make_result([1, 2, 4], [20.0, 21.0, 22.0])
+        if robust:
+            res.full_ssim_robust = [0.4, 0.5, 0.6]
+        fig, axes = plt.subplots(2, 2)
+        try:
+            _plot_rate_distortion(fig, *axes.ravel(), res)
+            assert axes.ravel()[1].get_ylabel() == label
+        finally:
+            plt.close(fig)

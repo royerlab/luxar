@@ -913,6 +913,7 @@ _RESCORED_QUALITY_KEYS = (
     "psnr_db",
     "psnr_robust_db",
     "ssim",
+    "ssim_robust",
     "foreground_psnr_db",
     "foreground_psnr_robust_db",
     "foreground_threshold",
@@ -1021,16 +1022,30 @@ def _post_cull_quality_line(quality: dict[str, float], pre: dict[str, Any]) -> s
         if key == "psnr_robust_db"
         else ""
     )
-    extra = "".join(
-        f", {label}={quality[k]:{fmt}}"
-        for k, label, fmt in (("ssim", "SSIM", ".4f"), ("mse", "MSE", ".2e"))
-        if k in quality
-    )
+    extra = _ssim_mse_summary(quality)
     return (
         f"Quality (saved model, after post-fit pruning/cull): "
         f"PSNR={new_psnr:.1f} dB{peak}{delta}, "
         f"foreground PSNR={quality.get(fg_key, float('nan')):.1f} dB{extra}"
     )
+
+
+def _ssim_mse_summary(quality: dict[str, float]) -> str:
+    """The ``, SSIM=…, MSE=…`` tail of a summary line (whichever are present).
+
+    SSIM is headlined on the robust peak like PSNR, the full range labelled.
+    """
+    parts = []
+    if "ssim_robust" in quality and "ssim" in quality:
+        parts.append(
+            f"SSIM={quality['ssim_robust']:.4f} robust peak "
+            f"({quality['ssim']:.4f} full range)"
+        )
+    elif "ssim" in quality:
+        parts.append(f"SSIM={quality['ssim']:.4f}")
+    if "mse" in quality:
+        parts.append(f"MSE={quality['mse']:.2e}")
+    return "".join(f", {part}" for part in parts)
 
 
 def _default_fit_scorer(

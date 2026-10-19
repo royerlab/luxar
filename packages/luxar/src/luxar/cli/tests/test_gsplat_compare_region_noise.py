@@ -185,14 +185,23 @@ def test_noise_verdict_bands() -> None:
     assert model_error_over_noise(0.5) is None
     above = noise_verdict(2.0, 25.0)
     assert above.startswith("above the estimated ceiling (2.0 dB): ambiguous")
-    assert "sub-voxel" in above and "reproducing noise" in above
-    # Far above is likelier a wrong ceiling than a fit: no verdict at all.
-    assert noise_verdict(8.0, 25.0).startswith("undetermined: 8.0 dB above")
+    assert "fine structure" in above and "reproducing noise" in above
+    # Far above: the estimate's error cannot explain the gap. The verdict says
+    # why it is undetermined and names BOTH readings, picking neither (a noisy
+    # confocal channel fitted with too many splats landed 8 dB above; a tester
+    # read "likely sub-voxel structure" as a verdict on the wrong cause).
+    far = noise_verdict(8.0, 25.0)
+    assert far.startswith("undetermined: 8.0 dB above")
+    assert "reproducing noise" in far and "fine structure" in far
+    assert "likely" not in far
     for gap in (1.5, 2.9, 3.5, 20.0):  # never a definite "fitting noise" call
         assert "ABOVE" not in noise_verdict(gap, 25.0)
-    assert "at the noise floor" in noise_verdict(0.4, 25.0)
-    assert "at the noise floor" in noise_verdict(-0.9, 25.0)
-    assert "near the noise floor" in noise_verdict(-2.5, 25.0)
+    # The "close to the best possible" bands carry the texture caveat: the
+    # estimate counts real finest-scale texture as noise.
+    for gap, band in ((0.4, "at"), (-0.9, "at"), (-2.5, "near")):
+        verdict = noise_verdict(gap, 25.0)
+        assert f"{band} the noise floor by this estimate" in verdict
+        assert "confirm on slices" in verdict
     below = noise_verdict(-6.0, 25.0)
     assert "6.0 dB below the noise ceiling" in below and "signal left" in below
     assert "nearly noise-free" in noise_verdict(-6.0, 75.0)
@@ -244,7 +253,10 @@ def test_unreliable_ceiling_gives_no_verdict() -> None:
     field, thr = default_foreground(torch.from_numpy(noisy))
     ref = noise_reference(noisy, (field > thr).numpy(), metrics)
     assert ref["noise_ceiling_reliable"] is False
-    assert ref["noise_verdict"].startswith("undetermined: the finest band is not white")
+    assert ref["noise_verdict"].startswith(
+        "undetermined: the noise estimate failed its scale check"
+    )
+    assert "no verdict is given" in ref["noise_verdict"]
 
 
 def test_shot_noise_sigma_is_the_rms_not_the_median() -> None:
