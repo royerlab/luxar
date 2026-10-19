@@ -248,7 +248,9 @@ describe('BlendWarmupManager', () => {
 
     await manager.warmScene(root);
     const sides = () =>
-      compileOne.mock.calls.map((call) => ((call[3] as THREE.Mesh).material as THREE.Material).side);
+      compileOne.mock.calls.map(
+        (call) => ((call[3] as THREE.Mesh).material as THREE.Material).side
+      );
     const passSides = [THREE.BackSide, THREE.FrontSide];
     expect(sides()).toEqual(BLENDING_MODES.flatMap(() => passSides));
     expect(manager.getStats()).toMatchObject({
@@ -258,15 +260,42 @@ describe('BlendWarmupManager', () => {
     });
 
     owner.dispose();
-    await Promise.resolve();
-    await Promise.resolve();
     // The survivor must pin both side variants after the owner goes away.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(compileOne).toHaveBeenCalledTimes(BLENDING_MODES.length * 4));
     expect(sides()).toEqual([
       ...BLENDING_MODES.flatMap(() => passSides),
       ...BLENDING_MODES.flatMap(() => passSides),
     ]);
     expect(manager.getStats().ownershipTransfers).toBe(BLENDING_MODES.length * 2);
+  });
+
+  it.each([
+    ['nontransparent', false, false],
+    ['forced single pass', true, true],
+  ])('keeps one DoubleSide variant per mode for %s', async (_name, transparent, singlePass) => {
+    const compileOne = vi.fn();
+    const manager = new BlendWarmupManager(
+      () => Promise.resolve(),
+      compileOne,
+      activateImmediately
+    );
+    manager.configure({
+      enabled: true,
+      renderer: {} as WarmupRenderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+      pipelineVariants: true,
+    });
+    const material = new FakeWarmupMaterial();
+    material.side = THREE.DoubleSide;
+    material.transparent = transparent;
+    material.forceSinglePass = singlePass;
+
+    await manager.warmScene(makeRenderableMesh('mesh', material));
+    expect(compileOne).toHaveBeenCalledTimes(BLENDING_MODES.length);
+    expect(
+      compileOne.mock.calls.map((call) => ((call[3] as THREE.Mesh).material as THREE.Material).side)
+    ).toEqual(BLENDING_MODES.map(() => THREE.DoubleSide));
   });
 
   it('awaits an asynchronous compile (WebGPU compileAsync) before the next one', async () => {

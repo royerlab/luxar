@@ -106,7 +106,7 @@ export interface SourceWarmupState {
   objects: Set<THREE.Object3D>;
   disposeHandler: () => void;
   /**
-   * Program variants this source USES (variant fingerprint → blend mode),
+   * Program variants this source USES (variant fingerprint → blend mode and side),
    * whether it owns the keeper for them or shares one compiled for an
    * identical material on another node. Released in `clearSource`.
    */
