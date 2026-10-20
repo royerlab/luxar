@@ -902,13 +902,14 @@ export class BlendWarmupManager {
 
   /** Release `sourceMaterial`'s variant registrations, transferring owned ones. */
   private releaseVariants(sourceMaterial: THREE.Material, state: SourceWarmupState): void {
-    for (const [variantFingerprint, { mode, side }] of state.variants) {
+    for (const [variantFingerprint, { mode }] of state.variants) {
       const users = this.variantUsers.get(variantFingerprint);
       users?.delete(sourceMaterial);
       if (this.variantOwner.get(variantFingerprint) !== sourceMaterial) continue;
       this.variantOwner.delete(variantFingerprint);
       const heir = users?.values().next().value;
       if (heir && !this.tearingDown) {
+        const side = this.sourceStates.get(heir)?.variants.get(variantFingerprint)?.side;
         this.adoptVariant(variantFingerprint, mode, side, heir);
       } else {
         this.variantUsers.delete(variantFingerprint);
