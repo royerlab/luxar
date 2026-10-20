@@ -43,10 +43,15 @@ export function bindTSLNodeOverride(material: NodeMaterial, base: TSLMaterialNod
 }
 
 /**
- * Replace output nodes of a built-in TSL Points, Lines, GSplats, or Mesh material.
+ * Replace output nodes of a built-in visual TSL Points, Lines, GSplats, or Mesh
+ * material (excluding physical meshes and picking materials).
  * The callback sees the latest Luxar graph on registration and every rebuild;
  * return only the outputs to replace. Passing null restores the base graph.
  * The callback is retained when the material is cloned.
+ * If the callback throws during a rebuild, that variant uses its base graph;
+ * the callback stays registered and runs again on the next rebuild.
+ * Vertex and depth overrides affect the visual pass only: picking continues
+ * with Luxar's built-in positions and depth.
  */
 export function setTSLNodeOverride(material: Material, override: TSLNodeOverride | null): void {
   const nodeMaterial = material as NodeMaterial;

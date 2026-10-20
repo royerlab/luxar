@@ -77,7 +77,13 @@ describe('public TSL node override for built-in materials', () => {
     await loadTslMaterials();
     const manager = new MaterialManager();
     manager.setCaps({ apiSurface: 'webgpu' } as RendererCapabilities);
-    const props = { blendingMode: 'additive' as const, opacity: 1, gamma: 1, intensity: 1, offset: 0 };
+    const props = {
+      blendingMode: 'additive' as const,
+      opacity: 1,
+      gamma: 1,
+      intensity: 1,
+      offset: 0,
+    };
     try {
       const material = manager.getPointMaterial(props);
       const peer = manager.getPointMaterial(props);

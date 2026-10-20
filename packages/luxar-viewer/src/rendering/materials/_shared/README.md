@@ -42,6 +42,8 @@ records which types actually reach it.
 `tsl-node-override.ts` supplies the public per-material output-node hook. It
 reapplies a callback after each shared-graph rebuild and carries it through
 visual-material clones; materials without an override keep their shared graph.
+`applySharedVisualTSLGraph` registers this hook for the four visual wrappers;
+pick materials use `applySharedTSLGraph` directly and retain their plain graph.
 
 ## Where each geometry type evaluates `perspectiveNearFade`
 

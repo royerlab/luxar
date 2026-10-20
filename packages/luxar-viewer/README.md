@@ -128,9 +128,13 @@ materials.
 The viewer's own WebGPU code remains lazily loaded; a host that imports
 `three/webgpu` for its factory controls when that dependency loads.
 
-To change a built-in Points, Lines, GSplats, or Mesh TSL material, use
-`setTSLNodeOverride` on that material after it is created. The callback receives
-the material's original output nodes and returns only the outputs to replace:
+To change a built-in visual Points, Lines, GSplats, or Mesh TSL material (not a
+`material="physical"` mesh), use `setTSLNodeOverride` on that material after it
+is created. In layer mode, find the rendered leaf object in the host scene and
+read its current `object.material` each time you set or clear an override.
+Luxar creates a separate material per node, and a Layers appearance edit may
+replace it with a clone. The callback receives the material's original output
+nodes and returns only the outputs to replace:
 
 ```ts
 import { setTSLNodeOverride } from '@luxar/viewer';
@@ -143,9 +147,13 @@ setTSLNodeOverride(material, ({ colorNode }) => ({
 
 The callback runs again when Luxar rebuilds the TSL graph (for example, after a
 colormap or gamma variant change), and follows the material when it is cloned.
+If it throws during a rebuild, that variant uses its base graph; the callback
+stays registered and runs again on the next rebuild. Overrides affect only the
+visual pass: `vertexNode` and `depthNode` changes are not mirrored into picking,
+so displaced geometry is still picked at its built-in position.
 It must return new nodes without mutating the original nodes, which are shared
 by materials of the same configuration. Pass `null` to restore the built-in
-graph. This hook applies to Luxar's built-in shared-graph TSL materials; a
+graph. This hook applies to Luxar's built-in visual TSL materials; a
 custom `NodeMaterial` uses its own node properties. On WebGL, use the material's
 GLSL `onBeforeCompile` hook. Keep the two backend implementations equivalent
 when an extension is intended to work in both renderers.
