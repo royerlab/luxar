@@ -544,15 +544,13 @@ export interface UrlParams {
    * resolution. Useful for per-load A/B comparisons and for diagnosing
    * TSL-vs-GLSL divergences without restarting the dev server.
    *
-   * - `?renderer=webgl` — `THREE.WebGLRenderer` + GLSL `ShaderMaterial`
-   *   (the production default).
+   * - `?renderer=webgl` — `THREE.WebGLRenderer` + GLSL `ShaderMaterial`.
    * - `?renderer=webgpu` — opt into `WebGPURenderer` + TSL
    *   `NodeMaterial`. The renderer internally dispatches to a real
    *   WebGPU adapter when available or falls back to its WebGL2
    *   backend otherwise.
-   * - Unset (`null`) — fall back to the build-time
-   *   `VITE_LUXAR_USE_WEBGPU` env var (opt-in to WebGPU); if that is
-   *   also unset, the default is `webgl`.
+   * - Unset (`null`) — use the build-time renderer env vars, then the
+   *   platform policy (WebGPU on measured platforms, WebGL elsewhere).
    *
    * Any other value is normalized to `null` (defer to env / default).
    */

@@ -4,9 +4,10 @@ Three small modules keep the three.js node system off WebGL's initial payload.
 The standalone HTML entry starts an additional dynamic prefetch for WebGPU.
 The bootstrap prefetch remains for library and embedded mounts without the HTML entry.
 
-The production default backend is WebGL (`selectBackend()` in
-`scene/scene-manager/render-pipeline/backend-selection.ts`); WebGPU is opt-in per
-session via `?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`. But the TSL
+The platform policy in `scene/scene-manager/render-pipeline/backend-selection.ts`
+defaults to WebGPU on measured platforms (`backend-policy.ts`) and WebGL
+elsewhere; `?renderer=webgpu` and `VITE_LUXAR_USE_WEBGPU=1` also select WebGPU.
+But the TSL
 material classes all `extend NodeMaterial` from `three/webgpu`, and until
 issue #1679 twenty-three production modules imported that subpath as a value.
 One such import anywhere the entry point reaches is enough to pin the whole
@@ -37,11 +38,14 @@ So the accessor sits in a leaf that imports nothing at runtime.
 ## The ordering contract
 
 `loadTslMaterials()` must resolve before the first material is constructed on
-the WebGPU path. The standalone HTML entry prefetches the registry before the
-main viewer bundle runs and starts adapter/device acquisition at the same time;
-bootstrap consumes that request once. Embedded mounts start adapter/device
-acquisition in bootstrap instead. Bootstrap also
-requests the registry before awaiting the adapter. `SceneManager.init` still
+the WebGPU path. The standalone HTML entry starts adapter/device acquisition
+before the main viewer bundle runs, and bootstrap consumes that request once
+(embedded mounts start it in bootstrap instead). For explicit and env-var
+WebGPU selections the entry also prefetches the registry at once, and
+bootstrap requests it again before awaiting the adapter. Under the platform
+policy neither does: only the adapter request starts early, and the device
+request, the `three/webgpu` chunk and the registry all wait until the adapter
+vendor matches a rule. `SceneManager.init` still
 awaits it before constructing a material:
 
 ```

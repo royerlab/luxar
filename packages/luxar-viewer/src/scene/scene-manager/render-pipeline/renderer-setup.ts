@@ -7,12 +7,14 @@
  *     paths (texture layout, ordering applies, RenderObject eviction,
  *     element-texture row uploads) at a renderer; shared with layer mode.
  *   - `selectBackend` (re-exported from `backend-selection.ts`) — apply the
- *     URL-param / env-var / default precedence ladder.
+ *     URL-param / env-var / platform-policy precedence ladder.
  *   - `createWebGLRenderer` — construct a `THREE.WebGLRenderer`
  *     from the configured WebGL2 context, build the renderer-
  *     capabilities snapshot, configure HDR.
- *   - `requestWebGPUDevice` — start a high-limit core adapter / device
- *     request and the lazy TSL chunk fetch before renderer construction.
+ *   - `requestWebGPUDevice` — consume the early entry's high-limit core
+ *     adapter / device request (or start one, see `early-device-request.ts`,
+ *     which also applies the platform policy's adapter-vendor check), start
+ *     the lazy TSL chunk fetch, and decide the WebGL fallback.
  *   - `createWebGPURenderer` — consume a bootstrap request once (or start
  *     a fresh one), construct and init() a `WebGPURenderer`, and build the
  *     capabilities snapshot.
@@ -48,6 +50,7 @@ import { resolveHdrHeadroom } from '../../../utils/hdr/hdr-headroom';
 import { platformName } from '../../../utils/platform';
 import { log, Modules } from '../../../utils/log';
 import { loadTslMaterials } from '../../../rendering/tsl/load';
+import type { WebGPUPlatformRule } from './backend-policy';
 import {
   clampHdrHeadroom,
   DEFAULT_HDR_HEADROOM,
@@ -230,6 +233,11 @@ export interface CreateWebGPUOptions {
    * backend. Ignored with `webgpuForceWebGL`, which asks for that backend.
    */
   requireNativeAdapter?: boolean;
+  /**
+   * The platform-policy rules the adapter must satisfy (`BackendSelection.platformRules`);
+   * an adapter matching none returns `{ fallback: true }`.
+   */
+  platformRules?: readonly WebGPUPlatformRule[];
   /** PROTOTYPE: request extended-range (HDR) output (`?hdr`); gated by `planHdrOutput`. */
   hdr?: boolean;
   /** Pinned HDR headroom (`?hdr=<n>`); omitted = resolved per display. */
@@ -254,16 +262,30 @@ export type WebGPUDeviceRequest =
       webgpuModule?: Promise<typeof import('three/webgpu')>;
     };
 
-function prefetchTslMaterialsWhenUsable(hasGpu: boolean, requireNativeAdapter?: boolean): void {
-  if (shouldPrefetchTsl(hasGpu, requireNativeAdapter))
+function prefetchTslMaterialsWhenUsable(
+  hasGpu: boolean,
+  requireNativeAdapter?: boolean,
+  platformRules?: readonly WebGPUPlatformRule[]
+): void {
+  if (shouldPrefetchTsl(hasGpu, requireNativeAdapter, platformRules))
     void loadTslMaterials().catch(() => undefined);
 }
 
+/**
+ * The early entry's in-flight request, or a fresh one. A fresh request under
+ * the platform policy starts the deferred TSL fetch once the vendor matches.
+ */
 function coreDeviceRequest(
   rendererOverride: 'webgl' | 'webgpu' | undefined,
+  platformRules: readonly WebGPUPlatformRule[] | undefined,
   preRequestedDevice?: Promise<CoreDeviceRequest>
 ): Promise<CoreDeviceRequest> {
-  return preRequestedDevice ?? requestCoreDevice(rendererOverride);
+  return (
+    preRequestedDevice ??
+    requestCoreDevice(rendererOverride, platformRules, () => {
+      void loadTslMaterials().catch(() => undefined);
+    })
+  );
 }
 
 function deviceRequestErrorMessage(error: unknown): string {
@@ -272,23 +294,31 @@ function deviceRequestErrorMessage(error: unknown): string {
 
 /**
  * Consume a core device request started by the early entry, or negotiate a
- * fresh one for direct callers and device-loss recovery.
+ * fresh one for direct callers and device-loss recovery, then make the
+ * fallback decision: no adapter (when `requireNativeAdapter` is set), an
+ * adapter outside the platform policy's `platformRules`, an adapter below the
+ * spec's `maxVertexBuffers`, or a failed native device request.
  */
 export async function requestWebGPUDevice(
   rendererOverride?: 'webgl' | 'webgpu',
   requireNativeAdapter?: boolean,
+  platformRules?: readonly WebGPUPlatformRule[],
   preRequestedDevice?: Promise<CoreDeviceRequest>
 ): Promise<WebGPUDeviceRequest> {
   const hasGpu = hasWebGPU();
-  // Direct callers still start the TSL load before adapter negotiation.
-  prefetchTslMaterialsWhenUsable(hasGpu, requireNativeAdapter);
-  const core = await coreDeviceRequest(rendererOverride, preRequestedDevice);
+  // Direct callers still start the TSL load before adapter negotiation when
+  // this session can use WebGPU (under the platform policy, only once the
+  // adapter qualifies). The awaited setup load retries if the prefetch fails.
+  prefetchTslMaterialsWhenUsable(hasGpu, requireNativeAdapter, platformRules);
+  const core = await coreDeviceRequest(rendererOverride, platformRules, preRequestedDevice);
   if (core.kind === 'unavailable') {
     if (lacksRequiredNativeDevice(requireNativeAdapter, hasGpu, false, undefined)) {
       return { fallback: true };
     }
     return { fallback: false, device: undefined };
   }
+  // Logged by the vendor check in `requestCoreDevice`.
+  if (core.kind === 'policy-rejected') return { fallback: true };
 
   if (core.kind === 'insufficient') {
     const adapterMax = core.adapter.limits.maxVertexBuffers;
@@ -532,7 +562,11 @@ function resolveWebGPUDeviceRequest(options: CreateWebGPUOptions): Promise<WebGP
   if (options.webgpuForceWebGL) return Promise.resolve({ fallback: false, device: undefined });
   return (
     options.preRequestedWebGPUDevice ??
-    requestWebGPUDevice(options.rendererOverride, options.requireNativeAdapter)
+    requestWebGPUDevice(
+      options.rendererOverride,
+      options.requireNativeAdapter,
+      options.platformRules
+    )
   );
 }
 

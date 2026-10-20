@@ -159,7 +159,7 @@ function currentCommitSha(): string {
 }
 
 function sceneUrl(scene: AuditScene, bias: LodBiasArm, extra = '&dpr=1'): string {
-  return `/?src=${DATA_BASE}/${scene.path}&debug&noLodFade${bias.query}${extra}`;
+  return `/?src=${DATA_BASE}/${scene.path}&debug&renderer=${BACKEND}&noLodFade${bias.query}${extra}`;
 }
 
 /** Skip cleanly when the store is not served (datasets live in the main checkout). */

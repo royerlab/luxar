@@ -32,6 +32,28 @@ for (const renderer of ['webgpu', 'WEBGPU']) {
   });
 }
 
+test('waits for the adapter vendor on a platform-policy WebGPU default', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'userAgentData', {
+      configurable: true,
+      value: { platform: 'Linux', brands: [{ brand: 'Chromium' }] },
+    });
+    Object.defineProperty(navigator, 'gpu', {
+      configurable: true,
+      value: { requestAdapter: () => Promise.resolve(null) },
+    });
+  });
+  const { requested, release } = await blockViewerEntry(page);
+  try {
+    await page.goto('/', { waitUntil: 'commit' });
+    release();
+    await page.waitForLoadState('domcontentloaded');
+    expect(requested.some((url) => url.includes('/rendering/tsl/registry.ts'))).toBe(false);
+  } finally {
+    release();
+  }
+});
+
 test('requests the adapter before the viewer entry runs', async ({ page }) => {
   await page.addInitScript(() => {
     (window as Window & { adapterRequests?: number }).adapterRequests = 0;
@@ -132,13 +154,86 @@ test('keeps the diagnostic WebGL bridge off the native adapter path', async ({ p
   }
 });
 
+for (const vendor of [
+  { name: 'non-matching', info: { vendor: 'amd' }, admitted: false },
+  {
+    name: 'software fallback',
+    info: { vendor: 'nvidia', isFallbackAdapter: true },
+    admitted: false,
+  },
+  { name: 'matching', info: { vendor: 'nvidia' }, admitted: true },
+]) {
+  test(`gates the early device request on the ${vendor.name} adapter vendor`, async ({ page }) => {
+    await page.addInitScript((info) => {
+      const w = window as Window & { adapterRequests?: number; deviceRequests?: number };
+      w.adapterRequests = 0;
+      w.deviceRequests = 0;
+      Object.defineProperty(navigator, 'userAgentData', {
+        configurable: true,
+        value: { platform: 'Linux', brands: [{ brand: 'Chromium' }] },
+      });
+      Object.defineProperty(navigator, 'gpu', {
+        configurable: true,
+        value: {
+          requestAdapter: async () => {
+            w.adapterRequests! += 1;
+            return {
+              info,
+              features: new Set<string>(),
+              limits: { maxVertexBuffers: 16 },
+              requestDevice: async () => {
+                w.deviceRequests! += 1;
+                return {};
+              },
+            };
+          },
+        },
+      });
+    }, vendor.info);
+    const { requested, release } = await blockViewerEntry(page);
+    const counts = (): Promise<[number, number]> =>
+      page.evaluate(() => {
+        const w = window as Window & { adapterRequests?: number; deviceRequests?: number };
+        return [w.adapterRequests ?? 0, w.deviceRequests ?? 0];
+      });
+    try {
+      await page.goto('/', { waitUntil: 'commit' });
+      // The adapter request starts early even under the platform policy.
+      await expect.poll(async () => (await counts())[0]).toBeGreaterThanOrEqual(1);
+      const registryRequested = () =>
+        requested.some((url) => url.includes('/rendering/tsl/registry.ts'));
+      if (vendor.admitted) {
+        await expect.poll(async () => (await counts())[1]).toBe(1);
+        await expect.poll(registryRequested).toBe(true);
+      } else {
+        release();
+        await page.waitForLoadState('domcontentloaded');
+        expect((await counts())[1]).toBe(0);
+        expect(registryRequested()).toBe(false);
+      }
+    } finally {
+      release();
+    }
+  });
+}
+
 for (const scenario of [
-  { name: 'WebGL URL', path: '/?renderer=webgl', stored: null },
-  { name: 'default WebGL', path: '/', stored: null },
-  { name: 'stored WebGL', path: '/', stored: 'webgl' },
+  { name: 'WebGL URL', path: '/?renderer=webgl', stored: null, platform: 'Linux' },
+  { name: 'unmeasured platform default', path: '/', stored: null, platform: 'macOS' },
+  { name: 'stored WebGL', path: '/', stored: 'webgl', platform: 'Linux' },
+  {
+    name: 'platform policy with diagnostic WebGL flag',
+    path: '/?webgpuForceWebgl',
+    stored: null,
+    platform: 'Linux',
+  },
 ]) {
   test(`does not request the WebGPU chunk for ${scenario.name}`, async ({ page }) => {
-    await page.addInitScript((stored) => {
+    await page.addInitScript(({ stored, platform }) => {
+      Object.defineProperty(navigator, 'userAgentData', {
+        configurable: true,
+        value: { platform, brands: [{ brand: 'Chromium' }] },
+      });
       if (stored) {
         localStorage.setItem(
           'luxar.settings',
@@ -155,7 +250,7 @@ for (const scenario of [
           return undefined;
         },
       });
-    }, scenario.stored);
+    }, scenario);
     const { requested, release } = await blockViewerEntry(page);
     try {
       await page.goto(scenario.path, { waitUntil: 'commit' });

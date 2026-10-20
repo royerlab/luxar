@@ -2,9 +2,10 @@
 /**
  * Assert that the WebGPU/TSL cone stays lazy for WebGL sessions.
  *
- * The production default backend is WebGL (`selectBackend()` in
- * backend-selection.ts), so the ~182 kB gzipped `three-webgpu` chunk must be
- * fetched only when a session actually opts into WebGPU. Issue #1679: it used
+ * The platform policy (`selectBackend()` in backend-selection.ts) considers
+ * WebGPU on measured OS/browser pairs, then checks the adapter vendor.
+ * The early entry must not fetch the ~182 kB gzipped `three-webgpu` chunk
+ * before that check. Issue #1679: it used
  * to be a static dependency of the entry chunk AND `modulepreload`ed from
  * `index.html`, so every WebGL user downloaded and parsed a renderer that never
  * ran — about a quarter of the initial JS payload.

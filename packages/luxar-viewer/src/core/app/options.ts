@@ -105,13 +105,11 @@ export interface LuxarAppOptions {
    * bootstrap reads `?renderer=webgl|webgpu` and threads it here
    * so per-load A/B testing doesn't need a dev-server restart.
    *
-   * - `'webgl'`: `THREE.WebGLRenderer` + GLSL `ShaderMaterial` (the
-   *   production default).
+   * - `'webgl'`: `THREE.WebGLRenderer` + GLSL `ShaderMaterial`.
    * - `'webgpu'`: `WebGPURenderer` + TSL `NodeMaterial`. Internally
    *   falls back to WebGL2 when no WebGPU adapter.
-   * - Undefined: fall back to `VITE_LUXAR_USE_WEBGPU` (opt-in to
-   *   WebGPU) / `VITE_LUXAR_USE_LEGACY_WEBGL` (no-op, matches default)
-   *   env vars, then the WebGL default.
+   * - Undefined: use the build-time renderer env vars, then the platform
+   *   policy (WebGPU on measured platforms, WebGL elsewhere).
    */
   renderer?: 'webgl' | 'webgpu';
   /** One-shot standalone startup request; omitted by embedders and on recovery. */

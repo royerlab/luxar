@@ -1380,7 +1380,7 @@ for (const demo of DEMOS) {
     // Opt out (lodFinest:false) for a very heavy scene where forcing every
     // element makes each software-GL frame take minutes (see DemoEntry.lodFinest).
     const finestParam = demo.lodFinest === false ? '' : '&lodFinest';
-    const viewerUrl = `${VIEWER_URL}/?src=${dataUrl}&debug${finestParam}`;
+    const viewerUrl = `${VIEWER_URL}/?src=${dataUrl}&debug&renderer=webgl${finestParam}`;
     console.log(`[${demo.id}] ${dataUrl}`);
 
     await installChromeHider(page); // survives Vite reloads (must precede goto)

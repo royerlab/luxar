@@ -102,6 +102,7 @@ import {
   selectBackend,
   type WebGPUDeviceRequest,
 } from './scene-manager/render-pipeline/renderer-setup';
+import type { WebGPUPlatformRule } from './scene-manager/render-pipeline/backend-policy';
 import { createPostProcessing } from './scene-manager/render-pipeline/post-processing-setup';
 import { ResizeOrchestrator } from './scene-manager/viewport/resize-orchestrator';
 import {
@@ -182,8 +183,8 @@ export class SceneManager extends THREE.EventDispatcher<{
 }> {
   /**
    * The graphics-API renderer. Holds the `Renderer` union honestly:
-   * a `THREE.WebGLRenderer` on the default path, or a `WebGPURenderer`
-   * when selected via `?renderer=webgpu` / `VITE_LUXAR_USE_WEBGPU=1`.
+   * a `THREE.WebGLRenderer` or a `WebGPURenderer` according to the
+   * renderer override, build-time env vars, and platform policy.
    * Without a native device, the explicit URL selection may use three's
    * internal WebGL2 backend; the environment selection falls back to
    * `THREE.WebGLRenderer`.
@@ -496,7 +497,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     /**
      * Optional backend override. When provided, wins over the
      * `VITE_LUXAR_USE_WEBGPU` / `VITE_LUXAR_USE_LEGACY_WEBGL` env vars
-     * and the WebGL default. Threaded from `LuxarAppOptions.renderer`,
+     * and the platform policy. Threaded from `LuxarAppOptions.renderer`,
      * ultimately from the `?renderer=webgl|webgpu` URL parameter.
      */
     renderer?: 'webgl' | 'webgpu';
@@ -567,17 +568,22 @@ export class SceneManager extends THREE.EventDispatcher<{
    * - Fullscreen immersive experience
    */
   private async setupRenderer(): Promise<void> {
-    const { backend, source, requireNativeAdapter } = selectBackend(this.rendererOverride);
+    const { backend, source, requireNativeAdapter, platformRules } = selectBackend(
+      this.rendererOverride
+    );
+    // The diagnostic WebGL2 bridge is only for an explicit or env-selected
+    // WebGPURenderer; it must not bypass the platform policy's vendor check.
+    const useWebGL = backend === 'webgl' || (source === 'platform-policy' && this.webgpuForceWebGL);
     log.info(
       Modules.RENDERER,
-      `Backend selection: ${backend === 'webgl' ? 'WebGLRenderer (GLSL)' : 'WebGPURenderer (TSL)'} ` +
-        `[source: ${source}${backend === 'webgpu' && this.webgpuForceWebGL ? ', forceWebGL backend' : ''}]`
+      `Backend selection: ${useWebGL ? 'WebGLRenderer (GLSL)' : 'WebGPURenderer (TSL)'} ` +
+        `[source: ${source}${!useWebGL && this.webgpuForceWebGL ? ', forceWebGL backend' : ''}]`
     );
-    if (backend === 'webgl') {
+    if (useWebGL) {
       await this.setupWebGLRenderer();
       return;
     }
-    await this.setupWebGPURenderer(requireNativeAdapter);
+    await this.setupWebGPURenderer(requireNativeAdapter, platformRules);
   }
 
   private async setupWebGLRenderer(): Promise<void> {
@@ -607,8 +613,9 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Opt-in renderer setup — selected via `?renderer=webgpu` URL flag
-   * or `VITE_LUXAR_USE_WEBGPU=1`. Constructs a `WebGPURenderer` and
+   * WebGPU renderer setup — selected via `?renderer=webgpu`,
+   * `VITE_LUXAR_USE_WEBGPU=1`, or the platform policy (`platformRules`,
+   * see `backend-policy.ts`). Constructs a `WebGPURenderer` and
    * runs its async `init()`. On browsers with WebGPU support, the
    * renderer acquires a WebGPU adapter and dispatches TSL graphs
    * to WGSL. On browsers without a native WebGPU adapter (Firefox
@@ -617,11 +624,14 @@ export class SceneManager extends THREE.EventDispatcher<{
    * but an explicit `?renderer=webgpu`); otherwise three runs the same TSL
    * graphs on its internal WebGL2 backend.
    *
-   * NOTE: WebGL is the **production default**; this method is
-   * reached only when the user explicitly opts into WebGPU.
-   * See `BROWSER_SUPPORT_POLICY.md` for the policy.
+   * WebGL stays the default wherever the platform policy has no row;
+   * an adapter that fails the policy's vendor check also drops to
+   * `WebGLRenderer`. See `BROWSER_SUPPORT_POLICY.md` for the policy.
    */
-  private async setupWebGPURenderer(requireNativeAdapter: boolean): Promise<void> {
+  private async setupWebGPURenderer(
+    requireNativeAdapter: boolean,
+    platformRules?: readonly WebGPUPlatformRule[]
+  ): Promise<void> {
     const preRequestedWebGPUDevice = this.preRequestedWebGPUDevice;
     this.preRequestedWebGPUDevice = undefined;
     const result = await createWebGPURenderer(this.canvasElement, {
@@ -633,6 +643,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       rendererOverride: this.rendererOverride,
       preRequestedWebGPUDevice,
       requireNativeAdapter,
+      platformRules,
     });
     if (result.fallback) {
       // No native device where one was required, or an adapter below the
