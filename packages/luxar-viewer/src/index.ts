@@ -163,6 +163,12 @@ export {
 } from './rendering/materials/_shared/material-builder';
 /** A named GLSL source and/or TSL material factory consumed by `buildMaterial`. */
 export type { ShaderSource, WebGLShaderSources } from './rendering/materials/_shared/shader-source';
+/** Override output nodes of a built-in TSL geometry material. */
+export {
+  setTSLNodeOverride,
+  type TSLNodeOverride,
+  type TSLMaterialNodes,
+} from './rendering/materials/_shared/tsl-node-override';
 export {
   supportsScalarColormap,
   applyColormapTextureToMaterial,

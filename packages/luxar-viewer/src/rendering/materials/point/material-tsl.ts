@@ -38,7 +38,8 @@ import {
   type PointTSLNodes,
 } from './shader-tsl';
 import { copyRuntimeUniforms, POINT_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
-import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
+import { applySharedVisualTSLGraph } from '../_shared/shared-graph-tsl';
+import { copyTSLNodeOverride } from '../_shared/tsl-node-override';
 import type { PointMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
@@ -329,7 +330,7 @@ export class PointTSLMaterial
     };
     // ONE graph per configuration, shared by every point material of it
     // (see shared-graph-tsl.ts): the build cache keys on node ids.
-    applySharedTSLGraph(this, 'point', config, this.tslNodes, (inputs, scratch) => {
+    applySharedVisualTSLGraph(this, 'point', config, this.tslNodes, (inputs, scratch) => {
       pointWebGPUFactory(inputs as PointTSLNodes, config, scratch);
     });
     applyPointMaterialState(
@@ -605,6 +606,8 @@ export class PointTSLMaterial
 
     // Runtime state a fresh clone would reset (POINT_RUNTIME_UNIFORMS, ../_shared/runtime-uniforms.ts).
     copyRuntimeUniforms(this, cloned, POINT_RUNTIME_UNIFORMS);
+
+    copyTSLNodeOverride(this, cloned);
 
     return cloned as this;
   }

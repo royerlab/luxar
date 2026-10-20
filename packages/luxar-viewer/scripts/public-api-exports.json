@@ -18,6 +18,7 @@
     "getCompleteBlendingState",
     "normalizeDataSourceUrl",
     "readUrlParams",
+    "setTSLNodeOverride",
     "supportsScalarColormap"
   ]
 }

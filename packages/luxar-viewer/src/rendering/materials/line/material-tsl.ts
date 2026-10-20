@@ -31,7 +31,8 @@ import {
   type LineTSLNodes,
 } from './shader-tsl';
 import { copyRuntimeUniforms, LINE_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
-import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
+import { applySharedVisualTSLGraph } from '../_shared/shared-graph-tsl';
+import { copyTSLNodeOverride } from '../_shared/tsl-node-override';
 import {
   isOrthographicProjection,
   type ProjectionVariantMaterial,
@@ -349,7 +350,7 @@ export class LineTSLMaterial
     // RESOLVED join (the factory resolves the session `?lineJoin=` override
     // at build time, so it selects code too).
     const key = { ...config, primitive, resolvedJoin: resolveLineJoin(config.join) };
-    applySharedTSLGraph(this, 'line', key, this.tslNodes, (inputs, scratch) => {
+    applySharedVisualTSLGraph(this, 'line', key, this.tslNodes, (inputs, scratch) => {
       factory(inputs as LineTSLNodes, config, scratch);
     });
     applyLineMaterialState(
@@ -655,6 +656,8 @@ export class LineTSLMaterial
     // width). No-op when still on the placeholder.
     const lineTex = this.uniforms.uLineTex?.value as THREE.DataTexture | null | undefined;
     if (lineTex) cloned.updateLineTexture(lineTex);
+
+    copyTSLNodeOverride(this, cloned);
 
     return cloned as this;
   }

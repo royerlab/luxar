@@ -272,6 +272,13 @@ export const GEOMETRY_BEHAVIOURS = {
     probedIn: 'rendering/materials/glass-partition.test.ts',
     cells: { points: 'yes', lines: 'yes', gsplats: 'yes', mesh: 'yes' },
   },
+  tslNodeOverride: {
+    what:
+      'A public TSL output-node override survives a visual material graph rebuild and clone ' +
+      'without changing a peer material’s shared base graph.',
+    probedIn: 'rendering/materials/tsl-node-override.test.ts',
+    cells: { points: 'yes', lines: 'yes', gsplats: 'yes', mesh: 'yes' },
+  },
 
   // ── Picking ──────────────────────────────────────────────────────────────
   pickRegistration: {

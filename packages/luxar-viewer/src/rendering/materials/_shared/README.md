@@ -39,6 +39,12 @@ records which types actually reach it.
 | `shared-graph-tsl.ts`        | `applySharedTSLGraph(material, family, key, leaves, build)` — ONE TSL graph per material configuration, shared by every material of it. three caches a node build under a key hashing every graph node's `id`, so a per-material graph cost a full `NodeBuilder.build` per material (one per partition part). The shared graph is built once over FORWARDING leaves whose object-granularity `updateBefore` copies the drawn material's own same-named leaf value, so the wrappers keep their leaves as value holders (uniform proxies, clone, setters unchanged). The key is the factory config (every code-selecting flag, the baked element-texture width) plus each leaf's presence and type/format. Shares `vertexNode`, `colorNode` and `depthNode` (the last for the pick factories, which put all four pick TSL materials on it through `picking/_shared/shared-pick-graph-tsl.ts`) |
 | `live-texture-tsl.ts`        | `bindLiveTexture(node, slot, fallback)` — keeps a TSL `texture()` node pointed at a host `IUniform` whose `.value` is swapped between passes (BloomChain walks the mip pyramid; FxaaPass assigns its LDR target per render). The swap runs in `updateBefore`, NOT `.onUpdate('render')`: node `update` callbacks run in graph order, so a texture bound there reaches the sample-tap clones after some have already derived their render-target Y-flip from the previous texture (#2584). Split from `tsl-helpers.ts` because it needs `NodeUpdateType` from `three/webgpu`                                                                                                                                                                                                                                                                                                                 |
 
+`tsl-node-override.ts` supplies the public per-material output-node hook. It
+reapplies a callback after each shared-graph rebuild and carries it through
+visual-material clones; materials without an override keep their shared graph.
+`applySharedVisualTSLGraph` registers this hook for the four visual wrappers;
+pick materials use `applySharedTSLGraph` directly and retain their plain graph.
+
 ## Where each geometry type evaluates `perspectiveNearFade`
 
 All four types share the one helper (`GLSL_NEAR_FADE_FUNCTIONS` /
