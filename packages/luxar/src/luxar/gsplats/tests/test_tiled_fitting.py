@@ -744,6 +744,15 @@ def test_mass_weighting_quantifies_haze_amplitude_tradeoff() -> None:
             (mass_psnr, equal_psnr, threshold_psnr),
             (mass_foreground_psnr, equal_foreground_psnr, threshold_foreground_psnr),
         )
+    assert np.isfinite(
+        [mass_disparity, equal_disparity, threshold_disparity]
+        + mass_psnr
+        + equal_psnr
+        + threshold_psnr
+        + mass_foreground_psnr
+        + equal_foreground_psnr
+        + threshold_foreground_psnr
+    ).all()
     assert mass_disparity > equal_disparity > threshold_disparity
     # Pinned on Linux CPU (the full-suite promote gate) at #3233. Foreground PSNR
     # rose 0.5-1.2 dB when #3123 smoothed the Otsu foreground mask, and the
@@ -836,6 +845,9 @@ def test_mass_weighting_quantifies_depth_attenuation_tradeoff() -> None:
             (equal_psnr, mass_psnr),
             (equal_foreground_psnr, mass_foreground_psnr),
         )
+    assert np.isfinite(
+        equal_psnr + mass_psnr + equal_foreground_psnr + mass_foreground_psnr
+    ).all()
     # Re-pinned at #3233 for the same metric and kernel changes as the haze test.
     # See #3238: absolute CPU fit scores vary by platform; the depth trade-off
     # below is the portable assertion.
