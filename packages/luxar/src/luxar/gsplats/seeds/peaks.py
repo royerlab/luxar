@@ -61,8 +61,8 @@ def seed_from_peaks(
         PyTorch device ('cuda', 'mps', 'cpu', or None for auto).
     seed : int or torch.Generator, optional
         Seed or generator for intensity-weighted sampling. An integer uses a
-        local generator and does not change PyTorch's global RNG state. On MPS,
-        sampling uses the CPU, so a supplied generator must be a CPU generator.
+        local generator and does not change PyTorch's global RNG state. A
+        supplied generator must match the sampling device (CPU on MPS).
 
     Returns
     -------
