@@ -21,9 +21,9 @@ from luxar import LuxarZarrCompiler
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar._zarr_compat import read_node_attrs
 from luxar.cli import app
-from luxar.cli.gsplat_ops.scene_exposure import _exposure_line
 from luxar.cli.tests._testing import normalized_cli_output
 from luxar.core.dimension_inference import build_dimensions_from_data
+from luxar.core.scene_exposure import _exposure_line
 from luxar.gsplats.exposure import ExposurePlan, HiddenAxis, plan_projected_exposure
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.tree import iter_leaves
@@ -339,6 +339,60 @@ def test_volumetric_convert_reports_the_optical_depth_its_absorption_gives(
     # A thick column far exceeds the additive target of 2: the old README
     # anchor ("brightest rays ~2") would have been off by this factor.
     assert density > 2.0
+
+
+def test_volumetric_convert_suggests_the_additive_display_gain(
+    tmp_path: Path,
+) -> None:
+    """Volumetric has no auto exposure, so convert names the gain additive uses.
+
+    The suggested ``--display-gain`` is exactly what additive auto exposure
+    stamps, and its kappa is the reciprocal of the density at that gain.
+    """
+    import re
+
+    src = _dense(tmp_path / "dense.gsplats.zarr")
+    _convert(CliRunner(), src, tmp_path / "additive.luxar.zarr")
+    additive_gain = _gain(tmp_path / "additive.luxar.zarr")
+    output = " ".join(
+        _convert(
+            CliRunner(),
+            src,
+            tmp_path / "vol.luxar.zarr",
+            "--blending-mode",
+            "volumetric",
+        ).split()
+    )
+    density = float(re.search(r"carry density ([0-9.e+]+), so", output).group(1))
+    match = re.search(
+        r"--display-gain ([0-9.e+-]+) \(an absolute gain, not a multiplier\); "
+        r"with it the brightest rays carry density ([0-9.e+-]+) and "
+        r"--absorption ([0-9.e+-]+) gives ~1",
+        output,
+    )
+    assert match, output
+    gain, gained_density, kappa = (float(g) for g in match.groups())
+    assert gain == pytest.approx(additive_gain, rel=0.05)
+    volumetric_gain = _gain(tmp_path / "vol.luxar.zarr")
+    assert gained_density == pytest.approx(
+        density * additive_gain / volumetric_gain, rel=0.01
+    )
+    assert kappa == pytest.approx(1.0 / gained_density, rel=0.05)
+
+
+def test_volumetric_convert_with_a_manual_gain_suggests_none(tmp_path: Path) -> None:
+    src = _dense(tmp_path / "dense.gsplats.zarr")
+    output = _convert(
+        CliRunner(),
+        src,
+        tmp_path / "vol.luxar.zarr",
+        "--blending-mode",
+        "volumetric",
+        "--display-gain",
+        "1e-4",
+    )
+    assert "carry density" in output
+    assert "Additive auto exposure would use" not in output
 
 
 def test_additive_convert_prints_no_volumetric_line(tmp_path: Path) -> None:
@@ -760,7 +814,7 @@ def test_a_lod_convert_emits_the_aces_lut_notice_once(tmp_path: Path) -> None:
 
 def test_dense_view_hint_fires_only_above_the_dense_threshold() -> None:
     """A dense opening view points at volumetric; a sparse one says nothing."""
-    from luxar.cli.gsplat_ops.scene_exposure import (
+    from luxar.core.scene_exposure import (
         DENSE_PROJECTED_SUM,
         dense_view_hint,
     )
@@ -780,7 +834,7 @@ def test_python_recipe_gets_the_gain_convert_stamps(tmp_path: Path) -> None:
     scene built from Python opens the way ``gsplat convert`` does.
     """
     from luxar import CameraConfig, Dimensions, ViewerConfig
-    from luxar.gsplats.exposure import auto_exposure_attrs
+    from luxar.core.scene_exposure import auto_exposure_attrs
 
     src = _dense(tmp_path / "dense.gsplats.zarr")
     converted = tmp_path / "convert.luxar.zarr"
@@ -811,7 +865,12 @@ def test_python_recipe_gets_the_gain_convert_stamps(tmp_path: Path) -> None:
             viewer_config=ViewerConfig(camera=camera),
         )
         scene.add_gsplats_from_file(
-            "gsplats", src, dim_order=order, blending_mode="additive", **attrs
+            "gsplats",
+            src,
+            dim_order=order,
+            blending_mode="additive",
+            fitted_defaults=False,
+            **attrs,
         )
     stored = read_node_attrs(out / "gsplats")
     assert stored["display_gain"] == pytest.approx(attrs["display_gain"])
@@ -824,7 +883,7 @@ def test_python_recipe_gets_the_gain_convert_stamps(tmp_path: Path) -> None:
 
 
 def test_python_recipe_keeps_per_splat_gain_off_summing_modes(tmp_path: Path) -> None:
-    from luxar.gsplats.exposure import auto_exposure_attrs
+    from luxar.core.scene_exposure import auto_exposure_attrs
 
     src = _dense(tmp_path / "dense.gsplats.zarr")
     attrs = auto_exposure_attrs(src, dim_order=["z", "y", "x"], blending_mode="max")
@@ -832,12 +891,37 @@ def test_python_recipe_keeps_per_splat_gain_off_summing_modes(tmp_path: Path) ->
     assert attrs["display_gain"] == pytest.approx(_per_splat(src), rel=1e-3)
 
 
-def test_python_recipe_needs_dimensions_beyond_plain_3d(tmp_path: Path) -> None:
-    from luxar.gsplats.exposure import auto_exposure_attrs
+def test_python_recipe_takes_any_column_count_without_dimensions(
+    tmp_path: Path,
+) -> None:
+    """With no ``dimensions=`` the layout is convert's own, so a 4-column
+    (t, z, y, x) stack needs nothing more and gets convert's gain."""
+    from luxar.core.scene_exposure import auto_exposure_attrs
 
-    src = _dense(tmp_path / "dense.gsplats.zarr")
-    with pytest.raises(ValueError, match="dimensions="):
-        auto_exposure_attrs(src, dim_order=["a", "b", "c"])
+    rng = np.random.default_rng(3)
+    n = 800
+    centers = np.column_stack(
+        [
+            rng.integers(0, 3, n).astype(np.float32),
+            rng.uniform(0, 40, n),
+            rng.normal(10, 2, n),
+            rng.normal(10, 2, n),
+        ]
+    ).astype(np.float32)
+    chol = np.zeros((n, 10), dtype=np.float32)
+    chol[:, [0, 2, 5, 9]] = [0.01, 1.5, 1.5, 1.5]
+    src = tmp_path / "tl.gsplats.zarr"
+    GSplatData(
+        centers=centers,
+        amplitudes=(rng.uniform(0.5, 1.0, n) * 500).astype(np.float32),
+        cholesky_factors=chol,
+        stats={"source_shape": [3, 40, 20, 20]},
+    ).save(src)
+    converted = tmp_path / "convert.luxar.zarr"
+    _convert(CliRunner(), src, converted)
+    attrs = auto_exposure_attrs(src)
+    assert attrs["amplitude_normalization_mode"] == "projected"
+    assert attrs["display_gain"] == pytest.approx(_gain(converted), rel=1e-6)
 
 
 def _labelled(path: Path) -> Path:
@@ -866,7 +950,7 @@ def _labelled(path: Path) -> Path:
 def test_python_recipe_is_source_consistent(tmp_path: Path) -> None:
     """Path, node + stats and GSplatData + stats give the same gain AND labels;
     without stats an in-memory source keeps the gain, the labels degrade."""
-    from luxar.gsplats.exposure import auto_exposure_attrs
+    from luxar.core.scene_exposure import auto_exposure_attrs
     from luxar.gsplats.io.load_gsplats import load_gsplat_node
 
     src = _labelled(tmp_path / "labelled.gsplats.zarr")
@@ -888,7 +972,7 @@ def test_python_recipe_is_source_consistent(tmp_path: Path) -> None:
 
 
 def test_python_recipe_takes_a_partition_by_path(tmp_path: Path) -> None:
-    from luxar.gsplats.exposure import auto_exposure_attrs
+    from luxar.core.scene_exposure import auto_exposure_attrs
 
     src = _labelled(tmp_path / "flat.gsplats.zarr")
     part = _partition(CliRunner(), src, tmp_path / "part.gsplats.zarr")
@@ -896,13 +980,19 @@ def test_python_recipe_takes_a_partition_by_path(tmp_path: Path) -> None:
     flat = auto_exposure_attrs(src, dim_order=["z", "y", "x"])
     assert attrs["amplitude_normalization_mode"] == "projected"
     assert attrs["display_gain"] == pytest.approx(flat["display_gain"], rel=0.05)
+    # Exactly the gain convert stamps on the grafted partition.
+    converted = tmp_path / "convert.luxar.zarr"
+    _convert(CliRunner(), part, converted)
+    assert auto_exposure_attrs(part)["display_gain"] == pytest.approx(
+        _gain(converted), rel=1e-6
+    )
 
 
 def test_python_recipe_falls_back_when_a_hidden_dim_has_no_column(
     tmp_path: Path,
 ) -> None:
     from luxar import Dimension, Dimensions
-    from luxar.gsplats.exposure import auto_exposure_attrs
+    from luxar.core.scene_exposure import auto_exposure_attrs
 
     src = _dense(tmp_path / "dense.gsplats.zarr")
     dims = Dimensions(

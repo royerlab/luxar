@@ -695,6 +695,7 @@ Controls:
                     scene.add_gsplats_from_file(
                         name=f"gsplats_{colormap}",
                         path=str(cache_path),
+                        fitted_defaults=False,
                         # No `dim_order`: grafting a multi-part subtree refuses
                         # it (the file is already a full node tree, so there is
                         # nothing left to remap). Nothing is lost — the old

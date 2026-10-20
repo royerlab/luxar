@@ -696,6 +696,32 @@ class TestPerKMetrics:
         for key, value in expected.items():
             assert got[key] == pytest.approx(value, rel=1e-5), key
         assert got["held_gain"] == pytest.approx(held_out_gain_db(held_mse, 0.1))
+        # Without a robust peak the robust SSIM is the full-range one.
+        assert got["full_ssim_robust"] == got["full_ssim"]
+
+    def test_robust_ssim_uses_the_robust_peak(self):
+        from luxar.gsplats.metrics import compute_ssim
+
+        g = torch.Generator().manual_seed(1)
+        ref = torch.rand(20, 40, 40, generator=g)
+        rendered = ref + 0.05 * torch.randn(20, 40, 40, generator=g)
+        mask = torch.rand(20, 40, 40, generator=g) < 0.05
+        fg = ref > 0.6
+        expected = compute_ssim(rendered, ref, data_range=0.25)
+        got = _per_k_metrics(
+            rendered.clone(),
+            ref,
+            mask,
+            fg[mask],
+            _foreground_weighting(mask, ref > 0.5, 2.0),
+            data_range=1.0,
+            baseline_mse=0.1,
+            compute_ssim=compute_ssim,
+            robust_range=0.25,
+        )
+        assert got["full_ssim_robust"] == pytest.approx(expected, rel=1e-5)
+        # A smaller peak shrinks SSIM's constants: the score can only drop.
+        assert got["full_ssim_robust"] < got["full_ssim"]
 
     def test_consumes_rendered_in_place(self):
         from luxar.gsplats.metrics import compute_ssim

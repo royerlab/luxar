@@ -589,6 +589,7 @@ def _write_tree_scene(
             scene.add_gsplats_from_file(
                 name="splats",
                 path=str(staged),
+                fitted_defaults=False,
                 blending_mode=blending_mode,
                 layer=True,
             )

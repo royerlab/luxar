@@ -558,6 +558,7 @@ Tracking Challenge / Zenodo 5270323. Cite: Barry et al. 2022; Maska et al. 2023.
                 group.add_gsplats_from_file(
                     recipe,
                     str(recipe_paths[recipe]),
+                    fitted_defaults=False,
                     opacity=1.0,
                     absorption=1.0,
                     blending_mode="volumetric",

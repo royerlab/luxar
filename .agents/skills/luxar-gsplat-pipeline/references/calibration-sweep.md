@@ -80,8 +80,10 @@ fits stored 97326 (`n2s`) and 71964 (`standard`).
 headline it; `cal.json` keeps both (`held_out_psnr_robust_db` beside the
 full-range `held_out_psnr_db`). The peak is one constant per volume, so the two
 differ by a constant `20·log10(robust/full)` and every K\* rule, which compares dB
-differences, picks the same K. A held-out score is still not a fit's in-sample
-score: expect `cal` numbers below the fit summary's.
+differences, picks the same K. The SSIM column uses the same robust peak
+(`full_ssim_robust`; the full-range `full_ssim` stays in `cal.json`). A held-out
+score is still not a fit's in-sample score: expect `cal` numbers below the fit
+summary's.
 
 ## Crop calibrations
 

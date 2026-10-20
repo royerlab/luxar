@@ -43,6 +43,7 @@ _METRICS: Dict[str, Any] = {
     "psnr_db": 44.4587,
     "psnr_robust_db": 41.2093,
     "ssim": 0.9876,
+    "ssim_robust": 0.8765,
     "rel_l2": 0.0333,
     "max_abs_error": 0.0444,
     "foreground_psnr_db": 32.8791,
@@ -1594,6 +1595,26 @@ def test_post_cull_quality_line_uses_robust_headline_and_full_range_fallback() -
         "Quality (saved model, after post-fit pruning/cull): PSNR=29.0 dB "
         "(-1.00 dB vs fitted), foreground PSNR=20.0 dB"
     )
+
+
+def test_post_cull_quality_line_headlines_robust_ssim() -> None:
+    from luxar.gsplats.fit_gsplats import _post_cull_quality_line
+
+    quality = {
+        "psnr_db": 29.0,
+        "psnr_robust_db": 24.0,
+        "foreground_psnr_robust_db": 15.0,
+        "ssim": 0.99,
+        "ssim_robust": 0.42,
+        "mse": 1e-3,
+    }
+    line = _post_cull_quality_line(quality, {})
+    assert line.endswith("SSIM=0.4200 robust peak (0.9900 full range), MSE=1.00e-03"), (
+        line
+    )
+    # A scorer without the robust SSIM keeps the bare full-range figure.
+    del quality["ssim_robust"]
+    assert _post_cull_quality_line(quality, {}).endswith("SSIM=0.9900, MSE=1.00e-03")
 
 
 @pytest.mark.slow

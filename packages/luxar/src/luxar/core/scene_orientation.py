@@ -47,13 +47,14 @@ from typing import Any, List, Optional
 
 import numpy as np
 
-from ...core.dimension_inference import build_dimensions_from_data, infer_discrete_step
-from ...core.dimensions import Dimension, Dimensions
-from ...core.viewer_config import VALID_VIEW_AXES, CameraConfig
-from ...gsplats.io.save_gsplats import fit_axis_dimension_metadata
+from ..gsplats.io.save_gsplats import fit_axis_dimension_metadata
+from .dimension_inference import build_dimensions_from_data, infer_discrete_step
+from .dimensions import Dimension, Dimensions
+from .viewer_config import VALID_VIEW_AXES, CameraConfig
 
 __all__ = [
     "ConvertOrientation",
+    "fitted_column_names",
     "parse_dim_order",
     "resolve_convert_orientation",
 ]
@@ -137,6 +138,21 @@ def _column_names(
         return names
     fitted = fit_axis_dimension_metadata(dict(fitting_info or {}), ndim)
     return [str(entry["name"]) for entry in fitted] if fitted else None
+
+
+def fitted_column_names(
+    ndim: int,
+    dimension_metadata: Optional[Sequence[Mapping[str, Any]]],
+    fitting_info: Optional[Mapping[str, Any]],
+) -> Optional[List[str]]:
+    """The store's own column names, or ``None`` for an unnamed store.
+
+    A store is FITTED (in the sense ``add_gsplats_from_file``'s convert defaults
+    use) exactly when this is not ``None``: a complete root
+    ``dimension_metadata``, or fitting provenance whose ``source_shape`` has the
+    centers' rank. A classical-splat import or a hand-built store has neither.
+    """
+    return _column_names(ndim, dimension_metadata, None, fitting_info)
 
 
 def _canonical_rank(name: str) -> int:

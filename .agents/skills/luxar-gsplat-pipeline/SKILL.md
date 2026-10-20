@@ -143,9 +143,9 @@ luxar gsplat compare fitted.gsplats.zarr original.tiff --output-json metrics.jso
 #   --fg-threshold, --at-fit-resolution, --device (--shape must equal the reference)
 ```
 
-Headline PSNR = robust peak (reference p99.99 − floor; full-range `psnr_db` beside
-it), plus SSIM, foreground SSIM, `mse`, `rel_l2`, `max_abs_error` and the
-**foreground trio**. **Read the foreground number** (smoothed-Otsu mask on the
+Headline PSNR and SSIM = robust peak (reference p99.99 − floor; full-range values
+beside them), plus foreground SSIM, `mse`, `rel_l2`, `max_abs_error` and the
+**foreground trio**; the noise verdict is an estimate, not a pass mark. **Read the foreground number** (smoothed-Otsu mask on the
 target), always with `foreground_fraction`. It is not interchangeable with `cal.json`'s
 `held_out_psnr_fg_db`, and neither covers the dim band — details in
 [references/foreground-metrics.md](references/foreground-metrics.md).
@@ -176,6 +176,7 @@ noise a connected-component SIZE filter beat NLM outright (it cannot damage what
 it keeps). Set `--h` / `--denoise-h` explicitly: Noise2Self calibration is defeated
 by very sparse data and answers at the edge of its grid. Measurements and the
 scipy recipe: [references/denoising-before-a-fit.md](references/denoising-before-a-fit.md).
+`fit --denoise` scores its summary vs the DENOISED input; `gsplat compare` vs raw.
 
 ### Symptom → knob
 
@@ -442,43 +443,39 @@ schedule too. Measurements and what does NOT fix it:
 
 ## Add a fitted gsplat node to a Luxar scene
 
-A `.gsplats.zarr` is a detached scene subtree; graft it into a scene three ways
-(scene authoring API — see the `luxar-visualization` skill for the full scene flow):
+For a FITTED store the bare adder builds the scene `luxar gsplat convert` builds
+(full scene flow: the `luxar-visualization` skill):
 
 ```python
-from luxar import LuxarZarrCompiler, Dimensions
+from luxar import Dimensions, LuxarZarrCompiler
 
 with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-
-    # (a) From a fitted file (auto-lowers multi-level LOD pyramids to a kind=lod group):
-    scene.add_gsplats_from_file("embryo", "fitted.gsplats.zarr")
-
-    # (b) From an in-memory fit result (GSplatData from fit_gaussian_splats):
-    scene.add_gsplats_from_data("embryo", result)
-
-    # (c) Fit in one step from a volume:
-    scene.add_gsplats_from_volume("embryo", volume, seeds=8000, n_iters=5000, device="auto")
-
-    # (d) From raw arrays — cholesky_factors is the packed lower-triangular factor L
-    #     of the COVARIANCE (Σ = L·Lᵀ); 3D = (N,6):
-    #     [L00, L10, L11, L20, L21, L22]. Diagonal is scale-like:
-    #     isotropic std σ -> [σ,0,σ,0,0,σ]  (NOT 1/σ)
-    #     This is the Group.add_gsplats / AdditiveSubLOD docstring contract.
-    scene.add_gsplats("trio", centers=c, amplitudes=a, cholesky_factors=L, colors=rgb)
+    # LOD pyramid -> kind=lod group; a partition is grafted node for node
+    scene.add_gsplats_from_file("embryo", "fitted.gsplats.zarr", colormap="plasma")
 ```
 
-The CLI shortcut `luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --center`
-does (a) for you and writes a ready-to-serve scene. It keeps the amplitudes in
-source data units (labelled `amplitude_unit`, floor in `amplitude_offset`) and
-auto-exposes a separate `display_gain`: dimmed (never brightened) so the opening
-view's predicted additive p99.9 is `--target-brightness` (2.0; 0.9 under
-`--tone-mapping None|Linear`) instead of a saturated blob (side views and other
-timepoints capped at 4x); `--no-auto-exposure` = per-splat gain only. The Python
-adders keep per-splat normalisation by default; the Python equivalent is
-`luxar.gsplats.exposure.data_unit_display_attrs(stats, amplitudes=..., plan=...)`
-(plan from `plan_projected_exposure`), passed to `add_gsplats_from_file(...,
-normalize_amplitudes=False, **attrs)`.
+It applies convert's auto exposure (`display_gain`, data units), `layer=True`
+and amplitude tier; on a fresh scene (`default_3d()`, no camera, no geometry)
+also the scene dims, `dim_order` and y-down XY camera. Matches
+`convert --no-center`. Explicit kwargs win; `fitted_defaults=False` = plain
+adder. Rules, opt-outs, multichannel:
+[references/scene-from-a-fit.md](references/scene-from-a-fit.md).
+
+Other ways in:
+
+```python
+scene.add_gsplats_from_data("embryo", result)  # in-memory GSplatData from a fit
+scene.add_gsplats_from_volume("embryo", volume, seeds=8000, n_iters=5000, device="auto")
+# From raw arrays: cholesky_factors is the packed lower-triangular factor L of the
+# COVARIANCE (Σ = L·Lᵀ); 3D = (N,6): [L00, L10, L11, L20, L21, L22]. The
+# diagonal is scale-like: isotropic std σ -> [σ,0,σ,0,0,σ] (NOT 1/σ). This is the
+# Group.add_gsplats / AdditiveSubLOD docstring contract.
+scene.add_gsplats("trio", centers=c, amplitudes=a, cholesky_factors=L, colors=rgb)
+```
+
+`convert`'s `--display-gain` is ABSOLUTE (per data unit), not a multiplier; under
+`volumetric` (no auto exposure) convert prints the additive gain to copy.
 
 ## Notes
 

@@ -46,6 +46,7 @@ _IMPORTANT_FITTING_KEYS = (
     "foreground_psnr_db",
     "foreground_threshold",
     "foreground_fraction",
+    "ssim_robust",
     "ssim",
     "mse",
     # Amplitudes are background-relative, so these normalization stamps are
@@ -1111,16 +1112,17 @@ def compare_quality(
 
     Renders the gsplats back onto the reference's voxel grid and computes PSNR,
     SSIM, MSE, relative L2 error and maximum absolute error, globally and over
-    the foreground. The headline PSNR uses a robust peak (reference p99.99 minus
-    the fit's floor), which one hot pixel cannot move; the classical full-range
-    PSNR is reported beside it. A physical-output fit is mapped back to voxels
+    the foreground. The headline PSNR and SSIM use a robust peak (reference
+    p99.99 minus the fit's floor), which one hot pixel cannot move; the
+    classical full-range figures are reported beside them. A physical-output fit is mapped back to voxels
     with its stored voxel_size. Partition and nested stores are scored over
     their default-rendered selection: all parts and each LOD group's finest
     level. The compression ratio covers the whole store, including coarse
     levels that are not scored. A --region crop fit is scored on the region it
     fitted (--whole-volume for all of the reference). Beside the foreground
     PSNR it prints the PSNR a noise-free model would score against this noisy
-    reference (from the noise sigma measured in the foreground) and a verdict.
+    reference (from the noise sigma measured in the foreground) and a verdict
+    on the gap: an estimate that fine real texture can fool, not a pass mark.
 
     Examples:
         luxar gsplat compare fitted.gsplats.zarr original.tiff

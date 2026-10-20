@@ -288,7 +288,7 @@ voice:
   and pass it through `luxar.cli.utils.deprecated_option(...)`, which prints
   the notice to stderr.
 - Viewer URL parameter: add the old key to `URL_PARAM_ALIASES` in
-  `packages/luxar-viewer/src/config/url-params.ts`.
+  `packages/luxar-viewer/src/config/url-param-access.ts`.
 
 Use the release date you are targeting for `since` and the date six months
 later for `remove_after` (the two-releases half of the rule is checked when the

@@ -166,7 +166,7 @@ export interface LuxarLayerOptions {
    * disposes it — it only reads capabilities and the drawing-buffer size.
    */
   renderer: Renderer;
-  /** Scene-pass target for WebGPU blend warm-up. Omit to use the host's current target. */
+  /** Scene-pass target for WebGL/WebGPU blend warm-up. Omit to use the host's current target. */
   getWarmupRenderTarget?: () => THREE.RenderTarget | null;
   /**
    * Live camera accessor. A getter rather than a value because a host may

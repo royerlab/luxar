@@ -523,7 +523,11 @@ carry over. `gsplat convert --blending-mode volumetric` therefore prints the
 predicted density on the brightest rays of the opening view and the κ that gives
 about one optical depth (37% transmission) there; on a 10-timepoint zebrafish
 nuclei fit that was 3.95 → κ ≈ 0.25, which is why κ = 4 renders such a fit as an
-opaque wall. Start near the printed value and adjust by eye. Any background haze
+opaque wall. Emission is that same density, so a small κ opens as saturated as
+additive: convert also prints the `--display-gain` additive auto exposure would
+use and the κ to pair with it. `--display-gain` is absolute (brightness per data
+unit), not a multiplier, so copy the printed number rather than trying a factor
+such as 0.1. Start near the printed values and adjust by eye. Any background haze
 left in the fit absorbs too, so use a colormap that starts at black (`inferno`,
 `magma`, `gray`): the dim foot of `plasma` or `viridis` is a saturated blue or
 purple, and haze renders as coloured fog instead of disappearing.
@@ -591,9 +595,31 @@ scene.add_lines(
 ### Gaussian splats
 
 Oriented Gaussian functions, Luxar's volume-rendering primitive. Fit them with
-the pipeline above and add the result with `scene.add_gsplats_from_data(name,
-result)` or `scene.add_gsplats_from_file(name, "fit.gsplats.zarr")`; embedding an
-existing fit needs no extra dependency.
+the pipeline above, then either run `luxar gsplat convert fit.gsplats.zarr
+scene.luxar.zarr` or add the fit in Python; embedding an existing fit needs no
+extra dependency.
+
+```python
+from luxar import Dimensions, LuxarZarrCompiler
+
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+    scene.add_gsplats_from_file("embryo", "fit.gsplats.zarr", colormap="plasma")
+```
+
+For a fitted store (one that records its axis names or fitting provenance) the
+adder applies what `convert` does: it auto-exposes a `display_gain` with the
+amplitudes kept in data units, lists the node in the Layers panel, and uses
+8-bit amplitudes for a uint8 source. On a fresh scene (`Dimensions.default_3d()`,
+explicit or not, with no camera and no other geometry) it also maps the
+`z, y, x` columns onto `x, y, z` dimensions and opens the camera on the XY plane
+with y pointing down (Fiji/napari). On a scene you laid out yourself the scene
+and the column mapping are left alone (a log line names the `dim_order` to pass),
+and `luxar.core.scene_defaults.fitted_scene_defaults(path)`
+gives convert's `dimensions` / `viewer_config` to pass to `create_scene`. The
+result matches `luxar gsplat convert --no-center`; convert also centers the data
+on its centroid by default. An explicit argument always wins, and
+`fitted_defaults=False` gives the plain adder.
 
 ### Mesh
 
