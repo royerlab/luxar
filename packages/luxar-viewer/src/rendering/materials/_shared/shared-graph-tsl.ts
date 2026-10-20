@@ -256,6 +256,21 @@ export function applySharedTSLGraph<T extends TSLLeafSet>(
       forwardedInputsByMaterial.delete(material);
     });
   }
+  material.vertexNode = graph.vertexNode;
+  material.colorNode = graph.colorNode;
+  material.depthNode = graph.depthNode;
+  return graph;
+}
+
+/** Bind a visual material's shared graph and reapply its opt-in output override. */
+export function applySharedVisualTSLGraph<T extends TSLLeafSet>(
+  material: NodeMaterial,
+  family: string,
+  key: unknown,
+  leaves: T,
+  build: (inputs: T, scratch: NodeMaterial) => void
+): SharedTSLGraph {
+  const graph = applySharedTSLGraph(material, family, key, leaves, build);
   bindTSLNodeOverride(material, graph);
   return graph;
 }

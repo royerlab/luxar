@@ -37,7 +37,7 @@ import {
   type MeshTSLNodes,
 } from './shader-tsl';
 import { copyRuntimeUniforms, MESH_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
-import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
+import { applySharedVisualTSLGraph } from '../_shared/shared-graph-tsl';
 import { copyTSLNodeOverride } from '../_shared/tsl-node-override';
 import {
   MESH_DEFAULTS,
@@ -289,7 +289,7 @@ export class MeshTSLMaterial
     };
     // ONE graph per configuration, shared by every mesh material of it
     // (see shared-graph-tsl.ts): the build cache keys on node ids.
-    applySharedTSLGraph(this, 'mesh', config, this.tslNodes, (inputs, scratch) => {
+    applySharedVisualTSLGraph(this, 'mesh', config, this.tslNodes, (inputs, scratch) => {
       meshWebGPUFactory(inputs as MeshTSLNodes, config, scratch);
     });
     applyMeshMaterialState(

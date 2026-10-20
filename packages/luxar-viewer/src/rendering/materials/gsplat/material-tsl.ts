@@ -43,7 +43,7 @@ import {
   type GSplatTSLNodes,
 } from './shader-tsl';
 import { copyRuntimeUniforms, GSPLAT_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
-import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
+import { applySharedVisualTSLGraph } from '../_shared/shared-graph-tsl';
 import { copyTSLNodeOverride } from '../_shared/tsl-node-override';
 import type { GSplatMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
@@ -346,7 +346,7 @@ export class GSplatTSLMaterial
     // ONE graph per configuration, shared by every gsplat material of it
     // (see shared-graph-tsl.ts): the build cache keys on node ids, so a
     // private graph per material cost a full NodeBuilder build per part.
-    applySharedTSLGraph(this, 'gsplat', config, this.tslNodes, (inputs, scratch) => {
+    applySharedVisualTSLGraph(this, 'gsplat', config, this.tslNodes, (inputs, scratch) => {
       gsplatWebGPUFactory(inputs as GSplatTSLNodes, config, scratch);
     });
     applyGSplatMaterialState(
