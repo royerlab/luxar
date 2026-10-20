@@ -80,7 +80,8 @@ at the first missing one):
     6. ``gsplat additive -b equi-energy:4 -m self_energy`` re-ladders every
        leaf so its first rung is the few splats carrying the most light (the
        merge's ``levels`` recipe only takes equal-count ladders), then
-       ``gsplat transform --scale 0.5`` to biological micrometres.
+       ``gsplat transform`` to correct the block-mean origin and scale to
+       biological micrometres.
     7. Build the 4-layer scene, then ``luxar optimize --pack``.
 
 WHY ``--min-extent 0`` FOR THE mRNA CHANNELS:
@@ -167,6 +168,7 @@ DEMO_META = {
 }
 
 import hashlib
+import json
 import math
 import os
 import re
@@ -625,6 +627,13 @@ def _downsample(volume: np.ndarray, factors: tuple[int, int, int]) -> np.ndarray
 _LEVELS = {"1": (1, 2, 2), "2": (2, 4, 4)}
 
 
+def _level_translation_um(
+    voxel_um: tuple[float, float, float], factors: tuple[int, int, int]
+) -> tuple[float, float, float]:
+    """Offset block-mean centres from their level indices to the source grid."""
+    return tuple((f - 1) * v / 2 for f, v in zip(factors, voxel_um, strict=True))
+
+
 def stitch_czi(czi_path: Path, out_zarr: Path) -> None:
     """Stitch the two CZI views and write a two-level OME-Zarr (c, z, y, x).
 
@@ -711,7 +720,14 @@ def stitch_czi(czi_path: Path, out_zarr: Path) -> None:
                                         for v, f in zip(voxel_um, factors, strict=True)
                                     ),
                                 ],
-                            }
+                            },
+                            {
+                                "type": "translation",
+                                "translation": [
+                                    0.0,
+                                    *_level_translation_um(voxel_um, factors),
+                                ],
+                            },
                         ],
                     }
                     for path, factors in _LEVELS.items()
@@ -801,7 +817,7 @@ def fit_channel(ch: Channel, floor: Optional[float]) -> Path:
             "--channels",
             f"{ch.index}:{ch.index + 1}",
             # Centres in (expanded-tissue) micrometres, from the OME-Zarr
-            # scale: the two levels then land in one physical frame.
+            # scale; `finish_channel` also applies each level's block offset.
             "--physical",
             "--floor",
             "none" if floor is None else f"{floor:.6g}",
@@ -824,9 +840,32 @@ def finish_channel(ch: Channel, merged: Path) -> Path:
     their ``levels`` groups keep their shape) and touch no fit, so a change to
     either costs about a minute per channel, never a refit.
     """
+    from luxar._zarr_compat import open_group
+
+    group = open_group(str(OME_ZARR), mode="r")
+    datasets = dict(group.attrs)["multiscales"][0]["datasets"]
+    level = next(dataset for dataset in datasets if dataset["path"] == ch.level)
+    factors = _LEVELS[ch.level]
+    level_scale = level["coordinateTransformations"][0]["scale"][1:]
+    voxel_um = tuple(s / f for s, f in zip(level_scale, factors, strict=True))
+    offset_um = _level_translation_um(voxel_um, factors)
+    # `gsplat transform` scales first, then translates: supply biological um.
+    translation = ",".join(f"{v / EXPANSION_FACTOR:g}" for v in offset_um)
+    scale = ",".join([f"{1.0 / EXPANSION_FACTOR:g}"] * 3)
+    recipe = json.dumps(
+        {"ladder_args": LADDER_ARGS, "scale": scale, "translation": translation},
+        sort_keys=True,
+    )
     final = archive_path(ch)
-    if final.exists() and final.stat().st_mtime >= merged.stat().st_mtime:
+    stamp = final.with_name(f"{final.name}.recipe.json")
+    if (
+        final.exists()
+        and stamp.exists()
+        and stamp.read_text() == recipe
+        and final.stat().st_mtime >= merged.stat().st_mtime
+    ):
         return final
+    stamp.unlink(missing_ok=True)
     laddered = final.with_name(f"laddered_{ch.key}.gsplats.zarr")
     with asection(f"Finishing {ch.label}"):
         # `batch-fit run --merge-recipe levels` only builds equal-count ladders
@@ -840,13 +879,22 @@ def finish_channel(ch: Channel, merged: Path) -> Path:
             *LADDER_ARGS,
             "--overwrite",
         )
-        scale = ",".join([f"{1.0 / EXPANSION_FACTOR:g}"] * 3)
         if final.exists():  # stale: `transform` has no --overwrite
             shutil.rmtree(final)
         run_luxar_cli(
-            "gsplat", "transform", str(laddered), str(final), "--scale", scale
+            "gsplat",
+            "transform",
+            str(laddered),
+            str(final),
+            "--scale",
+            scale,
+            "--translate",
+            translation,
         )
         shutil.rmtree(laddered)
+        stamp_tmp = stamp.with_suffix(".tmp")
+        stamp_tmp.write_text(recipe)
+        stamp_tmp.replace(stamp)
     return final
 
 

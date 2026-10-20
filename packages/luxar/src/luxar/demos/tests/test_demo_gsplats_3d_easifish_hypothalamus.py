@@ -164,6 +164,18 @@ def test_downsample_is_a_block_mean_that_crops_remainders() -> None:
     assert out[0, 0, 0] == np.rint(volume[:2, :2, :2].mean())
 
 
+@pytest.mark.parametrize(
+    ("level", "expected"),
+    [("1", (0.0, 0.115, 0.115)), ("2", (0.21, 0.345, 0.345))],
+)
+def test_level_translation_matches_block_centres(
+    level: str, expected: tuple[float, float, float]
+) -> None:
+    assert _demo._level_translation_um(
+        (0.42, 0.23, 0.23), _demo._LEVELS[level]
+    ) == pytest.approx(expected)
+
+
 def test_nominal_dx_reads_the_stage_positions() -> None:
     meta = "<PositionX>-398.811</PositionX><PositionX>4.609</PositionX>"
     assert _demo._nominal_dx(meta, 2, 1920, 0.22851993924221545) == 1765
@@ -207,6 +219,19 @@ def test_stitch_writes_a_two_level_ome_zarr_with_per_channel_floors(
     assert [d["path"] for d in datasets] == ["1", "2"]
     scale_1 = datasets[0]["coordinateTransformations"][0]["scale"]
     assert scale_1 == pytest.approx([1.0, 0.42, 0.46, 0.46])
+    for dataset, factors in zip(datasets, ((1, 2, 2), (2, 4, 4)), strict=True):
+        assert dataset["coordinateTransformations"][1] == {
+            "type": "translation",
+            "translation": pytest.approx(
+                [
+                    0.0,
+                    *(
+                        ((f - 1) / 2) * v
+                        for f, v in zip(factors, (0.42, 0.23, 0.23), strict=True)
+                    ),
+                ]
+            ),
+        }
     # One floor per channel per level, each resolved on its own array.
     assert all(len(v) == 4 for v in record["floors"].values())
 
@@ -286,10 +311,32 @@ def test_fit_channel_passes_its_own_floor_and_channel(
     assert len(calls) == 1
 
 
+def _finish_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from luxar._zarr_compat import open_group
+
+    monkeypatch.setattr(_demo, "RECOMPUTE_DIR", tmp_path)
+    monkeypatch.setattr(_demo, "OME_ZARR", tmp_path / "stitched.ome.zarr")
+    group = open_group(str(_demo.OME_ZARR), mode="w")
+    group.attrs["multiscales"] = [
+        {
+            "datasets": [
+                {
+                    "path": "1",
+                    "coordinateTransformations": [{"scale": [1.0, 0.42, 0.46, 0.46]}],
+                },
+                {
+                    "path": "2",
+                    "coordinateTransformations": [{"scale": [1.0, 0.84, 0.92, 0.92]}],
+                },
+            ]
+        }
+    ]
+
+
 def test_finish_channel_reladders_then_scales_to_biological_um(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(_demo, "RECOMPUTE_DIR", tmp_path)
+    _finish_source(tmp_path, monkeypatch)
     calls: list[tuple[str, ...]] = []
 
     def fake_cli(*args: str) -> None:
@@ -307,9 +354,53 @@ def test_finish_channel_reladders_then_scales_to_biological_um(
     assert _flag_value(additive, "-b") == "equi-energy:4"
     assert transform[:2] == ("gsplat", "transform")
     assert _flag_value(transform, "--scale") == "0.5,0.5,0.5"
+    assert _flag_value(transform, "--translate") == "0,0.0575,0.0575"
     # Newer than the merge: reused, nothing re-run.
     assert _demo.finish_channel(gpr83, merged) == final
     assert len(calls) == 2
+    monkeypatch.setattr(_demo, "EXPANSION_FACTOR", 4.0)
+    assert _demo.finish_channel(gpr83, merged) == final
+    assert len(calls) == 4
+    assert _flag_value(calls[-1], "--translate") == "0,0.02875,0.02875"
+    monkeypatch.setattr(
+        _demo, "LADDER_ARGS", ("-b", "equi-energy:5", "-m", "self_energy")
+    )
+    assert _demo.finish_channel(gpr83, merged) == final
+    assert len(calls) == 6
+    assert _flag_value(calls[-2], "-b") == "equi-energy:5"
+    monkeypatch.setattr(_demo, "EXPANSION_FACTOR", 2.0)
+    dapi = next(ch for ch in _demo.CHANNELS if ch.key == "dapi")
+    dapi_merged = _demo.merged_path(dapi)
+    dapi_merged.mkdir(parents=True)
+    _demo.finish_channel(dapi, dapi_merged)
+    assert _flag_value(calls[-1], "--translate") == "0.105,0.1725,0.1725"
+
+
+def test_finish_channel_rebuilds_after_interrupted_transform(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _finish_source(tmp_path, monkeypatch)
+    ch = next(ch for ch in _demo.CHANNELS if ch.level == "1")
+    merged = _demo.merged_path(ch)
+    merged.mkdir(parents=True)
+    calls: list[tuple[str, ...]] = []
+
+    def interrupted_cli(*args: str) -> None:
+        calls.append(args)
+        Path(args[3]).mkdir(parents=True, exist_ok=True)
+        if args[1] == "transform" and len(calls) == 2:
+            raise RuntimeError("interrupted")
+
+    monkeypatch.setattr(_demo, "run_luxar_cli", interrupted_cli)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        _demo.finish_channel(ch, merged)
+    assert _demo.finish_channel(ch, merged) == _demo.archive_path(ch)
+    assert [call[1] for call in calls] == [
+        "additive",
+        "transform",
+        "additive",
+        "transform",
+    ]
 
 
 def test_each_channel_is_fitted_with_its_own_level_floor(
