@@ -20,6 +20,7 @@ if HAS_TORCH:
     from luxar.gsplats.fitting.preprocessing import (
         _compression_ratio_to_target_count,
         _compute_floats_per_splat,
+        _generate_seeds,
         _normalize_data,
         _resolve_floor,
         preprocess_data,
@@ -91,6 +92,22 @@ class TestPreprocessDataValidation:
 
 class TestPreprocessData:
     """Test data preprocessing functionality."""
+
+    def test_peaks_fit_seeding_is_independent_of_global_rng(self) -> None:
+        volume = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(1)
+            before = torch.random.get_rng_state().clone()
+            first = _generate_seeds(volume, 8, "peaks", False, device="cpu")
+            assert torch.equal(torch.random.get_rng_state(), before)
+            torch.manual_seed(99)
+            before = torch.random.get_rng_state().clone()
+            second = _generate_seeds(volume, 8, "peaks", False, device="cpu")
+            assert torch.equal(torch.random.get_rng_state(), before)
+            override = _generate_seeds(volume, 8, "peaks", False, device="cpu", seed=43)
+        assert len(first) == 8
+        np.testing.assert_array_equal(first, second)
+        assert not np.array_equal(first, override)
 
     def test_basic_preprocessing(self, mock_config_2d) -> None:
         """Test basic data preprocessing."""
