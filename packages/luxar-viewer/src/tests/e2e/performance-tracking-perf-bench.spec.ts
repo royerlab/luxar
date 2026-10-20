@@ -103,7 +103,7 @@ test.describe('Performance Regression Tracking', () => {
   test('should track dataset load time', async ({ page }) => {
     const startTime = Date.now();
 
-    await page.goto(`/?src=${DATASET}&debug`);
+    await page.goto(`/?src=${DATASET}&debug&renderer=webgl`);
     await waitForLuxarReady(page);
 
     // Wait for points to load
@@ -138,7 +138,7 @@ test.describe('Performance Regression Tracking', () => {
   test('should track initialization time', async ({ page }) => {
     const startTime = Date.now();
 
-    await page.goto('/?debug');
+    await page.goto('/?debug&renderer=webgl');
     await waitForLuxarReady(page);
 
     const initTime = Date.now() - startTime;
@@ -161,7 +161,7 @@ test.describe('Performance Regression Tracking', () => {
   test('should track navigation responsiveness', async ({ page }) => {
     const NAV_DATASET = `${PERF_DATA_BASE}/datasets/examples/dense_grid_5d_example.luxar.zarr`;
 
-    await page.goto(`/?src=${NAV_DATASET}&debug`);
+    await page.goto(`/?src=${NAV_DATASET}&debug&renderer=webgl`);
     await waitForLuxarReady(page);
 
     const startTime = Date.now();
@@ -188,7 +188,7 @@ test.describe('Performance Regression Tracking', () => {
   });
 
   test('should track rendering frame rate', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug`);
+    await page.goto(`/?src=${DATASET}&debug&renderer=webgl`);
     await waitForLuxarReady(page);
 
     // Measure FPS
@@ -250,7 +250,7 @@ test.describe('Performance Regression Tracking', () => {
 
 test.describe('Performance - Memory & Rendering', () => {
   test('should not leak memory while idle', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug`);
+    await page.goto(`/?src=${DATASET}&debug&renderer=webgl`);
     await waitForLuxarReady(page);
 
     const initialMemory = await page.evaluate(() => {
@@ -272,7 +272,7 @@ test.describe('Performance - Memory & Rendering', () => {
   });
 
   test('should track WebGL memory usage', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug`);
+    await page.goto(`/?src=${DATASET}&debug&renderer=webgl`);
     await waitForLuxarReady(page);
 
     const webglMemory = await page.evaluate(() => {
@@ -287,7 +287,7 @@ test.describe('Performance - Memory & Rendering', () => {
   });
 
   test('should render 60 frames efficiently', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug`);
+    await page.goto(`/?src=${DATASET}&debug&renderer=webgl`);
     await waitForLuxarReady(page);
 
     const renderTime = await page.evaluate(async () => {
@@ -317,7 +317,7 @@ test.describe('Performance - Memory & Rendering', () => {
   });
 
   test('should not degrade FPS over time', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug`);
+    await page.goto(`/?src=${DATASET}&debug&renderer=webgl`);
     await waitForLuxarReady(page);
 
     const measureFPS = async () => {

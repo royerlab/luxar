@@ -174,7 +174,7 @@ async function captureArm(browser, renderer, bloom) {
   page.on('pageerror', (e) => errors.push(e.message));
   const url =
     `http://localhost:${viewerPort}/?src=http://127.0.0.1:${dataPort}/${datasetRel}&debug&dpr=1` +
-    (renderer === 'webgpu' ? '&renderer=webgpu' : '');
+    `&renderer=${renderer}`;
   await page.goto(url);
   await page.waitForFunction(() => !!window.__luxarDebug?.app?.sceneManager?.scene, undefined, {
     timeout: 60000,
