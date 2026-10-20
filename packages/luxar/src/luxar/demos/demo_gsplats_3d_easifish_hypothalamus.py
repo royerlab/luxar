@@ -904,7 +904,7 @@ def _camera(bmin: np.ndarray, bmax: np.ndarray) -> CameraConfig:
     distance = max(extent[2] / (0.85 * vh * 16 / 9), extent[1] / (0.85 * vh))
     distance += extent[0] / 2.0
     tilt = math.radians(CAMERA_TILT_DEG)
-    position = centre + distance * np.array([-math.cos(tilt), math.sin(tilt), 0.0])
+    position = centre + distance * np.array([math.cos(tilt), math.sin(tilt), 0.0])
     return CameraConfig(
         position=tuple(float(v) for v in position),
         target=tuple(float(v) for v in centre),

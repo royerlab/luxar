@@ -458,14 +458,21 @@ def test_scene_has_four_additive_layers_with_authored_windows(
     assert len(layers) == 4
 
 
-def test_camera_looks_at_the_slab_with_image_rows_down() -> None:
+@pytest.mark.parametrize("tilt", [0.0, 30.0])
+def test_camera_looks_at_the_slab_with_image_rows_down(
+    tilt: float, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(_demo, "CAMERA_TILT_DEG", tilt)
     bmin = np.array([0.0, 0.0, 0.0])
     bmax = np.array([250.0, 435.0, 835.0])  # (z, y, x) in um
     camera = _demo._camera(bmin, bmax)
     assert camera.up == (0.0, -1.0, 0.0)
     assert camera.target == pytest.approx(tuple((bmin + bmax) / 2))
-    # The camera sits on the -z (depth) side, in front of the XY face.
-    assert camera.position[0] < bmin[0]
+    assert camera.position[0] > bmax[0]
+    eye_to_target = np.asarray(camera.position) - np.asarray(camera.target)
+    screen_right = np.cross(np.asarray(camera.up), eye_to_target)
+    screen_right /= np.linalg.norm(screen_right)
+    assert screen_right == pytest.approx([0.0, 0.0, 1.0])
 
 
 def test_pack_scene_writes_chunk_packs_into_the_output(
