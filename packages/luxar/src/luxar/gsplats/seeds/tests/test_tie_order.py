@@ -24,7 +24,7 @@ from luxar.gsplats.seeds.multiscale_decomposition import (
     _dedupe_with_scales_and_energies,
 )
 from luxar.gsplats.seeds.peaks import seed_from_peaks, top_k_indices_stable
-from luxar.gsplats.seeds.utils import argsort_descending
+from luxar.gsplats.seeds.utils import argsort_descending, local_maxima
 
 
 def _tied_volume() -> np.ndarray:
@@ -80,6 +80,17 @@ def test_argsort_descending_integer_extremes_do_not_wrap() -> None:
 def test_argsort_descending_puts_nan_last() -> None:
     values = np.array([np.nan, 1.0, np.nan, 2.0, 1.0])
     np.testing.assert_array_equal(argsort_descending(values), [3, 1, 4, 0, 2])
+
+
+def test_local_maxima_top_k_keeps_lowest_c_order_ties_and_returns_c_order() -> None:
+    image = np.zeros((51, 51), dtype=np.float32)
+    image[1::3, 1::3] = 5.0
+    image[49, 49] = 6.0
+
+    peaks = local_maxima(image, radius=1, thresh=1.0, top_k=8)
+
+    expected = np.array([(1, c) for c in range(1, 20, 3)] + [(49, 49)])
+    np.testing.assert_array_equal(peaks, expected)
 
 
 def test_edge_candidates_are_brightest_first_with_c_order_ties() -> None:
