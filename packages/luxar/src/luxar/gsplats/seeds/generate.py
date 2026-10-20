@@ -107,7 +107,8 @@ def generate_seeds(
         **Peaks Parameters** (method="peaks"):
 
         seed : int or torch.Generator or None, optional
-            Local sampling seed or generator. None uses PyTorch's global RNG.
+            Local sampling seed or generator for peaks only. None uses PyTorch's
+            global RNG.
 
     Returns
     -------
@@ -257,7 +258,7 @@ def generate_seeds(
         if "peaks" in methods and used_by_peaks:
             peaks_kwargs[key] = value
 
-        if not (
+        if (key == "seed" and "peaks" not in methods) or not (
             used_by_decomposition
             or used_by_grid
             or used_by_edges

@@ -14,6 +14,7 @@ All heavy computation is in PyTorch for GPU acceleration.
 
 from __future__ import annotations
 
+import operator
 from typing import Optional
 
 import numpy as np
@@ -63,6 +64,7 @@ def seed_from_peaks(
         Seed or generator for intensity-weighted sampling. An integer uses a
         local generator and does not change PyTorch's global RNG state. A
         supplied generator must match the sampling device (CPU on MPS).
+        Seeded MPS sampling runs on CPU; results are reproducible per device.
 
     Returns
     -------
@@ -70,6 +72,14 @@ def seed_from_peaks(
         Seeds with centers at sampled non-zero voxels, amplitudes from
         V, and isotropic Cholesky factors at ``init_sigma``.
     """
+    if seed is not None and not isinstance(seed, torch.Generator):
+        try:
+            if isinstance(seed, bool):
+                raise TypeError
+            seed = operator.index(seed)
+        except TypeError as exc:
+            raise TypeError("seed must be an integer or torch.Generator") from exc
+
     ndim = V.ndim
 
     if init_sigma is None:
@@ -130,16 +140,16 @@ def seed_from_peaks(
                 intensities = intensities[topk_idx]
 
             probs = intensities / intensities.sum()
+            # MPS does not support multinomial with a generator, so seeded draws use CPU.
             sampling_device = (
                 torch.device("cpu")
                 if torch.device(dev).type == "mps" and seed is not None
                 else dev
             )
-            generator = (
-                torch.Generator(device=sampling_device).manual_seed(seed)
-                if isinstance(seed, int)
-                else seed
-            )
+            if seed is None or isinstance(seed, torch.Generator):
+                generator = seed
+            else:
+                generator = torch.Generator(device=sampling_device).manual_seed(seed)
             indices = torch.multinomial(
                 probs.to(sampling_device),
                 n_seeds,

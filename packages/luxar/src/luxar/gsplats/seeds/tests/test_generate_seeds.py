@@ -359,6 +359,23 @@ class TestSpecialCases:
 class TestReproducibility:
     """Test reproducibility."""
 
+    def test_numpy_integer_seed_and_invalid_types(self) -> None:
+        volume = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
+        expected = seed_from_peaks(volume, n_seeds=8, seed=42, device="cpu")
+        actual = seed_from_peaks(volume, n_seeds=8, seed=np.int64(42), device="cpu")
+        np.testing.assert_array_equal(actual.centers, expected.centers)
+
+        for invalid in (True, 42.0, "42"):
+            with pytest.raises(TypeError, match="seed"):
+                seed_from_peaks(volume, n_seeds=8, seed=invalid, device="cpu")
+            with pytest.raises(TypeError, match="seed"):
+                seed_from_peaks(volume, seed=invalid, device="cpu")
+
+    def test_seed_warns_when_peaks_is_not_selected(self) -> None:
+        volume = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
+        with pytest.warns(UserWarning, match="Parameter 'seed'.*not used"):
+            generate_seeds(volume, method="edges", seed=42, device="cpu")
+
     def test_peaks_seed_is_independent_of_global_rng(self) -> None:
         volume = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
 
