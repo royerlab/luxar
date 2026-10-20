@@ -88,6 +88,13 @@ INSTALL_SPECS: dict[str, DependencySpec] = {
         "built locally; a cached catalog skips it entirely.",
     ),
     "cellxgene_census": DependencySpec("cellxgene-census>=1.0.0", "demos"),
+    "czifile": DependencySpec(
+        "czifile>=2026.4.30",
+        "demos",
+        "Reads the raw Zeiss CZI that the EASI-FISH demo stitches and fits; "
+        "a run from hosted fits never imports it. 2026.4.30 is the first "
+        "release exposing the voxel size as CziImage.attrs['coord_scales'].",
+    ),
     "gdown": DependencySpec(
         "gdown",
         "",  # intentionally not in any extra — Google-Drive fetches only
