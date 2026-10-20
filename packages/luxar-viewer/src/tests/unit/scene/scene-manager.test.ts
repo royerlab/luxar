@@ -456,10 +456,9 @@ describe('SceneManager', () => {
     // let one case's DISPLAYED dims decide how the next case's nD bounds
     // are projected (the default is [0, 1, 2] when uninitialised).
     __resetSceneDimsManagerForTests();
-    // Pin the unit tests to the WebGL path. This is the production
-    // default — these tests exercise scene composition / disposal /
-    // position bounds and are renderer-agnostic in intent. Stubbing
-    // the env flag keeps the test hermetic against any future change
+    // Pin the unit tests to the WebGL path. These tests exercise scene
+    // composition / disposal / position bounds and are renderer-agnostic in
+    // intent. Stubbing the env flag keeps the test hermetic against any future change
     // that introduces a new opt-in to WebGPU, and the GLSL path is
     // the well-mocked one (`THREE.WebGLRenderer` is stubbed in this
     // file; the `three/webgpu` `WebGPURenderer` is not).
@@ -2336,6 +2335,48 @@ describe('SceneManager', () => {
   });
 
   describe('WebGPU → WebGL fallback wiring', () => {
+    it('checks the adapter vendor on a fresh platform-policy request', async () => {
+      vi.stubEnv('VITE_LUXAR_USE_LEGACY_WEBGL', '0');
+      const requestDevice = vi.fn();
+      const requestAdapter = vi.fn().mockResolvedValue({
+        info: { vendor: 'amd' },
+        features: new Set<string>(),
+        limits: { maxVertexBuffers: 16 },
+        requestDevice,
+      });
+      vi.stubGlobal('navigator', {
+        ...navigator,
+        userAgentData: { platform: 'Linux', brands: [{ brand: 'Chromium' }] },
+        gpu: { requestAdapter },
+      });
+      try {
+        await sceneManager.init({ canvas: mockCanvas as any });
+        expect(requestAdapter).toHaveBeenCalledTimes(1);
+        expect(requestDevice).not.toHaveBeenCalled();
+        expect(sceneManager.renderer).toBeInstanceOf(THREE.WebGLRenderer);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('does not let forceWebGL bypass the platform policy', async () => {
+      vi.stubEnv('VITE_LUXAR_USE_LEGACY_WEBGL', '0');
+      const requestAdapter = vi.fn();
+      vi.stubGlobal('navigator', {
+        ...navigator,
+        userAgentData: { platform: 'Linux', brands: [{ brand: 'Chromium' }] },
+        gpu: { requestAdapter },
+      });
+      try {
+        await sceneManager.init({ canvas: mockCanvas as any, webgpuForceWebGL: true });
+        expect(mockedCreateWebGPURenderer).not.toHaveBeenCalled();
+        expect(requestAdapter).not.toHaveBeenCalled();
+        expect(sceneManager.renderer).toBeInstanceOf(THREE.WebGLRenderer);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
     // When createWebGPURenderer returns { fallback: true } (adapter below
     // the WebGPU spec minimum and no explicit override), SceneManager's
     // setupWebGPURenderer must drop down to setupWebGLRenderer and the

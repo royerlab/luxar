@@ -100,6 +100,10 @@ vi.mock('zarrita', () => ({
   withMaybeConsolidatedMetadata: undefined,
 }));
 
+vi.mock('../../../rendering/tsl/load', () => ({
+  loadTslMaterials: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { buildInfo, buildInfoLine } from '../../../config/build-info';
 import { VIEWER_VERSION } from '../../../version';
 import { config } from '../../../config';
@@ -122,6 +126,7 @@ import {
   uninstallRendererInfoSampler,
 } from '../../../core/app/debug/renderer-info-sampler';
 import { resetRootDocumentPrefetchForTests } from '../../../cache/root-document-prefetch';
+import { loadTslMaterials } from '../../../rendering/tsl/load';
 import {
   defaultUserSettings,
   saveUserSettings,
@@ -251,6 +256,32 @@ describe('bootstrapStandalone', () => {
   });
 
   describe('WebGPU startup', () => {
+    it('rejects an unmeasured adapter on the platform-policy path before device or TSL loading', async () => {
+      vi.stubEnv('VITE_LUXAR_USE_LEGACY_WEBGL', '0');
+      const requestDevice = vi.fn();
+      const requestAdapter = vi.fn().mockResolvedValue({
+        info: { vendor: 'amd' },
+        features: new Set<string>(),
+        limits: { maxVertexBuffers: 16 },
+        requestDevice,
+      });
+      vi.stubGlobal('navigator', {
+        ...navigator,
+        userAgentData: { platform: 'Linux', brands: [{ brand: 'Chromium' }] },
+        gpu: { requestAdapter },
+      });
+
+      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+
+      const options = mocks.init.mock.calls[0]?.[0] as {
+        preRequestedWebGPUDevice?: Promise<unknown>;
+      };
+      expect(requestAdapter).toHaveBeenCalledTimes(1);
+      expect(await options.preRequestedWebGPUDevice).toEqual({ fallback: true });
+      expect(requestDevice).not.toHaveBeenCalled();
+      expect(loadTslMaterials).not.toHaveBeenCalled();
+    });
+
     it('passes native-adapter fallback through the bootstrap device request', async () => {
       vi.stubEnv('VITE_LUXAR_USE_WEBGPU', '1');
       const requestAdapter = vi.fn().mockResolvedValue(null);
