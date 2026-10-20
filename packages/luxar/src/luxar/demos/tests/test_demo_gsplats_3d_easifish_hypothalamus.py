@@ -576,8 +576,9 @@ def test_scene_text_states_its_size_against_the_raw_czi(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize("archive_kind", ["directory", "zip"])
 def test_build_scene_restates_the_measured_packed_size(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, archive_kind: str
 ) -> None:
     """The final text states the size of the store it ends up in."""
     import shutil
@@ -586,6 +587,11 @@ def test_build_scene_restates_the_measured_packed_size(
         ch.key: _tiny_store(tmp_path / f"{ch.key}.gsplats.zarr", float(i))
         for i, ch in enumerate(_demo.CHANNELS)
     }
+    if archive_kind == "zip":
+        paths = {
+            key: Path(shutil.make_archive(str(path), "zip", root_dir=path))
+            for key, path in paths.items()
+        }
     packs: list[Path] = []
 
     def fake_pack(built: Path, output: Path) -> None:

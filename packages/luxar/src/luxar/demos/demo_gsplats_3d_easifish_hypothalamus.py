@@ -1184,7 +1184,10 @@ def build_scene(paths: dict[str, Path], output_path: Path) -> int:
     retired = output_path.with_name(f".{output_path.name}.old")
     for stale in (built, scratch, retired):  # leftovers of an interrupted run
         _remove(stale)
-    stated = sum(dir_size_bytes(path) for path in paths.values())
+    stated = sum(
+        path.stat().st_size if path.is_file() else dir_size_bytes(path)
+        for path in paths.values()
+    )
     aprint(f"splat stores on disk: {format_bytes(stated)} ({stated:,} bytes)")
     create_luxar_scene(paths, built, stated)
     for attempt in range(1, _SIZE_PASSES + 1):
