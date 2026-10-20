@@ -96,10 +96,14 @@ const material = buildMaterial(
   source,
   { depthWrite: false },
   {
-    apiSurface: renderer.isWebGPURenderer ? 'webgpu' : 'webgl2',
+    apiSurface: 'isWebGPURenderer' in renderer ? 'webgpu' : 'webgl2',
   }
 );
 ```
+
+Use `'webgpu'` for `WebGPURenderer` even when it runs on its internal WebGL2
+backend (`webgpuForceWebGL` or no adapter): it still requires a `NodeMaterial`.
+Passing `'webgl2'` there creates a `ShaderMaterial` that it cannot draw.
 
 `buildMaterial` passes the same `config.uniforms` table to either path and
 applies the requested blending, depth, transparency, tone-mapping, and side
@@ -112,10 +116,15 @@ not include blend factors.
 
 If the active renderer uses the WebGPU API surface and `webgpu` is absent,
 `buildMaterial` throws an error naming the source. It does not change the
-renderer for a single material: a GLSL-only plugin must select
-`WebGLRenderer` for the whole scene before building materials. This remains
-the policy if WebGPU becomes the default. An embedder may choose WebGL for a
-known GLSL-only plugin before initializing `LuxarApp` or its host renderer.
+renderer for a single material: `WebGPURenderer` cannot draw a GLSL
+`ShaderMaterial`, even on its internal WebGL2 backend. Unlike the
+[adapter-missing fallback in #3147](https://github.com/royerlab/luxar/issues/3147),
+which selects a renderer before materials are built, changing renderers for one
+material would leave it in a scene using the other renderer. For a known
+GLSL-only plugin, set `LuxarAppOptions.renderer: 'webgl'` in app mode, or
+construct a `WebGLRenderer` as the host renderer in layer mode, before building
+materials.
+
 The viewer's own WebGPU code remains lazily loaded; a host that imports
 `three/webgpu` for its factory controls when that dependency loads.
 
