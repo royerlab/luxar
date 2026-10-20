@@ -419,6 +419,55 @@ describe('BlendWarmupManager', () => {
     expect(manager.getStats().ownershipTransfers).toBe(BLENDING_MODES.length * 2);
   });
 
+  it.each([
+    ['FrontSide owner, DoubleSide heir', THREE.FrontSide, THREE.DoubleSide],
+    ['DoubleSide owner, FrontSide heir', THREE.DoubleSide, THREE.FrontSide],
+  ])(
+    'preserves the heir side when transferring a shared front keeper (%s)',
+    async (_name, ownerSide, heirSide) => {
+      const compiledSides: THREE.Side[] = [];
+      const manager = new BlendWarmupManager(
+        () => Promise.resolve(),
+        (_renderer, _camera, _scene, object) => {
+          compiledSides.push(((object as THREE.Mesh).material as THREE.Material).side);
+        },
+        activateImmediately
+      );
+      manager.configure({
+        enabled: true,
+        renderer: {} as WarmupRenderer,
+        camera: new THREE.PerspectiveCamera(),
+        targetScene: new THREE.Scene(),
+        pipelineVariants: true,
+      });
+      const owner = new FakeWarmupMaterial();
+      owner.side = ownerSide;
+      owner.transparent = true;
+      owner.forceSinglePass = false;
+      const heir = new FakeWarmupMaterial();
+      heir.side = heirSide;
+      heir.transparent = true;
+      heir.forceSinglePass = false;
+      const root = new THREE.Group();
+      root.add(makeRenderableMesh('mesh', owner));
+      root.add(makeRenderableMesh('mesh', heir));
+
+      await manager.warmScene(root);
+      const initialCompiles = BLENDING_MODES.length * 2;
+      expect(compiledSides).toHaveLength(initialCompiles);
+      expect(manager.getStats().dedupedAcrossSources).toBe(BLENDING_MODES.length);
+
+      owner.dispose();
+      await vi.waitFor(() =>
+        expect(compiledSides).toHaveLength(initialCompiles + BLENDING_MODES.length)
+      );
+      expect(compiledSides.slice(initialCompiles)).toEqual(
+        Array(BLENDING_MODES.length).fill(THREE.FrontSide)
+      );
+      expect(manager.getStats().ownershipTransfers).toBe(BLENDING_MODES.length);
+    }
+  );
+
   it('clones the real mesh TSL blend graph and state for both WebGPU passes', async () => {
     const compiled: MeshTSLMaterial[] = [];
     const manager = new BlendWarmupManager(
