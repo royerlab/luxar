@@ -178,9 +178,8 @@ export function buildMaterial(
           'factory but the active renderer dispatches via the WebGPU ' +
           "path (caps.apiSurface='webgpu'). WebGPURenderer cannot " +
           'dispatch ShaderMaterial even in its WebGL2 fallback mode; ' +
-          "add a 'webgpu' factory to the ShaderSource or switch to the " +
-          'default WebGLRenderer path (remove ?renderer=webgpu / ' +
-          'VITE_LUXAR_USE_WEBGPU=1).'
+          "add a 'webgpu' factory to the ShaderSource or select " +
+          'WebGLRenderer for the scene before building materials.'
       );
     }
     // TSL / NodeMaterial path. The factory type is imported only for

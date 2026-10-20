@@ -110,7 +110,7 @@ describe('buildMaterial backend dispatch', () => {
       webgl: TRIVIAL_GLSL,
     };
     expect(() => buildMaterial(source, {}, makeCaps('webgpu'))).toThrowError(
-      /no 'webgpu' TSL factory.*caps\.apiSurface='webgpu'/s
+      /ShaderSource 'test-glsl-only-but-webgpu' has no 'webgpu' TSL factory.*caps\.apiSurface='webgpu'.*select WebGLRenderer for the scene/s
     );
   });
 
