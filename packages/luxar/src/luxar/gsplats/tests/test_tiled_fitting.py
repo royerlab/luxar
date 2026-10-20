@@ -827,6 +827,8 @@ def test_mass_weighting_quantifies_depth_attenuation_tradeoff() -> None:
     assert equal_foreground_psnr == pytest.approx([39.00, 39.49, 40.70], abs=0.35)
     assert mass_foreground_psnr == pytest.approx([41.12, 39.19, 39.45], abs=0.35)
     assert np.mean(mass_psnr) - np.mean(equal_psnr) == pytest.approx(0.20, abs=0.35)
+    # #3123's smoothed foreground mask moved this past the old 0.0 +/- 0.1 pin;
+    # 0.19 dB remains within fit scatter, not evidence of a foreground gain.
     assert np.mean(mass_foreground_psnr) - np.mean(
         equal_foreground_psnr
     ) == pytest.approx(0.19, abs=0.1)
