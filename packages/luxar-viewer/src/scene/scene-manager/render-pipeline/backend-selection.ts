@@ -1,7 +1,7 @@
 import {
   candidateRules,
   detectBrowserPlatform,
-  WEBGPU_PLATFORM_RULES,
+  defaultPlatformRules,
   type BrowserPlatform,
   type WebGPUPlatformRule,
 } from './backend-policy';
@@ -24,7 +24,7 @@ export interface BackendSelection {
 export function selectBackend(
   rendererOverride: 'webgl' | 'webgpu' | undefined,
   platform: BrowserPlatform = detectBrowserPlatform(),
-  rules: readonly WebGPUPlatformRule[] = WEBGPU_PLATFORM_RULES
+  rules: readonly WebGPUPlatformRule[] = defaultPlatformRules()
 ): BackendSelection {
   if (rendererOverride === 'webgl') {
     return { backend: 'webgl', source: 'url-param', requireNativeAdapter: true };

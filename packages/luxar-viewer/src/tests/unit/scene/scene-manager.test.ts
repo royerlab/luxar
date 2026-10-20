@@ -2337,6 +2337,7 @@ describe('SceneManager', () => {
   describe('WebGPU → WebGL fallback wiring', () => {
     it('checks the adapter vendor on a fresh platform-policy request', async () => {
       vi.stubEnv('VITE_LUXAR_USE_LEGACY_WEBGL', '0');
+      vi.stubEnv('VITE_LUXAR_WEBGPU_STAGED_RULES', '1'); // the Linux row is held (#3172)
       const requestDevice = vi.fn();
       const requestAdapter = vi.fn().mockResolvedValue({
         info: { vendor: 'amd' },

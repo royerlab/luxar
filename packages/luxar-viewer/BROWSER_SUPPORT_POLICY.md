@@ -34,7 +34,8 @@ highest precedence first:
    at dev-server/build time. `VITE_LUXAR_USE_WEBGPU_RENDERER=1` is accepted as
    an alias.
 3. **Platform policy** (`render-pipeline/backend-policy.ts`): WebGPU on a
-   platform listed in `WEBGPU_PLATFORM_RULES`, WebGL2 everywhere else.
+   platform listed in `WEBGPU_PLATFORM_RULES` (none yet, see below), WebGL2
+   everywhere else.
 
 Only an explicit `?renderer=webgpu` (or the Settings › Advanced › Renderer
 choice) may run TSL on Three.js's internal WebGL2 backend when the browser has
@@ -47,11 +48,18 @@ never downloads the `three-webgpu` chunk.
 
 ## Platform policy
 
-A row of `WEBGPU_PLATFORM_RULES` admits one platform to WebGPU by default:
+A row of `WEBGPU_PLATFORM_RULES` admits one platform to WebGPU by default.
+**The table is empty for now:** WebGPU is not the default anywhere until its
+cold load is within 0.15 s of WebGL (#3172). Platforms that passed the GPU-speed
+measurement wait in `STAGED_WEBGPU_PLATFORM_RULES`:
 
-| OS    | Browser  | GPU vendor | Evidence                                                                                                                                           |
-| ----- | -------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Linux | Chromium | NVIDIA     | #3146 go/no-go, RTX 3070 on Vulkan: WebGPU 2-9% faster GPU time on every heavy perf case; cold load about 0.5 s slower on a first visit (accepted) |
+| OS    | Browser  | GPU vendor | Evidence                                                                                                                      |
+| ----- | -------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Linux | Chromium | NVIDIA     | #3146 go/no-go, RTX 3070 on Vulkan: WebGPU 2-9% faster GPU time on every heavy perf case; cold load about 0.5 s slower (held) |
+
+A dev or test build can run the staged rows with
+`VITE_LUXAR_WEBGPU_STAGED_RULES=1`; the Playwright dev server sets it so the
+E2E suite exercises the policy path.
 
 Platforms measured and left on WebGL2: macOS with an Apple GPU (Metal), where
 WebGPU is up to ~20% slower on 10M lines and additive splats (#3224) and cold
@@ -71,9 +79,10 @@ The renderer log names the outcome (`WebGPU by platform policy: …` or `… is
 not on a measured WebGPU platform; using WebGLRenderer.`).
 
 Add a row only after running the render gate's `perf` and `hosted` suites with
-`--backends webgl,webgpu` on that platform, and record the evidence in the row.
-Note that stock Chrome on Linux (146) exposes no WebGPU adapter without flags,
-so the Linux row takes effect where Chrome enables WebGPU on that hardware.
+`--backends webgl,webgpu` on that platform, with cold load within 0.15 s of
+WebGL, and record the evidence in the row. Note that stock Chrome on Linux
+(146) exposes no WebGPU adapter without flags, so the Linux row, once active,
+takes effect where Chrome enables WebGPU on that hardware.
 
 Common invocations:
 

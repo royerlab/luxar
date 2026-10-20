@@ -1,10 +1,16 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   candidateRules,
+  defaultPlatformRules,
   detectBrowserPlatform,
   matchAdapterRule,
+  STAGED_WEBGPU_PLATFORM_RULES,
   WEBGPU_PLATFORM_RULES,
 } from '../../../../../scene/scene-manager/render-pipeline/backend-policy';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('detectBrowserPlatform', () => {
   it('reads OS and browser from client hints when present', () => {
@@ -50,17 +56,33 @@ describe('detectBrowserPlatform', () => {
 });
 
 describe('platform rules', () => {
-  it('admits only Linux + Chromium + NVIDIA today', () => {
-    expect(WEBGPU_PLATFORM_RULES.map((r) => [r.os, r.browser, r.vendor])).toEqual([
+  it('admits no platform until cold load is within 0.15 s (#3172)', () => {
+    vi.stubEnv('VITE_LUXAR_WEBGPU_STAGED_RULES', '');
+    expect(WEBGPU_PLATFORM_RULES).toEqual([]);
+    expect(candidateRules({ os: 'linux', browser: 'chromium' })).toEqual([]);
+  });
+
+  it('includes the staged platform when explicitly enabled', () => {
+    vi.stubEnv('VITE_LUXAR_WEBGPU_STAGED_RULES', '1');
+    expect(defaultPlatformRules()).toEqual(STAGED_WEBGPU_PLATFORM_RULES);
+  });
+
+  it('stages only Linux + Chromium + NVIDIA', () => {
+    expect(STAGED_WEBGPU_PLATFORM_RULES.map((r) => [r.os, r.browser, r.vendor])).toEqual([
       ['linux', 'chromium', 'nvidia'],
     ]);
-    expect(candidateRules({ os: 'macos', browser: 'chromium' })).toEqual([]);
-    expect(candidateRules({ os: 'windows', browser: 'chromium' })).toEqual([]);
-    expect(candidateRules({ os: 'linux', browser: 'firefox' })).toEqual([]);
+    const staged = (os: 'macos' | 'windows' | 'linux', browser: 'chromium' | 'firefox') =>
+      candidateRules({ os, browser }, STAGED_WEBGPU_PLATFORM_RULES);
+    expect(staged('macos', 'chromium')).toEqual([]);
+    expect(staged('windows', 'chromium')).toEqual([]);
+    expect(staged('linux', 'firefox')).toEqual([]);
   });
 
   it('matches the adapter vendor case-insensitively and rejects fallback adapters', () => {
-    const linux = candidateRules({ os: 'linux', browser: 'chromium' });
+    const linux = candidateRules(
+      { os: 'linux', browser: 'chromium' },
+      STAGED_WEBGPU_PLATFORM_RULES
+    );
     expect(matchAdapterRule(linux, { vendor: 'NVIDIA' })?.vendor).toBe('nvidia');
     expect(matchAdapterRule(linux, { vendor: 'intel' })).toBeUndefined();
     expect(matchAdapterRule(linux, { vendor: 'nvidia', isFallbackAdapter: true })).toBeUndefined();

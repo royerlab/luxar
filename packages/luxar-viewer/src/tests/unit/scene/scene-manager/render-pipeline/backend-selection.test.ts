@@ -4,6 +4,7 @@ import {
   selectBackend,
   shouldPrefetchTsl,
 } from '../../../../../scene/scene-manager/render-pipeline/backend-selection';
+import { STAGED_WEBGPU_PLATFORM_RULES } from '../../../../../scene/scene-manager/render-pipeline/backend-policy';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -18,9 +19,19 @@ describe('early TSL prefetch decision', () => {
     });
   }
 
+  it('defaults to WebGL on Linux + Chromium while the WebGPU rows are held (#3172)', () => {
+    stubLinuxChromiumWithGpu();
+    vi.stubEnv('VITE_LUXAR_WEBGPU_STAGED_RULES', '');
+    expect(selectBackend(undefined)).toEqual({
+      backend: 'webgl',
+      source: 'platform-policy',
+      requireNativeAdapter: true,
+    });
+  });
+
   it('waits for adapter vendor qualification under the platform policy', () => {
     stubLinuxChromiumWithGpu();
-    const selection = selectBackend(undefined);
+    const selection = selectBackend(undefined, undefined, STAGED_WEBGPU_PLATFORM_RULES);
     expect(selection.backend).toBe('webgpu');
     expect(selection.platformRules?.map((rule) => rule.vendor)).toEqual(['nvidia']);
     expect(shouldPrefetchTsl(true, selection.requireNativeAdapter, selection.platformRules)).toBe(
