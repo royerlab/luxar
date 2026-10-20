@@ -490,6 +490,37 @@ DATASETS: dict[str, dict] = {
         # as superseded pins; the active pins now resolve to the cc-by v2.0.0
         # Zenodo deposition (R2 override retired 2026-09-18).
     ),
+    "gsplats_4d_organoid_budding": dict(
+        bucket="local-compute",
+        # Redistributable (CC BY 4.0), and local-compute only because the fits
+        # are not hosted yet: the demo fetches its source from Zenodo 6828906
+        # and refits.
+        # TODO(Loic): once a cc-by record carries the per-frame fit bundle
+        # `organoid_budding_frames.gsplats.zarr.zip` (the demo's BUNDLE_NAME),
+        # promote this to bucket="zenodo", record="cc-by" with an `acquisition`
+        # block (not comparable: the record holds only the authors'
+        # deconvolved 8-bit crops) and the bundle's sha256 and size in `files`.
+        # Then restore the demo's `load_dataset_bundle` call (TODO at BUNDLE_NAME).
+        redistribute=True,
+        license="cc-by-4.0",
+        source=(
+            "LSTree light-sheet recordings, Zenodo 6828906 (recording "
+            "002-P21-25X-Budding: deconvolved rgb_grid frames + MaMuT lineage)"
+        ),
+        attribution=(
+            "de Medeiros, G., Ortiz, R., Strnad, P., Boni, A., Moos, F., Repina, "
+            "N., Challet Meylan, L., Maurer, F. & Liberali, P. Multiscale "
+            "light-sheet organoid imaging framework. Nature Communications 13, "
+            "4864 (2022). doi:10.1038/s41467-022-32465-z. Data: "
+            "doi:10.5281/zenodo.6828906 (CC BY 4.0)."
+        ),
+        reason="CC BY 4.0 and redistributable, but no Zenodo record carries the fits yet.",
+        strategy=(
+            "Fetch 167 rgb_grid frames + the lineage XML from Zenodo 6828906 by "
+            "range requests (~345 MB), unmix the membranes as red - green, and "
+            "fit both channels locally (GPU, ~1 h on an 8 GB card)."
+        ),
+    ),
     "gsplats_cell_tracking": dict(
         bucket="zenodo",
         record="cc-by",

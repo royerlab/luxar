@@ -480,6 +480,17 @@
         }
       ]
     },
+    "gsplats_4d_organoid_budding": {
+      "bucket": "local-compute",
+      "redistribute": true,
+      "license": "cc-by-4.0",
+      "source": "LSTree light-sheet recordings, Zenodo 6828906 (recording 002-P21-25X-Budding: deconvolved rgb_grid frames + MaMuT lineage)",
+      "attribution": "de Medeiros, G., Ortiz, R., Strnad, P., Boni, A., Moos, F., Repina, N., Challet Meylan, L., Maurer, F. & Liberali, P. Multiscale light-sheet organoid imaging framework. Nature Communications 13, 4864 (2022). doi:10.1038/s41467-022-32465-z. Data: doi:10.5281/zenodo.6828906 (CC BY 4.0).",
+      "reason": "CC BY 4.0 and redistributable, but no Zenodo record carries the fits yet.",
+      "strategy": "Fetch 167 rgb_grid frames + the lineage XML from Zenodo 6828906 by range requests (~345 MB), unmix the membranes as red - green, and fit both channels locally (GPU, ~1 h on an 8 GB card).",
+      "dir": "gsplats_4d_organoid_budding",
+      "files": []
+    },
     "gsplats_cell_tracking": {
       "bucket": "zenodo",
       "record": "cc-by",

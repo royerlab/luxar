@@ -70,7 +70,7 @@ from ._support.downloads.download import (
     robust_download,
     warn_if_quarantined,
 )
-from ._support.downloads.remote_zip import download_zip_member
+from ._support.downloads.remote_zip import download_zip_member, download_zip_members
 from ._support.runtime.cli import run_luxar_cli
 from ._support.runtime.device import detect_device, warn_if_no_cuda_gpu
 from ._support.runtime.environment import bake_scene_environment
@@ -129,6 +129,7 @@ __all__ = [
     "detect_device",
     "download_with_checksum",
     "download_zip_member",
+    "download_zip_members",
     "ensure_dataset",
     "extras_for",
     "find_quarantined_files",

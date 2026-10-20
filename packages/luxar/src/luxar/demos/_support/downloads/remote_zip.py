@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import time
 from pathlib import Path
-from typing import Any, BinaryIO, Optional
+from typing import Any, BinaryIO, Collection, Mapping, Optional
 
 from arbol import aprint, asection
 
@@ -235,8 +235,26 @@ def _find_member_in_central_dir(
     method)`` (``method`` is 0=STORED or 8=DEFLATE), resolving Zip64 extra
     fields where the classic 32-bit fields saturate.
     """
+    return _find_members_in_central_dir(central_dir, (member,))[member]
+
+
+def _find_members_in_central_dir(
+    central_dir: bytes, members: Collection[str]
+) -> dict[str, tuple[int, int, int, int, int]]:
+    """Locate every name in ``members`` with ONE pass over the central directory.
+
+    Same record per member as :func:`_find_member_in_central_dir`. A single pass
+    matters when many members are pulled from one large archive: a lookup per
+    member rescans a directory of tens of thousands of entries every time.
+
+    Raises:
+        KeyError: Naming the first member that is absent, with a preview of
+            what the archive does hold.
+    """
     import struct
 
+    wanted = set(members)
+    found: dict[str, tuple[int, int, int, int, int]] = {}
     offset = 0
     names = []
     while offset + 46 <= len(central_dir):
@@ -254,40 +272,61 @@ def _find_member_in_central_dir(
             "utf-8", errors="replace"
         )
 
-        if name == member:
+        # The FIRST entry of a duplicated name wins, as in the single-member
+        # lookup this replaced.
+        if name in wanted and name not in found:
+            member = name
             # Zip64 extra field (id 0x0001): 8-byte values appear in a fixed
             # order, but ONLY for the classic fields that saturated.
             extra = central_dir[
                 offset + 46 + name_len : offset + 46 + name_len + extra_len
             ]
-            e = 0
-            while e + 4 <= len(extra):
-                field_id, field_len = struct.unpack_from("<HH", extra, e)
-                if field_id == 0x0001:
-                    v = e + 4
-                    if uncomp_size == 0xFFFFFFFF:
-                        uncomp_size = struct.unpack_from("<Q", extra, v)[0]
-                        v += 8
-                    if comp_size == 0xFFFFFFFF:
-                        comp_size = struct.unpack_from("<Q", extra, v)[0]
-                        v += 8
-                    if local_offset == 0xFFFFFFFF:
-                        local_offset = struct.unpack_from("<Q", extra, v)[0]
-                        v += 8
-                    break
-                e += 4 + field_len
+            uncomp_size, comp_size, local_offset = _apply_zip64_extra(
+                extra, uncomp_size, comp_size, local_offset
+            )
             if method not in (0, 8):
                 raise ValueError(
                     f"Member {member!r} uses unsupported compression method "
                     f"{method} (only STORED and DEFLATE are supported)"
                 )
-            return local_offset, comp_size, uncomp_size, crc32, method
-
-        names.append(name)
+            found[member] = (local_offset, comp_size, uncomp_size, crc32, method)
+            if len(found) == len(wanted):
+                return found
+        else:
+            names.append(name)
         offset += 46 + name_len + extra_len + comment_len
 
+    missing = sorted(wanted - set(found))
     preview = ", ".join(names[:8]) + ("…" if len(names) > 8 else "")
-    raise KeyError(f"Member {member!r} not found in remote zip (has: {preview})")
+    raise KeyError(f"Member {missing[0]!r} not found in remote zip (has: {preview})")
+
+
+def _apply_zip64_extra(
+    extra: bytes, uncomp_size: int, comp_size: int, local_offset: int
+) -> tuple[int, int, int]:
+    """Resolve saturated classic fields from a Zip64 extra field (id 0x0001).
+
+    Its 8-byte values appear in a fixed order, but ONLY for the classic fields
+    that saturated at 0xFFFFFFFF.
+    """
+    import struct
+
+    e = 0
+    while e + 4 <= len(extra):
+        field_id, field_len = struct.unpack_from("<HH", extra, e)
+        if field_id == 0x0001:
+            v = e + 4
+            if uncomp_size == 0xFFFFFFFF:
+                uncomp_size = struct.unpack_from("<Q", extra, v)[0]
+                v += 8
+            if comp_size == 0xFFFFFFFF:
+                comp_size = struct.unpack_from("<Q", extra, v)[0]
+                v += 8
+            if local_offset == 0xFFFFFFFF:
+                local_offset = struct.unpack_from("<Q", extra, v)[0]
+            break
+        e += 4 + field_len
+    return uncomp_size, comp_size, local_offset
 
 
 def download_zip_member(
@@ -343,12 +382,6 @@ def download_zip_member(
     Returns:
         Path to the extracted member.
     """
-    import zlib
-
-    import requests
-    from requests.adapters import HTTPAdapter
-    from urllib3.util.retry import Retry
-
     from .zip_safety import _validate_zip_member_path
 
     _validate_zip_member_path(member)
@@ -360,6 +393,104 @@ def download_zip_member(
             aprint(f"✓ Member already extracted: {output_path}")
             return output_path
 
+    session = _remote_zip_session(url, extra_headers, max_retries)
+    central_dir, archive_size = _parse_remote_zip_directory(
+        session, url, timeout=timeout, extra_headers=extra_headers
+    )
+    return _extract_member(
+        session,
+        url,
+        member,
+        _find_member_in_central_dir(central_dir, member),
+        archive_size,
+        output_path,
+        expected_size=expected_size,
+        max_retries=max_retries,
+        timeout=timeout,
+        chunk_size=chunk_size,
+        extra_headers=extra_headers,
+        max_uncompressed_size=max_uncompressed_size,
+    )
+
+
+def download_zip_members(
+    url: str,
+    members: Mapping[str, Path],
+    *,
+    max_retries: int = 3,
+    timeout: int = 300,
+    chunk_size: int = 1024 * 1024,
+    extra_headers: Optional[dict] = None,
+    max_uncompressed_size: Optional[int] = _MAX_MEMBER_UNCOMPRESSED_BYTES,
+) -> dict[str, Path]:
+    """Extract SEVERAL members from one remote zip, reading its directory once.
+
+    The many-member counterpart of :func:`download_zip_member`, with the same
+    per-member guarantees (path validation, size ceiling, bounded inflate, size
+    + CRC32 verification, atomic promotion, skip when an output of the declared
+    size is already present). The difference is cost: the archive tail and
+    central directory are fetched ONCE and every member is located in a single
+    pass, instead of once per member. That matters for a timelapse pulled frame
+    by frame out of a multi-GB archive whose directory runs to megabytes.
+
+    Args:
+        url: Archive URL.
+        members: Member path inside the zip (POSIX separators) -> output path.
+        max_retries: Retry attempts for each member body download.
+        timeout: Per-request timeout (seconds).
+        chunk_size: Streaming chunk size (bytes).
+        extra_headers: Extra HTTP headers scoped to the original URL.
+        max_uncompressed_size: Absolute ceiling (bytes) on each member's
+            uncompressed size; see :func:`download_zip_member`.
+
+    Returns:
+        Member path -> extracted path, in the order of ``members``.
+
+    Raises:
+        KeyError: A requested member is not in the archive. Nothing is
+            downloaded in that case, because every member is located first.
+    """
+    from .zip_safety import _validate_zip_member_path
+
+    for member in members:
+        _validate_zip_member_path(member)
+    if not members:
+        return {}
+
+    session = _remote_zip_session(url, extra_headers, max_retries)
+    central_dir, archive_size = _parse_remote_zip_directory(
+        session, url, timeout=timeout, extra_headers=extra_headers
+    )
+    records = _find_members_in_central_dir(central_dir, members)
+    extracted: dict[str, Path] = {}
+    with asection(f"Extracting {len(members)} members from remote zip"):
+        for member, output_path in members.items():
+            output_path = Path(output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            extracted[member] = _extract_member(
+                session,
+                url,
+                member,
+                records[member],
+                archive_size,
+                output_path,
+                expected_size=None,
+                max_retries=max_retries,
+                timeout=timeout,
+                chunk_size=chunk_size,
+                extra_headers=extra_headers,
+                max_uncompressed_size=max_uncompressed_size,
+            )
+    return extracted
+
+
+def _remote_zip_session(
+    url: str, extra_headers: Optional[dict], max_retries: int
+) -> Any:
+    """A host-scoped ``requests`` session retrying transient HTTP failures."""
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+
     session = _make_host_scoped_session(url, (extra_headers or {}).keys())
     retry_strategy = Retry(
         total=max_retries,
@@ -369,14 +500,35 @@ def download_zip_member(
     )
     session.mount("http://", HTTPAdapter(max_retries=retry_strategy))
     session.mount("https://", HTTPAdapter(max_retries=retry_strategy))
+    return session
 
+
+def _extract_member(
+    session: Any,
+    url: str,
+    member: str,
+    record: tuple[int, int, int, int, int],
+    archive_size: int,
+    output_path: Path,
+    *,
+    expected_size: Optional[int],
+    max_retries: int,
+    timeout: int,
+    chunk_size: int,
+    extra_headers: Optional[dict],
+    max_uncompressed_size: Optional[int],
+) -> Path:
+    """Stream one already-located member to ``output_path``, size + CRC verified.
+
+    ``record`` is the member's central-directory entry as returned by
+    :func:`_find_members_in_central_dir`.
+    """
+    import zlib
+
+    import requests
+
+    local_offset, comp_size, uncomp_size, crc_expected, cd_method = record
     with asection(f"Extracting {member} from remote zip"):
-        central_dir, archive_size = _parse_remote_zip_directory(
-            session, url, timeout=timeout, extra_headers=extra_headers
-        )
-        local_offset, comp_size, uncomp_size, crc_expected, cd_method = (
-            _find_member_in_central_dir(central_dir, member)
-        )
         aprint(
             f"Member: {comp_size / 1e6:.1f} MB compressed → "
             f"{uncomp_size / 1e6:.1f} MB (archive: {archive_size / 1e9:.2f} GB)"
