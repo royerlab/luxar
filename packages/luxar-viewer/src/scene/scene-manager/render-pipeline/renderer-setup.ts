@@ -539,7 +539,7 @@ function resolveWebGPUDeviceRequest(options: CreateWebGPUOptions): Promise<WebGP
 /**
  * Construct a `WebGPURenderer`. Consumes a pre-requested device or starts a
  * fresh request with raised limits to bypass three's compat-mode defaults
- * (see {@link forwardedAdapterLimits}). Performs `await renderer.init()`
+ * (see `forwardedAdapterLimits` in `early-device-request.ts`). Performs `await renderer.init()`
  * before returning.
  *
  * Returns `{ fallback: true }` so the caller can drop to WebGL when the
