@@ -6,8 +6,8 @@
  *   - `configureRendererBackend` — point the backend-dependent rendering
  *     paths (texture layout, ordering applies, RenderObject eviction,
  *     element-texture row uploads) at a renderer; shared with layer mode.
- *   - `selectBackend` — apply the URL-param / env-var / platform-policy
- *     precedence ladder to pick WebGL or WebGPU.
+ *   - `selectBackend` (re-exported from `backend-selection.ts`) — apply the
+ *     URL-param / env-var / platform-policy precedence ladder.
  *   - `createWebGLRenderer` — construct a `THREE.WebGLRenderer`
  *     from the configured WebGL2 context, build the renderer-
  *     capabilities snapshot, configure HDR.
@@ -48,20 +48,15 @@ import { resolveHdrHeadroom } from '../../../utils/hdr/hdr-headroom';
 import { platformName } from '../../../utils/platform';
 import { log, Modules } from '../../../utils/log';
 import { loadTslMaterials } from '../../../rendering/tsl/load';
-import {
-  candidateRules,
-  detectBrowserPlatform,
-  matchAdapterRule,
-  WEBGPU_PLATFORM_RULES,
-  type BrowserPlatform,
-  type WebGPUPlatformRule,
-} from './backend-policy';
+import { matchAdapterRule, type WebGPUPlatformRule } from './backend-policy';
 import {
   clampHdrHeadroom,
   DEFAULT_HDR_HEADROOM,
   type HdrOutputState,
 } from '../../../types/hdr-output';
 import { notifier } from '../../../utils/cross-layer/notifier';
+export { selectBackend } from './backend-selection';
+import { shouldPrefetchTsl } from './backend-selection';
 
 /**
  * Point the backend-dependent rendering paths at `renderer`. Every renderer
@@ -113,80 +108,6 @@ function warnOnBackendMix(apiSurface: RendererCapabilities['apiSurface']): void 
       'page-wide, so if another Luxar host on this page still renders through ' +
       `${previous} it now runs on ${apiSurface}'s settings. Use one backend per page.`
   );
-}
-
-/**
- * URL-param / env-var / default precedence ladder for backend
- * selection. The result drives whether `createWebGLRenderer` or
- * `createWebGPURenderer` is invoked. Kept as a pure function so
- * the selection logic is unit-testable independent of WebGL /
- * WebGPU construction.
- */
-export interface BackendSelection {
-  /** Backend to use: 'webgl' or 'webgpu'. */
-  backend: 'webgl' | 'webgpu';
-  /** Where the selection came from, for logging. */
-  source: 'url-param' | 'env-var' | 'platform-policy';
-  /**
-   * WebGPU only on a NATIVE adapter: without one, use `WebGLRenderer` rather
-   * than letting three run TSL on its internal WebGL2 backend. True for every
-   * selection except an explicit `?renderer=webgpu`, which keeps the WebGL2
-   * bridge reachable for diagnostics (and the render gate's `webgpu-gl` arm).
-   */
-  requireNativeAdapter: boolean;
-  /**
-   * Set when the platform policy chose WebGPU from the OS and browser alone:
-   * the rules the adapter must still satisfy (its vendor) once it answers,
-   * or the session falls back to `WebGLRenderer`. See `backend-policy.ts`.
-   */
-  platformRules?: readonly WebGPUPlatformRule[];
-}
-
-/**
- * Select the rendering backend.
- *
- * Precedence (highest to lowest):
- *   1. Per-instance `rendererOverride` (URL `?renderer=webgl|webgpu`, or the
- *      Settings › Advanced › Renderer choice).
- *   2. `VITE_LUXAR_USE_WEBGPU=1` / `VITE_LUXAR_USE_WEBGPU_RENDERER=1` env vars.
- *   3. `VITE_LUXAR_USE_LEGACY_WEBGL=1` env var (forces WebGL).
- *   4. The platform policy (`backend-policy.ts`): WebGPU when the OS and
- *      browser match a measured platform (the adapter's vendor is checked
- *      once it answers), WebGL everywhere else.
- *
- * Only an explicit `'webgpu'` override may run on three's WebGL2 bridge; every
- * other WebGPU selection requires a native adapter.
- */
-export function selectBackend(
-  rendererOverride: 'webgl' | 'webgpu' | undefined,
-  platform: BrowserPlatform = detectBrowserPlatform(),
-  rules: readonly WebGPUPlatformRule[] = WEBGPU_PLATFORM_RULES
-): BackendSelection {
-  if (rendererOverride === 'webgl') {
-    return { backend: 'webgl', source: 'url-param', requireNativeAdapter: true };
-  }
-  if (rendererOverride === 'webgpu') {
-    return { backend: 'webgpu', source: 'url-param', requireNativeAdapter: false };
-  }
-  if (
-    import.meta.env.VITE_LUXAR_USE_WEBGPU === '1' ||
-    import.meta.env.VITE_LUXAR_USE_WEBGPU_RENDERER === '1'
-  ) {
-    return { backend: 'webgpu', source: 'env-var', requireNativeAdapter: true };
-  }
-  if (import.meta.env.VITE_LUXAR_USE_LEGACY_WEBGL === '1') {
-    return { backend: 'webgl', source: 'env-var', requireNativeAdapter: true };
-  }
-  const platformRules = candidateRules(platform, rules);
-  if (platformRules.length === 0) {
-    return { backend: 'webgl', source: 'platform-policy', requireNativeAdapter: true };
-  }
-  return {
-    backend: 'webgpu',
-    source: 'platform-policy',
-    requireNativeAdapter: true,
-    platformRules,
-  };
 }
 
 /**
@@ -418,8 +339,8 @@ function prefetchTslMaterialsWhenUsable(
   requireNativeAdapter?: boolean,
   platformRules?: readonly WebGPUPlatformRule[]
 ): void {
-  if (platformRules) return; // fetched once the adapter qualifies (failsPlatformPolicy)
-  if (hasGpu || !requireNativeAdapter) void loadTslMaterials().catch(() => undefined);
+  if (shouldPrefetchTsl(hasGpu, requireNativeAdapter, platformRules))
+    void loadTslMaterials().catch(() => undefined);
 }
 
 /** No adapter: fall back to WebGL when a native one was required, else run the WebGL2 bridge. */

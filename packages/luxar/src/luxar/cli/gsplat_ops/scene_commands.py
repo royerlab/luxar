@@ -43,7 +43,12 @@ def convert_to_scene(
         "--scale-intensity",
         callback=_positive_scale,
         help="Set the node's display gain (brightness per data unit) to exactly "
-        "this factor instead of auto exposure. The amplitudes are NOT edited: "
+        "this factor instead of auto exposure. It is ABSOLUTE, not a multiplier "
+        "on the auto gain: fitted amplitudes stay in data units (often hundreds "
+        "or thousands), so a usable gain is often far below 1. The 'Exposure:' "
+        "line convert prints names the auto gain, and under --blending-mode "
+        "volumetric (no auto exposure) convert prints the gain additive auto "
+        "exposure would use. The amplitudes are NOT edited: "
         "they stay in data units (any tree shape). --scale-intensity is the old "
         "name; `gsplat transform --scale-intensity` is the command that edits "
         "the data.",
@@ -168,10 +173,15 @@ def convert_to_scene(
     flip). A store without axis names or fitting provenance (geometric x, y, z
     data) keeps the positional mapping.
 
+    From Python, ``luxar.core.scene_defaults.fitted_scene_defaults(path)``
+    returns this scene (without centering) as the ``dimensions`` and
+    ``viewer_config`` for ``create_scene`` plus the ``add_gsplats_from_file``
+    kwargs.
+
     Examples:
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --no-center
-        luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --display-gain 0.1
+        luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --display-gain 1e-3
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr \\
             --colormap plasma --tone-mapping ACES
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr \\

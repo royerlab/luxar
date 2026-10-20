@@ -974,6 +974,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 scene.add_gsplats_from_file(
                     name="mcfo_neurons",
                     path=str(data_path),
+                    fitted_defaults=False,
                     normalize_amplitudes=False,
                     # `volumetric` — emission–absorption. The neurons are sparse
                     # but the brain is 167 um deep, so additive summing along the

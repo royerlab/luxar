@@ -101,3 +101,16 @@ The user guide's *Waypoint trajectories* section compares them side by side.
    :members: Orbit, ZoomPan, Arc, Straight, Swing, FlyThrough, Via
    :no-undoc-members:
    :show-inheritance:
+
+Fitted-store scenes
+-------------------
+
+The scene ``luxar gsplat convert`` builds for a fitted ``.gsplats.zarr``, shared
+with ``add_gsplats_from_file``'s fitted default, and convert's auto exposure as
+adder kwargs.
+
+.. automodule:: luxar.core.scene_defaults
+   :members:
+   :exclude-members: dimensions, viewer_config, attrs, orientation, exposure, amplitude_bits
+
+.. autofunction:: luxar.core.scene_exposure.auto_exposure_attrs

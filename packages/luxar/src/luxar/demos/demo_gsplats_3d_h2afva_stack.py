@@ -589,6 +589,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 scene.add_gsplats_from_file(
                     name="zebrafish_nuclei",
                     path=str(data_path),
+                    fitted_defaults=False,
                     # `volumetric` — emission–absorption, so the embryo reads as
                     # dense tissue rather than a shell of alpha-over surfaces.
                     #

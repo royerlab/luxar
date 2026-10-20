@@ -2239,7 +2239,9 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
 # A streaming (additive) ladder is a separate step on the fitted data:
 # luxar gsplat lod fitted.gsplats.zarr streamed.gsplats.zarr --recipe stream
 
-# From saved .gsplats.zarr file (preserves LOD structure)
+# From saved .gsplats.zarr file (preserves LOD structure). A fitted store gets
+# the dims, y-down camera, auto exposure and Layers entry `luxar gsplat convert`
+# applies (fitted_defaults=False for the plain adder)
 with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
     scene.add_gsplats_from_file("nuclei", "fitted.gsplats.zarr")

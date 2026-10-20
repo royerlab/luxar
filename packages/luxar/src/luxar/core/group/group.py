@@ -1226,9 +1226,12 @@ class Group(Node):
                 their exposure must be shared across siblings; pass ``True``
                 explicitly to override that rule. A positive number sets an
                 explicit target. The factor used is recorded as
-                ``amplitude_normalization_factor``.
+                ``amplitude_normalization_factor``. A FITTED store under the
+                default ``fitted_defaults=None`` gets ``False`` plus convert's
+                auto-exposed ``display_gain`` instead (see above), unless this
+                argument or a gain / window attr is passed.
 
-                On by default for standalone insertion because raw fitted
+                On by default for other standalone insertion because raw fitted
                 amplitudes need a brightness factor that the colormap window
                 cannot provide: a fit stores source units (detector counts),
                 the window feeds only the LUT index (clamped to ``[0, 1]``, so
@@ -1313,9 +1316,33 @@ class Group(Node):
         lod_group: Any = _UNSET_LOD,
         additive_lod: Any = None,
         flatten: bool = False,
+        fitted_defaults: Optional[bool] = None,
         **attrs: Any,
     ) -> Union[GSplats, "Group"]:
         """Add Gaussian splats by loading from a .gsplats.zarr file.
+
+        A FITTED store (one that names its columns: a root
+        ``dimension_metadata``, or fitting provenance) added with defaults gets
+        what ``luxar gsplat convert`` applies, resolved by the same function
+        (:func:`luxar.core.scene_defaults.resolve_fitted_scene`):
+        data-unit amplitudes with an auto-exposed ``display_gain`` (predicted
+        under the tone mapping the scene has at add time), ``layer=True``, the
+        explicit compositing defaults and the 8-bit amplitude tier for a uint8
+        source. On a fresh root scene (dimensions equal to
+        ``Dimensions.default_3d()``, which includes a scene explicitly created
+        with it, no camera, no geometry yet) it also sets convert's scene
+        dimensions, the y-down XY camera and convert's ``dim_order``; a later
+        fitted add on that scene reuses the mapping. On any other scene the
+        scene and the positional column mapping are left alone, and a log line
+        names the ``dim_order`` / ``create_scene`` arguments for convert's
+        layout. An explicit argument always wins: ``dim_order`` / ``fill`` /
+        ``fill_sigma`` / ``transform`` / ``nd_transform`` keep your orientation,
+        and ``normalize_amplitudes`` or a gain / window attr keeps the old
+        exposure. ``fitted_defaults=False`` turns all of it off (the plain
+        adder, and no exposure prediction: use it for a very large store);
+        ``True`` applies it to any store; ``None`` (default) applies it to
+        fitted stores outside ``kind=lod`` / ``kind=partition`` groups. See
+        :mod:`luxar.core.group.gsplats_pipeline.fitted_defaults`.
 
         If the source file carries multiple substitutive levels, the
         pyramid is auto-lowered into a ``kind=lod`` Group (one gsplats
@@ -1367,9 +1394,12 @@ class Group(Node):
                 their exposure must be shared across siblings; pass ``True``
                 explicitly to override that rule. A positive number sets an
                 explicit target. The factor used is recorded as
-                ``amplitude_normalization_factor``.
+                ``amplitude_normalization_factor``. A FITTED store under the
+                default ``fitted_defaults=None`` gets ``False`` plus convert's
+                auto-exposed ``display_gain`` instead (see above), unless this
+                argument or a gain / window attr is passed.
 
-                On by default for standalone insertion because raw fitted
+                On by default for other standalone insertion because raw fitted
                 amplitudes need a brightness factor that the colormap window
                 cannot provide: a fit stores source units (detector counts),
                 the window feeds only the LUT index (clamped to ``[0, 1]``, so
@@ -1387,9 +1417,10 @@ class Group(Node):
                 stamps. They are refused while ``normalize_amplitudes`` would
                 rescale the amplitudes. Neither path dims for splats SUMMING
                 along a ray, which ``gsplat convert``'s auto exposure does: a
-                dense fit under ``additive`` opens white. Pass
-                ``**luxar.gsplats.exposure.auto_exposure_attrs(path, ...)`` for
-                convert's exposure (it sets ``normalize_amplitudes=False``).
+                dense fit under ``additive`` opens white. The fitted default
+                applies convert's auto exposure; with ``fitted_defaults=False``
+                pass ``**luxar.core.scene_exposure.auto_exposure_attrs(path, dimensions=scene.dimensions, ...)``
+                for it (it sets ``normalize_amplitudes=False``).
             partition: Spatial partition control applied to the loaded matrix,
                 or to each leaf of a retained nested tree.
             substitutive_lod: Substitutive-LOD control applied after loading;
@@ -1399,6 +1430,8 @@ class Group(Node):
                 independently to each leaf of a retained nested tree.
             flatten: Collapse stored structure to the default finest selection
                 before applying the requested structure.
+            fitted_defaults: ``None`` = convert's defaults for a fitted store,
+                ``True`` = for any store, ``False`` = never (see above).
             **attrs: Additional node attributes — the :meth:`add_gsplats`
                 vocabulary (including ``absorption``) MINUS the four channels
                 the file supplies, which are refused; see the rules above. On a
@@ -1410,33 +1443,94 @@ class Group(Node):
                 (it is nearest-setter-wins), leaving the layer's Blend control
                 inert.
         """
+        from .gsplats_pipeline.fitted_defaults import resolve_adder_defaults
         from .gsplats_pipeline.from_io import add_gsplats_from_file_impl
 
         lod_group = _resolve_gsplat_substitutive_lod_alias(substitutive_lod, lod_group)
+        defaults = resolve_adder_defaults(
+            self,
+            path=path,
+            parent=parent,
+            fitted_defaults=fitted_defaults,
+            dim_order=dim_order,
+            orientation_given=(
+                dim_order is not None or fill is not None or fill_sigma is not None
+            ),
+            normalize_given=normalize_amplitudes is not _DEFAULT_NORMALIZE_AMPLITUDES,
+            flatten=flatten,
+            attrs=attrs,
+        )
+        if defaults is not None and defaults.applied:
+            dim_order, attrs = defaults.dim_order, defaults.attrs
+            if defaults.normalize_amplitudes is False:
+                normalize_amplitudes = False
+        preloaded = defaults.loaded if defaults is not None else None
         normalize_amplitudes = _resolve_normalize_amplitudes_default(
             parent or self, normalize_amplitudes
         )
         _reject_display_attrs_with_normalization(normalize_amplitudes, attrs)
-        return self._transactional_add(
-            name,
-            parent,
-            lambda: add_gsplats_from_file_impl(
-                self,
-                name=name,
-                path=path,
-                parent=parent,
-                extend_to_all=extend_to_all,
-                dim_order=dim_order,
-                fill=fill,
-                fill_sigma=fill_sigma,
-                normalize_amplitudes=normalize_amplitudes,
-                partition=partition,
-                lod_group=lod_group,
-                additive_lod=additive_lod,
-                flatten=flatten,
-                **attrs,
+        return self._with_fitted_scene_layout(
+            defaults,
+            lambda: self._transactional_add(
+                name,
+                parent,
+                lambda: add_gsplats_from_file_impl(
+                    self,
+                    name=name,
+                    path=path,
+                    parent=parent,
+                    extend_to_all=extend_to_all,
+                    dim_order=dim_order,
+                    fill=fill,
+                    fill_sigma=fill_sigma,
+                    normalize_amplitudes=normalize_amplitudes,
+                    partition=partition,
+                    lod_group=lod_group,
+                    additive_lod=additive_lod,
+                    flatten=flatten,
+                    _preloaded=preloaded,
+                    **attrs,
+                ),
             ),
         )
+
+    def _with_fitted_scene_layout(
+        self, defaults: Any, add: Callable[[], TNode]
+    ) -> TNode:
+        """Run ``add`` under a fitted default's scene layout and amplitude tier.
+
+        The scene dimensions / camera are set before the add (the node is
+        validated against them) and restored if anything fails, so a refused
+        call leaves the scene as it was. A successful layout is recorded on the
+        scene so a later fitted add (a second channel) may reuse its mapping.
+        """
+        import contextlib
+
+        from .gsplats_pipeline.fitted_defaults import FITTED_LAYOUT_ATTR
+
+        if defaults is None or not defaults.applied:
+            return add()
+        scene = self._find_scene()
+        writer = self._require_scene_writer(scene)
+        scope = getattr(writer, "default_gsplat_amplitude_bits", None)
+        bits = defaults.amplitude_bits
+        before = (scene.dimensions, scene.viewer_config)
+        try:
+            if defaults.dimensions is not None:
+                scene.dimensions = defaults.dimensions
+            if defaults.viewer_config is not None:
+                scene.viewer_config = defaults.viewer_config
+            with scope(bits) if scope and bits else contextlib.nullcontext():
+                node = add()
+        except BaseException:
+            if scene.dimensions is not before[0]:
+                scene.dimensions = before[0]
+            if scene.viewer_config is not before[1]:
+                scene.viewer_config = before[1]
+            raise
+        if defaults.dimensions is not None:
+            setattr(scene, FITTED_LAYOUT_ATTR, defaults.dimensions.to_dict())
+        return node
 
     def add_gsplats_from_volume(
         self,

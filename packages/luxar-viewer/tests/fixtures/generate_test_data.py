@@ -4168,6 +4168,7 @@ def generate_partition_layer_test() -> None:
                 scene.add_gsplats_from_file(
                     "tiles",
                     str(src),
+                    fitted_defaults=False,
                     opacity=1.0,
                     absorption=1.0,
                     blending_mode="volumetric",
