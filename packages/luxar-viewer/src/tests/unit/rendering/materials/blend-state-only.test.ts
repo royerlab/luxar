@@ -34,8 +34,8 @@ describe.each(materials)('%s TSL blend state', (_name, make) => {
   });
 });
 
-// geometry-subset: gsplat normal uses a different fragment branch from the other types.
-describe.each(materials.filter(([name]) => name !== 'gsplats'))(
+// geometry-subset: mesh has no normal-only density alpha branch.
+describe.each(materials.filter(([name]) => name === 'mesh'))(
   '%s TSL blend factors',
   (_name, make) => {
     it('switches normal ↔ luminous without invalidating the node graph', () => {
@@ -56,6 +56,31 @@ describe.each(materials.filter(([name]) => name !== 'gsplats'))(
     });
   }
 );
+
+// geometry-subset: point and line normal use the density alpha graph branch.
+describe.each([
+  ['points', () => new PointTSLMaterial({ blendingMode: 'normal' }), () => new PointTSLMaterial()],
+  ['lines', () => new LineTSLMaterial({ blendingMode: 'normal' }), () => new LineTSLMaterial()],
+] as const)('%s TSL normal graph', (_name, makeNormal, makeAdditive) => {
+  it('switches to the same normal graph as a fresh material and back to additive', () => {
+    const freshNormal = makeNormal();
+    const material = makeAdditive();
+    const additiveGraph = material.colorNode;
+
+    material.applyBlendingMode('normal');
+    expect(material.colorNode).toBe(freshNormal.colorNode);
+    expect(material.colorNode).not.toBe(additiveGraph);
+
+    material.applyBlendingMode('luminous');
+    expect(material.colorNode).not.toBe(freshNormal.colorNode);
+
+    material.applyBlendingMode('normal');
+    expect(material.colorNode).toBe(freshNormal.colorNode);
+
+    material.applyBlendingMode('additive');
+    expect(material.colorNode).toBe(additiveGraph);
+  });
+});
 
 it('gsplats switch max ↔ opaque blend equations without rebuilding their peak graph', () => {
   const material = new GSplatTSLMaterial({ blendingMode: 'max' });

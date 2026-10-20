@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { BLENDING_MODES, type BlendingMode } from '../../../types/blending';
+import { MeshTSLMaterial } from '../../../rendering/materials/mesh/material-tsl';
+import { resolveMeshBlendingMode } from '../../../rendering/materials/mesh/appearance';
 import {
   BlendWarmupManager,
   buildBlendWarmupFingerprint,
@@ -36,6 +38,9 @@ class FakeWarmupMaterial extends THREE.ShaderMaterial {
     const cloned = new FakeWarmupMaterial('additive');
     cloned.defines = { ...this.defines };
     cloned.userData = { ...this.userData };
+    cloned.side = this.side;
+    cloned.transparent = this.transparent;
+    cloned.forceSinglePass = this.forceSinglePass;
     return cloned as this;
   }
 }
@@ -366,6 +371,130 @@ describe('BlendWarmupManager', () => {
     // collapses the other modes onto one program.
     expect(await run(false)).toBe(3);
     expect(await run(true)).toBe(BLENDING_MODES.length);
+  });
+
+  it('pins both transparent DoubleSide mesh passes across a shared-variant owner transfer', async () => {
+    const compileOne = vi.fn();
+    const manager = new BlendWarmupManager(
+      () => Promise.resolve(),
+      compileOne,
+      activateImmediately
+    );
+    manager.configure({
+      enabled: true,
+      renderer: {} as WarmupRenderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+      pipelineVariants: true,
+    });
+    const owner = new FakeWarmupMaterial();
+    owner.side = THREE.DoubleSide;
+    owner.transparent = true;
+    owner.forceSinglePass = false;
+    const survivor = owner.clone();
+    const root = new THREE.Group();
+    root.add(makeRenderableMesh('mesh', owner));
+    root.add(makeRenderableMesh('mesh', survivor));
+
+    await manager.warmScene(root);
+    const sides = () =>
+      compileOne.mock.calls.map(
+        (call) => ((call[3] as THREE.Mesh).material as THREE.Material).side
+      );
+    const passSides = [THREE.BackSide, THREE.FrontSide];
+    expect(sides()).toEqual(BLENDING_MODES.flatMap(() => passSides));
+    expect(manager.getStats()).toMatchObject({
+      queued: BLENDING_MODES.length * 2,
+      compiled: BLENDING_MODES.length * 2,
+      dedupedAcrossSources: BLENDING_MODES.length * 2,
+    });
+
+    owner.dispose();
+    // The survivor must pin both side variants after the owner goes away.
+    await vi.waitFor(() => expect(compileOne).toHaveBeenCalledTimes(BLENDING_MODES.length * 4));
+    expect(sides()).toEqual([
+      ...BLENDING_MODES.flatMap(() => passSides),
+      ...BLENDING_MODES.flatMap(() => passSides),
+    ]);
+    expect(manager.getStats().ownershipTransfers).toBe(BLENDING_MODES.length * 2);
+  });
+
+  it('clones the real mesh TSL blend graph and state for both WebGPU passes', async () => {
+    const compiled: MeshTSLMaterial[] = [];
+    const manager = new BlendWarmupManager(
+      () => Promise.resolve(),
+      (_renderer, _camera, _scene, object) => {
+        compiled.push((object as THREE.Mesh).material as MeshTSLMaterial);
+      },
+      activateImmediately
+    );
+    manager.configure({
+      enabled: true,
+      renderer: {} as WarmupRenderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+      pipelineVariants: true,
+    });
+    const source = new MeshTSLMaterial({ blendingMode: 'opaque' });
+    source.side = THREE.DoubleSide;
+
+    await manager.warmScene(makeRenderableMesh('mesh', source, 1));
+
+    const expectedCount = BLENDING_MODES.reduce(
+      (count, mode) => count + (resolveMeshBlendingMode(mode) === 'opaque' ? 1 : 2),
+      0
+    );
+    expect(compiled).toHaveLength(expectedCount);
+    let index = 0;
+    for (const mode of BLENDING_MODES) {
+      const back = compiled[index++];
+      expect(back.userData.blendingMode).toBe(resolveMeshBlendingMode(mode));
+      if (resolveMeshBlendingMode(mode) === 'opaque') {
+        expect(back.side).toBe(THREE.DoubleSide);
+        continue;
+      }
+      const front = compiled[index++];
+      expect([back.side, front.side]).toEqual([THREE.BackSide, THREE.FrontSide]);
+      expect(front.userData.blendingMode).toBe(mode);
+      expect(front.colorNode).toBe(back.colorNode);
+      expect(front.blending).toBe(back.blending);
+      expect(front.blendSrc).toBe(back.blendSrc);
+      expect(front.blendDst).toBe(back.blendDst);
+      expect(front.blendEquation).toBe(back.blendEquation);
+      expect(front.depthWrite).toBe(back.depthWrite);
+      expect(front.depthTest).toBe(back.depthTest);
+      expect(front.defines).toEqual(back.defines);
+      expect(front.customProgramCacheKey()).toBe(back.customProgramCacheKey());
+    }
+  });
+
+  it.each([
+    ['nontransparent', false, false],
+    ['forced single pass', true, true],
+  ])('keeps one DoubleSide variant per mode for %s', async (_name, transparent, singlePass) => {
+    const compileOne = vi.fn();
+    const manager = new BlendWarmupManager(
+      () => Promise.resolve(),
+      compileOne,
+      activateImmediately
+    );
+    manager.configure({
+      enabled: true,
+      renderer: {} as WarmupRenderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+      pipelineVariants: true,
+    });
+    const material = new FakeWarmupMaterial();
+    material.side = THREE.DoubleSide;
+    material.transparent = transparent;
+    material.forceSinglePass = singlePass;
+
+    await manager.warmScene(makeRenderableMesh('mesh', material));
+    expect(compileOne).toHaveBeenCalledTimes(BLENDING_MODES.length);
+    expect(
+      compileOne.mock.calls.map((call) => ((call[3] as THREE.Mesh).material as THREE.Material).side)
+    ).toEqual(BLENDING_MODES.map(() => THREE.DoubleSide));
   });
 
   it('awaits an asynchronous compile (WebGPU compileAsync) before the next one', async () => {
