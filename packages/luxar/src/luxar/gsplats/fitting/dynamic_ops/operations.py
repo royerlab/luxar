@@ -398,7 +398,7 @@ def _select_weak_splats(
     residual_at_centers = residual[tuple(center_coords.T)]
 
     # Sort ALL splats by importance (ascending = weakest first)
-    sorted_indices = torch.argsort(importance)
+    sorted_indices = torch.sort(importance, stable=True)[1]
 
     # Filter strategy: Only relocate splats at LOW-residual locations
     # High residual = splat is fighting a tough region, leave it there!

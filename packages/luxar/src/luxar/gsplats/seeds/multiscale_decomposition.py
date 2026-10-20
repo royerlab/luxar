@@ -15,6 +15,7 @@ from arbol import aprint
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.seeds.utils import (
     SEED_AMPLITUDE_SCALE,
+    argsort_descending,
     local_maxima,
     sigmas_to_cholesky_isotropic,
 )
@@ -265,7 +266,7 @@ def _dedupe_with_scales_and_energies(
         return coords, scales, energies
 
     # Sort by energy (highest first)
-    sort_idx = np.argsort(energies)[::-1]
+    sort_idx = argsort_descending(energies)
     coords_sorted = coords[sort_idx]
     scales_sorted = scales[sort_idx]
     energies_sorted = energies[sort_idx]

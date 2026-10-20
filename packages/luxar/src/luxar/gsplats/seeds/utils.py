@@ -16,7 +16,12 @@ from scipy import ndimage as ndi
 
 from luxar.gsplats.spatial_hash import SpatialHashGrid
 
-__all__ = ["SpatialHashGrid", "SEED_AMPLITUDE_SCALE", "greedy_min_distance_select"]
+__all__ = [
+    "SpatialHashGrid",
+    "SEED_AMPLITUDE_SCALE",
+    "argsort_descending",
+    "greedy_min_distance_select",
+]
 
 # Amplitude scaling factor for seed initialization.
 # Multiplying by 0.9 (90%) helps avoid initial over-prediction when splats overlap,
@@ -24,6 +29,28 @@ __all__ = ["SpatialHashGrid", "SEED_AMPLITUDE_SCALE", "greedy_min_distance_selec
 # Starting slightly below the target intensity allows the optimizer to increase
 # amplitudes as needed rather than fighting against penalty gradients.
 SEED_AMPLITUDE_SCALE = 0.9
+
+
+def argsort_descending(values: np.ndarray) -> np.ndarray:
+    """Indices ordering ``values`` brightest first, ties kept in input order.
+
+    NumPy's default ``argsort`` is an unstable introsort whose SIMD backends
+    order equal keys differently on x86 and arm64, so ``argsort(v)[::-1]`` gave
+    platform-dependent seed orders (and, through the order-dependent dedup and
+    top-up steps, platform-dependent fits) whenever intensities tie. This is a
+    stable O(N log N) sort that breaks every tie by input index. NaN sorts
+    LAST (``argsort(v)[::-1]`` put it first): a NaN is never the brightest.
+
+    Floats are sorted on their negation, which is exact. Integers and bools are
+    not negated (``-int8(-128)`` and ``-int64.min`` wrap, and no float type
+    holds every int64/uint64 exactly): the input is reversed, sorted ascending
+    stably, and the order reversed back, which leaves ties in input order.
+    """
+    v = np.asarray(values)
+    if v.dtype.kind == "f":
+        return np.argsort(-v, kind="stable")
+    order: np.ndarray = (len(v) - 1) - np.argsort(v[::-1], kind="stable")[::-1]
+    return order
 
 
 def sigmas_to_cholesky_isotropic(
@@ -214,8 +241,9 @@ def local_maxima(
     if top_k is not None and len(coords) > top_k:
         # Get intensity values at peak locations
         vals = img[tuple(coords.T)]
-        # Select indices of top_k strongest peaks (highest intensities)
-        keep = np.argsort(vals)[-top_k:]
+        # Keep the top_k strongest peaks (ties by C-order index), returned in
+        # the same C-order as the untruncated result.
+        keep = np.sort(argsort_descending(vals)[:top_k])
         coords = coords[keep]
     return cast(np.ndarray, coords)
 
@@ -465,7 +493,7 @@ def dedupe_farthest_first(
 
     # Sort by intensity if provided (highest first), otherwise keep original order
     if intensities is not None:
-        sort_indices = np.argsort(intensities)[::-1]  # Descending order
+        sort_indices = argsort_descending(intensities)
         coords_sorted = coords[sort_indices].astype(np.float32)
     else:
         sort_indices = None
@@ -500,7 +528,7 @@ def _dedupe_simple(
 
     # Sort by intensity if provided
     if intensities is not None:
-        sort_indices = np.argsort(intensities)[::-1]
+        sort_indices = argsort_descending(intensities)
         coords_sorted = coords[sort_indices]
     else:
         sort_indices = None

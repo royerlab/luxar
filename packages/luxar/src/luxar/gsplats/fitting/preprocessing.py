@@ -16,7 +16,7 @@ from arbol import aprint, asection
 from scipy.spatial import distance
 
 from luxar.gsplats.fitting.config import FitConfig, PreprocessedData
-from luxar.gsplats.seeds.utils import SEED_AMPLITUDE_SCALE
+from luxar.gsplats.seeds.utils import SEED_AMPLITUDE_SCALE, argsort_descending
 
 if TYPE_CHECKING:
     from luxar.gsplats.calibration import FloorEstimate
@@ -652,7 +652,7 @@ def _subsample_seeds_spatially_diverse(
     if target_count >= smart_subsample_threshold:
         # Fast path: random weighted sampling for large selections
         # Sort by intensity and take top candidates with some randomness
-        sort_idx = np.argsort(valid_intensities)[::-1]  # Descending
+        sort_idx = argsort_descending(valid_intensities)
 
         # Take top 120% of target, then randomly select exact target from those
         n_candidates = min(len(valid_seeds), int(target_count * 1.2))
@@ -959,7 +959,7 @@ def _add_grid_fallback_seeds(
     if len(grid_coords) > 0:
         idx = np.clip(np.round(grid_coords).astype(int), 0, shape - 1)
         intensities = V[tuple(idx.T)]
-        sorted_indices = np.argsort(intensities)[::-1]
+        sorted_indices = argsort_descending(intensities)
 
         # Take exactly 'needed' to reach target (or all if fewer available)
         take = min(needed, len(grid_coords))
