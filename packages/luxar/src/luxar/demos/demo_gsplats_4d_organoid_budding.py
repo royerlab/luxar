@@ -45,9 +45,10 @@ License: CC BY 4.0
 Recording: 002-P21-25X-Budding (one of seven main-figure recordings)
 
 Only the parts this demo uses are fetched, by HTTP range requests into the
-archive: every fourth ``rgb_grid/grid-T*.vti`` frame (about 345 MB) and the
-lineage ``mamut_deconv.xml`` (0.9 MB). Each member is CRC-checked against the
-archive directory and, as a set, against the SHA-256 digest pinned below.
+archive: every fourth ``rgb_grid/grid-T*.vti`` frame (about 345 MB transferred,
+455 MB extracted) and the lineage ``mamut_deconv.xml`` (0.9 MB transferred,
+6.7 MB extracted). Each member is CRC-checked against the archive directory
+and, as a set, against the SHA-256 digest pinned below.
 
 What the frames are: the record does not carry the raw light-sheet stacks (the
 paper's ~700 GB of imaging is available from the authors on request). The
@@ -70,6 +71,22 @@ Organism:    mouse intestinal organoid, H2B-mCherry / mem9-GFP
 Voxel size:  2.0 x 0.26 x 0.26 um (ZYX)
 Temporal:    667 frames, 10 min apart (experiment.json records 0.1667 h)
 Shown:       167 frames, every fourth (40 min apart)
+
+The compression figure:
+-----------------------
+The caption and description compare two ON-DISK sizes. The raw side is what
+the demo fetches, as extracted files: the 167 shown VTI frames (T0244 standing
+in for the empty T0245, which is not counted) plus the lineage XML, which is
+source data the scene draws too; 462,102,786 bytes, pinned as SOURCE_BYTES and
+checked against the files whenever they are fetched. The scene side is the
+served scene directory, the sum of its file sizes. The ratio is modest (about
+5x) because the source is already reduced: deconvolved, cropped to the
+organoid, 8-bit and zlib-compressed inside the VTI files. The ~700 GB raw
+acquisition, available from the authors on request, is not the baseline.
+The scene's size is only known once it is written, so the build writes it into
+a scratch sibling with an estimate, rewrites the two text attrs with the
+measured size (restamping the content hash) until the figure stops moving, and
+then renames it onto the served path.
 
 How to Cite:
 ------------
@@ -167,8 +184,17 @@ from luxar.demos import (
     warn_if_no_cuda_gpu,
     window_attrs,
 )
+from luxar.demos._caption import compression_caption, compression_note, format_bytes
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.demos._lod_policy import save_with_lod
+from luxar.demos._scene_size import (
+    converge_stated_size,
+    promote_scene,
+    remove_scene,
+    replace_scene_texts,
+    report_scene_size,
+    scratch_paths,
+)
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.merged_quality import collect_part_provenance
@@ -223,6 +249,19 @@ SOURCE_SET_SHA256 = "a2b5cb751a489f092cd57f99064114582b416c9ff44a17a5cd592253777
 #: SHA-256 of the lineage XML on its own: it is the one member a run with every
 #: fit already cached (or a hosted bundle) still needs.
 LINEAGE_SHA256 = "9e10c8bc7c5eb66459a158258390f6654314c5881483fe2996b5f5b52d022bd9"
+#: Extracted on-disk sizes of the pinned members: the 167 fetched VTI frames
+#: (T0244 in place of T0245) and the lineage XML. They follow from the digest
+#: above, are checked against the files by `fetch_source`, and let a run built
+#: from cached fits state the source size without the source on disk.
+SOURCE_FRAME_BYTES = 455_390_806
+LINEAGE_BYTES = 6_711_980
+#: The raw side of the caption's compression figure.
+SOURCE_BYTES = SOURCE_FRAME_BYTES + LINEAGE_BYTES
+#: How the caption names what SOURCE_BYTES measures.
+RAW_LABEL = "source frames and lineage"
+#: First guess at the served scene's size (the reference build); the build
+#: measures the real one and restates it if the caption would change.
+SCENE_BYTES_ESTIMATE = 88_569_352
 
 #: Voxel size of every rgb_grid frame, (z, y, x) in microns.
 VOXEL_SIZE_ZYX = (2.0, 0.26, 0.26)
@@ -357,6 +396,21 @@ def _source_set_digest(members: list[str]) -> str:
     return hashlib.sha256(lines.encode()).hexdigest()
 
 
+def check_source_bytes(members: list[str]) -> int:
+    """The members' extracted sizes summed; must equal the pinned SOURCE_BYTES.
+
+    The digest already pins the bytes, so a mismatch means the two pins were
+    updated out of step.
+    """
+    total = sum(_source_path(m).stat().st_size for m in members)
+    if total != SOURCE_BYTES:
+        raise ValueError(
+            f"Source members total {total:,} bytes, pinned SOURCE_BYTES is "
+            f"{SOURCE_BYTES:,}: update the size pins with the digest."
+        )
+    return total
+
+
 def _source_is_cached(members: list[str]) -> bool:
     return all(_source_path(m).exists() for m in members) and (
         _source_set_digest(members) == SOURCE_SET_SHA256
@@ -386,6 +440,7 @@ def fetch_source() -> tuple[list[Path], Path]:
     members = [frame_member(source_frame(f)) for f in FRAMES] + [LINEAGE_MEMBER]
     if _source_is_cached(members):
         aprint(f"Using the cached source ({len(members)} members, digest verified)")
+        check_source_bytes(members)
         return [_source_path(m) for m in members[:-1]], _source_path(LINEAGE_MEMBER)
     print_data_provenance(
         title=f"LSTree light-sheet recordings, {RECORDING}",
@@ -403,6 +458,7 @@ def fetch_source() -> tuple[list[Path], Path]:
             f"holds the bytes this demo was built from; delete "
             f"{CACHE_DIR / 'source'} to re-fetch, or update the pin deliberately."
         )
+    check_source_bytes(members)
     return [_source_path(m) for m in members[:-1]], _source_path(LINEAGE_MEMBER)
 
 
@@ -776,10 +832,25 @@ def opening_camera(stacks: dict[str, GSplatData]) -> CameraConfig:
     )
 
 
+def _size_texts(scene_bytes: int) -> tuple[str, str]:
+    """The (description, caption) phrases that state ``scene_bytes``."""
+    return (
+        compression_note(SOURCE_BYTES, scene_bytes, RAW_LABEL),
+        compression_caption(SOURCE_BYTES, scene_bytes, RAW_LABEL),
+    )
+
+
 def create_luxar_scene(
-    stacks: dict[str, GSplatData], lineage: dict[str, np.ndarray], output_path: Path
+    stacks: dict[str, GSplatData],
+    lineage: dict[str, np.ndarray],
+    output_path: Path,
+    scene_bytes: int,
 ) -> Path:
-    """Write the 4D scene: two gsplat layers + lineage trails and markers."""
+    """Write the 4D scene: two gsplat layers + lineage trails and markers.
+
+    ``scene_bytes`` is the on-disk size the text states for the scene;
+    :func:`build_scene` measures it and restates it if it was off.
+    """
     t_max = FRAMES[-1] * FRAME_INTERVAL_MIN
     with asection("Creating 4D organoid scene"):
         dims = Dimensions(
@@ -818,7 +889,8 @@ def create_luxar_scene(
                 f"light-sheet, {len(FRAMES)} frames 40 min apart: from one cell to "
                 "a budding mini-gut. Membranes (bop_orange) and nuclei (bop_blue) "
                 "as Gaussian splats; the founder cell's tracked lineage as fading "
-                "trails and markers coloured by lineage."
+                "trails and markers coloured by lineage. Scene size: "
+                f"{compression_note(SOURCE_BYTES, scene_bytes, RAW_LABEL)}."
             )
 
             for ch in CHANNELS:
@@ -882,11 +954,53 @@ def create_luxar_scene(
             )
             add_demo_caption(
                 scene,
-                "Light-sheet • membranes + nuclei • lineage",
+                "Light-sheet • membranes + nuclei • lineage • "
+                f"{compression_caption(SOURCE_BYTES, scene_bytes, RAW_LABEL)}",
                 DEMO_META.get("citation"),
             )
     aprint(f"Scene saved: {output_path}")
     return output_path
+
+
+def restate_scene_size(scene: Path, stated: int, measured: int) -> None:
+    """Rewrite the size figures in the scene's description and caption.
+
+    The scene is the one that will be served, so the content hash is restamped.
+    """
+    swaps = list(zip(_size_texts(stated), _size_texts(measured), strict=True))
+    replace_scene_texts(scene, swaps, expected=2, restamp_hash=True)
+
+
+def build_scene(
+    stacks: dict[str, GSplatData], lineage: dict[str, np.ndarray], output_path: Path
+) -> int:
+    """Write the scene so its text states its own on-disk size; returns it.
+
+    The scene is written into a hidden scratch sibling of ``output_path``
+    stating :data:`SCENE_BYTES_ESTIMATE`, measured, and restated in place until
+    the stated figure stops changing; only then is it renamed onto
+    ``output_path``, so an interrupted build never leaves a scene stating a
+    wrong size.
+    """
+    scratch, retired = scratch_paths(output_path, "building", keep_extension=True)
+    for stale in (scratch, retired):  # leftovers of an interrupted run
+        remove_scene(stale)
+    aprint(
+        f"source on disk: {format_bytes(SOURCE_BYTES)} ({SOURCE_BYTES:,} bytes: "
+        f"{len(FRAMES)} VTI frames {SOURCE_FRAME_BYTES:,} + lineage "
+        f"{LINEAGE_BYTES:,})"
+    )
+    create_luxar_scene(stacks, lineage, scratch, SCENE_BYTES_ESTIMATE)
+    stated, measured, converged = converge_stated_size(
+        SCENE_BYTES_ESTIMATE,
+        _size_texts,
+        lambda: None,  # the restate edits the measured store itself
+        scratch,
+        lambda old, new: restate_scene_size(scratch, old, new),
+    )
+    promote_scene(scratch, output_path, retired)
+    report_scene_size(SOURCE_BYTES, RAW_LABEL, stated, measured, converged)
+    return measured
 
 
 # =============================================================================
@@ -933,9 +1047,9 @@ def main() -> None:
             f"{len(FRAMES)} frames"
         )
 
-    scene_path = create_luxar_scene(stacks, lineage, output_path)
+    build_scene(stacks, lineage, output_path)
     if not NO_SERVE:
-        launch_viewer(scene_path)
+        launch_viewer(output_path)
     aprint("\nDone!")
 
 

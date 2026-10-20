@@ -238,11 +238,17 @@ from luxar.demos import (
 from luxar.demos._caption import (
     compression_caption,
     compression_note,
-    compression_ratio,
     format_bytes,
-    format_ratio,
 )
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+from luxar.demos._scene_size import (
+    converge_stated_size,
+    promote_scene,
+    remove_scene,
+    replace_scene_texts,
+    report_scene_size,
+    scratch_paths,
+)
 from luxar.demos.registry import dir_size_bytes
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds, iter_default_leaves
@@ -1117,10 +1123,6 @@ def pack_scene(built: Path, output_path: Path) -> None:
     run_luxar_cli("optimize", str(built), str(output_path), "--pack", "--overwrite")
 
 
-#: Packs before the stated size must have converged (the second normally does).
-_SIZE_PASSES = 3
-
-
 def _size_texts(scene_bytes: int) -> tuple[str, str]:
     """The (description, caption) phrases that state ``scene_bytes``."""
     return (
@@ -1137,35 +1139,8 @@ def restate_scene_size(built: Path, stated: int, measured: int) -> None:
     ``luxar optimize`` recomputes the hash of its output from scratch and binds
     the chunk packs to that.
     """
-    from luxar._zarr_compat import consolidate, group_keys, open_group
-
     swaps = list(zip(_size_texts(stated), _size_texts(measured), strict=True))
-    root = open_group(str(built), mode="r+")
-    texts = [(root, "description")]
-    overlays = root["overlays"]
-    texts += [(overlays[name], "text") for name in group_keys(overlays)]
-    replaced = 0
-    for group, key in texts:
-        text = group.attrs.get(key)
-        if not isinstance(text, str):
-            continue
-        new = text
-        for old, fresh in swaps:
-            new = new.replace(old, fresh)
-        if new != text:
-            group.attrs[key] = new
-            replaced += 1
-    if replaced != 2:
-        raise RuntimeError(f"expected the size in 2 texts of {built}, found {replaced}")
-    consolidate(root)
-
-
-def _remove(path: Path) -> None:
-    """Remove a scene directory, or the symlink standing in for one."""
-    if path.is_symlink():
-        path.unlink()
-    elif path.exists():
-        shutil.rmtree(path)
+    replace_scene_texts(built, swaps, expected=2)
 
 
 def build_scene(paths: dict[str, Path], output_path: Path) -> int:
@@ -1180,41 +1155,25 @@ def build_scene(paths: dict[str, Path], output_path: Path) -> int:
     would then serve as current. Returns the final size.
     """
     built = local_fit_path(DATASET, "scene_unpacked.luxar.zarr")
-    scratch = output_path.with_name(f".{output_path.name}.packing")
-    retired = output_path.with_name(f".{output_path.name}.old")
+    scratch, retired = scratch_paths(output_path, "packing")
     for stale in (built, scratch, retired):  # leftovers of an interrupted run
-        _remove(stale)
+        remove_scene(stale)
     stated = sum(
         path.stat().st_size if path.is_file() else dir_size_bytes(path)
         for path in paths.values()
     )
     aprint(f"splat stores on disk: {format_bytes(stated)} ({stated:,} bytes)")
     create_luxar_scene(paths, built, stated)
-    for attempt in range(1, _SIZE_PASSES + 1):
-        pack_scene(built, scratch)
-        measured = dir_size_bytes(scratch)
-        converged = _size_texts(measured) == _size_texts(stated)
-        if converged or attempt == _SIZE_PASSES:
-            break
-        restate_scene_size(built, stated, measured)
-        stated = measured
-    shutil.rmtree(built)
-    # A directory cannot be renamed onto a non-empty one: retire the old scene
-    # first. The rename keeps every byte, so `measured` still describes it.
-    if output_path.exists():
-        os.replace(output_path, retired)
-    os.replace(scratch, output_path)
-    _remove(retired)
-    ratio = format_ratio(compression_ratio(CZI_BYTES, measured))
-    aprint(
-        f"scene on disk: {format_bytes(measured)} ({measured:,} bytes), {ratio} "
-        f"smaller than the {format_bytes(CZI_BYTES)} {RAW_LABEL}"
+    stated, measured, converged = converge_stated_size(
+        stated,
+        _size_texts,
+        lambda: pack_scene(built, scratch),
+        scratch,
+        lambda old, new: restate_scene_size(built, old, new),
     )
-    if not converged:
-        aprint(
-            f"⚠️  stated size {format_bytes(stated)} did not converge on the "
-            f"measured {format_bytes(measured)} in {_SIZE_PASSES} packs"
-        )
+    shutil.rmtree(built)
+    promote_scene(scratch, output_path, retired)
+    report_scene_size(CZI_BYTES, RAW_LABEL, stated, measured, converged)
     return measured
 
 

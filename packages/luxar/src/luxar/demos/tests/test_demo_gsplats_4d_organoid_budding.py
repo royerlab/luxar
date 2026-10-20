@@ -11,6 +11,8 @@ import numpy as np
 import pytest
 
 from luxar.demos import demo_gsplats_4d_organoid_budding as demo
+from luxar.demos._scene_size import SIZE_PASSES
+from luxar.demos.registry import dir_size_bytes
 from luxar.gsplats.gsplat_data import GSplatData
 
 
@@ -234,6 +236,7 @@ def test_a_verified_source_cache_skips_the_network(monkeypatch, tmp_path: Path) 
         demo._source_path(member).parent.mkdir(parents=True, exist_ok=True)
         demo._source_path(member).write_bytes(member.encode())
     monkeypatch.setattr(demo, "SOURCE_SET_SHA256", demo._source_set_digest(members))
+    monkeypatch.setattr(demo, "SOURCE_BYTES", sum(len(m) for m in members))
     monkeypatch.setattr(demo, "download_zip_members", _no_network)
     frames, lineage = demo.fetch_source()
     assert frames == [demo._source_path(members[0])]
@@ -302,9 +305,138 @@ def test_scene_builds_with_both_layers_and_the_lineage(
     spots = {i: (i, np.full(3, 5.0 + i, np.float32)) for i in range(9)}
     lineage = demo.lineage_geometry(spots, {i: i - 1 for i in range(1, 9)})
 
-    out = demo.create_luxar_scene(stacks, lineage, tmp_path / "organoid.luxar.zarr")
+    out = demo.create_luxar_scene(
+        stacks, lineage, tmp_path / "organoid.luxar.zarr", 88_569_352
+    )
 
     root = zarr.open_group(str(out), mode="r")
     names = set(root.group_keys())
     assert {"membranes", "nuclei", "lineage_trails", "tracked_cells"} <= names
     assert root.attrs["citation"]["doi"] == "10.1038/s41467-022-32465-z"
+
+
+def test_source_size_pins_cover_every_fetched_member() -> None:
+    # 167 VTI frames (T0244 standing in for T0245, so 167 distinct files) plus
+    # the lineage XML, measured on the extracted, digest-verified source.
+    members = {demo.frame_member(demo.source_frame(f)) for f in demo.FRAMES}
+    assert len(members) == len(demo.FRAMES) == 167
+    assert demo.frame_member(244) not in members
+    assert demo.SOURCE_FRAME_BYTES == 455_390_806
+    assert demo.LINEAGE_BYTES == 6_711_980
+    assert demo.SOURCE_BYTES == demo.SOURCE_FRAME_BYTES + demo.LINEAGE_BYTES
+
+
+def test_a_source_that_misses_the_size_pin_is_refused(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(demo, "CACHE_DIR", tmp_path)
+    members = [demo.frame_member(0), demo.LINEAGE_MEMBER]
+    for member in members:
+        demo._source_path(member).parent.mkdir(parents=True, exist_ok=True)
+        demo._source_path(member).write_bytes(b"12345")
+    monkeypatch.setattr(demo, "SOURCE_BYTES", 10)
+    assert demo.check_source_bytes(members) == 10
+    monkeypatch.setattr(demo, "SOURCE_BYTES", 11)
+    with pytest.raises(ValueError, match="update the size pins"):
+        demo.check_source_bytes(members)
+
+
+def _tiny_scene_inputs(monkeypatch) -> tuple[dict, dict]:
+    frames = (0, 4, 8)
+    monkeypatch.setattr(demo, "FRAMES", frames)
+    monkeypatch.setattr(demo, "OPENING_FRAME", 8)
+    stacks = {
+        ch["name"]: demo.stack_channel([_tiny_frame(i, i) for i in range(len(frames))])
+        for ch in demo.CHANNELS
+    }
+    spots = {i: (i, np.full(3, 5.0 + i, np.float32)) for i in range(9)}
+    return stacks, demo.lineage_geometry(spots, {i: i - 1 for i in range(1, 9)})
+
+
+def _scene_texts(scene: Path) -> tuple[str, list[str]]:
+    from luxar._zarr_compat import group_keys, open_group
+
+    root = open_group(str(scene), mode="r")
+    overlays = root["overlays"]
+    return dict(root.attrs)["description"], [
+        dict(overlays[name].attrs)["text"] for name in group_keys(overlays)
+    ]
+
+
+def test_scene_text_states_its_size_against_the_source(
+    monkeypatch, tmp_path: Path
+) -> None:
+    stacks, lineage = _tiny_scene_inputs(monkeypatch)
+    out = demo.create_luxar_scene(
+        stacks, lineage, tmp_path / "organoid.luxar.zarr", 88_569_352
+    )
+    description, texts = _scene_texts(out)
+    assert description.endswith(
+        "Scene size: 88.6 MB on disk, from the 462 MB source frames and "
+        "lineage (≈5.2x smaller)."
+    )
+    assert (
+        "Light-sheet • membranes + nuclei • lineage • 88.6 MB, ≈5.2x smaller "
+        "than the source frames and lineage • de Medeiros et al. 2022"
+    ) in texts
+
+
+def test_build_scene_states_the_measured_size_and_restamps_the_hash(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import shutil
+
+    from luxar._zarr_compat import open_group
+    from luxar.io._compiler.finalize.hashing import compute_content_hashes
+
+    stacks, lineage = _tiny_scene_inputs(monkeypatch)
+    restated: list[int] = []
+    restate = demo.restate_scene_size
+
+    def counting_restate(scene: Path, stated: int, measured: int) -> None:
+        restated.append(measured)
+        restate(scene, stated, measured)
+
+    monkeypatch.setattr(demo, "restate_scene_size", counting_restate)
+    out = tmp_path / "out.luxar.zarr"
+    measured = demo.build_scene(stacks, lineage, out)
+
+    assert measured == dir_size_bytes(out)
+    # The tiny scene is nowhere near the 88.6 MB estimate, so it was restated.
+    assert 1 <= len(restated) < SIZE_PASSES
+    description, texts = _scene_texts(out)
+    note, caption = demo._size_texts(measured)
+    assert note in description and "88.6 MB" not in description
+    assert any(caption in t for t in texts)
+    # The stamped hash is the one a fresh walk computes over the restated text.
+    stamped = dict(open_group(str(out), mode="r").attrs)["content_hash"]
+    copy = tmp_path / "copy.luxar.zarr"
+    shutil.copytree(out, copy)
+    assert compute_content_hashes(open_group(str(copy), mode="r+")) == stamped
+    assert not (tmp_path / ".building.out.luxar.zarr").exists()
+
+
+def test_an_interrupted_build_leaves_output_path_untouched(
+    monkeypatch, tmp_path: Path
+) -> None:
+    stacks, lineage = _tiny_scene_inputs(monkeypatch)
+    out = tmp_path / "out.luxar.zarr"
+    out.mkdir()
+    (out / "previous.txt").write_text("the scene served before this build")
+    restate = demo.restate_scene_size
+
+    def dying_restate(scene: Path, stated: int, measured: int) -> None:
+        raise KeyboardInterrupt  # Ctrl-C, OOM, ...
+
+    monkeypatch.setattr(demo, "restate_scene_size", dying_restate)
+    with pytest.raises(KeyboardInterrupt):
+        demo.build_scene(stacks, lineage, out)
+    assert [p.name for p in out.iterdir()] == ["previous.txt"]
+
+    # The next run clears the interrupted scratch and replaces the old scene.
+    monkeypatch.setattr(demo, "restate_scene_size", restate)
+    measured = demo.build_scene(stacks, lineage, out)
+    assert not (out / "previous.txt").exists()
+    assert not (tmp_path / ".building.out.luxar.zarr").exists()
+    assert not (tmp_path / ".out.luxar.zarr.old").exists()
+    assert demo._size_texts(measured)[0] in _scene_texts(out)[0]
