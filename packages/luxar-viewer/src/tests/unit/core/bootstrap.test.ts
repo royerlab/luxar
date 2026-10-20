@@ -214,7 +214,7 @@ describe('bootstrapStandalone', () => {
   });
 
   afterEach(() => {
-    takePreRequestedWebGPUDevice();
+    void takePreRequestedWebGPUDevice();
     mocks.disposeCleanups.splice(0).forEach((cleanup) => cleanup());
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
     delete window.__luxarBuild;

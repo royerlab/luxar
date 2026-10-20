@@ -32,7 +32,7 @@ type NavigatorWithGPU = Navigator & {
  * limits.
  *
  * `maxVertexBuffers` is deliberately NOT here — it is clamped to 16
- * rather than forwarded verbatim (see `createWebGPURenderer`).
+ * rather than forwarded verbatim (see `requestCoreDevice`).
  */
 const FORWARDED_ADAPTER_LIMIT_NAMES = [
   'maxBufferSize',

@@ -65,7 +65,6 @@ import * as THREE from 'three';
 import {
   createUncapturedGpuErrorHandler,
   createWebGPURenderer,
-  forwardedAdapterLimits,
   GPU_ERROR_DISTINCT_LIMIT,
   GPU_ERROR_REPEAT_LIMIT,
   requestWebGPUDevice,
@@ -73,6 +72,7 @@ import {
 } from '../../../../../scene/scene-manager/render-pipeline/renderer-setup';
 import { log, Modules } from '../../../../../utils/log';
 import {
+  forwardedAdapterLimits,
   preRequestWebGPUDevice,
   takePreRequestedWebGPUDevice,
 } from '../../../../../scene/scene-manager/render-pipeline/early-device-request';

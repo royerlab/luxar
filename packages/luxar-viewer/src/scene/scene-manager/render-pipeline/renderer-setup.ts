@@ -63,7 +63,6 @@ import {
   type CoreDeviceRequest,
   type GPUAdapterLike,
 } from './early-device-request';
-export { forwardedAdapterLimits } from './early-device-request';
 
 /**
  * Point the backend-dependent rendering paths at `renderer`. Every renderer
