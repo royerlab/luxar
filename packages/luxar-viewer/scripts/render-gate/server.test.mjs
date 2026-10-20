@@ -18,6 +18,8 @@ beforeAll(() => {
   mkdirSync(join(data, 'gate'), { recursive: true });
   writeFileSync(join(dist, 'index.html'), '<html></html>');
   writeFileSync(join(dist, 'viewer.js'), 'export const payload = "' + 'x'.repeat(10000) + '";');
+  writeFileSync(join(dist, 'viewer.css'), 'body{' + 'color:red;'.repeat(1000) + '}');
+  writeFileSync(join(dist, 'empty.js'), '');
   writeFileSync(join(data, 'gate', 'blob.bin'), BODY);
 });
 
@@ -53,21 +55,58 @@ describe('startServer', () => {
       const url = `${s.origin}/viewer.js`;
       const compressed = await fetch(url, { headers: { 'Accept-Encoding': 'gzip' } });
       expect(compressed.headers.get('content-encoding')).toBe('gzip');
+      expect(compressed.headers.get('accept-ranges')).toBeNull();
       expect(compressed.headers.get('vary')).toBe('Accept-Encoding');
       expect(await compressed.text()).toContain('x'.repeat(10000));
       expect(s.log[0].bytes).toBeLessThan(1000);
 
       const identity = await fetch(url, { headers: { 'Accept-Encoding': 'gzip;q=0' } });
       expect(identity.headers.get('content-encoding')).toBeNull();
+      expect(identity.headers.get('vary')).toBe('Accept-Encoding');
+      expect(identity.headers.get('etag')).not.toBe(compressed.headers.get('etag'));
       expect(await identity.text()).toContain('x'.repeat(10000));
+
+      const cached = await fetch(url, {
+        headers: {
+          'Accept-Encoding': 'gzip',
+          'If-None-Match': compressed.headers.get('etag'),
+        },
+      });
+      expect(cached.status).toBe(304);
+      expect(cached.headers.get('vary')).toBe('Accept-Encoding');
 
       const ranged = await fetch(url, {
         headers: { 'Accept-Encoding': 'gzip', Range: 'bytes=0-5' },
       });
       expect(ranged.status).toBe(206);
       expect(ranged.headers.get('content-encoding')).toBeNull();
+      expect(ranged.headers.get('accept-ranges')).toBe('bytes');
       expect(await ranged.text()).toBe('export');
-      expect(s.log[2].bytes).toBe(6);
+      expect(s.log[3].bytes).toBe(6);
+
+      const dataset = await fetch(`${s.origin}/datasets/gate/blob.bin`, {
+        headers: { 'Accept-Encoding': 'gzip', Range: 'bytes=2-5' },
+      });
+      expect(dataset.status).toBe(206);
+      expect(dataset.headers.get('content-encoding')).toBeNull();
+      expect(await dataset.text()).toBe('2345');
+
+      const css = await fetch(`${s.origin}/viewer.css`, {
+        headers: { 'Accept-Encoding': 'gzip' },
+      });
+      expect(css.headers.get('content-encoding')).toBe('gzip');
+      expect(await css.text()).toContain('color:red;');
+    });
+  });
+
+  it('sends the complete encoded body for an empty JS asset', async () => {
+    await withServer({ gzip: true }, async (s) => {
+      const response = await fetch(`${s.origin}/empty.js`, {
+        headers: { 'Accept-Encoding': 'gzip' },
+      });
+      expect(response.headers.get('content-encoding')).toBe('gzip');
+      expect(await response.text()).toBe('');
+      expect(s.log[0].bytes).toBeGreaterThan(0);
     });
   });
 

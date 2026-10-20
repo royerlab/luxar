@@ -30,7 +30,14 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { createReadStream, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import {
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+} from 'node:fs';
 import { createServer } from 'node:http';
 import http2 from 'node:http2';
 import { gzipSync } from 'node:zlib';
@@ -161,8 +168,8 @@ function acceptsGzip(header) {
   return (header ?? '').split(',').some((token) => {
     const [name, ...parameters] = token.trim().split(';');
     if (name.toLowerCase() !== 'gzip') return false;
-    const quality = parameters.find((p) => p.trim().startsWith('q='));
-    return quality === undefined || Number(quality.trim().slice(2)) > 0;
+    const quality = parameters.map((p) => p.trim()).find((p) => /^q\s*=/i.test(p));
+    return quality === undefined || Number(quality.split('=')[1]) > 0;
   });
 }
 
@@ -197,6 +204,16 @@ export function startServer({
   let maxInflight = 0;
   const bucket = tokenBucket(bytesPerSec);
   const compressedAssets = new Map();
+  if (gzip) {
+    // Pre-compress before the server accepts requests or the browser navigates.
+    // A hosted CDN serves static assets already encoded; doing this on the first request
+    // would add synchronous server CPU work to the measured cold load.
+    for (const asset of readdirSync(distDir, { recursive: true, withFileTypes: true })) {
+      if (!asset.isFile() || !['.js', '.css'].includes(extname(asset.name))) continue;
+      const path = join(asset.parentPath, asset.name);
+      compressedAssets.set(path, gzipSync(readFileSync(path)));
+    }
+  }
   const reset = () => {
     log.length = 0;
     maxInflight = inflight;
@@ -244,15 +261,11 @@ export function startServer({
   async function serveHosted(req, res, file, entry, isData) {
     const compressible = gzip && !isData && ['.js', '.css'].includes(extname(file.path));
     const compressed =
-      compressible && !req.headers.range && acceptsGzip(req.headers['accept-encoding']);
-    let body;
-    if (compressed) {
-      body = compressedAssets.get(file.path);
-      if (!body) {
-        body = gzipSync(readFileSync(file.path));
-        compressedAssets.set(file.path, body);
-      }
-    }
+      compressible &&
+      !req.headers.range &&
+      acceptsGzip(req.headers['accept-encoding']) &&
+      compressedAssets.has(file.path);
+    const body = compressed ? compressedAssets.get(file.path) : undefined;
     const tag = `"${file.size.toString(16)}-${Math.floor(file.mtime).toString(16)}${compressed ? '-gzip' : ''}"`;
     const base = { 'Cache-Control': cacheControl, 'Access-Control-Allow-Origin': '*' };
     if (compressible) base.Vary = 'Accept-Encoding';
@@ -278,11 +291,11 @@ export function startServer({
       'Content-Length': body?.length ?? Math.max(0, end - start + 1),
     };
     if (body) headers['Content-Encoding'] = 'gzip';
-    if (range) headers['Accept-Ranges'] = 'bytes';
+    if (range && !body) headers['Accept-Ranges'] = 'bytes';
     if (r) headers['Content-Range'] = `bytes ${start}-${end}/${file.size}`;
     entry.status = r ? 206 : 200;
     res.writeHead(entry.status, headers);
-    if (req.method === 'HEAD' || file.size === 0) {
+    if (req.method === 'HEAD' || (file.size === 0 && !body)) {
       res.end();
       return;
     }
