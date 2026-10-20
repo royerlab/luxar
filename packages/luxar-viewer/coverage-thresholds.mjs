@@ -113,7 +113,9 @@ export const COVERAGE_THRESHOLDS = {
   // `ui/control-panel/render-panel` is port-injected, so the grid fitting, the
   // centred final row and the active-tile marking are all reachable from
   // jsdom; the subtree went 91.90 -> 92.00 and the old floor went stale.
-  'src/ui/**': { lines: 91, functions: 86, branches: 79 },
+  // functions 86 -> 89 after the public-entry material-builder test (#3229)
+  // imported the barrel and lifted measured coverage to 90.20.
+  'src/ui/**': { lines: 91, functions: 89, branches: 79 },
   // branches 83 -> 85 after the #2508 capture-readiness tests reached the
   // version-skew branches nothing had exercised (a cap refusing on a partial
   // snapshot, the unreadable-figure paths, the hostile-string guard): the
@@ -174,7 +176,7 @@ export const COVERAGE_RECORDED = {
   'src/controls/**': { lines: 96.81, functions: 92.92, branches: 89.82 },
   'src/data/**': { lines: 94.59, functions: 93.54, branches: 88.38 },
   'src/workers/**': { lines: 95.07, functions: 95.65, branches: 90.07 },
-  'src/ui/**': { lines: 92.69, functions: 88.34, branches: 80.63 },
+  'src/ui/**': { lines: 92.69, functions: 90.2, branches: 80.63 },
   'src/core/**': { lines: 92.79, functions: 82.22, branches: 87.96 },
   'src/input/**': { lines: 92.96, functions: 89.41, branches: 86.11 },
   'src/rendering/**': { lines: 92.61, functions: 90.74, branches: 81.98 },
