@@ -58,6 +58,55 @@ test('requests the adapter before the viewer entry runs', async ({ page }) => {
   }
 });
 
+test('requests the device with forwarded limits before the viewer entry runs', async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as Window & { deviceDescriptors?: unknown[] }).deviceDescriptors = [];
+    Object.defineProperty(navigator, 'gpu', {
+      configurable: true,
+      value: {
+        requestAdapter: async () => ({
+          features: new Set(['timestamp-query']),
+          limits: {
+            maxVertexBuffers: 20,
+            maxBufferSize: 4096,
+            maxStorageBufferBindingSize: 2048,
+            maxTextureDimension2D: 16384,
+          },
+          requestDevice: async (descriptor: unknown) => {
+            (window as Window & { deviceDescriptors?: unknown[] }).deviceDescriptors!.push(
+              descriptor
+            );
+            return {};
+          },
+        }),
+      },
+    });
+  });
+  const { release } = await blockViewerEntry(page);
+  try {
+    await page.goto('/?renderer=webgpu', { waitUntil: 'commit' });
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => (window as Window & { deviceDescriptors?: unknown[] }).deviceDescriptors
+        )
+      )
+      .toEqual([
+        {
+          requiredFeatures: ['timestamp-query'],
+          requiredLimits: {
+            maxVertexBuffers: 16,
+            maxBufferSize: 4096,
+            maxStorageBufferBindingSize: 2048,
+            maxTextureDimension2D: 16384,
+          },
+        },
+      ]);
+  } finally {
+    release();
+  }
+});
+
 test('keeps the diagnostic WebGL bridge off the native adapter path', async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'gpu', {

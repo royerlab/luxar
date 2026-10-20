@@ -73,9 +73,9 @@ import {
 } from '../../../../../scene/scene-manager/render-pipeline/renderer-setup';
 import { log, Modules } from '../../../../../utils/log';
 import {
-  preRequestWebGPUAdapter,
-  takePreRequestedWebGPUAdapter,
-} from '../../../../../scene/scene-manager/render-pipeline/early-adapter-request';
+  preRequestWebGPUDevice,
+  takePreRequestedWebGPUDevice,
+} from '../../../../../scene/scene-manager/render-pipeline/early-device-request';
 
 describe('selectBackend', () => {
   const originalEnv = { ...import.meta.env };
@@ -252,21 +252,46 @@ describe('createWebGPURenderer', () => {
     expect(webgpuImport.calls).toBe(2);
   });
 
-  it('consumes an early adapter request once without renegotiating', async () => {
+  it('consumes an early device request once without renegotiating', async () => {
     const adapter = makeAdapter({ maxVertexBuffers: 16 });
     const requestAdapter = vi.fn().mockResolvedValue(adapter);
     stubNavigatorGpu(requestAdapter);
 
-    preRequestWebGPUAdapter();
+    preRequestWebGPUDevice('webgpu');
     expect(requestAdapter).toHaveBeenCalledOnce();
-    const early = takePreRequestedWebGPUAdapter();
+    const early = takePreRequestedWebGPUDevice();
     expect(early).toBeDefined();
-    expect(takePreRequestedWebGPUAdapter()).toBeUndefined();
+    expect(takePreRequestedWebGPUDevice()).toBeUndefined();
 
     const result = await requestWebGPUDevice('webgpu', false, early);
     expect(result).toMatchObject({ fallback: false });
     expect(requestAdapter).toHaveBeenCalledOnce();
     expect(adapter.requestDevice).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the low-limit adapter fallback before an early device request', async () => {
+    const adapter = makeAdapter({ maxVertexBuffers: 4 });
+    const requestAdapter = vi.fn().mockResolvedValue(adapter);
+    stubNavigatorGpu(requestAdapter);
+
+    preRequestWebGPUDevice();
+    const result = await requestWebGPUDevice(undefined, true, takePreRequestedWebGPUDevice());
+    expect(result).toEqual({ fallback: true });
+    expect(requestAdapter).toHaveBeenCalledOnce();
+    expect(adapter.requestDevice).not.toHaveBeenCalled();
+  });
+
+  it('falls back when an early device request rejects', async () => {
+    const requestDevice = vi.fn().mockRejectedValue(new Error('device exhausted'));
+    const adapter = makeAdapter({ maxVertexBuffers: 16, requestDevice });
+    const requestAdapter = vi.fn().mockResolvedValue(adapter);
+    stubNavigatorGpu(requestAdapter);
+
+    preRequestWebGPUDevice();
+    const result = await requestWebGPUDevice(undefined, true, takePreRequestedWebGPUDevice());
+    expect(result).toEqual({ fallback: true });
+    expect(requestAdapter).toHaveBeenCalledOnce();
+    expect(requestDevice).toHaveBeenCalledOnce();
   });
 
   it('forceWebGL diagnostic mode: skips navigator.gpu and sets forceWebGL on renderer', async () => {
