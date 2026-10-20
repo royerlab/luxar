@@ -733,6 +733,8 @@ def finalize_results(
         "final_rel_l2": optimization_results.best_rel_l2,
         "converged": optimization_results.converged_early,
         "early_stopped": optimization_results.early_stopped,
+        "early_stop_reason": optimization_results.early_stop_reason,
+        "early_stop_rel_tol": optimization_results.early_stop_rel_tol,
         "n_splats": len(amps_np),
         # Normalization metadata (recorded for inspection/reproducibility).
         # `floor` is the background level subtracted before fitting (None if

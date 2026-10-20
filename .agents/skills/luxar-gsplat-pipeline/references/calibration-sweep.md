@@ -144,3 +144,71 @@ nuclei can trigger it too. K\* itself is unchanged.
 
 Never fit real data with `--seeds auto`: it sizes 100-10,000 seeds from the
 volume's linear extent, not its content.
+
+## Relative early stop inside each fit
+
+The sweep's early stop above ends the GRID; this one ends each FIT. Every preset
+carries `early_stop_rel_tol: 0.001`: a fit stops once its best loss improved by
+less than 0.1% over the last `early_stop_patience` iterations (500 for `n2s`), as
+well as after a window with no improvement at all. Before it, the plain rule
+accepted any improvement, and the top grid points crept for thousands of
+iterations: on an Allen hiPSC K = 64000 point relL2 sat at 0.4860 for ~9,600
+iterations. `early_stop_rel_tol: null` in a `--config` restores the plain rule.
+The paper's Noise2Self tables use the Python API and are unchanged; to reproduce
+the CLI recipe timings in the consumer-GPU and tiled-fitting supplementary
+documents, set `early_stop_rel_tol: null`.
+
+Measured before making it the default (RTX 3070, `n2s`, `--n-grid 5`, same grid
+per volume; "sweep" is the summed fit time; fg = foreground held-out PSNR at K\*,
+robust peak):
+
+| Volume | Plain rule: sweep, K\*, fg | rel 1e-3 | rel 3e-4 | rel 1e-4 |
+| --- | --- | --- | --- | --- |
+| Allen hiPSC DNA, 65x624x924 | 2487 s, 512000, 19.32 | 315 s, 512000, 19.31 | 432 s, 512000, 19.31 | 1740 s, 512000, 19.32 |
+| Tribolium light-sheet crop, 64x256x256 | 263 s, 38055, 43.87 | 96 s, 38055, 43.91 | 101 s, 38055, 43.86 | not run |
+| FlyLight neuron crop, 96x256x256 (sparse) | 204 s, 11314, 21.51 | 57 s, 11314, 21.45 | 60 s, 11314, 21.42 | not run |
+| IDR 5514375, 31x256x256 (flat curve) | 77 s, 290, 14.75 | 91 s, 290, 14.75 | 92 s, 31000, 15.08 | 77 s, 31000, 15.06 |
+
+K\* under the default `psnr_foreground` criterion was unchanged on Allen,
+Tribolium and FlyLight; on Allen's flat curve the `psnr_minmax` K\* moved from
+22627 to 512000 at rel 1e-3. Losses were at most 0.10 dB on every held-out and
+foreground point (FlyLight, K = 1000); the one larger move, 0.14 dB on a
+Tribolium foreground point, was a gain. IDR's K\* flips between 290
+(plateau) and 31000 (signal_limited) in two plain-rule runs with identical
+settings too: its curve moves 0.18 dB between K = 290 and 31000 and sits at the
+noise ceiling, so the flip is run-to-run noise, not the stopping rule. IDR's fits are
+short and gain nothing. Standard-preset `fit`s (5000 iterations, patience 300) at
+the top K: Allen K = 64000 175 s → 54 s, FlyLight K = 32000 29-39 s → 15 s,
+Tribolium K = 64000 33-49 s → 21 s, IDR K = 31000 unchanged (it never stalls
+within 5000 iterations). Foreground PSNR of the saved fits stayed within the
+0.1-0.2 dB spread of two plain-rule replicates on every volume.
+
+## On a CPU
+
+A CPU fit costs roughly a fixed time per iteration at a given volume (the render
+kernels are ~80% of it), so a sweep's CPU time follows its total iterations. With
+the relative stop on, the quicker recipe is
+
+    luxar gsplat cal vol.tiff cal.json --device cpu --preset standard --n-grid 5
+
+Total iterations, read from the kept fits of each sweep (device-independent; the
+sweeps ran on an RTX 3070 because the CPU host was saturated by other work):
+
+| Volume | Default `cal` (n2s, 10 points) | `--preset standard --n-grid 5` | Ratio | K\*: default / recipe |
+| --- | --- | --- | --- | --- |
+| Allen hiPSC DNA | 16875 (8 fitted, sweep stopped at 128000) | 8025 | 0.48 | 16000 plateau / 512000 signal_limited (knee 16000 / 22627) |
+| Tribolium crop (`--k-max 128000`) | 15475 | 9650 | 0.62 | 25398 / 38055 (one coarse step) |
+| FlyLight crop (`--k-max 128000`) | 8400 | 5125 | 0.61 | 8640 / 11314 (one coarse step) |
+| IDR 5514375 | 13850 | 11300 | 0.82 | 1944 / 290 (flat curve at the noise ceiling) |
+
+Measured CPU cost per iteration (`taskset` 8 cores of an i9-9900K, 4-8 torch
+threads): 31x256x256 at K = 6529 about 0.1 s, 64x256x256 at K = 16000 about
+0.3 s; multiply by the totals above for a CPU estimate. `standard` caps each fit at
+5000 iterations, which matters on the points that fit noise and never stall (IDR's
+K = 31000 point ran 11,400 iterations under `n2s`). The 5-point grid steps 3.4-4.8x
+instead of ~1.7-2x, so on a peaked curve K\* lands one coarse step from the default's;
+on a creeping curve the 0.1 dB sweep stop never fires and K\* reads
+`signal_limited` at the top (Allen), so read the knee (operating point) there.
+`--preset draft` is not safe: it under-trains the top point and flipped K\* on IDR
+5514375 (31,000 to 1,375). Re-run the default `cal` before a production fit if the K\* matters to
+within a factor of two.

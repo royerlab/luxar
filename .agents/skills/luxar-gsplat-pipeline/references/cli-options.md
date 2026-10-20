@@ -113,7 +113,18 @@ cannot itself appear inside a comma list. `peaks` (sparse point-like maxima) and
 | `standard` | 5,000 | 300 | 10 | 0.999 |
 | `hifi` | 10,000 | 400 | 15 | 0.999 |
 | `ultra` | 20,000 | 500 | 20 | 0.999 |
-| `n2s` | 20,000 | 500 | 10 | 0.999 (manuscript blind-spot protocol) |
+| `n2s` | 20,000 | 500 | 10 | 0.999 (blind-spot protocol budget; `cal`'s default) |
+
+Every preset also carries `early_stop_rel_tol: 0.001`: besides "no improvement
+for `early_stop_patience` iterations", a fit stops once its best loss improved by
+less than 0.1% (relative) over that window. The Python API default is `None`
+(plain rule only); `early_stop_rel_tol: null` in a `--config` restores it on the
+CLI. The paper's Noise2Self tables use the Python API and are unchanged; to
+reproduce the CLI recipe timings in the consumer-GPU and tiled-fitting
+supplementary documents, set `early_stop_rel_tol: null`. Measured on four
+volumes before the change (measurements in
+[calibration-sweep.md](calibration-sweep.md#relative-early-stop-inside-each-fit)).
+YAML 1.1 reads `1e-3` without a dot as text: write `0.001` or `1.0e-3`.
 
 Every preset and all three Python fitters default to `cull_retention=0.999`.
 This near-lossless trim keeps 99.9% of cumulative amplitude. The earlier 0.95
@@ -126,8 +137,8 @@ cumulative-amplitude cull discards the tail, and on heavy-tailed sparse data tha
 tail is a lot of splats — the final count is not `--seeds`. A bigger preset is not
 free either: `early_stop_patience` grows with it (200 → 500), and since the counter
 resets only on an improvement and the stop is tested only on eval iterations (every
-25th), the larger one burns AT LEAST 500 iterations after the last improvement —
-somewhat more, never fewer. The preset silently moves `max_eccentricity` too
+25th), the plain rule burns AT LEAST 500 iterations after the last improvement —
+somewhat more, never fewer. (The relative rule above can end a creeping fit sooner.) The preset silently moves `max_eccentricity` too
 (10 → 20 from `draft` to `ultra`; `n2s` stays at 10).
 
 **With NO `--preset`, `fit` uses the `standard` preset** (`DEFAULT_FIT_PRESET`):

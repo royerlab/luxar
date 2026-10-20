@@ -75,6 +75,7 @@ class OptimConfig:
     patience: int = 15
     lr_reduction_factor: float = 0.9
     early_stop_patience: Optional[int] = 300
+    early_stop_rel_tol: Optional[float] = None
     sort_splats_enabled: bool = True
     sort_splats_interval: int = 1000
 
@@ -174,6 +175,7 @@ class FitParameters:
     patience: int = 15
     lr_reduction_factor: float = 0.9
     early_stop_patience: Optional[int] = 300
+    early_stop_rel_tol: Optional[float] = None
     dynamic_ops_verbose: bool = False
     voxel_footprint_correction: bool | float = False
     boundary_penalty: Optional[float] = None
@@ -260,6 +262,11 @@ class FitConfig:
     # counterpart of the globally-resolved `floor`. Leave None for a
     # whole-volume fit, where the array already IS the volume.
     norm_range: Optional[tuple[float, float]] = None
+
+    # Relative early stop: also stop once the best loss improved by less than
+    # this fraction over the last ``early_stop_patience`` iterations. None keeps
+    # the plain rule (stop only after no improvement at all).
+    early_stop_rel_tol: Optional[float] = None
 
     # Metal acceleration (with defaults - must come after required fields)
     use_metal: bool = True  # Enable Metal acceleration when available (macOS + MPS)
@@ -488,6 +495,13 @@ class OptimizationResults:
     # disabled. Lets the fit diagnostics split a stuck near-reseed-sigma
     # population into ever-relocated vs never-relocated seeds (#2734).
     relocated_mask: Optional[np.ndarray] = None
+
+    # Why the loop ended early: "converged" (an error target was met), "plain"
+    # (no new best loss for a patience window), "relative" (the best loss
+    # improved by at most ``early_stop_rel_tol`` over that window), or None
+    # (it ran to ``n_iters``). The tolerance in force is recorded beside it.
+    early_stop_reason: Optional[str] = None
+    early_stop_rel_tol: Optional[float] = None
 
 
 @dataclass

@@ -270,6 +270,61 @@ def test_noise_line_restates_a_legacy_ceiling_on_the_robust_peak() -> None:
     assert "RMS σ = 7.29 (6.1% of the robust peak)" in lines[0]
     assert "ceiling ≈ 24.3 dB" in lines[0]
     assert "may read low" in lines[1]
+    assert not any("At the noise ceiling" in line for line in lines)
+
+
+def _ceiling_result(ceiling_offset_db: float, ratio: float) -> Any:
+    """A result whose best held-out score is ``ceiling_offset_db`` above the ceiling."""
+    from luxar.gsplats.calibration import CalibrationResult, NoiseFloor, find_k_star
+
+    ks, held = [1000, 2000, 4000], [30.0, 31.0, 30.5]
+    res = CalibrationResult(
+        k_values_requested=ks,
+        k_values_effective=ks,
+        held_out_psnr_db=held,
+        train_psnr_db=held,
+        held_out_mse=[1e-3] * 3,
+        full_psnr_db=held,
+        full_ssim=[0.9] * 3,
+        held_out_peak=find_k_star(ks, held),
+        noise_floor=NoiseFloor(0.0029, 0.0029, 0.0029, 0.0, 50.8),
+        fit_times_seconds=[1.0] * 3,
+        splat_paths=None,
+        mask_seed=0,
+        mask_fraction=0.05,
+        donut_radius=1,
+        fit_config={},
+        volume_shape=[8, 8, 8],
+        volume_dtype="float32",
+        timestamp="2026-01-01T00:00:00",
+        data_range=1597.1,
+        robust_data_range=119.1,
+    )
+    best_robust = 31.0 + res.robust_offset_db()
+    res.noise_sigma_rms = 7.29
+    res.psnr_ceiling_robust_db = best_robust - ceiling_offset_db
+    res.noise_scale_ratio = ratio
+    return res
+
+
+@pytest.mark.parametrize(
+    ("offset_db", "ratio", "noted"),
+    [
+        (0.15, 1.1, True),  # Allen-like: best just above a reliable ceiling
+        (-0.25, 1.1, True),  # just below it
+        (-1.0, 1.1, False),  # clearly below: the sweep is not noise-limited
+        (0.5, 1.1, False),  # far above: the ceiling itself under-reads
+        (0.0, 9.9, False),  # IDR-like: the scale check failed
+        (0.0, float("nan"), False),  # no scale check at all
+    ],
+)
+def test_at_ceiling_note_needs_a_reliable_ceiling_and_a_close_score(
+    offset_db: float, ratio: float, noted: bool
+) -> None:
+    from luxar.cli.gsplat_ops.fitting.calibrate import _noise_lines
+
+    lines = _noise_lines(_ceiling_result(offset_db, ratio))
+    assert any("At the noise ceiling" in line for line in lines) is noted
 
 
 def test_pdf_alone_keeps_the_fits_temporarily_for_the_slice_page(

@@ -200,6 +200,7 @@ def fit_gaussian_splats(
     patience: int = 15,
     lr_reduction_factor: float = 0.9,
     early_stop_patience: Optional[int] = 300,
+    early_stop_rel_tol: Optional[float] = None,
     # Dynamic operations parameters
     enable_dynamic_ops: bool = True,
     dynamic_config: Optional[DynamicOpsConfig] = None,
@@ -428,6 +429,11 @@ def fit_gaussian_splats(
         Early stopping: stop if no loss improvement for N iterations.
         None disables early stopping (runs until convergence or iteration limit).
         Example: 300 stops if no improvement for 300 consecutive iterations.
+    early_stop_rel_tol : Optional[float], default=None
+        Relative early stop. When set, the fit also stops once the best loss
+        has improved by less than this fraction (of the best loss one window
+        earlier) over the last ``early_stop_patience`` iterations. None keeps
+        the plain rule. Ignored when ``early_stop_patience`` is None.
     enable_dynamic_ops : bool, default=True
         Enable dynamic operations (seeding and pruning).
     dynamic_config : DynamicOpsConfig, optional

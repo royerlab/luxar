@@ -63,8 +63,8 @@ budget: `cal` prints what `fit --seeds K*` will store. A `--region`/`--auto-regi
 K\* is a crop budget; `cal` also prints a whole-volume `--seeds` for the simple path.
 Details and measurements: [references/calibration-sweep.md](references/calibration-sweep.md).
 
-Presets: `draft` / `standard` / `hifi` / `ultra` / `n2s` (`n2s` = the manuscript's
-blind-spot protocol, and `cal`'s default). Override any preset knob, e.g.
+Presets: `draft` / `standard` / `hifi` / `ultra` / `n2s` (`n2s` = the blind-spot
+protocol budget and `cal`'s default; all stop on relative progress, 0.1%/window). Override any preset knob, e.g.
 `--iters 8000`. Generate a config template with
 `luxar gsplat fit --dump-config --preset hifi > config.yaml`, then `--config config.yaml`.
 

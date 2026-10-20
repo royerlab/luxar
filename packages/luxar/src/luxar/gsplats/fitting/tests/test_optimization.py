@@ -16,6 +16,7 @@ from luxar.gsplats.fitting.initialization import initialize_optimization
 from luxar.gsplats.fitting.losses import create_loss_function
 from luxar.gsplats.fitting.optimization import (
     _compute_max_abs_error,
+    _EarlyStopRule,
     run_optimization_loop,
 )
 
@@ -927,3 +928,83 @@ def test_warm_start_from_a_good_fit_does_not_get_worse() -> None:
     refit = fit_gaussian_splats(vol, seeds=first, n_iters=60, lr=0.05, **kwargs)
     assert refit.stats["psnr_db"] >= start.stats["psnr_db"] - 0.01
     assert refit.stats["psnr_db"] > first.stats["psnr_db"] - 1.0
+
+
+class TestEarlyStopRule:
+    """The patience rule, with and without a relative tolerance."""
+
+    def test_plain_rule_waits_for_no_improvement_at_all(self) -> None:
+        rule = _EarlyStopRule(patience=100, rel_tol=None)
+        # Creeping by 1e-6 per eval never stops the plain rule ...
+        for it in range(25, 1001, 25):
+            assert not rule.should_stop(it, 1.0 - 1e-6 * it, 0)
+        # ... only a full window without a new best does.
+        assert rule.should_stop(1025, 0.999, 100) == "plain"
+
+    def test_relative_rule_stops_on_a_crawl(self) -> None:
+        rule = _EarlyStopRule(patience=100, rel_tol=1e-3)
+        stopped = [
+            it for it in range(25, 1001, 25) if rule.should_stop(it, 1.0 - 1e-6 * it, 0)
+        ]
+        # First eval with a full window behind it (it - 100 >= 25).
+        assert stopped and stopped[0] == 125
+        fresh = _EarlyStopRule(patience=100, rel_tol=1e-3)
+        reasons = [fresh.should_stop(it, 1.0 - 1e-6 * it, 0) for it in (25, 50, 125)]
+        assert reasons == [None, None, "relative"]
+
+    def test_relative_rule_keeps_going_while_progress_is_real(self) -> None:
+        rule = _EarlyStopRule(patience=100, rel_tol=1e-3)
+        # 1% per window, ten times the tolerance.
+        for it in range(25, 2001, 25):
+            assert not rule.should_stop(it, 0.9999**it, 0)
+
+    def test_relative_rule_needs_a_full_window(self) -> None:
+        rule = _EarlyStopRule(patience=300, rel_tol=0.5)
+        # Flat loss, but no eval is a full window old yet.
+        assert not rule.should_stop(1, 1.0, 0)
+        assert not rule.should_stop(250, 1.0, 0)
+        assert rule.should_stop(325, 1.0, 0)
+
+    def test_disabled_patience_disables_both(self) -> None:
+        rule = _EarlyStopRule(patience=None, rel_tol=0.5)
+        assert not rule.should_stop(10_000, 1.0, 10_000)
+
+
+def test_relative_early_stop_ends_a_fit_sooner() -> None:
+    """End to end: the tolerance cuts the tail of a real fit."""
+    from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+
+    rng = np.random.default_rng(0)
+    zz, yy, xx = np.mgrid[0:16, 0:24, 0:24]
+    vol = np.zeros((16, 24, 24), np.float32)
+    for _ in range(8):
+        c = rng.uniform([3, 3, 3], [13, 21, 21])
+        vol += np.exp(-((zz - c[0]) ** 2 + (yy - c[1]) ** 2 + (xx - c[2]) ** 2) / 6)
+    vol += rng.normal(0, 0.02, vol.shape).astype(np.float32)
+    kwargs = dict(
+        seeds=40,
+        n_iters=2000,
+        early_stop_patience=200,
+        device="cpu",
+        verbose=False,
+        use_cuda=False,
+    )
+    plain = fit_gaussian_splats(vol, **kwargs)
+    relative = fit_gaussian_splats(vol, early_stop_rel_tol=1e-2, **kwargs)
+    assert relative.stats["iterations"] < plain.stats["iterations"]
+    assert relative.stats["early_stopped"]
+    assert relative.stats["early_stop_reason"] == "relative"
+    assert relative.stats["early_stop_rel_tol"] == 1e-2
+    assert plain.stats["early_stop_rel_tol"] is None
+    assert plain.stats["early_stop_reason"] in ("plain", None)
+
+
+def test_stop_message_names_the_rule_that_fired(capsys) -> None:
+    """The verbose message must not describe a plain stop as a relative one."""
+    _EarlyStopRule(patience=300, rel_tol=None).announce("plain", 900, 300)
+    plain = capsys.readouterr().out
+    assert "No improvement for 300 iterations" in plain
+    assert "relative" not in plain
+    _EarlyStopRule(patience=300, rel_tol=1e-3).announce("relative", 900, 25)
+    relative = capsys.readouterr().out
+    assert "improved by <= 0.001 (relative) over the last 300 iterations" in relative

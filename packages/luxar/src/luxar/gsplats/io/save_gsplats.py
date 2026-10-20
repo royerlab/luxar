@@ -210,6 +210,8 @@ _FITTING_INFO_KEYS = (
     "iterations",
     "converged",
     "early_stopped",
+    "early_stop_reason",
+    "early_stop_rel_tol",
     "best_iteration",
     "best_from_final_step",
     "final_loss",
