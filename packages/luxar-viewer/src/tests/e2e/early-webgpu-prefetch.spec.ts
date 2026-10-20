@@ -58,6 +58,31 @@ test('requests the adapter before the viewer entry runs', async ({ page }) => {
   }
 });
 
+test('keeps the diagnostic WebGL bridge off the native adapter path', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'gpu', {
+      configurable: true,
+      get: () => {
+        (window as Window & { gpuReads?: number }).gpuReads =
+          ((window as Window & { gpuReads?: number }).gpuReads ?? 0) + 1;
+        return { requestAdapter: async () => null };
+      },
+    });
+  });
+  const { requested, release } = await blockViewerEntry(page);
+  try {
+    await page.goto('/?renderer=webgpu&webgpuForceWebgl', { waitUntil: 'commit' });
+    await expect
+      .poll(() => requested.some((url) => url.includes('/rendering/tsl/registry.ts')))
+      .toBe(true);
+    expect(
+      await page.evaluate(() => (window as Window & { gpuReads?: number }).gpuReads ?? 0)
+    ).toBe(0);
+  } finally {
+    release();
+  }
+});
+
 for (const scenario of [
   { name: 'WebGL URL', path: '/?renderer=webgl', stored: null },
   { name: 'default WebGL', path: '/', stored: null },

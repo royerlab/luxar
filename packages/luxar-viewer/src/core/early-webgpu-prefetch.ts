@@ -8,6 +8,7 @@ import {
   shouldPrefetchTsl,
 } from '../scene/scene-manager/render-pipeline/backend-selection';
 import { earlyRendererOverride } from '../config/renderer-preference';
+import { hasParam } from '../config/url-param-access';
 import {
   hasWebGPU,
   preRequestWebGPUAdapter,
@@ -15,8 +16,9 @@ import {
 
 const selection = selectBackend(earlyRendererOverride(location.search));
 if (selection.backend === 'webgpu') {
-  const hasGpu = hasWebGPU();
-  if (shouldPrefetchTsl(hasGpu, selection.requireNativeAdapter)) {
+  const forceWebGL = hasParam(new URLSearchParams(location.search), 'webgpuForceWebgl');
+  const hasGpu = !forceWebGL && hasWebGPU();
+  if (forceWebGL || shouldPrefetchTsl(hasGpu, selection.requireNativeAdapter)) {
     if (hasGpu) preRequestWebGPUAdapter();
     // The normal load in SceneManager still installs the registry and handles
     // failures. The browser shares this in-flight module fetch with that load.
