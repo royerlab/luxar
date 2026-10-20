@@ -17,6 +17,12 @@
 
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
+import { NodeMaterial } from 'three/webgpu';
+import { vec4 } from 'three/tsl';
+import {
+  buildMaterial as publicBuildMaterial,
+  type ShaderSource as PublicShaderSource,
+} from '../../../index';
 import {
   buildMaterial,
   type BuildMaterialConfig,
@@ -53,6 +59,23 @@ const TRIVIAL_GLSL = {
 };
 
 describe('buildMaterial backend dispatch', () => {
+  it('lets an embedder build a TSL material through the public package entry', () => {
+    const source: PublicShaderSource = {
+      name: 'embedder-tint',
+      webgl: TRIVIAL_GLSL,
+      webgpu: () => {
+        const material = new NodeMaterial();
+        material.colorNode = vec4(0.25, 0.5, 0.75, 1);
+        return material;
+      },
+    };
+    const material = publicBuildMaterial(source, { depthWrite: false }, { apiSurface: 'webgpu' });
+    expect(material).toBeInstanceOf(NodeMaterial);
+    expect((material as NodeMaterial).colorNode).toBeDefined();
+    expect(material.depthWrite).toBe(false);
+    material.dispose();
+  });
+
   it('returns a ShaderMaterial under WebGL2 when source.webgl is present', () => {
     const source: ShaderSource = {
       name: 'test-glsl-only',

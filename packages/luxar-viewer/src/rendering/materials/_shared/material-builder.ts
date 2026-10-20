@@ -5,7 +5,7 @@
  * A caller delegates inner construction here — today that is the
  * post-processing passes only (`FxaaPass`, `BloomChain`), the geometry
  * materials having their own wrappers. The helper branches on
- * `RendererCapabilities.apiSurface`:
+ * `apiSurface` from the active renderer's capabilities:
  *
  * - WebGL2 path returns a configured `THREE.ShaderMaterial` from
  *   `source.webgl.{vertex,fragment}`.
@@ -162,7 +162,7 @@ function resolveRenderState(config: BuildMaterialConfig): ResolvedRenderState {
 export function buildMaterial(
   source: ShaderSource,
   config: BuildMaterialConfig,
-  caps: RendererCapabilities
+  caps: Pick<RendererCapabilities, 'apiSurface'>
 ): THREE.Material {
   const state = resolveRenderState(config);
 
@@ -183,11 +183,9 @@ export function buildMaterial(
           'VITE_LUXAR_USE_WEBGPU=1).'
       );
     }
-    // TSL / NodeMaterial path. Cast through unknown — the factory's
-    // return type is intentionally erased on `ShaderSource.webgpu`
-    // (see shader-source.ts) so the type module doesn't depend on
-    // three/webgpu's NodeMaterial type at compile time.
-    const material = source.webgpu(config.uniforms ?? {}) as THREE.Material;
+    // TSL / NodeMaterial path. The factory type is imported only for
+    // checking, so this path does not eagerly load three/webgpu.
+    const material = source.webgpu(config.uniforms ?? {});
     // Apply the SAME resolved state the WebGL branch passes to its
     // ShaderMaterial constructor. Assigned field by field (rather than
     // `Object.assign`) so each write is type-checked against

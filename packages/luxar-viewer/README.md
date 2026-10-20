@@ -66,6 +66,59 @@ hardcoded colors or spacing. See
 [`src/styles/base/README.md`](src/styles/base/README.md) for the full
 group table.
 
+### Custom shader materials
+
+`ShaderSource` and `buildMaterial` are exported from `@luxar/viewer` for
+embedders that add their own materials to a Three.js scene. Supply GLSL3
+strings for `WebGLRenderer` and a synchronous TSL `NodeMaterial` factory for
+`WebGPURenderer`:
+
+```ts
+import { buildMaterial, type ShaderSource } from '@luxar/viewer';
+import { NodeMaterial } from 'three/webgpu';
+import { vec4 } from 'three/tsl';
+
+const source: ShaderSource = {
+  name: 'my-overlay',
+  webgl: {
+    vertex:
+      'void main() { gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragment: 'out vec4 fragColor; void main() { fragColor = vec4(0.2, 0.8, 1.0, 1.0); }',
+  },
+  webgpu: () => {
+    const material = new NodeMaterial();
+    material.colorNode = vec4(0.2, 0.8, 1.0, 1.0);
+    return material;
+  },
+};
+
+const material = buildMaterial(
+  source,
+  { depthWrite: false },
+  {
+    apiSurface: renderer.isWebGPURenderer ? 'webgpu' : 'webgl2',
+  }
+);
+```
+
+`buildMaterial` passes the same `config.uniforms` table to either path and
+applies the requested blending, depth, transparency, tone-mapping, and side
+state to both. The TSL factory must use those uniform references when its
+values need to change after construction. GLSL `defines` and
+`onBeforeCompile` patches have no TSL equivalent; express those changes in
+the `webgpu` factory. A factory that needs custom blend factors should set
+them after `buildMaterial` returns, since its basic render-state config does
+not include blend factors.
+
+If the active renderer uses the WebGPU API surface and `webgpu` is absent,
+`buildMaterial` throws an error naming the source. It does not change the
+renderer for a single material: a GLSL-only plugin must select
+`WebGLRenderer` for the whole scene before building materials. This remains
+the policy if WebGPU becomes the default. An embedder may choose WebGL for a
+known GLSL-only plugin before initializing `LuxarApp` or its host renderer.
+The viewer's own WebGPU code remains lazily loaded; a host that imports
+`three/webgpu` for its factory controls when that dependency loads.
+
 ### `LuxarAppOptions`
 
 | Option             | Type                  | Default         | Notes                                                                                                                                                                                                                                                                   |
