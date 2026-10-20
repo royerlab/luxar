@@ -98,10 +98,11 @@ USAGE:
     python demo_gsplats_4d_organoid_budding.py [options]
 
 Options:
-    --recompute:   Re-fetch and refit from the Zenodo source (CUDA GPU strongly
-                   recommended: about an hour of fitting on an 8 GB RTX 3070,
-                   plus ~15 min to fetch; on CPU the late frames take minutes
-                   each)
+    --recompute:   Refit every frame (a verified source cache is reused; delete
+                   ~/.cache/luxar/gsplats_4d_organoid_budding/source to re-fetch).
+                   CUDA GPU strongly recommended: about an hour of fitting on
+                   an 8 GB RTX 3070, plus ~15 min to fetch on a cold cache;
+                   on CPU the late frames take minutes each.
     --no-serve:    Generate the scene without launching the viewer
     --serve-only:  Just serve a previously generated scene
 
