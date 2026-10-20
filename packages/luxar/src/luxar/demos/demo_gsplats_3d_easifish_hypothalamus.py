@@ -82,7 +82,40 @@ at the first missing one):
        merge's ``levels`` recipe only takes equal-count ladders), then
        ``gsplat transform`` to correct the block-mean origin and scale to
        biological micrometres.
-    7. Build the 4-layer scene, then ``luxar optimize --pack``.
+    7. Build the 4-layer scene, then ``luxar optimize --pack``. The caption
+       states the packed scene's on-disk size against the raw CZI's; see
+       "THE COMPRESSION FIGURE".
+
+WHY THE mRNA CHANNELS ARE FITTED AT xy/2:
+    The CZI samples 0.42 um in z and 0.23 um in xy (expanded units), so z is
+    ~1.8x coarser. Halving xy gives 0.42 x 0.46 x 0.46 um, nearly isotropic.
+    The extra xy samples of full resolution sharpen puncta laterally, but each
+    spot is still smeared by the coarse z step. On Gpr83 crops fitted at
+    30,000 seeds, spot recall at 50% peak was 0.99 at full resolution and 1.00
+    at xy/2 (unpruned), but each fit was scored against the spots detected in
+    its OWN level's data: 1,496 at full resolution (128x512x512) against 398
+    at xy/2 (128x256x256, a footprint of the same size), so dense or dim
+    puncta may well merge or fade at xy/2; a like-for-like check (scoring the
+    xy/2 fit against the full-resolution spots) has not been done. Full resolution is
+    4x the voxels (4.1 G against 1.03 G per channel): roughly 4x the ~2.5 h
+    GB10 build, and host RAM well past the >= 32 GB floor, for a demo every
+    user rebuilds on first run until the fits are hosted. DAPI drops one level
+    more (z/2, xy/4): nuclei are many voxels across and serve as context.
+    The cost is sub-voxel spot detail: puncta closer than ~0.5 um (expanded)
+    can merge.
+
+THE COMPRESSION FIGURE:
+    The caption and description compare two ON-DISK sizes: the 34.9 GB CZI as
+    published, and the packed scene this demo serves (the sum of its file
+    sizes, what an HTTP server serves; directory entries excluded. Its ~18,000
+    small files occupy about twice that in filesystem blocks). The scene's
+    size is only known after the pack, so the build packs into a scratch store
+    with an estimate, rewrites the two text attrs of the unpacked scene with
+    the measured size, and packs again; ``optimize`` restamps the content hash
+    and binds the chunk packs to it. The text barely moves the size, so the
+    stated figure converges on the second pack, and only then is the scratch
+    store renamed onto the served path (an interrupted build leaves the old
+    scene, or none, never one stating a wrong size).
 
 WHY ``--min-extent 0`` FOR THE mRNA CHANNELS:
     The default post-fit pruning (``--min-extent 0.6``) removes splats whose
@@ -123,8 +156,9 @@ USAGE:
     Measured on an NVIDIA GB10 (128 GB unified memory):
 
     - Disk: the 34.9 GB CZI plus ~5 GB of derived files (3.2 GB OME-Zarr,
-      ~0.4 GB of fits, the 0.26 GB scene). The CZI stays in the cache after
-      the build; see the demos README for how to remove it.
+      ~0.4 GB of fits, the 0.11 GB scene, ~0.26 GB in filesystem blocks).
+      The CZI stays in the cache after the build; see the demos README for
+      how to remove it.
     - Host RAM: >= 32 GB. Stitching holds ~20 GB (two 4.4 GB views plus the
       stitched channel and its levels); each mRNA fit runs a ~13 GB parent
       plus ~6.5 GB per worker, up to three workers (~33 GB).
@@ -201,7 +235,15 @@ from luxar.demos import (
     warn_if_no_cuda_gpu,
     window_attrs,
 )
+from luxar.demos._caption import (
+    compression_caption,
+    compression_note,
+    compression_ratio,
+    format_bytes,
+    format_ratio,
+)
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+from luxar.demos.registry import dir_size_bytes
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds, iter_default_leaves
 from luxar.utils.paths import get_demos_output_dir
@@ -220,6 +262,8 @@ CZI_URL = "https://ndownloader.figshare.com/files/26510777"
 CZI_NAME = "LHA3_R3_medium.czi"
 CZI_SHA256 = "3152e32d30983046f714c2a482a8706aa89492fdc2ca20a38661ef39b6903fcc"
 CZI_BYTES = 34_861_369_536
+#: How the caption names the source :data:`CZI_BYTES` is measured against.
+RAW_LABEL = "raw CZI"
 
 RECOMPUTE_DIR = local_fit_path(DATASET, CZI_NAME).parent
 OME_ZARR = RECOMPUTE_DIR / "lha3_r3_stitched.ome.zarr"
@@ -623,7 +667,8 @@ def _downsample(volume: np.ndarray, factors: tuple[int, int, int]) -> np.ndarray
 
 #: OME-Zarr levels written, keyed by their path: block-mean factors (z, y, x)
 #: applied to the stitched full-resolution channel. Full resolution itself is
-#: not stored: no fit reads it, and it would add ~16 GB.
+#: not stored: no fit reads it, and it would add ~16 GB. Why xy/2 and not full
+#: resolution: "WHY THE mRNA CHANNELS ARE FITTED AT xy/2" in the docstring.
 _LEVELS = {"1": (1, 2, 2), "2": (2, 4, 4)}
 
 
@@ -964,8 +1009,14 @@ def _camera(bmin: np.ndarray, bmax: np.ndarray) -> CameraConfig:
 CAMERA_TILT_DEG = 30.0
 
 
-def create_luxar_scene(paths: dict[str, Path], output_path: Path) -> None:
-    """Build the four-layer scene from the per-channel archives."""
+def create_luxar_scene(
+    paths: dict[str, Path], output_path: Path, scene_bytes: int
+) -> None:
+    """Build the four-layer scene from the per-channel archives.
+
+    ``scene_bytes`` is the on-disk size the text states for the FINAL (packed)
+    scene; :func:`build_scene` measures it and restates it if it was off.
+    """
     with asection("Creating the EASI-FISH scene"):
         nodes = {ch.key: load_gsplat_node(str(paths[ch.key]))[0] for ch in CHANNELS}
         # Finest-level splats: the coarser per-part levels are merged stand-ins
@@ -1015,7 +1066,8 @@ def create_luxar_scene(paths: dict[str, Path], output_path: Path) -> None:
                 "level of detail. Coordinates are biological micrometres (the "
                 "tissue was imaged after 2x linear expansion). Zoom in on a "
                 "coloured cell to resolve its transcripts. Press L for the "
-                "Layers panel."
+                "Layers panel. Scene size: "
+                f"{compression_note(CZI_BYTES, scene_bytes, RAW_LABEL)}."
             )
             for ch in CHANNELS:
                 with asection(f"Adding {ch.label} ({ch.colormap})"):
@@ -1048,7 +1100,8 @@ def create_luxar_scene(paths: dict[str, Path], output_path: Path) -> None:
             add_demo_caption(
                 scene,
                 "DAPI grey • Slc17a6 magenta • Gpr83 green • Bdnf yellow • "
-                f"{sum(counts.values()):,} splats",
+                f"{sum(counts.values()):,} splats • "
+                f"{compression_caption(CZI_BYTES, scene_bytes, RAW_LABEL)}",
                 DEMO_META.get("citation"),
             )
     aprint(f"Scene saved: {output_path}")
@@ -1062,6 +1115,104 @@ def pack_scene(built: Path, output_path: Path) -> None:
     (measured: 3,447 unpacked against 887 packed).
     """
     run_luxar_cli("optimize", str(built), str(output_path), "--pack", "--overwrite")
+
+
+#: Packs before the stated size must have converged (the second normally does).
+_SIZE_PASSES = 3
+
+
+def _size_texts(scene_bytes: int) -> tuple[str, str]:
+    """The (description, caption) phrases that state ``scene_bytes``."""
+    return (
+        compression_note(CZI_BYTES, scene_bytes, RAW_LABEL),
+        compression_caption(CZI_BYTES, scene_bytes, RAW_LABEL),
+    )
+
+
+def restate_scene_size(built: Path, stated: int, measured: int) -> None:
+    """Rewrite the size figures in an UNPACKED scene's description and caption.
+
+    Attrs only, through the zarr facade. The unpacked store's own
+    ``content_hash`` goes stale, which is harmless: it is an intermediate, and
+    ``luxar optimize`` recomputes the hash of its output from scratch and binds
+    the chunk packs to that.
+    """
+    from luxar._zarr_compat import consolidate, group_keys, open_group
+
+    swaps = list(zip(_size_texts(stated), _size_texts(measured), strict=True))
+    root = open_group(str(built), mode="r+")
+    texts = [(root, "description")]
+    overlays = root["overlays"]
+    texts += [(overlays[name], "text") for name in group_keys(overlays)]
+    replaced = 0
+    for group, key in texts:
+        text = group.attrs.get(key)
+        if not isinstance(text, str):
+            continue
+        new = text
+        for old, fresh in swaps:
+            new = new.replace(old, fresh)
+        if new != text:
+            group.attrs[key] = new
+            replaced += 1
+    if replaced != 2:
+        raise RuntimeError(f"expected the size in 2 texts of {built}, found {replaced}")
+    consolidate(root)
+
+
+def _remove(path: Path) -> None:
+    """Remove a scene directory, or the symlink standing in for one."""
+    if path.is_symlink():
+        path.unlink()
+    elif path.exists():
+        shutil.rmtree(path)
+
+
+def build_scene(paths: dict[str, Path], output_path: Path) -> int:
+    """Build and pack the scene so its text states its own on-disk size.
+
+    The first pack states an estimate (the splat stores' size); each further
+    pack restates the size the previous one measured. Every pass packs into a
+    hidden scratch sibling of ``output_path`` (same directory, so the final
+    rename stays on one filesystem), which replaces ``output_path`` only once
+    the stated size has converged: an interrupted build must not leave a
+    fingerprinted scene stating a wrong size, which :func:`scene_is_fresh`
+    would then serve as current. Returns the final size.
+    """
+    built = local_fit_path(DATASET, "scene_unpacked.luxar.zarr")
+    scratch = output_path.with_name(f".{output_path.name}.packing")
+    retired = output_path.with_name(f".{output_path.name}.old")
+    for stale in (built, scratch, retired):  # leftovers of an interrupted run
+        _remove(stale)
+    stated = sum(dir_size_bytes(path) for path in paths.values())
+    aprint(f"splat stores on disk: {format_bytes(stated)} ({stated:,} bytes)")
+    create_luxar_scene(paths, built, stated)
+    for attempt in range(1, _SIZE_PASSES + 1):
+        pack_scene(built, scratch)
+        measured = dir_size_bytes(scratch)
+        converged = _size_texts(measured) == _size_texts(stated)
+        if converged or attempt == _SIZE_PASSES:
+            break
+        restate_scene_size(built, stated, measured)
+        stated = measured
+    shutil.rmtree(built)
+    # A directory cannot be renamed onto a non-empty one: retire the old scene
+    # first. The rename keeps every byte, so `measured` still describes it.
+    if output_path.exists():
+        os.replace(output_path, retired)
+    os.replace(scratch, output_path)
+    _remove(retired)
+    ratio = format_ratio(compression_ratio(CZI_BYTES, measured))
+    aprint(
+        f"scene on disk: {format_bytes(measured)} ({measured:,} bytes), {ratio} "
+        f"smaller than the {format_bytes(CZI_BYTES)} {RAW_LABEL}"
+    )
+    if not converged:
+        aprint(
+            f"⚠️  stated size {format_bytes(stated)} did not converge on the "
+            f"measured {format_bytes(measured)} in {_SIZE_PASSES} packs"
+        )
+    return measured
 
 
 def scene_is_fresh(output_path: Path, archives: dict[str, Path]) -> bool:
@@ -1090,12 +1241,7 @@ def main() -> None:
         if scene_is_fresh(output_path, paths):
             aprint(f"Using existing scene: {output_path}")
         else:
-            built = local_fit_path(DATASET, "scene_unpacked.luxar.zarr")
-            if built.exists():
-                shutil.rmtree(built)
-            create_luxar_scene(paths, built)
-            pack_scene(built, output_path)
-            shutil.rmtree(built)
+            build_scene(paths, output_path)
 
     if not NO_SERVE:
         launch_viewer(output_path)
