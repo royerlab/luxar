@@ -112,6 +112,10 @@ SCIENTIFIC_FIDELITY_OVERRIDES = {
             "vignette_enabled",
         }
     ),
+    # Single mRNA molecules are puncta; the lens smears and fringes them off-centre.
+    "demo_gsplats_3d_easifish_hypothalamus.py": frozenset(
+        {"chromatic_lens_distortion_enabled"}
+    ),
     "demo_gsplats_2d_codex_pancreas.py": frozenset(
         {
             "bloom_enabled",

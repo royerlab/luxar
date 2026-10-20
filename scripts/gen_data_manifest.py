@@ -698,6 +698,35 @@ DATASETS: dict[str, dict] = {
             "archive + fit locally (GPU). The archive is never fetched whole."
         ),
     ),
+    "gsplats_easifish_lha": dict(
+        bucket="local-compute",
+        # Redistributable (CC BY 4.0) like `gsplats_flylight_mcfo`, and
+        # local-compute for the same reason: the fits are not hosted yet.
+        # TODO(Loic): once a cc-by record carries the four finished archives as
+        # `easifish_{dapi,slc17a6,gpr83,bdnf}.gsplats.zarr.zip` (the demo's
+        # `archive_path`, zipped), promote this to bucket="zenodo",
+        # record="cc-by" with an `acquisition` block, and resolve them in the
+        # demo's `resolve_channel_paths` with `ensure_dataset` (falling back to
+        # the local build).
+        redistribute=True,
+        license="cc-by-4.0",
+        source=(
+            "Janelia figshare 10.25378/janelia.13622819, EASI-FISH example "
+            "data round 3 (LHA3_R3_medium.czi)"
+        ),
+        attribution=(
+            "Wang Y, Eddison M, Fleishman G, et al. (Tillberg and Sternson "
+            "labs, HHMI Janelia), EASI-FISH for thick tissue defines lateral "
+            "hypothalamus spatio-molecular organization, Cell 184(26) (2021), "
+            "doi:10.1016/j.cell.2021.11.024. Data CC BY 4.0, "
+            "doi:10.25378/janelia.13622819."
+        ),
+        reason="CC BY 4.0 and redistributable, but no Zenodo record is published yet.",
+        strategy=(
+            "Download the 34.9 GB CZI from figshare, stitch its two tiles, "
+            "and fit the four channels locally (GPU, ~2.5 h)."
+        ),
+    ),
     # For this dataset, `redistribute=False` governs re-hosting the dataset
     # itself: the raw recording or a fitted archive derived from it. It does
     # not prohibit a supplementary screen recording that shows the data, nor

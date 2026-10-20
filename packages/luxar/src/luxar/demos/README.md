@@ -136,11 +136,13 @@ pin and a bare authored position whose FOV assumption nobody can read.
 
 `_narration.py` is the build-time text-to-speech helper behind the sound layer's narration (`synthesise(text, voice, cache_dir)`): the macOS system voice (`say` → `afconvert` to AAC) is auto-detected for free local synthesis; OpenAI TTS over plain HTTPS requires `LUXAR_NARRATION_ENGINE=openai` (with `OPENAI_API_KEY` only authenticating the explicitly selected paid engine); otherwise it emits a `UserWarning` and no clip. Clips are cached by a hash of `(engine, model, voice, text)` under the calling demo's cache dir, so unchanged text never re-synthesises; `LUXAR_NARRATION_ENGINE=say|none` can also force the local or silent path (`none` keeps a CI build offline).
 
-Four demos pin scientific-fidelity exceptions. The two quantitative ortho demos
+Five demos pin scientific-fidelity exceptions. The two quantitative ortho demos
 suppress bloom, vignette, lens distortion and detector noise so their
 projection-derived scale bars and measured intensities remain meaningful. The
 biodiversity globe and nD transform bench suppress lens distortion and detector
-noise because their categorical or exact RGB hues carry data.
+noise because their categorical or exact RGB hues carry data. The EASI-FISH demo
+suppresses lens distortion only, because a single mRNA molecule is a punctum and
+the lens smears and colour-fringes puncta away from the frame centre.
 
 The three network demos (`caida_as_topology`, `huri_interactome`,
 `ppi_flow_field`) share `_graph_common.py`, but not all of it. All three use the
@@ -943,6 +945,19 @@ Two-channel confocal z-stack of endogenously tagged MAP4 (microtubule-associated
 
 ---
 
+#### demo_gsplats_3d_easifish_hypothalamus.py - 3D Spatial Transcriptomics (EASI-FISH, Mouse Lateral Hypothalamus)
+Four-channel EASI-FISH of a slab of mouse lateral hypothalamus (about 124 x 217 x 417 µm of tissue, imaged after 2x linear expansion and shown in biological µm) (Wang et al., *Cell* 2021; Tillberg and Sternson labs, HHMI Janelia): DAPI nuclei plus the single mRNA molecules of *Slc17a6* (magenta), *Gpr83* (green) and *Bdnf* (yellow). At the opening view the cells expressing each gene stand out by colour against grey nuclei; zoom in on one and its colour resolves into individual transcripts.
+
+**Run**: `luxar demo run gsplats_3d_easifish_hypothalamus`
+
+**Requires**: a CUDA GPU, >= 32 GB of RAM and about 40 GB of disk. No hosted fit is published yet, so the first run downloads the 34.9 GB raw CZI from figshare (DOI 10.25378/janelia.13622819, CC BY 4.0; resumable and sha256-verified), or takes a copy you already have with `-- --czi PATH`. It stitches the two tiles (~20 GB of RAM) and fits the four channels (about 2.5 h on an NVIDIA GB10; each mRNA fit runs a ~13 GB parent plus up to three ~6.5 GB workers). Every step caches under `~/.cache/luxar/gsplats_easifish_lha/local/`, so a later run only rebuilds the scene, and only when the demo's code or a fit changed. Needs `czifile` (in the `demos` extra). The fit quality quoted for this demo assumes the pedestal-seeding fix of PR #3226.
+
+The 34.9 GB CZI stays in that cache after the build, since a refit needs it. To reclaim the space once the scene is built, delete `~/.cache/luxar/gsplats_easifish_lha/local/LHA3_R3_medium.czi` (the fits and the scene do not need it), or remove the whole demo cache with `luxar demo cache clear gsplats_3d_easifish_hypothalamus` (which also deletes the fits, so the next run refits).
+
+**Demonstrates**: stitching a raw two-tile Zeiss CZI from its stage positions refined by NCC, per-channel `batch-fit run` (content tiling for the punctate mRNA channels, uniform tiles for DAPI) with a per-part `levels` LOD built by the streaming merge and re-laddered with equal-energy rungs (`gsplat additive -b equi-energy:4`) so first paint is a small, visually heavy subset, rescaling to biological µm by the 2x expansion factor, `--min-extent 0` to keep every punctum, background floors resolved per channel, hand-authored per-layer brightness and colormap windows so four additive channels do not wash out, and `luxar optimize --pack` to cut the opening view's request count.
+
+---
+
 #### demo_gsplats_3d_tribolium_embryo.py - 3D Tribolium Embryo (Cell Tracking Challenge)
 Large isotropic 3D light-sheet volume of a developing beetle (*Tribolium castaneum*) embryo using Gaussian splatting. Near-isotropic at 0.381 um per voxel.
 
@@ -1597,6 +1612,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichan
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichannel_layers.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_acto3d_heart.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_opencell_map4.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_easifish_hypothalamus.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_tribolium_embryo.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_lod_tribolium.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_lod_embryo_line.py

@@ -102,7 +102,7 @@ change is in the [changelog](CHANGELOG.md).
 ```bash
 python3 -m venv luxar-env && source luxar-env/bin/activate   # needs Python 3.12+
 pip install luxar       # viewer, compiler and CLI
-luxar demo              # Browse the 90 bundled demos
+luxar demo              # Browse the 91 bundled demos
 luxar demo run cloud    # Run one: generates the data and opens the viewer
 ```
 
@@ -193,7 +193,7 @@ capture: `luxar gsplat import` under [Volume rendering](#photogrammetric-splats-
 geometry, what it needs, and whether you have already built it.
 
 ```
-🎬 90 Luxar demos  ·  75 built  ·  8 cached  ·  7 not generated yet
+🎬 91 Luxar demos  ·  75 built  ·  8 cached  ·  8 not generated yet
 
  ASTRONOMY ──────────────────────────────────────────────────────────── 6 demos
  ✓  2  asteroids_solar_system                  points+lines  300 MB
@@ -910,7 +910,7 @@ about 64 KB, writes the nD
 spatial index and the LOD ladders, and emits Zarr format 3 (reading both 2 and
 3); `encoding/` decides how each attribute is quantized and compressed. `cli/`
 exposes all of it, `control/` drives a running viewer from Python, and `demos/`
-holds the 90 bundled demos, whose hosted data is pinned by digest and fetched on demand.
+holds the 91 bundled demos, whose hosted data is pinned by digest and fetched on demand.
 
 **The archive.** A directory of small chunk files, or a single zip read by byte
 range. It carries its own metadata (dimensions, node tree, chunk bounds, ladder
@@ -1079,9 +1079,9 @@ is credited on the recording itself:
 | Zebrafish histone timelapse (253 + 51 timepoints) | 2 files, 6.5 GiB | [10.5281/zenodo.21912283](https://doi.org/10.5281/zenodo.21912283) |
 | *Drosophila* embryogenesis (500 timepoints) | 1 file, 1.1 GiB | [10.5281/zenodo.22118694](https://doi.org/10.5281/zenodo.22118694) |
 
-These records cover 25 of the 31 demo datasets. Those 31 are the datasets tracked
-by the data manifest; the other six (Gaia, IllustrisTNG, Acto3D, Tribolium, FlyLight
-MCFO, Dip-C) are built locally because redistribution is not permitted or not yet
+These records cover 25 of the 32 demo datasets. Those 32 are the datasets tracked
+by the data manifest; the other seven (Gaia, IllustrisTNG, Acto3D, Tribolium, FlyLight
+MCFO, EASI-FISH, Dip-C) are built locally because redistribution is not permitted or not yet
 arranged, or because regeneration is cheap. The remaining demos fetch their
 catalogs straight from the upstream providers credited in [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).
 

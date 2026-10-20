@@ -216,6 +216,11 @@ demos = [
     "astroquery>=0.4.7",
     "mrcfile>=1.4.0",
     "nibabel>=5.0.0",
+    # Zeiss CZI reader for demo_gsplats_3d_easifish_hypothalamus (stitches the
+    # raw two-tile acquisition). >=2026.4.30 is the first release with
+    # `CziImage.attrs["coord_scales"]`, which the demo reads the voxel size from.
+    # Mirrored by INSTALL_SPECS in luxar.demos._dependencies.
+    "czifile>=2026.4.30",
     "pyshp>=2.3.0",
     # scikit-image ships only a handful of sample images in its wheel; cells3d
     # and kidney are FETCHED, and skimage's fetcher is pooch. Without this pin
