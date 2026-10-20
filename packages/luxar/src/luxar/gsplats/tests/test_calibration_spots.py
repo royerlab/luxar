@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
+from luxar.gsplats.calibration import CalibrationResult, calibrate
 from luxar.gsplats.calibration.spots import (
     SPOT_MIN_COUNT,
     SpotReference,
@@ -33,6 +36,23 @@ def test_detect_spots_finds_isolated_puncta() -> None:
     spots = detect_spots(_puncta_volume(n=40))
     assert spots is not None
     assert spots.n == 40
+
+
+def test_calibrate_records_spot_fidelity_in_json(tmp_path) -> None:
+    result = calibrate(
+        _puncta_volume(n=40),
+        k_grid=[50, 200],
+        fit_kwargs={"n_iters": 8, "device": "cpu", "verbose": False},
+    )
+    assert result.spot_count is not None and result.spot_count >= SPOT_MIN_COUNT
+    assert len(result.spot_peak_ratio) == len(result.k_values_requested) == 2
+    assert all(math.isfinite(ratio) for ratio in result.spot_peak_ratio)
+
+    path = tmp_path / "cal.json"
+    result.to_json(path)
+    restored = CalibrationResult.from_json(path)
+    assert restored.spot_count == result.spot_count
+    assert restored.spot_peak_ratio == pytest.approx(result.spot_peak_ratio)
 
 
 def test_detect_spots_survives_a_mostly_zero_volume() -> None:
