@@ -66,6 +66,27 @@ def _make_config_and_data(n_splats=20, shape=(32, 32)):
 
 
 class TestSortSplats:
+    def test_equal_morton_codes_keep_input_order(self):
+        """Splats sharing a Morton cell retain their relative order."""
+        n_splats = 5000
+        config, preprocessed = _make_config_and_data(n_splats=n_splats)
+        components = initialize_optimization(config, preprocessed)
+        model = components.model
+
+        # Alternate two Morton cells so a default introsort has long tie runs
+        # to reorder. The amplitude parameter carries each original row index.
+        with torch.no_grad():
+            model.raw_mu.data[::2] = -1
+            model.raw_mu.data[1::2] = 1
+            model.raw_a.data[:] = torch.arange(n_splats).reshape(model.raw_a.shape)
+
+        sort_splats_by_morton_order(model, components.optimizer)
+
+        expected = torch.cat(
+            (torch.arange(0, n_splats, 2), torch.arange(1, n_splats, 2))
+        ).float()
+        torch.testing.assert_close(model.raw_a.data.flatten(), expected)
+
     def test_sort_preserves_forward_output(self):
         """Model output should be identical before and after sorting."""
         config, preprocessed = _make_config_and_data()

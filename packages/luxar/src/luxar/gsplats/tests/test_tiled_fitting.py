@@ -739,17 +739,18 @@ def test_mass_weighting_quantifies_haze_amplitude_tradeoff() -> None:
     # Pinned on Linux CPU (the full-suite promote gate) at #3233. Foreground PSNR
     # rose 0.5-1.2 dB when #3123 smoothed the Otsu foreground mask, and the
     # native CPU kernel moved global PSNR by <= 0.43 dB; the relational checks
-    # below (the allocator's actual trade-offs) held throughout.
+    # below (the allocator's actual trade-offs) held throughout. Re-pinned
+    # from Linux once tied seeds got a stable order; macOS now matches exactly.
     assert mass_disparity == pytest.approx(4.36, abs=0.15)
-    assert equal_disparity == pytest.approx(3.96, abs=0.15)
-    assert threshold_disparity == pytest.approx(1.31, abs=0.15)
+    assert equal_disparity == pytest.approx(3.93, abs=0.15)
+    assert threshold_disparity == pytest.approx(1.29, abs=0.15)
     assert mass_disparity > equal_disparity > threshold_disparity
-    assert mass_psnr == pytest.approx([20.49, 50.56], abs=0.35)
-    assert equal_psnr == pytest.approx([20.78, 50.59], abs=0.35)
-    assert threshold_psnr == pytest.approx([15.53, 52.16], abs=0.35)
-    assert mass_foreground_psnr == pytest.approx([21.76, 40.95], abs=0.35)
-    assert equal_foreground_psnr == pytest.approx([21.92, 40.82], abs=0.35)
-    assert threshold_foreground_psnr == pytest.approx([15.33, 41.13], abs=0.35)
+    assert mass_psnr == pytest.approx([19.74, 50.56], abs=0.35)
+    assert equal_psnr == pytest.approx([21.72, 50.59], abs=0.35)
+    assert threshold_psnr == pytest.approx([15.50, 52.16], abs=0.35)
+    assert mass_foreground_psnr == pytest.approx([21.06, 40.95], abs=0.35)
+    assert equal_foreground_psnr == pytest.approx([21.72, 40.82], abs=0.35)
+    assert threshold_foreground_psnr == pytest.approx([15.31, 41.13], abs=0.35)
     # A neighbouring-seed sweep varied global/foreground PSNR by 1.4/2.1 dB,
     # so only the pedestal tile's approximately 5 dB threshold penalty is gated.
     assert mass_psnr[0] > threshold_psnr[0]

@@ -55,7 +55,7 @@ def sort_splats_by_morton_order(
         centers_np, min_coords, max_coords, 2**bits_per_dim
     )
     morton_codes = morton_encode_nd(grid_coords, bits_per_dim)
-    sort_indices = np.argsort(morton_codes)
+    sort_indices = np.argsort(morton_codes, kind="stable")
 
     # Early exit if already sorted
     if np.all(sort_indices == np.arange(n_splats)):

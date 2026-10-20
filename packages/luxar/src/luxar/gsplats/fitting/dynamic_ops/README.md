@@ -38,7 +38,8 @@ Tracks recently relocated splats using a cooldown mechanism to prevent immediate
 In `peak_finding.py`:
 - `_find_residual_peaks_global()` - Global peak finding (all regions compete)
 - `_find_residual_peaks_tiled()` - Tiled peak finding for spatial fairness
-- `_top_tile_peaks()` - Top-k NMS peaks of ALL tiles at once: tiles are gathered into a `(T, *tile_shape)` batch, max-pooled once and reduced with one `topk` (no per-tile host syncs); the probabilistic keep makes one host transfer and consumes the seeded RNG in the old tile order
+- `_top_tile_peaks()` - Top-k NMS peaks of ALL tiles at once: tiles are gathered into a `(T, *tile_shape)` batch, max-pooled once and reduced with one stable top-k (`_top_k_stable`: ties broken by lowest index, so the selected peaks are the same on every platform; one host sync per batch instead of one per tile); the probabilistic keep makes one host transfer and consumes the seeded RNG in the old tile order
+- `_top_k_stable()` - Row-wise top-k with ties broken by lowest index (`max` for k=1; `topk` values plus a k-column stable re-sort otherwise). `torch.topk`'s tie order differs between x86 and arm64
 - `auto_tiles_per_dim()` - The `num_tiles_per_dim=None` rule of `_find_residual_peaks` (16 / 6 / 4 / 2 for 2D / 3D / 4D / 5D+). `apply_dynamic_operations` (`operations._tiles_per_dim`) applies it for 3D only (216 tiles instead of the 512 it used to force) and keeps 8 tiles/axis for every other dimensionality, where the auto values are unmeasured in the fit
 - `_separable_nd_max_pool()` - Efficient nD max pooling via separable 1D passes (`start_dim` leaves leading batch axes unpooled)
 

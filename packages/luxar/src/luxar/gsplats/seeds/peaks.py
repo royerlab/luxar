@@ -25,6 +25,23 @@ from luxar.gsplats.seeds.gpu_ops import _get_device, should_use_gpu
 from luxar.gsplats.seeds.utils import SEED_AMPLITUDE_SCALE, sigmas_to_cholesky_isotropic
 
 
+def top_k_indices_stable(values: torch.Tensor, k: int) -> torch.Tensor:
+    """Indices of the ``k`` largest of a 1D tensor, ties at the cut by lowest index.
+
+    ``torch.topk``'s choice among equal values differs between backends and
+    platforms. Its VALUES are unambiguous, so the k-th value fixes the set:
+    everything above it, then the lowest-index elements equal to it. Returned
+    in ascending index order. Avoids a full O(M log M) sort and its M-long
+    index tensor; the extra memory is proportional to the selection.
+    """
+    if k >= len(values):
+        return torch.arange(len(values), device=values.device)
+    kth = torch.topk(values, k).values[-1]
+    above = torch.nonzero(values > kth).squeeze(1)
+    tied = torch.nonzero(values == kth).squeeze(1)[: k - len(above)]
+    return torch.sort(torch.cat((above, tied))).values
+
+
 def seed_from_peaks(
     V: np.ndarray,
     n_seeds: Optional[int] = None,
@@ -119,8 +136,8 @@ def seed_from_peaks(
             # pre-filter to the top candidates by intensity first.
             max_categories = 2**24 - 1
             if n_nonzero > max_categories:
-                # Keep top max_categories by intensity (fast top-k on GPU)
-                _, topk_idx = torch.topk(intensities, max_categories)
+                # Keep the top max_categories by intensity, ties by index.
+                topk_idx = top_k_indices_stable(intensities, max_categories)
                 nonzero_coords = nonzero_coords[topk_idx]
                 intensities = intensities[topk_idx]
 
@@ -130,7 +147,7 @@ def seed_from_peaks(
             selected_intensities = intensities[indices]
 
         # Sort by intensity (brightest first)
-        sorted_idx = torch.argsort(selected_intensities, descending=True)
+        sorted_idx = torch.sort(selected_intensities, descending=True, stable=True)[1]
         selected_coords = selected_coords[sorted_idx]
         selected_intensities = selected_intensities[sorted_idx]
 
