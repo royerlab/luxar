@@ -528,7 +528,7 @@ def test_scene_has_four_additive_layers_with_authored_windows(
         for i, ch in enumerate(_demo.CHANNELS)
     }
     out = tmp_path / "scene.luxar.zarr"
-    _demo.create_luxar_scene(paths, out)
+    _demo.create_luxar_scene(paths, out, 110_718_328)
 
     root = open_group(str(out), mode="r")
     attrs = dict(root.attrs)
@@ -547,6 +547,117 @@ def test_scene_has_four_additive_layers_with_authored_windows(
         assert node["offset"] == pytest.approx(-lo / (hi - lo))
         assert node["amplitude_normalization_factor"] > 0
     assert len(layers) == 4
+
+
+def _scene_texts(scene: Path) -> tuple[str, list[str]]:
+    from luxar._zarr_compat import group_keys, open_group
+
+    root = open_group(str(scene), mode="r")
+    overlays = root["overlays"]
+    return dict(root.attrs)["description"], [
+        dict(overlays[name].attrs)["text"] for name in group_keys(overlays)
+    ]
+
+
+def test_scene_text_states_its_size_against_the_raw_czi(tmp_path: Path) -> None:
+    paths = {
+        ch.key: _tiny_store(tmp_path / f"{ch.key}.gsplats.zarr", float(i))
+        for i, ch in enumerate(_demo.CHANNELS)
+    }
+    out = tmp_path / "scene.luxar.zarr"
+    _demo.create_luxar_scene(paths, out, 110_718_328)
+    description, texts = _scene_texts(out)
+    assert description.endswith(
+        "Scene size: 111 MB on disk, from the 34.9 GB raw CZI (≈315x smaller)."
+    )
+    assert any(
+        "splats • 111 MB, ≈315x smaller than the raw CZI • Wang et al. 2021" in t
+        for t in texts
+    )
+
+
+@pytest.mark.parametrize("archive_kind", ["directory", "zip"])
+def test_build_scene_restates_the_measured_packed_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, archive_kind: str
+) -> None:
+    """The final text states the size of the store it ends up in."""
+    import shutil
+
+    paths = {
+        ch.key: _tiny_store(tmp_path / f"{ch.key}.gsplats.zarr", float(i))
+        for i, ch in enumerate(_demo.CHANNELS)
+    }
+    if archive_kind == "zip":
+        paths = {
+            key: Path(shutil.make_archive(str(path), "zip", root_dir=path))
+            for key, path in paths.items()
+        }
+    packs: list[Path] = []
+
+    def fake_pack(built: Path, output: Path) -> None:
+        # A stand-in for `optimize --pack` that makes the scene 3x larger than
+        # its splats, so the first (splat-sized) estimate is wrong.
+        if output.exists():
+            shutil.rmtree(output)
+        shutil.copytree(built, output)
+        (output / "padding.bin").write_bytes(b"\0" * 2 * _demo.dir_size_bytes(built))
+        packs.append(output)
+
+    monkeypatch.setattr(_demo, "local_fit_path", lambda _ds, name: tmp_path / name)
+    monkeypatch.setattr(_demo, "pack_scene", fake_pack)
+    out = tmp_path / "out.luxar.zarr"
+    measured = _demo.build_scene(paths, out)
+
+    assert measured == _demo.dir_size_bytes(out)
+    assert len(packs) == 2  # the estimate was off; one restatement converged
+    description, texts = _scene_texts(out)
+    note, caption = _demo._size_texts(measured)
+    assert note in description
+    assert any(caption in t for t in texts)
+    assert not (tmp_path / "scene_unpacked.luxar.zarr").exists()
+    # Every pass packed into the scratch sibling, never into the served path.
+    assert set(packs) == {tmp_path / ".out.luxar.zarr.packing"}
+    assert not packs[0].exists()
+
+
+def test_an_interrupted_pass_leaves_output_path_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import shutil
+
+    paths = {
+        ch.key: _tiny_store(tmp_path / f"{ch.key}.gsplats.zarr", float(i))
+        for i, ch in enumerate(_demo.CHANNELS)
+    }
+    out = tmp_path / "out.luxar.zarr"
+    out.mkdir()
+    (out / "previous.txt").write_text("the scene served before this build")
+    calls = 0
+
+    def crashing_pack(built: Path, output: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:  # the restating pass dies (Ctrl-C, OOM, ...)
+            raise KeyboardInterrupt
+        if output.exists():  # `optimize --overwrite`
+            shutil.rmtree(output)
+        shutil.copytree(built, output)
+        (output / "padding.bin").write_bytes(b"\0" * 2 * _demo.dir_size_bytes(built))
+
+    monkeypatch.setattr(_demo, "local_fit_path", lambda _ds, name: tmp_path / name)
+    monkeypatch.setattr(_demo, "pack_scene", crashing_pack)
+    with pytest.raises(KeyboardInterrupt):
+        _demo.build_scene(paths, out)
+    assert [p.name for p in out.iterdir()] == ["previous.txt"]
+
+    # The next run cleans the interrupted scratch and replaces the old scene.
+    calls = 10
+    _demo.build_scene(paths, out)
+    assert not (out / "previous.txt").exists()
+    assert not (tmp_path / ".out.luxar.zarr.packing").exists()
+    assert not (tmp_path / ".out.luxar.zarr.old").exists()
+    note, _caption = _demo._size_texts(_demo.dir_size_bytes(out))
+    assert note in _scene_texts(out)[0]
 
 
 @pytest.mark.parametrize("tilt", [0.0, 30.0])
