@@ -149,11 +149,11 @@
     "packages/luxar/src/luxar/demos/_support/downloads/download.py::verify_file_checksum": [
       14
     ],
+    "packages/luxar/src/luxar/demos/_support/downloads/remote_zip.py::_extract_member": [
+      22
+    ],
     "packages/luxar/src/luxar/demos/_support/downloads/remote_zip.py::_parse_remote_zip_directory": [
       11
-    ],
-    "packages/luxar/src/luxar/demos/_support/downloads/remote_zip.py::download_zip_member": [
-      24
     ],
     "packages/luxar/src/luxar/demos/demo_arxiv_embeddings_kaggle.py::generate_paper_landscape": [
       16

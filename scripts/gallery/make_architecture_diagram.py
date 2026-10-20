@@ -1031,7 +1031,7 @@ def build_layers(t: Theme) -> dw.Drawing:
             (
                 "demos/",
                 "Demos",
-                "91 bundled demos; hosted data pinned by\nSHA-256 and fetched on demand",
+                "92 bundled demos; hosted data pinned by\nSHA-256 and fetched on demand",
             ),
         ],
     )

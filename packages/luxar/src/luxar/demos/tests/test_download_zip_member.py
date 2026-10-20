@@ -23,6 +23,7 @@ from luxar.demos._support.downloads.remote_zip import (
     _MAX_CENTRAL_DIR_BYTES,
     _parse_remote_zip_directory,
     download_zip_member,
+    download_zip_members,
 )
 
 
@@ -864,3 +865,63 @@ class TestCentralDirectoryBounds:
                     timeout=30,
                     extra_headers=None,
                 )
+
+
+class TestDownloadZipMembers:
+    @pytest.mark.parametrize("zip64", [False, True], ids=["classic", "zip64"])
+    def test_extracts_every_member_byte_exact(
+        self, range_server: str, tmp_path: Path, zip64: bool
+    ) -> None:
+        payloads = _make_payloads()
+        _build_zip(tmp_path / "archive.zip", payloads, force_zip64=zip64)
+        wanted = {
+            name: tmp_path / "out" / f"{i}.bin" for i, name in enumerate(payloads)
+        }
+
+        result = download_zip_members(f"{range_server}/archive.zip", wanted)
+
+        assert list(result) == list(wanted)
+        for name, out in wanted.items():
+            assert result[name] == out
+            assert out.read_bytes() == payloads[name]
+        # A second call finds every output complete and leaves them in place.
+        assert download_zip_members(f"{range_server}/archive.zip", wanted) == result
+
+    def test_missing_member_fails_before_any_download(
+        self, range_server: str, tmp_path: Path
+    ) -> None:
+        payloads = _make_payloads()
+        _build_zip(tmp_path / "archive.zip", payloads)
+        first = next(iter(payloads))
+        wanted = {
+            first: tmp_path / "out" / "first.bin",
+            "models/nope.ply": tmp_path / "out" / "nope.bin",
+        }
+        with pytest.raises(KeyError, match="models/nope.ply"):
+            download_zip_members(f"{range_server}/archive.zip", wanted)
+        assert not (tmp_path / "out").exists()
+
+    def test_rejects_traversal_member_path(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="Unsafe zip path"):
+            download_zip_members(
+                "http://127.0.0.1:1/never-contacted.zip",
+                {"../evil.ply": tmp_path / "o.ply"},
+            )
+
+    def test_empty_request_touches_no_network(self, tmp_path: Path) -> None:
+        assert download_zip_members("http://127.0.0.1:1/never.zip", {}) == {}
+
+
+def test_duplicate_member_name_resolves_to_the_first_entry(
+    range_server: str, tmp_path: Path
+) -> None:
+    archive = tmp_path / "archive.zip"
+    with pytest.warns(UserWarning, match="Duplicate name"):
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("data.bin", b"first")
+            zf.writestr("data.bin", b"second")
+    out = tmp_path / "one.bin"
+    many = tmp_path / "many.bin"
+    download_zip_member(f"{range_server}/archive.zip", "data.bin", out)
+    download_zip_members(f"{range_server}/archive.zip", {"data.bin": many})
+    assert out.read_bytes() == many.read_bytes() == b"first"

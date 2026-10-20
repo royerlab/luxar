@@ -1124,6 +1124,17 @@ Five hours of zebrafish gastrulation (Zenodo 1211599, confocal, 151 timepoints t
 
 ---
 
+#### demo_gsplats_4d_organoid_budding.py - 4D Budding Intestinal Organoid with its Lineage
+A mouse intestinal organoid growing from **one cell** into a budding mini-gut over about 110 hours of live light-sheet imaging (LSTree, Liberali lab; Zenodo 6828906, recording `002-P21-25X-Budding`, LS1-Live, 10 min per frame). Two Gaussian-splat layers show the two markers, membranes (mem9-GFP, `bop_orange`) and nuclei (H2B-mCherry, `bop_blue`), over 167 frames, every fourth of the 667. The founder cell's lineage, from the authors' partial semi-automatic Mastodon tracking (24,018 positions and 286 divisions in one tree, up to 115 tracked cells at once), is drawn over the splats as fading comet trails (Lines) and one marker per tracked cell (Points). A mother cell's hue interval is split between her daughters at each division, so sister clones share neighbouring hues. The record carries no raw stacks: the fitted frames are the authors' own deconvolved two-channel export (`rgb_grid`), cropped to the organoid and stored as 8-bit RGB voxels at 2.0 x 0.26 x 0.26 um. That export is an additive composite: green is the nuclei, and red is membranes **plus** nuclei (clipped at 255), so the membranes are unmixed as red minus green before fitting; fitting red as it is drew every nucleus twice. Every frame is fitted on that one shared intensity scale (`norm_range=(0, 255)`, `floor="none"`), so the organoid's brightness changes over time are kept, and placed at its own crop origin in acquisition microns. The Time slider is in **minutes** on an exact 40-minute grid.
+
+**Run**: `luxar demo run gsplats_4d_organoid_budding`
+
+**Requires**: Until the precomputed per-frame fits are hosted (the manifest lists the dataset as `local-compute` for now), the demo fetches its source from Zenodo 6828906 by HTTP range requests into the 12 GB archive (about 345 MB: 167 frames plus the 0.9 MB lineage XML, SHA-256 pinned as a set) and refits every frame and channel. A CUDA GPU is strongly recommended (about an hour of fitting on an 8 GB RTX 3070, minutes per late frame on a CPU); the fits are cached per frame under `~/.cache/luxar/gsplats_4d_organoid_budding/local/`.
+
+**Demonstrates**: `download_zip_members` (many members out of one multi-GB remote zip with a single central-directory read), decoding VTK XML ImageData with the standard library, unmixing an additive RGB export (membranes = red - green) before fitting, per-frame crops with moving origins placed in one acquisition frame, an occupancy-proportional splat budget, `combine_as_new_dimension` for a stacked time axis with a slice-aware ladder (`additive_lod=dict(slice_dims=[3], recompute=True)`), a MaMuT lineage oriented by frame and coloured by clone, and all three of Points, Lines and GSplats animating together on one discrete time axis. Options: `--recompute`, `--no-serve`, `--serve-only`.
+
+---
+
 #### demo_gsplats_4d_nexrad_supercell.py - 4D NEXRAD El Reno Tornadic Supercell
 82 WSR-88D weather-radar volume scans of the **2013-05-31 Oklahoma convective evening** — including the **El Reno supercell**, which produced the widest tornado ever recorded (4.2 km, EF3) — as a 4D Gaussian-splat timelapse spanning 21:00 UTC to 03:00 UTC. Scrubbing the **Time** slider carries you from a nearly empty sky through initiation, tornadogenesis (touchdown 23:03) and the tornado's end (23:43), into the overnight mesoscale system that flooded Oklahoma City. The opening frames already hold the separate convection to the north-east; the El Reno supercell itself appears around 22Z and then grows to dominate the domain. The 3D structure is the point: the **hook echo** curling around the low-level mesocyclone, the **bounded weak echo region** where the updraft is too violent for precipitation to form, and the **overshooting top** punching past 15 km. The domain spans 300 x 300 km, which retains 90% of the >=20 dBZ echo (a tighter storm-scale box kept only 75%). A **magenta vertical line** marks the surveyed tornado position on the frames when it was down — taken from the NWS ground damage survey (via the SPC tornado database), an independent source that lands right on the radar's hook echo. A faint **wireframe cube** outlines the analysis domain, which is what makes the 300 x 300 x 18 km slab legible as a volume rather than a floating cloud.
 
@@ -1622,6 +1633,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_recipes_tribolium.p
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_zebrafish_timelapse.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_neuromast_2ch.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_celegans_tracking.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_organoid_budding.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_nexrad_supercell.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_cell_tracking_challenge.py
 ```
