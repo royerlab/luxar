@@ -5,6 +5,7 @@ Tests for fitting/optimization.py module.
 import numpy as np
 import pytest
 import torch
+import zarr
 
 from luxar.gsplats.fitting.config import (
     DynamicOpsConfig,
@@ -970,9 +971,10 @@ class TestEarlyStopRule:
         assert not rule.should_stop(10_000, 1.0, 10_000)
 
 
-def test_relative_early_stop_ends_a_fit_sooner() -> None:
+def test_relative_early_stop_ends_a_fit_sooner(tmp_path) -> None:
     """End to end: the tolerance cuts the tail of a real fit."""
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+    from luxar.gsplats.io.load_gsplats import load_gsplats
 
     rng = np.random.default_rng(0)
     zz, yy, xx = np.mgrid[0:16, 0:24, 0:24]
@@ -997,6 +999,16 @@ def test_relative_early_stop_ends_a_fit_sooner() -> None:
     assert relative.stats["early_stop_rel_tol"] == 1e-2
     assert plain.stats["early_stop_rel_tol"] is None
     assert plain.stats["early_stop_reason"] in ("plain", None)
+
+    for name, result in (("plain", plain), ("relative", relative)):
+        path = tmp_path / f"{name}.gsplats.zarr"
+        result.save(path)
+        fitting = zarr.open_group(str(path), mode="r")["fitting"].attrs
+        assert fitting["early_stop_reason"] == result.stats["early_stop_reason"]
+        assert fitting["early_stop_rel_tol"] == result.stats["early_stop_rel_tol"]
+        loaded = load_gsplats(path, include_stats=True)
+        assert loaded.stats["early_stop_reason"] == result.stats["early_stop_reason"]
+        assert loaded.stats["early_stop_rel_tol"] == result.stats["early_stop_rel_tol"]
 
 
 def test_stop_message_names_the_rule_that_fired(capsys) -> None:
