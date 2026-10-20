@@ -17,6 +17,7 @@ beforeAll(() => {
   mkdirSync(dist);
   mkdirSync(join(data, 'gate'), { recursive: true });
   writeFileSync(join(dist, 'index.html'), '<html></html>');
+  writeFileSync(join(dist, 'viewer.js'), 'export const payload = "' + 'x'.repeat(10000) + '";');
   writeFileSync(join(data, 'gate', 'blob.bin'), BODY);
 });
 
@@ -47,6 +48,29 @@ describe('parseRange', () => {
 });
 
 describe('startServer', () => {
+  it('transfers compressed JS on the hosted link while keeping byte ranges uncompressed', async () => {
+    await withServer({ range: true, gzip: true, etag: true }, async (s) => {
+      const url = `${s.origin}/viewer.js`;
+      const compressed = await fetch(url, { headers: { 'Accept-Encoding': 'gzip' } });
+      expect(compressed.headers.get('content-encoding')).toBe('gzip');
+      expect(compressed.headers.get('vary')).toBe('Accept-Encoding');
+      expect(await compressed.text()).toContain('x'.repeat(10000));
+      expect(s.log[0].bytes).toBeLessThan(1000);
+
+      const identity = await fetch(url, { headers: { 'Accept-Encoding': 'gzip;q=0' } });
+      expect(identity.headers.get('content-encoding')).toBeNull();
+      expect(await identity.text()).toContain('x'.repeat(10000));
+
+      const ranged = await fetch(url, {
+        headers: { 'Accept-Encoding': 'gzip', Range: 'bytes=0-5' },
+      });
+      expect(ranged.status).toBe(206);
+      expect(ranged.headers.get('content-encoding')).toBeNull();
+      expect(await ranged.text()).toBe('export');
+      expect(s.log[2].bytes).toBe(6);
+    });
+  });
+
   it('default mode ignores Range and sends the unchanged minimal headers', async () => {
     await withServer({}, async (s) => {
       const r = await fetch(`${s.origin}/datasets/gate/blob.bin`, {

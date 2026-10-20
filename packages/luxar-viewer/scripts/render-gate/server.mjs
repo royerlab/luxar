@@ -18,6 +18,8 @@
  *   generated once into `certDir` (the browser needs
  *   `--ignore-certificate-errors`), removing HTTP/1.1's 6-connection limit;
  * - `etag`: strong `ETag` from size + mtime, `If-None-Match` answers 304;
+ * - `gzip`: transfer static JS/CSS as compressed bytes when requested, as a
+ *   production host does (dataset byte ranges remain identity-encoded);
  * - `cacheControl`: the `Cache-Control` value (default `no-store`).
  *
  * Every server keeps a request log, exposed at `GET /__gate/requests` (JSON)
@@ -31,6 +33,7 @@ import { execFileSync } from 'node:child_process';
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import http2 from 'node:http2';
+import { gzipSync } from 'node:zlib';
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -154,11 +157,20 @@ function etagMatches(header, tag) {
   return header.split(',').some((t) => t.trim().replace(/^W\//, '') === tag);
 }
 
+function acceptsGzip(header) {
+  return (header ?? '').split(',').some((token) => {
+    const [name, ...parameters] = token.trim().split(';');
+    if (name.toLowerCase() !== 'gzip') return false;
+    const quality = parameters.find((p) => p.trim().startsWith('q='));
+    return quality === undefined || Number(quality.trim().slice(2)) > 0;
+  });
+}
+
 /**
  * Start a server.
  *
  * @param {{ distDir: string, dataRoot: string, port: number, range?: boolean,
- *   latencyMs?: number, bytesPerSec?: number, h2?: boolean, etag?: boolean,
+ *   latencyMs?: number, bytesPerSec?: number, h2?: boolean, etag?: boolean, gzip?: boolean,
  *   cacheControl?: string, certDir?: string }} opts
  * @returns {Promise<{ origin: string, log: object[], now: () => number,
  *   stats: () => { requests: number, bytes: number, maxInflight: number },
@@ -173,16 +185,18 @@ export function startServer({
   bytesPerSec = 0,
   h2 = false,
   etag = false,
+  gzip = false,
   cacheControl = 'no-store',
   certDir = DEFAULT_CERT_DIR,
 }) {
-  const plain = !range && !latencyMs && !bytesPerSec && !h2 && !etag;
+  const plain = !range && !latencyMs && !bytesPerSec && !h2 && !etag && !gzip;
   const t0 = performance.now();
   const now = () => performance.now() - t0;
   const log = [];
   let inflight = 0;
   let maxInflight = 0;
   const bucket = tokenBucket(bytesPerSec);
+  const compressedAssets = new Map();
   const reset = () => {
     log.length = 0;
     maxInflight = inflight;
@@ -227,9 +241,21 @@ export function startServer({
     createReadStream(file.path).pipe(res);
   }
 
-  async function serveHosted(req, res, file, entry) {
-    const tag = `"${file.size.toString(16)}-${Math.floor(file.mtime).toString(16)}"`;
+  async function serveHosted(req, res, file, entry, isData) {
+    const compressible = gzip && !isData && ['.js', '.css'].includes(extname(file.path));
+    const compressed =
+      compressible && !req.headers.range && acceptsGzip(req.headers['accept-encoding']);
+    let body;
+    if (compressed) {
+      body = compressedAssets.get(file.path);
+      if (!body) {
+        body = gzipSync(readFileSync(file.path));
+        compressedAssets.set(file.path, body);
+      }
+    }
+    const tag = `"${file.size.toString(16)}-${Math.floor(file.mtime).toString(16)}${compressed ? '-gzip' : ''}"`;
     const base = { 'Cache-Control': cacheControl, 'Access-Control-Allow-Origin': '*' };
+    if (compressible) base.Vary = 'Accept-Encoding';
     if (etag) base.ETag = tag;
     if (etag && etagMatches(req.headers['if-none-match'], tag)) {
       entry.status = 304;
@@ -249,8 +275,9 @@ export function startServer({
     const headers = {
       ...base,
       'Content-Type': TYPES[extname(file.path)] ?? 'application/octet-stream',
-      'Content-Length': Math.max(0, end - start + 1),
+      'Content-Length': body?.length ?? Math.max(0, end - start + 1),
     };
+    if (body) headers['Content-Encoding'] = 'gzip';
     if (range) headers['Accept-Ranges'] = 'bytes';
     if (r) headers['Content-Range'] = `bytes ${start}-${end}/${file.size}`;
     entry.status = r ? 206 : 200;
@@ -259,7 +286,13 @@ export function startServer({
       res.end();
       return;
     }
-    const rs = createReadStream(file.path, { start, end, highWaterMark: 16384 });
+    const rs = body
+      ? (function* () {
+          for (let offset = 0; offset < body.length; offset += 16384) {
+            yield body.subarray(offset, offset + 16384);
+          }
+        })()
+      : createReadStream(file.path, { start, end, highWaterMark: 16384 });
     for await (const chunk of rs) {
       await bucket.take(chunk.length);
       if (res.destroyed) break;
@@ -308,7 +341,7 @@ export function startServer({
         return;
       }
       if (plain) servePlain(req, res, file, entry);
-      else await serveHosted(req, res, file, entry);
+      else await serveHosted(req, res, file, entry, isData);
     } catch (e) {
       entry.error = String(e?.message ?? e);
       if (!res.headersSent) res.writeHead(500);
