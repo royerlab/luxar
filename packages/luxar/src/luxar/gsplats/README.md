@@ -796,7 +796,7 @@ print(f"Recommended K* = {result.held_out_peak.k_star:,}")
 print(
     f"Curve type     = {result.held_out_peak.type}"
 )  # peak | plateau | signal_limited | low_k_optimal
-print(f"Noise floor σ̂ = {result.noise_floor.sigma_hat:.4f}")
+print(f"RMS noise σ    = {result.noise_sigma_rms:.4g}")  # intensity units
 print(f"PSNR ceiling   = {result.psnr_ceiling_robust_db:.1f} dB")  # RMS noise, robust peak
 
 # Persist or re-load the sweep curves
