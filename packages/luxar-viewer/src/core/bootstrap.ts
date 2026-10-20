@@ -321,7 +321,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     },
     // `?renderer=webgl|webgpu` forces a backend regardless of the
     // build-time env, then the stored Settings preference, then undefined →
-    // SceneManager falls back to the env var, then the WebGL default. See
+    // SceneManager falls back to the env vars, then the platform policy. See
     // `setupRenderer` for the precedence chain.
     renderer:
       urlParams.renderer ??

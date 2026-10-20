@@ -39,7 +39,8 @@ So the accessor sits in a leaf that imports nothing at runtime.
 
 `loadTslMaterials()` must resolve before the first material is constructed on
 the WebGPU path. Standalone bootstrap starts adapter/device acquisition and
-prefetches this registry before awaiting the adapter. `SceneManager.init` still
+prefetches this registry before awaiting the adapter for explicit/env selections,
+and after an adapter qualifies under the platform policy. `SceneManager.init` still
 awaits it before constructing a material:
 
 ```

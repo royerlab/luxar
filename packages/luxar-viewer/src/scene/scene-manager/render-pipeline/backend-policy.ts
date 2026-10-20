@@ -21,10 +21,10 @@
  */
 
 /** Operating system, as far as the user agent tells. */
-type PlatformOS = 'linux' | 'macos' | 'windows' | 'android' | 'chromeos' | 'ios' | 'unknown';
+export type PlatformOS = 'linux' | 'macos' | 'windows' | 'android' | 'chromeos' | 'ios' | 'unknown';
 
 /** Browser engine family. */
-type BrowserFamily = 'chromium' | 'firefox' | 'safari' | 'unknown';
+export type BrowserFamily = 'chromium' | 'firefox' | 'safari' | 'unknown';
 
 /** What the user agent says about the machine. */
 export interface BrowserPlatform {
@@ -54,7 +54,7 @@ export const WEBGPU_PLATFORM_RULES: readonly WebGPUPlatformRule[] = [
   },
 ];
 
-interface NavigatorLike {
+export interface NavigatorLike {
   userAgent?: string;
   userAgentData?: { platform?: string; brands?: ReadonlyArray<{ brand: string }> };
 }

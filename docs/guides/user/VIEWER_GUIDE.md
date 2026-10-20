@@ -1,9 +1,9 @@
 # Luxar Viewer User Guide
 
 The Luxar viewer is a browser-based application for exploring nD scientific scenes
-containing points, lines, Gaussian splats, and triangle meshes. It renders with WebGL
-by default and has an opt-in WebGPU path (see the `renderer` URL parameter below), and
-it loads data from Zarr stores served over HTTP.
+containing points, lines, Gaussian splats, and triangle meshes. Its platform policy
+selects WebGPU on measured platforms and WebGL elsewhere; the `renderer` URL parameter
+overrides that choice. The viewer loads data from Zarr stores served over HTTP.
 
 ![Luxar viewer interface overview](../../images/docs/viewer-ui-overview.png)
 
@@ -231,7 +231,7 @@ Append parameters to the viewer URL to control startup behavior.
 | `bakeEnv` | flag | Capture the scene-derived environment cube map once the load settles and download it (driven by `luxar env bake`). |
 | `probe` | `auto` \| `node:<path>` \| `x,y,z` | Probe position for `bakeEnv`; defaults to the scene's configured probe or `auto`. |
 | `envResolution` | integer 16-1024 | Cube face size for `bakeEnv`; defaults to the scene's configured resolution or 128. |
-| `renderer` | `webgl` \| `webgpu` | Select the default GLSL WebGLRenderer path or opt into the WebGPURenderer + TSL path. |
+| `renderer` | `webgl` \| `webgpu` | Override the platform policy with the GLSL WebGLRenderer or WebGPURenderer + TSL path. |
 | `hdr` | `off` or number | PROTOTYPE, `renderer=webgpu` only: extended-range HDR canvas output is on by default in WebGPU sessions on an HDR display (SDR otherwise). `hdr=off` (or `0` / `false`) forces SDR for this page load (the Settings › Advanced › HDR Output preference applies otherwise); a positive number pins the headroom (multiple of SDR white, clamped to 1-16; a pin of 1 means SDR); any other value, or a bare `hdr`, forces auto. Unpinned, the headroom is resolved per display and adjustable in the HDR folder. |
 | `webgpuForceWebgl` | flag | Diagnostic flag for `renderer=webgpu`: keep WebGPURenderer + TSL materials but force Three.js's internal WebGL2 backend. |
 | `perfTimestamp` | flag | Opt into GPU timestamp queries (WebGPU only, `timestamp-query` feature). Small runtime cost; intended for the perf bench. |
