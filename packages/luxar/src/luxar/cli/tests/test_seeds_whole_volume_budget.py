@@ -1270,3 +1270,32 @@ def test_too_high_user_floor_means_the_same_on_every_entry_point(
     worker = runner.invoke(app, cmd[cmd.index("gsplat") :])
     assert worker.exit_code == 0, normalized_cli_output(worker)
     assert seen["floor"] == "none"
+
+
+def test_seeds_auto_warning_only_where_auto_is_the_extent_heuristic() -> None:
+    from luxar.cli.gsplat_ops.fitting.fit_utils import seeds_line
+
+    assert "⚠" in seeds_line(None, progressive=False, tile=None)
+    # Progressive auto is a fixed 50,000; a tile worker's parent already warned.
+    assert seeds_line(None, progressive=True, tile=None) == "Seeds: auto"
+    assert seeds_line(None, progressive=False, tile="3/16") == "Seeds: auto"
+    assert seeds_line(8000, progressive=False, tile=None) == "Seeds: 8000"
+
+
+def test_batch_planner_warns_once_about_auto_seeds(monkeypatch) -> None:
+    """Batch tasks are quiet `fit --tile k/M` workers, so the planner warns."""
+    import luxar.cli.gsplat_ops.batch.planning as planning
+
+    lines: list[str] = []
+    monkeypatch.setattr(planning, "aprint", lambda msg: lines.append(str(msg)))
+    planning._announce_seed_split("uniform", {}, 4, exact_counts_resolved=False)
+    planning._announce_seed_split(
+        "uniform", {"seeds": "auto"}, 4, exact_counts_resolved=False
+    )
+    assert len(lines) == 2 and all("⚠" in line for line in lines)
+    lines.clear()
+    planning._announce_seed_split(
+        "uniform", {"progressive": ""}, 4, exact_counts_resolved=False
+    )
+    planning._announce_seed_split("content", {}, 4, exact_counts_resolved=False)
+    assert lines == []

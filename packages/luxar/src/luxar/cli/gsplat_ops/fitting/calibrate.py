@@ -20,6 +20,13 @@ if TYPE_CHECKING:
     )
 
 
+def _is_crop_scoped(calibration_region: Optional[dict], whole: Optional[dict]) -> bool:
+    """Whether K* is a crop budget (the rule :func:`_print_k_star_scope_caveat` uses)."""
+    if calibration_region is not None and calibration_region.get("strategy") == "whole":
+        return False
+    return not (calibration_region is None and whole is None)
+
+
 def _print_k_star_scope_caveat(
     calibration_region: Optional[dict], whole: Optional[dict] = None
 ) -> None:
@@ -35,9 +42,7 @@ def _print_k_star_scope_caveat(
     ``--region-size`` on every axis, so the "crop" IS the whole volume and its
     K* is exactly what ``--seeds`` wants.
     """
-    if calibration_region is not None and calibration_region.get("strategy") == "whole":
-        return
-    if calibration_region is None and whole is None:
+    if not _is_crop_scoped(calibration_region, whole):
         return
     aprint("    ⚠ region-scoped (measured on the crop), NOT a whole-volume budget.")
     if whole is not None:
@@ -88,6 +93,22 @@ def _print_regime_warnings(result: "CalibrationResult") -> None:
             "  ⚠ held-out curve still climbing at K_max (not converged): "
             "extend --k-max or use the R-D-model extrapolation."
         )
+    from luxar.gsplats.calibration.spots import spot_fidelity_warning
+
+    whole = result.whole_volume_seeds
+    spot_warning = spot_fidelity_warning(
+        result.k_values_requested,
+        result.spot_peak_ratio,
+        (result.held_out_peak_selected or result.held_out_peak).k_star,
+        result.spot_count,
+        (result.sweep or {}).get("k_values_skipped") or (),
+        k_effective=result.k_values_effective,
+        crop_scoped=_is_crop_scoped(result.calibration_region, whole),
+        whole_volume=whole,
+        density=result.splat_density,
+    )
+    if spot_warning:
+        aprint(f"  ⚠ {spot_warning}")
 
 
 def _selected_summary(

@@ -171,6 +171,13 @@ class CalibrationResult:
     """Held-out PSNR ceiling on the robust peak (the table's basis):
     ``20 log10(robust_data_range / noise_sigma_rms)``. A held-out score cannot
     sit far above it, since the held-out error includes the noise itself."""
+    spot_count: Optional[int] = None
+    """Puncta detected on the floor-subtracted volume (:mod:`.spots`); ``None``
+    for a ``cal.json`` that predates the check or a volume with no spread."""
+    spot_peak_ratio: List[float] = field(default_factory=list)
+    """Per K: median rendered/reference peak at the detected puncta (blurred,
+    ``sigma = 1`` voxel). Report-only; ``cal`` warns when K* reaches under 95% of
+    the sweep's best on a punctate volume (``luxar.gsplats.calibration.spots``)."""
     whole_volume_seeds: Optional[Dict[str, Any]] = None
     """For a crop calibration (``cal --region`` / ``--auto-region``): the
     whole-input ``fit --seeds`` budget — the content planner's per-box density
@@ -347,6 +354,10 @@ class CalibrationResult:
             k_values_fitted=[int(x) for x in raw.get("k_values_fitted", [])],
             k_values_stored=[int(x) for x in raw.get("k_values_stored", [])],
             whole_volume_seeds=raw.get("whole_volume_seeds"),
+            spot_count=(
+                int(raw["spot_count"]) if raw.get("spot_count") is not None else None
+            ),
+            spot_peak_ratio=_hydrate_float_list(raw.get("spot_peak_ratio", [])),
             noise_sigma_rms=_opt_float(raw.get("noise_sigma_rms")),
             noise_scale_ratio=_opt_float(raw.get("noise_scale_ratio")),
             psnr_ceiling_robust_db=_opt_float(raw.get("psnr_ceiling_robust_db")),

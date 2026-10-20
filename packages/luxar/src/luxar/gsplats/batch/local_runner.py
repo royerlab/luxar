@@ -298,6 +298,40 @@ def _finalize_output(
     return False, False
 
 
+def _promote_result(
+    res: TaskResult, out: Path, staging: Path, *, overwrite: bool
+) -> Optional[str]:
+    """Promote one finished task's staging store; the failure text, or ``None``."""
+    if res.returncode != 0:
+        return "\n".join(res.output.strip().splitlines()[-20:])
+    try:
+        ok, _empty = _finalize_output(out, staging, overwrite=overwrite)
+    except OSError as exc:
+        # Raised from inside the pool's completion loop it would stall every
+        # queued task until the pool drained, so it is recorded instead.
+        return f"worker exited 0 but promoting its output raised {exc!r}"
+    if not ok:
+        return (
+            "worker exited 0 but its output could not be promoted "
+            "(staging missing, or the rename to the final path failed)"
+        )
+    return None
+
+
+def _progress_line(
+    res: TaskResult, job: BatchJob, done: int, total: int, failure: Optional[str]
+) -> str:
+    """One ``[done/total]`` line for a finished, skipped or failed task."""
+    tag = f"(T={job.timepoint} C={job.channel} K={job.tile_index})"
+    if res.skipped:
+        return f"[{done}/{total}] skip {tag} (exists)"
+    if failure is None:
+        return f"[{done}/{total}] done {tag}"
+    if res.returncode == 0:
+        return f"[{done}/{total}] FAILED {tag} (promotion)"
+    return f"[{done}/{total}] FAILED {tag} (exit {res.returncode})"
+
+
 def run_batch_local(
     manifest: BatchManifest,
     output_dir: Path,
@@ -405,19 +439,28 @@ def run_batch_local(
         if verbose and n_run < len(task_ids):
             aprint(f"Resuming: {len(task_ids) - n_run} task(s) already complete")
 
-        def _on_done(res: TaskResult, done: int, total: int) -> None:
-            if not verbose:
-                return
-            job = job_by_id[res.key]
-            tag = f"(T={job.timepoint} C={job.channel} K={job.tile_index})"
-            if res.skipped:
-                aprint(f"[{done}/{total}] skip {tag} (exists)")
-            elif res.returncode == 0:
-                aprint(f"[{done}/{total}] done {tag}")
-            else:
-                aprint(f"[{done}/{total}] FAILED {tag} (exit {res.returncode})")
+        # Promote each tile the moment its worker finishes, so finished tiles
+        # are on disk under their final names while the rest still run:
+        # `batch-fit status` counts them, and an interrupted run resumes from
+        # them instead of refitting everything. Failures are curated like the
+        # parallel tiled path (name the failing (t,c,k) + stderr tail, keep the
+        # staging store on disk for inspection).
+        failures: list[tuple[int, str]] = []
 
-        results = run_task_pool(
+        def _on_done(res: TaskResult, done: int, total: int) -> None:
+            job = job_by_id[res.key]
+            failure = None
+            if not res.skipped:
+                out = _out_path(job)
+                failure = _promote_result(
+                    res, out, _staging_path(out, staging_token), overwrite=not resume
+                )
+                if failure is not None:
+                    failures.append((res.key, failure))
+            if verbose:
+                aprint(_progress_line(res, job, done, total, failure))
+
+        run_task_pool(
             task_ids,
             max_workers=global_workers,
             argv_builder=_argv,
@@ -426,31 +469,6 @@ def run_batch_local(
             on_done=_on_done,
             verbose=verbose,
         )
-
-    # Promote each successful per-attempt staging store; collect failures
-    # (curated like the parallel tiled path — name failing (t,c,k) + stderr
-    # tails, keep the staging store on disk for inspection).
-    failures: list[tuple[int, str]] = []
-    for res in results:
-        if res.skipped:
-            continue
-        job = job_by_id[res.key]
-        out = _out_path(job)
-        if res.returncode != 0:
-            tail = "\n".join(res.output.strip().splitlines()[-20:])
-            failures.append((res.key, tail))
-            continue
-        ok, _empty = _finalize_output(
-            out, _staging_path(out, staging_token), overwrite=not resume
-        )
-        if not ok:
-            failures.append(
-                (
-                    res.key,
-                    "worker exited 0 but its output could not be promoted "
-                    "(staging missing, or the rename to the final path failed)",
-                )
-            )
 
     if failures:
 

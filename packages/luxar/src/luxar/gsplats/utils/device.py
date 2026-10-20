@@ -42,6 +42,18 @@ _AUTO_HOST_WORKER_OVERHEAD_BYTES = 1024**3
 # Override with the ``LUXAR_AUTO_WORKER_HARD_CAP`` environment variable.
 _AUTO_WORKER_HARD_CAP = 8
 
+# Unified memory (an integrated GPU such as the GB10 in a DGX Spark, where the
+# GPU and CPU allocate from ONE pool): a worker's device AND host footprints
+# come out of the same memory, so they are added and divided into
+# min(device free, host available) rather than checked against two pools.
+# Measured on a GB10, one `fit --preset draft --seeds 30000` worker drew
+# 3.3 GB at 8.4 Mvox and 4.8 GB at 33.5 Mvox off MemAvailable, i.e.
+# ~2.8 GB + 62 B/voxel. (On a discrete RTX 3070 the same fits used
+# 0.64 / 1.84 GB of VRAM, so the 8 B/voxel ``task_working_set_bytes`` used for
+# discrete cards undercounts too; it is left alone here.)
+_UNIFIED_WORKER_BYTES_PER_VOXEL = 64
+_UNIFIED_WORKER_BASE_BYTES = 3 * 1024**3
+
 WorkerLimitReason = Literal[
     "CPU count",
     "GPU memory",
@@ -51,6 +63,7 @@ WorkerLimitReason = Literal[
     "requested count",
     "selected GPU count",
     "task count",
+    "unified memory",
 ]
 
 
@@ -418,6 +431,36 @@ def _host_worker_limit(task_bytes: int) -> WorkerLimit:
     return WorkerLimit(int(count), limit)
 
 
+def is_unified_memory_device(index: int) -> bool:
+    """True when CUDA device ``index`` is integrated (shares host memory)."""
+    try:
+        props = torch.cuda.get_device_properties(index)
+    except (AssertionError, RuntimeError, ValueError):
+        return False
+    return bool(getattr(props, "is_integrated", False))
+
+
+def unified_worker_capacity(free_device_memory: Optional[int], task_voxels: int) -> int:
+    """Workers that fit one unified pool: device plus host cost per worker.
+
+    The pool is host ``MemAvailable``. ``mem_get_info`` describes the same
+    memory but leaves out reclaimable page cache: on a GB10 it read 5.9 GB
+    free while ``MemAvailable`` was 74 GB, so it is only the fallback when
+    the host figure is unavailable. See :data:`_UNIFIED_WORKER_BYTES_PER_VOXEL`
+    for the per-worker measurement.
+    """
+    pool = available_host_memory_bytes()
+    if pool is None:
+        pool = free_device_memory
+    if pool is None:
+        return 1
+    per_worker = (
+        _UNIFIED_WORKER_BYTES_PER_VOXEL * max(0, int(task_voxels))
+        + _UNIFIED_WORKER_BASE_BYTES
+    )
+    return max(1, int(pool) // per_worker)
+
+
 def _gpu_worker_capacity(free_memory: Optional[int], task_bytes: int) -> WorkerLimit:
     if free_memory is None:
         return WorkerLimit(1, "GPU memory unavailable")
@@ -431,10 +474,20 @@ def resolve_auto_worker_limit(
     require_device_memory: bool = False,
     dtype_bytes: int = 4,
     safety_factor: float = 2.0,
+    unified_memory: bool = False,
 ) -> WorkerLimit:
-    """Resolve safe host concurrency for one device and report its limiter."""
+    """Resolve safe host concurrency for one device and report its limiter.
+
+    ``unified_memory``: the device shares host memory
+    (:func:`is_unified_memory_device`), so its workers are sized from one pool.
+    """
     task_bytes = task_working_set_bytes(task_voxels, dtype_bytes, safety_factor)
     host_limit = _host_worker_limit(task_bytes)
+    if unified_memory:
+        unified = WorkerLimit(
+            unified_worker_capacity(free_device_memory, task_voxels), "unified memory"
+        )
+        return min((host_limit, unified), key=lambda item: item.count)
     if not require_device_memory:
         return host_limit
     if free_device_memory is None:
@@ -570,6 +623,33 @@ def resolve_gpu_selection(spec: str) -> list[int]:
     return unique
 
 
+def _device_capacities(
+    gpu_indices: list[int], task_voxels: int, task_bytes: int, host_limit: WorkerLimit
+) -> tuple[dict[int, int], int, WorkerLimit]:
+    """Per-device worker capacity, unqueryable-device count and the host limit.
+
+    An integrated device's capacity is its shared pool, which also caps the
+    host-wide total (so several integrated devices never count the same
+    memory twice); the returned host limit then reads ``"unified memory"``.
+    """
+    from luxar.gsplats.metrics import _gpu_free_memory
+
+    capacities: dict[int, int] = {}
+    unknown_device_memory = 0
+    for idx in gpu_indices:
+        free = _gpu_free_memory(torch.device(f"cuda:{idx}"))
+        if is_unified_memory_device(idx):
+            capacities[idx] = unified_worker_capacity(free, task_voxels)
+            if capacities[idx] <= host_limit.count:
+                host_limit = WorkerLimit(capacities[idx], "unified memory")
+        elif free is None:
+            capacities[idx] = host_limit.count
+            unknown_device_memory += 1
+        else:
+            capacities[idx] = _gpu_worker_capacity(free, task_bytes).count
+    return capacities, unknown_device_memory, host_limit
+
+
 def resolve_jobs_per_gpu(
     gpu_indices: list[int],
     *,
@@ -600,8 +680,6 @@ def resolve_jobs_per_gpu(
         host_limit = _host_worker_limit(task_bytes)
         return WorkerAllocation({-1: host_limit.count}, host_limit.limit)
 
-    from luxar.gsplats.metrics import _gpu_free_memory
-
     if explicit is not None:
         return WorkerAllocation(
             {idx: explicit for idx in gpu_indices}, "requested count"
@@ -609,16 +687,9 @@ def resolve_jobs_per_gpu(
 
     task_bytes = task_working_set_bytes(task_voxels, dtype_bytes, safety_factor)
     host_limit = _host_worker_limit(task_bytes)
-    capacities: dict[int, int] = {}
-    unknown_device_memory = 0
-    for idx in gpu_indices:
-        free = _gpu_free_memory(torch.device(f"cuda:{idx}"))
-        if free is None:
-            capacities[idx] = host_limit.count
-            unknown_device_memory += 1
-        else:
-            capacities[idx] = _gpu_worker_capacity(free, task_bytes).count
-
+    capacities, unknown_device_memory, host_limit = _device_capacities(
+        gpu_indices, task_voxels, task_bytes, host_limit
+    )
     device_total = sum(capacities.values())
     unconstrained_total = min(device_total, host_limit.count)
     total = max(len(capacities), unconstrained_total)
@@ -626,7 +697,9 @@ def resolve_jobs_per_gpu(
         limiting_resource: WorkerLimitReason = "selected GPU count"
     elif unknown_device_memory > 0:
         limiting_resource = "GPU memory unavailable"
-    elif device_total <= host_limit.count:
+    elif device_total < host_limit.count or (
+        device_total == host_limit.count and host_limit.limit != "unified memory"
+    ):
         limiting_resource = "GPU memory"
     else:
         limiting_resource = host_limit.limit

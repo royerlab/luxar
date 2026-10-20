@@ -22,6 +22,15 @@ _GB = 1024**3
 
 
 @pytest.fixture(autouse=True)
+def _discrete_gpus(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Model every CUDA device as discrete, so the suite reads the same on a
+    unified-memory host (GB10, Jetson); unified tests opt back in."""
+    import luxar.gsplats.utils.device as _device
+
+    monkeypatch.setattr(_device, "is_unified_memory_device", lambda index: False)
+
+
+@pytest.fixture(autouse=True)
 def _pin_worker_thread_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OMP_NUM_THREADS", "1")
     monkeypatch.setenv("MKL_NUM_THREADS", "1")
@@ -278,6 +287,61 @@ def test_resolve_jobs_per_gpu_unknown_host_memory_still_hard_caps(monkeypatch) -
 
     assert plan.workers == {0: 8}
     assert plan.limit == "hard cap"
+
+
+def _unified_device(monkeypatch, *, free: int, available: int) -> None:  # type: ignore[no-untyped-def]
+    """A GB10-like integrated GPU: device and host share one memory pool."""
+    monkeypatch.setattr(device_mod, "is_unified_memory_device", lambda index: True)
+    monkeypatch.setattr(metrics, "_gpu_free_memory", lambda dev: free)
+    monkeypatch.setattr(device_mod, "available_host_memory_bytes", lambda: available)
+    monkeypatch.setattr(device_mod, "_effective_cpu_count", lambda: 20)
+
+
+def test_resolve_jobs_per_gpu_unified_memory_adds_device_and_host(monkeypatch) -> None:
+    # The EASI-FISH run: 94 Mvox content boxes, ~54 GB available. Sized as two
+    # pools this hit the hard cap of 8 and drove the box near OOM.
+    _unified_device(monkeypatch, free=50 * _GB, available=54 * _GB)
+    voxels = 94_000_000
+    per_worker = (
+        device_mod._UNIFIED_WORKER_BYTES_PER_VOXEL * voxels
+        + device_mod._UNIFIED_WORKER_BASE_BYTES
+    )
+
+    plan = resolve_jobs_per_gpu([0], task_voxels=voxels, jobs_per_gpu="auto")
+
+    assert plan.workers == {0: (54 * _GB) // per_worker} == {0: 6}
+    assert plan.limit == "unified memory"
+
+
+def test_resolve_jobs_per_gpu_unified_memory_reads_host_available(monkeypatch) -> None:
+    # mem_get_info leaves out reclaimable page cache (5.9 GB "free" against
+    # 74 GB MemAvailable on a GB10), so the host figure sizes the pool.
+    _unified_device(monkeypatch, free=6 * _GB, available=74 * _GB)
+
+    plan = resolve_jobs_per_gpu([0], task_voxels=256**3, jobs_per_gpu="auto")
+
+    assert plan.workers == {0: 8}
+    assert plan.limit == "hard cap"
+
+
+def test_resolve_auto_worker_limit_unified_memory(monkeypatch) -> None:
+    _unified_device(monkeypatch, free=50 * _GB, available=54 * _GB)
+
+    limit = device_mod.resolve_auto_worker_limit(
+        task_voxels=94_000_000,
+        free_device_memory=50 * _GB,
+        require_device_memory=True,
+        unified_memory=True,
+    )
+
+    assert (limit.count, limit.limit) == (6, "unified memory")
+
+
+def test_unified_worker_capacity_falls_back_to_device_free(monkeypatch) -> None:
+    monkeypatch.setattr(device_mod, "available_host_memory_bytes", lambda: None)
+    per_worker = device_mod._UNIFIED_WORKER_BASE_BYTES
+    assert device_mod.unified_worker_capacity(4 * per_worker, 0) == 4
+    assert device_mod.unified_worker_capacity(None, 0) == 1
 
 
 def test_resolve_jobs_per_gpu_explicit_uniform() -> None:
