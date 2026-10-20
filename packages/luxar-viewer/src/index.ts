@@ -156,6 +156,13 @@ export type { CompleteBlendingState } from './rendering/blending-state';
  * given `volumetric` warns and falls back to `opaque`.
  */
 export type { BlendingMode } from './rendering/material-manager';
+/** Build a custom GLSL/TSL material for the active renderer API. */
+export {
+  buildMaterial,
+  type BuildMaterialConfig,
+} from './rendering/materials/_shared/material-builder';
+/** A named GLSL source and/or TSL material factory consumed by `buildMaterial`. */
+export type { ShaderSource, WebGLShaderSources } from './rendering/materials/_shared/shader-source';
 export {
   supportsScalarColormap,
   applyColormapTextureToMaterial,

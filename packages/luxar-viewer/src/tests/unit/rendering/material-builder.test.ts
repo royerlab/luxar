@@ -17,6 +17,12 @@
 
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
+import { NodeMaterial } from 'three/webgpu';
+import { vec4 } from 'three/tsl';
+import {
+  buildMaterial as publicBuildMaterial,
+  type ShaderSource as PublicShaderSource,
+} from '../../../index';
 import {
   buildMaterial,
   type BuildMaterialConfig,
@@ -53,6 +59,31 @@ const TRIVIAL_GLSL = {
 };
 
 describe('buildMaterial backend dispatch', () => {
+  it('lets an embedder build a TSL material through the public package entry', () => {
+    const uniforms = { uTint: { value: 0.5 } };
+    let receivedUniforms: Record<string, THREE.IUniform> | undefined;
+    const source: PublicShaderSource = {
+      name: 'embedder-tint',
+      webgl: TRIVIAL_GLSL,
+      webgpu: (factoryUniforms) => {
+        receivedUniforms = factoryUniforms;
+        const material = new NodeMaterial();
+        material.colorNode = vec4(0.25, 0.5, 0.75, 1);
+        return material;
+      },
+    };
+    const material = publicBuildMaterial(
+      source,
+      { uniforms, depthWrite: false },
+      { apiSurface: 'webgpu' }
+    );
+    expect(material).toBeInstanceOf(NodeMaterial);
+    expect((material as NodeMaterial).colorNode).toBeDefined();
+    expect(material.depthWrite).toBe(false);
+    expect(receivedUniforms).toBe(uniforms);
+    material.dispose();
+  });
+
   it('returns a ShaderMaterial under WebGL2 when source.webgl is present', () => {
     const source: ShaderSource = {
       name: 'test-glsl-only',
@@ -87,7 +118,7 @@ describe('buildMaterial backend dispatch', () => {
       webgl: TRIVIAL_GLSL,
     };
     expect(() => buildMaterial(source, {}, makeCaps('webgpu'))).toThrowError(
-      /no 'webgpu' TSL factory.*caps\.apiSurface='webgpu'/s
+      /ShaderSource 'test-glsl-only-but-webgpu' has no 'webgpu' TSL factory.*caps\.apiSurface='webgpu'.*select WebGLRenderer for the scene/s
     );
   });
 

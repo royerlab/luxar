@@ -66,6 +66,68 @@ hardcoded colors or spacing. See
 [`src/styles/base/README.md`](src/styles/base/README.md) for the full
 group table.
 
+### Custom shader materials
+
+`ShaderSource` and `buildMaterial` are exported from `@luxar/viewer` for
+embedders that add their own materials to a Three.js scene. Supply GLSL3
+strings for `WebGLRenderer` and a synchronous TSL `NodeMaterial` factory for
+`WebGPURenderer`:
+
+```ts
+import { buildMaterial, type ShaderSource } from '@luxar/viewer';
+import { NodeMaterial } from 'three/webgpu';
+import { vec4 } from 'three/tsl';
+
+const source: ShaderSource = {
+  name: 'my-overlay',
+  webgl: {
+    vertex:
+      'void main() { gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragment: 'out vec4 fragColor; void main() { fragColor = vec4(0.2, 0.8, 1.0, 1.0); }',
+  },
+  webgpu: () => {
+    const material = new NodeMaterial();
+    material.colorNode = vec4(0.2, 0.8, 1.0, 1.0);
+    return material;
+  },
+};
+
+const material = buildMaterial(
+  source,
+  { depthWrite: false },
+  {
+    apiSurface: 'isWebGPURenderer' in renderer ? 'webgpu' : 'webgl2',
+  }
+);
+```
+
+Use `'webgpu'` for `WebGPURenderer` even when it runs on its internal WebGL2
+backend (`webgpuForceWebGL` or no adapter): it still requires a `NodeMaterial`.
+Passing `'webgl2'` there creates a `ShaderMaterial` that it cannot draw.
+
+`buildMaterial` passes the same `config.uniforms` table to either path and
+applies the requested blending, depth, transparency, tone-mapping, and side
+state to both. The TSL factory must use those uniform references when its
+values need to change after construction. GLSL `defines` and
+`onBeforeCompile` patches have no TSL equivalent; express those changes in
+the `webgpu` factory. A factory that needs custom blend factors should set
+them after `buildMaterial` returns, since its basic render-state config does
+not include blend factors.
+
+If the active renderer uses the WebGPU API surface and `webgpu` is absent,
+`buildMaterial` throws an error naming the source. It does not change the
+renderer for a single material: `WebGPURenderer` cannot draw a GLSL
+`ShaderMaterial`, even on its internal WebGL2 backend. Unlike the
+[adapter-missing fallback in #3147](https://github.com/royerlab/luxar/issues/3147),
+which selects a renderer before materials are built, changing renderers for one
+material would leave it in a scene using the other renderer. For a known
+GLSL-only plugin, set `LuxarAppOptions.renderer: 'webgl'` in app mode, or
+construct a `WebGLRenderer` as the host renderer in layer mode, before building
+materials.
+
+The viewer's own WebGPU code remains lazily loaded; a host that imports
+`three/webgpu` for its factory controls when that dependency loads.
+
 ### `LuxarAppOptions`
 
 | Option             | Type                  | Default         | Notes                                                                                                                                                                                                                                                                   |
