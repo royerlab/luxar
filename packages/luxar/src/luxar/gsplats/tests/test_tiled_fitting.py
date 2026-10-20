@@ -736,16 +736,20 @@ def test_mass_weighting_quantifies_haze_amplitude_tradeoff() -> None:
         threshold_counts
     )
 
-    assert mass_disparity == pytest.approx(4.39, abs=0.15)
-    assert equal_disparity == pytest.approx(3.98, abs=0.15)
-    assert threshold_disparity == pytest.approx(1.30, abs=0.15)
+    # Pinned on Linux CPU (the full-suite promote gate) at #3233. Foreground PSNR
+    # rose 0.5-1.2 dB when #3123 smoothed the Otsu foreground mask, and the
+    # native CPU kernel moved global PSNR by <= 0.43 dB; the relational checks
+    # below (the allocator's actual trade-offs) held throughout.
+    assert mass_disparity == pytest.approx(4.36, abs=0.15)
+    assert equal_disparity == pytest.approx(3.96, abs=0.15)
+    assert threshold_disparity == pytest.approx(1.31, abs=0.15)
     assert mass_disparity > equal_disparity > threshold_disparity
-    assert mass_psnr == pytest.approx([20.75, 50.34], abs=0.35)
-    assert equal_psnr == pytest.approx([20.87, 50.56], abs=0.35)
-    assert threshold_psnr == pytest.approx([15.54, 52.06], abs=0.35)
-    assert mass_foreground_psnr == pytest.approx([21.58, 39.85], abs=0.35)
-    assert equal_foreground_psnr == pytest.approx([21.93, 40.30], abs=0.35)
-    assert threshold_foreground_psnr == pytest.approx([15.34, 40.59], abs=0.35)
+    assert mass_psnr == pytest.approx([20.49, 50.56], abs=0.35)
+    assert equal_psnr == pytest.approx([20.78, 50.59], abs=0.35)
+    assert threshold_psnr == pytest.approx([15.53, 52.16], abs=0.35)
+    assert mass_foreground_psnr == pytest.approx([21.76, 40.95], abs=0.35)
+    assert equal_foreground_psnr == pytest.approx([21.92, 40.82], abs=0.35)
+    assert threshold_foreground_psnr == pytest.approx([15.33, 41.13], abs=0.35)
     # A neighbouring-seed sweep varied global/foreground PSNR by 1.4/2.1 dB,
     # so only the pedestal tile's approximately 5 dB threshold penalty is gated.
     assert mass_psnr[0] > threshold_psnr[0]
@@ -817,14 +821,15 @@ def test_mass_weighting_quantifies_depth_attenuation_tradeoff() -> None:
     equal_psnr, equal_foreground_psnr = psnr_by_depth((300, 300, 300))
     mass_psnr, mass_foreground_psnr = psnr_by_depth(mass_counts)
 
-    assert equal_psnr == pytest.approx([49.82, 50.05, 50.44], abs=0.35)
-    assert mass_psnr == pytest.approx([51.42, 50.21, 49.16], abs=0.35)
-    assert equal_foreground_psnr == pytest.approx([38.69, 39.15, 40.47], abs=0.35)
-    assert mass_foreground_psnr == pytest.approx([39.88, 39.22, 39.19], abs=0.35)
-    assert np.mean(mass_psnr) - np.mean(equal_psnr) == pytest.approx(0.16, abs=0.35)
+    # Re-pinned at #3233 for the same metric and kernel changes as the haze test.
+    assert equal_psnr == pytest.approx([49.89, 50.19, 50.38], abs=0.35)
+    assert mass_psnr == pytest.approx([51.85, 50.05, 49.16], abs=0.35)
+    assert equal_foreground_psnr == pytest.approx([39.00, 39.49, 40.70], abs=0.35)
+    assert mass_foreground_psnr == pytest.approx([41.12, 39.19, 39.45], abs=0.35)
+    assert np.mean(mass_psnr) - np.mean(equal_psnr) == pytest.approx(0.20, abs=0.35)
     assert np.mean(mass_foreground_psnr) - np.mean(
         equal_foreground_psnr
-    ) == pytest.approx(0.0, abs=0.1)
+    ) == pytest.approx(0.19, abs=0.1)
     assert mass_psnr[-1] < equal_psnr[-1] - 0.8
     assert mass_foreground_psnr[-1] < equal_foreground_psnr[-1] - 0.8
 
