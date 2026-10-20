@@ -95,7 +95,7 @@ Each surface has one way to say "deprecated", so every notice reads the same:
 | Python keyword argument | `luxar.utils.deprecated_kwarg_alias(kwargs, old, new, …)` at the top of the function body moves the old key onto the new one and warns; passing both spellings is a `TypeError`. |
 | CLI flag | The old flag stays declared as a `hidden=True` typer option defaulting to `None` (so it leaves `--help`), and `luxar.cli.utils.deprecated_option(value, old_flag, new_flag, …)` prints the notice to **stderr** — a command-line process hides `DeprecationWarning` by default, so the CLI does not rely on it. |
 | CLI command or sub-command | The old command stays registered, hidden, and prints the same stderr notice before delegating. |
-| Viewer URL parameter | The old key is added to `URL_PARAM_ALIASES` in `packages/luxar-viewer/src/config/url-params.ts`, mapping to its current spelling; the parser resolves it and logs one deprecation warning per key per session. |
+| Viewer URL parameter | The old key is added to `URL_PARAM_ALIASES` in `packages/luxar-viewer/src/config/url-param-access.ts`, mapping to its current spelling; the parser resolves it and logs one deprecation warning per key per session. |
 | Viewer barrel export | The old export stays, re-exporting the new symbol, with a `@deprecated` JSDoc tag naming the replacement and the window. |
 | Viewer `StorageKeys` entry | Not automated. A renamed key is read under its old name once, written back under the new one, and the old entry removed — a one-shot migration in the module that owns the key, documented beside the `StorageKeys` registry. |
 

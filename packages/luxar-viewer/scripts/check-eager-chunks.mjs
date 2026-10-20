@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Assert that the WebGPU/TSL cone stays OFF the app's critical path.
+ * Assert that the WebGPU/TSL cone stays lazy for WebGL sessions.
  *
  * The production default backend is WebGL (`selectBackend()` in
- * renderer-setup.ts), so the ~182 kB gzipped `three-webgpu` chunk must be
+ * backend-selection.ts), so the ~182 kB gzipped `three-webgpu` chunk must be
  * fetched only when a session actually opts into WebGPU. Issue #1679: it used
  * to be a static dependency of the entry chunk AND `modulepreload`ed from
  * `index.html`, so every WebGL user downloaded and parsed a renderer that never
@@ -162,17 +162,27 @@ function auditEntry({ html: htmlName, forbid }) {
     }
   }
 
-  // ── 2. The entry chunk must not STATICALLY import a forbidden chunk ──────
-  const entryHref = html.match(/<script[^>]+type="module"[^>]+src="([^"]+)"/)?.[1];
-  if (!entryHref) {
+  // ── 2. Every entry script must keep forbidden chunks behind import() ─────
+  const scripts = [...html.matchAll(/<script[^>]+type="module"[^>]+src="([^"]+)"[^>]*>/g)];
+  if (scripts.length === 0) {
     fail(`Could not find the entry <script type="module"> in dist/${htmlName}.`);
     return;
   }
-  const entryName = entryHref.split('/').pop();
+  if (htmlName === 'index.html') {
+    // vite.config.ts inserts the prefetch before the first module script.
+    // Guard that exact layout so a new index.html entry cannot reorder it.
+    if (scripts.length !== 2 || !scripts[0][0].includes('data-webgpu-prefetch')) {
+      fail('dist/index.html must start the WebGPU prefetch before the viewer entry script.');
+    }
+    for (const script of scripts) {
+      const name = script[1].split('/').pop();
+      if (!assetFiles.includes(name)) fail(`dist/index.html references missing script '${name}'.`);
+    }
+  }
 
-  // ── 3. …and nothing it reaches statically may import one either ──────────
+  // ── 3. …and nothing they reach statically may import one either ──────────
   const visited = new Set();
-  const queue = [entryName];
+  const queue = scripts.map((script) => script[1].split('/').pop());
   while (queue.length > 0) {
     const name = queue.shift();
     if (visited.has(name)) continue;

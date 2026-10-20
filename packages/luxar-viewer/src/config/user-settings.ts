@@ -28,10 +28,12 @@
 import { config } from './index';
 import { LINE_PRIMITIVE_POLICIES, type LinePrimitivePolicy } from '../types/line-primitive';
 import { StorageKeys } from '../utils/storage-keys';
+import {
+  DEFAULT_RENDERER_PREFERENCE,
+  SETTINGS_VERSION,
+  sanitizeRendererPreference,
+} from './renderer-preference';
 import { log, Modules } from '../utils/log';
-
-/** Current schema version — bump on breaking shape changes (old versions → defaults). */
-const SETTINGS_VERSION = 1 as const;
 
 export interface UserSettings {
   version: typeof SETTINGS_VERSION;
@@ -155,7 +157,7 @@ export function defaultUserSettings(): UserSettings {
       budgetMB: 1024,
     },
     advanced: {
-      renderer: 'auto',
+      renderer: DEFAULT_RENDERER_PREFERENCE,
       linePrimitivePolicy: 'auto',
       hdrOutput: 'auto',
     },
@@ -242,7 +244,7 @@ function sanitizeUserSettings(raw: unknown): UserSettings {
       ),
     },
     advanced: {
-      renderer: enumOrDefault(advanced.renderer, ['auto', 'webgl', 'webgpu'], d.advanced.renderer),
+      renderer: sanitizeRendererPreference(advanced.renderer),
       // Vocabulary from `types/line-primitive.ts` rather than a local
       // literal: a new policy value must not be able to pass validation
       // here while the resolver rejects it (or vice versa).
