@@ -131,7 +131,7 @@ import {
   preRequestWebGPUDevice,
   takePreRequestedWebGPUDevice,
 } from '../../../scene/scene-manager/render-pipeline/early-device-request';
-import { WEBGPU_PLATFORM_RULES } from '../../../scene/scene-manager/render-pipeline/backend-policy';
+import { STAGED_WEBGPU_PLATFORM_RULES } from '../../../scene/scene-manager/render-pipeline/backend-policy';
 import {
   defaultUserSettings,
   saveUserSettings,
@@ -264,6 +264,7 @@ describe('bootstrapStandalone', () => {
   describe('WebGPU startup', () => {
     it('rejects an unmeasured adapter on the platform-policy path before device or TSL loading', async () => {
       vi.stubEnv('VITE_LUXAR_USE_LEGACY_WEBGL', '0');
+      vi.stubEnv('VITE_LUXAR_WEBGPU_STAGED_RULES', '1'); // the Linux row is held (#3172)
       const requestDevice = vi.fn();
       const requestAdapter = vi.fn().mockResolvedValue({
         info: { vendor: 'amd' },
@@ -320,6 +321,7 @@ describe('bootstrapStandalone', () => {
 
     it('consumes an early platform-policy request that rejected the adapter vendor', async () => {
       vi.stubEnv('VITE_LUXAR_USE_LEGACY_WEBGL', '0');
+      vi.stubEnv('VITE_LUXAR_WEBGPU_STAGED_RULES', '1'); // the Linux row is held (#3172)
       const requestDevice = vi.fn();
       const requestAdapter = vi.fn().mockResolvedValue({
         info: { vendor: 'amd' },
@@ -334,7 +336,7 @@ describe('bootstrapStandalone', () => {
       });
       const onPolicyMatch = vi.fn();
 
-      preRequestWebGPUDevice(undefined, WEBGPU_PLATFORM_RULES, onPolicyMatch);
+      preRequestWebGPUDevice(undefined, STAGED_WEBGPU_PLATFORM_RULES, onPolicyMatch);
       await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
 
       const options = mocks.init.mock.calls[0]?.[0] as {

@@ -71,6 +71,7 @@ import {
   selectBackend,
 } from '../../../../../scene/scene-manager/render-pipeline/renderer-setup';
 import { log, Modules } from '../../../../../utils/log';
+import { STAGED_WEBGPU_PLATFORM_RULES } from '../../../../../scene/scene-manager/render-pipeline/backend-policy';
 import {
   forwardedAdapterLimits,
   preRequestWebGPUDevice,
@@ -142,7 +143,7 @@ describe('selectBackend', () => {
   });
 
   it('defaults to webgpu on a policy platform, with the rules the adapter must still meet', () => {
-    const r = selectBackend(undefined, LINUX_CHROME);
+    const r = selectBackend(undefined, LINUX_CHROME, STAGED_WEBGPU_PLATFORM_RULES);
     expect(r).toMatchObject({
       backend: 'webgpu',
       source: 'platform-policy',

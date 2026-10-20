@@ -8,7 +8,9 @@
  * default is a table of measured platforms rather than one global switch: a
  * row admits a platform to WebGPU, and everything without a row stays on
  * WebGL. Add a row only after the render gate's perf and hosted suites have
- * been run on that platform (`--backends webgl,webgpu`).
+ * been run on that platform (`--backends webgl,webgpu`), and only once cold
+ * load there is within 0.15 s of WebGL (#3172). Until then the table is empty
+ * and measured rows wait in {@link STAGED_WEBGPU_PLATFORM_RULES}.
  *
  * Matching runs in two steps so a session that cannot qualify never pays for
  * WebGPU. The OS and browser come from the user agent and are checked before
@@ -42,17 +44,36 @@ export interface WebGPUPlatformRule {
   evidence: string;
 }
 
-/** The measured platforms where WebGPU is the default. */
-export const WEBGPU_PLATFORM_RULES: readonly WebGPUPlatformRule[] = [
+/**
+ * Measured platforms that passed the GPU-speed half of the go/no-go but are
+ * held off the default: WebGPU is not the default anywhere until its cold load
+ * is within 0.15 s of WebGL (#3172). Move a row into
+ * {@link WEBGPU_PLATFORM_RULES} once that holds on its platform.
+ */
+export const STAGED_WEBGPU_PLATFORM_RULES: readonly WebGPUPlatformRule[] = [
   {
     os: 'linux',
     browser: 'chromium',
     vendor: 'nvidia',
     evidence:
       '#3146 go/no-go (RTX 3070, Vulkan): WebGPU 2-9% faster GPU time on every heavy case; ' +
-      'cold load ~0.5 s slower on a first visit, accepted',
+      'cold load ~0.5 s slower on a first visit (held on #3172)',
   },
 ];
+
+/** The platforms where WebGPU is the default: none yet (see {@link STAGED_WEBGPU_PLATFORM_RULES}). */
+export const WEBGPU_PLATFORM_RULES: readonly WebGPUPlatformRule[] = [];
+
+/**
+ * The rules the default selection uses: {@link WEBGPU_PLATFORM_RULES}, plus the
+ * staged rows when a dev or test build sets `VITE_LUXAR_WEBGPU_STAGED_RULES=1`
+ * (how the E2E suite exercises the policy path). Read per call, not at import.
+ */
+export function defaultPlatformRules(): readonly WebGPUPlatformRule[] {
+  return import.meta.env.VITE_LUXAR_WEBGPU_STAGED_RULES === '1'
+    ? [...WEBGPU_PLATFORM_RULES, ...STAGED_WEBGPU_PLATFORM_RULES]
+    : WEBGPU_PLATFORM_RULES;
+}
 
 export interface NavigatorLike {
   userAgent?: string;
@@ -102,7 +123,7 @@ export function detectBrowserPlatform(
 /** The rules this OS and browser could still satisfy, before any adapter request. */
 export function candidateRules(
   platform: BrowserPlatform,
-  rules: readonly WebGPUPlatformRule[] = WEBGPU_PLATFORM_RULES
+  rules: readonly WebGPUPlatformRule[] = defaultPlatformRules()
 ): WebGPUPlatformRule[] {
   return rules.filter((r) => r.os === platform.os && r.browser === platform.browser);
 }

@@ -5,8 +5,8 @@ The standalone HTML entry starts an additional dynamic prefetch for WebGPU.
 The bootstrap prefetch remains for library and embedded mounts without the HTML entry.
 
 The platform policy in `scene/scene-manager/render-pipeline/backend-selection.ts`
-defaults to WebGPU on measured platforms (`backend-policy.ts`) and WebGL
-elsewhere; `?renderer=webgpu` and `VITE_LUXAR_USE_WEBGPU=1` also select WebGPU.
+defaults to WebGPU on the platforms in its table (`backend-policy.ts`; empty
+until #3172, so WebGL everywhere today) and WebGL elsewhere; `?renderer=webgpu` and `VITE_LUXAR_USE_WEBGPU=1` also select WebGPU.
 But the TSL
 material classes all `extend NodeMaterial` from `three/webgpu`, and until
 issue #1679 twenty-three production modules imported that subpath as a value.
