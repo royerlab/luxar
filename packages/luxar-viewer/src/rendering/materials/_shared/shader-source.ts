@@ -18,6 +18,7 @@
  * doesn't supply.
  */
 
+import type { IUniform } from 'three';
 import type { NodeMaterial } from 'three/webgpu';
 
 /**
@@ -54,7 +55,7 @@ export interface ShaderSource {
    * renderer-specific material. This is a type-only reference, so
    * importing the public `ShaderSource` type does not load WebGPU code.
    */
-  readonly webgpu?: (uniforms: Record<string, unknown>) => NodeMaterial;
+  readonly webgpu?: (uniforms: Record<string, IUniform>) => NodeMaterial;
 }
 
 /**

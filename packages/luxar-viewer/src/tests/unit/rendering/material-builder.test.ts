@@ -60,19 +60,27 @@ const TRIVIAL_GLSL = {
 
 describe('buildMaterial backend dispatch', () => {
   it('lets an embedder build a TSL material through the public package entry', () => {
+    const uniforms = { uTint: { value: 0.5 } };
+    let receivedUniforms: Record<string, THREE.IUniform> | undefined;
     const source: PublicShaderSource = {
       name: 'embedder-tint',
       webgl: TRIVIAL_GLSL,
-      webgpu: () => {
+      webgpu: (factoryUniforms) => {
+        receivedUniforms = factoryUniforms;
         const material = new NodeMaterial();
         material.colorNode = vec4(0.25, 0.5, 0.75, 1);
         return material;
       },
     };
-    const material = publicBuildMaterial(source, { depthWrite: false }, { apiSurface: 'webgpu' });
+    const material = publicBuildMaterial(
+      source,
+      { uniforms, depthWrite: false },
+      { apiSurface: 'webgpu' }
+    );
     expect(material).toBeInstanceOf(NodeMaterial);
     expect((material as NodeMaterial).colorNode).toBeDefined();
     expect(material.depthWrite).toBe(false);
+    expect(receivedUniforms).toBe(uniforms);
     material.dispose();
   });
 
