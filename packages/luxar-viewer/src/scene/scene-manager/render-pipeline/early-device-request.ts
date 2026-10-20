@@ -34,12 +34,13 @@ type NavigatorWithGPU = Navigator & {
  * `maxVertexBuffers` is deliberately NOT here — it is clamped to 16
  * rather than forwarded verbatim (see `createWebGPURenderer`).
  */
-export const FORWARDED_ADAPTER_LIMIT_NAMES = [
+const FORWARDED_ADAPTER_LIMIT_NAMES = [
   'maxBufferSize',
   'maxStorageBufferBindingSize',
   'maxTextureDimension2D',
 ] as const;
-export type ForwardedAdapterLimitName = (typeof FORWARDED_ADAPTER_LIMIT_NAMES)[number];
+/** Names of the limits copied from the adapter into the device request. */
+type ForwardedAdapterLimitName = (typeof FORWARDED_ADAPTER_LIMIT_NAMES)[number];
 
 /** Forward numeric adapter limits; absent entries keep their spec defaults. */
 export function forwardedAdapterLimits(
@@ -53,6 +54,7 @@ export function forwardedAdapterLimits(
   return out;
 }
 
+/** Whether the browser exposes the WebGPU entry point. */
 export function hasWebGPU(): boolean {
   return (navigator as NavigatorWithGPU).gpu !== undefined;
 }
@@ -72,6 +74,7 @@ async function requestCoreAdapter(): Promise<GPUAdapterLike | null> {
   return adapter ?? gpu.requestAdapter().catch(() => null);
 }
 
+/** The result of native adapter and device negotiation before renderer setup. */
 export type CoreDeviceRequest =
   | { kind: 'unavailable'; adapter: null }
   | { kind: 'insufficient'; adapter: GPUAdapterLike }
