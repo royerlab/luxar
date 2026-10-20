@@ -11,9 +11,11 @@ import warnings
 
 import numpy as np
 import pytest
+import torch
 
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.seeds import generate_seeds
+from luxar.gsplats.seeds.peaks import seed_from_peaks
 
 HAS_SCIPY = importlib.util.find_spec("scipy") is not None
 
@@ -356,6 +358,40 @@ class TestSpecialCases:
 
 class TestReproducibility:
     """Test reproducibility."""
+
+    def test_peaks_seed_is_independent_of_global_rng(self) -> None:
+        volume = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
+
+        for make_seeds in (
+            seed_from_peaks,
+            lambda v, **kw: generate_seeds(v, method="peaks", **kw),
+        ):
+            torch.manual_seed(1)
+            before = torch.random.get_rng_state().clone()
+            first = make_seeds(volume, n_seeds=8, seed=42, device="cpu")
+            assert torch.equal(torch.random.get_rng_state(), before)
+
+            torch.manual_seed(99)
+            before = torch.random.get_rng_state().clone()
+            second = make_seeds(volume, n_seeds=8, seed=42, device="cpu")
+            assert torch.equal(torch.random.get_rng_state(), before)
+
+            assert len(first.centers) == 8
+            np.testing.assert_array_equal(first.centers, second.centers)
+            np.testing.assert_array_equal(first.amplitudes, second.amplitudes)
+
+    def test_peaks_accepts_generator(self) -> None:
+        volume = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
+        generator = torch.Generator().manual_seed(42)
+        before = generator.get_state().clone()
+
+        generated = generate_seeds(
+            volume, method="peaks", n_seeds=8, seed=generator, device="cpu"
+        )
+        expected = seed_from_peaks(volume, n_seeds=8, seed=42, device="cpu")
+
+        assert not torch.equal(generator.get_state(), before)
+        np.testing.assert_array_equal(generated.centers, expected.centers)
 
     def test_reproducible_results(self, simple_2d_image) -> None:
         """Test results are reproducible for deterministic methods."""

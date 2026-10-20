@@ -255,6 +255,7 @@ seeds = seed_from_peaks(
     n_seeds=None,                         # Number of seeds (None = one per non-zero voxel)
     init_sigma=None,                      # Gaussian sigma (None = auto-scaled)
     device=None,                          # GPU device ('cuda', 'mps', 'auto', None)
+    seed=42,                              # Reproducible sampling without changing global RNG
 )
 ```
 

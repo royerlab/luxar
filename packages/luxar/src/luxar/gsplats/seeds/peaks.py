@@ -30,6 +30,7 @@ def seed_from_peaks(
     n_seeds: Optional[int] = None,
     init_sigma: Optional[float] = None,
     device: Optional[str] = None,
+    seed: int | torch.Generator | None = None,
 ) -> GSplatData:
     """Generate seeds at non-zero voxels, weighted by intensity.
 
@@ -58,6 +59,9 @@ def seed_from_peaks(
         massively overlap and overshoot.
     device : str, optional
         PyTorch device ('cuda', 'mps', 'cpu', or None for auto).
+    seed : int or torch.Generator, optional
+        Seed or generator for intensity-weighted sampling. An integer uses a
+        local generator and does not change PyTorch's global RNG state.
 
     Returns
     -------
@@ -125,7 +129,20 @@ def seed_from_peaks(
                 intensities = intensities[topk_idx]
 
             probs = intensities / intensities.sum()
-            indices = torch.multinomial(probs, n_seeds, replacement=False)
+            sampling_device = (
+                torch.device("cpu") if dev.type == "mps" and seed is not None else dev
+            )
+            generator = (
+                torch.Generator(device=sampling_device).manual_seed(seed)
+                if isinstance(seed, int)
+                else seed
+            )
+            indices = torch.multinomial(
+                probs.to(sampling_device),
+                n_seeds,
+                replacement=False,
+                generator=generator,
+            ).to(dev)
             selected_coords = nonzero_coords[indices]
             selected_intensities = intensities[indices]
 
