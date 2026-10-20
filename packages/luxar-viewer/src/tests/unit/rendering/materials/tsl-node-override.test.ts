@@ -7,17 +7,20 @@ import { PointTSLMaterial } from '../../../../rendering/materials/point/material
 import { LineTSLMaterial } from '../../../../rendering/materials/line/material-tsl';
 import { GSplatTSLMaterial } from '../../../../rendering/materials/gsplat/material-tsl';
 import { MeshTSLMaterial } from '../../../../rendering/materials/mesh/material-tsl';
+import type { GeometryTypeName } from '../../../../types/format-contract';
+import { defineBehaviourConformance } from '../../../_conformance/define-behaviour-conformance';
 
-const visualMaterials = [
-  ['point', () => new PointTSLMaterial()],
-  ['line', () => new LineTSLMaterial()],
-  ['gsplat', () => new GSplatTSLMaterial()],
-  ['mesh', () => new MeshTSLMaterial()],
-] as const;
+const visualMaterials = {
+  points: () => new PointTSLMaterial(),
+  lines: () => new LineTSLMaterial(),
+  gsplats: () => new GSplatTSLMaterial(),
+  mesh: () => new MeshTSLMaterial(),
+} satisfies Record<GeometryTypeName, () => NodeMaterial>;
 
 describe('public TSL node override for built-in materials', () => {
-  for (const [name, make] of visualMaterials) {
-    it(`${name}: keeps the override through a graph rebuild and clone`, () => {
+  defineBehaviourConformance('tslNodeOverride', {
+    holds(type) {
+      const make = visualMaterials[type];
       const material = make();
       const peer = make();
       const baseColor = material.colorNode;
@@ -47,8 +50,8 @@ describe('public TSL node override for built-in materials', () => {
       expect(material.colorNode).not.toBe(replacement);
       expect(material.colorNode).toBe(getSharedTSLGraph(material)?.colorNode);
       expect(clone.colorNode).toBe(replacement);
-    });
-  }
+    },
+  });
 
   it('refuses a material outside Luxar’s built-in shared graphs', () => {
     expect(() => setTSLNodeOverride(new NodeMaterial(), () => ({}))).toThrow(
@@ -83,6 +86,7 @@ describe('public TSL node override for built-in materials', () => {
       return { colorNode: replacement };
     });
     expect(() => material.updateGamma(2)).toThrow('failed rebuild');
+    expect(material.colorNode).toBe(getSharedTSLGraph(material)?.colorNode);
     setTSLNodeOverride(material, null);
     expect(material.colorNode).toBe(getSharedTSLGraph(material)?.colorNode);
   });
