@@ -28,10 +28,10 @@ if (selection.backend === 'webgpu') {
   // request starts here: the device request, the `three/webgpu` chunk and (via
   // the callback) the registry wait until the adapter vendor matches a rule.
   if (hasGpu) preRequestWebGPUDevice(rendererOverride, selection.platformRules, prefetchRegistry);
-  // Without the policy the registry is fetched at once. `webgpuForceWebgl`
-  // runs TSL on three's WebGL2 bridge whatever the adapter, so it needs it too.
+  // Explicit or env-selected WebGPU prefetches the registry at once. Their
+  // `webgpuForceWebgl` path also needs it for three's WebGL2 bridge.
   if (
-    forceWebGL ||
+    (forceWebGL && !selection.platformRules) ||
     shouldPrefetchTsl(hasGpu, selection.requireNativeAdapter, selection.platformRules)
   ) {
     prefetchRegistry();

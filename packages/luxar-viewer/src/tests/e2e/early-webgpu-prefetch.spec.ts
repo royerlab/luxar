@@ -221,6 +221,12 @@ for (const scenario of [
   { name: 'WebGL URL', path: '/?renderer=webgl', stored: null, platform: 'Linux' },
   { name: 'unmeasured platform default', path: '/', stored: null, platform: 'macOS' },
   { name: 'stored WebGL', path: '/', stored: 'webgl', platform: 'Linux' },
+  {
+    name: 'platform policy with diagnostic WebGL flag',
+    path: '/?webgpuForceWebgl',
+    stored: null,
+    platform: 'Linux',
+  },
 ]) {
   test(`does not request the WebGPU chunk for ${scenario.name}`, async ({ page }) => {
     await page.addInitScript(({ stored, platform }) => {
