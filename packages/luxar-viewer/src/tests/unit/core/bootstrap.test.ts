@@ -123,6 +123,10 @@ import {
 } from '../../../core/app/debug/renderer-info-sampler';
 import { resetRootDocumentPrefetchForTests } from '../../../cache/root-document-prefetch';
 import {
+  preRequestWebGPUDevice,
+  takePreRequestedWebGPUDevice,
+} from '../../../scene/scene-manager/render-pipeline/early-device-request';
+import {
   defaultUserSettings,
   saveUserSettings,
   resetUserSettingsForTests,
@@ -210,6 +214,7 @@ describe('bootstrapStandalone', () => {
   });
 
   afterEach(() => {
+    void takePreRequestedWebGPUDevice();
     mocks.disposeCleanups.splice(0).forEach((cleanup) => cleanup());
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
     delete window.__luxarBuild;
@@ -251,6 +256,36 @@ describe('bootstrapStandalone', () => {
   });
 
   describe('WebGPU startup', () => {
+    it('consumes the device requested by the early entry once', async () => {
+      const device = {};
+      const requestDevice = vi.fn().mockResolvedValue(device);
+      const requestAdapter = vi.fn().mockResolvedValue({
+        features: new Set<string>(),
+        limits: { maxVertexBuffers: 16 },
+        requestDevice,
+      });
+      vi.stubGlobal('navigator', { ...navigator, gpu: { requestAdapter } });
+
+      preRequestWebGPUDevice('webgpu');
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, renderer: 'webgpu' },
+      });
+
+      expect(requestAdapter).toHaveBeenCalledTimes(1);
+      expect(requestDevice).toHaveBeenCalledTimes(1);
+      const options = mocks.init.mock.calls[0]?.[0] as {
+        preRequestedWebGPUDevice?: Promise<unknown>;
+      };
+      const result = (await options.preRequestedWebGPUDevice) as {
+        fallback: boolean;
+        device: unknown;
+      };
+      expect(result.fallback).toBe(false);
+      expect(result.device).toBe(device);
+      expect(takePreRequestedWebGPUDevice()).toBeUndefined();
+    });
+
     it('passes native-adapter fallback through the bootstrap device request', async () => {
       vi.stubEnv('VITE_LUXAR_USE_WEBGPU', '1');
       const requestAdapter = vi.fn().mockResolvedValue(null);

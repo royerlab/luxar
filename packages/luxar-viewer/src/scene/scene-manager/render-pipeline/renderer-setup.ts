@@ -54,8 +54,15 @@ import {
   type HdrOutputState,
 } from '../../../types/hdr-output';
 import { notifier } from '../../../utils/cross-layer/notifier';
+import { formatErrorForDisplay, getErrorMessage } from '../../../utils/format-error';
 export { selectBackend } from './backend-selection';
 import { shouldPrefetchTsl } from './backend-selection';
+import {
+  hasWebGPU,
+  requestCoreDevice,
+  type CoreDeviceRequest,
+  type GPUAdapterLike,
+} from './early-device-request';
 
 /**
  * Point the backend-dependent rendering paths at `renderer`. Every renderer
@@ -107,53 +114,6 @@ function warnOnBackendMix(apiSurface: RendererCapabilities['apiSurface']): void 
       'page-wide, so if another Luxar host on this page still renders through ' +
       `${previous} it now runs on ${apiSurface}'s settings. Use one backend per page.`
   );
-}
-
-/**
- * Adapter limits forwarded verbatim into the device's `requiredLimits`
- * when the adapter advertises them as numbers (absent / non-numeric
- * entries are omitted so the device keeps the spec default).
- *
- * `maxTextureDimension2D` is the per-node element-data ceiling:
- * element textures (points/lines/gsplats) grow DOWNWARD in rows, and
- * `renderer-capabilities` reads the LIVE DEVICE limit to derive every
- * capacity clamp. The WebGPU default is 8192 rows — for lines
- * (6 texels/segment, 682 segments/row at width 4096) that caps a node
- * at 5,586,944 segments while the same GPU's WebGL context exposes
- * 16384 rows = 11.2 M. Same forward-the-adapter policy as the buffer
- * limits.
- *
- * `maxVertexBuffers` is deliberately NOT here — it is clamped to 16
- * rather than forwarded verbatim (see `createWebGPURenderer`).
- */
-export const FORWARDED_ADAPTER_LIMIT_NAMES = [
-  'maxBufferSize',
-  'maxStorageBufferBindingSize',
-  'maxTextureDimension2D',
-] as const;
-
-/** One of the adapter limits forwarded verbatim into `requiredLimits`. */
-export type ForwardedAdapterLimitName = (typeof FORWARDED_ADAPTER_LIMIT_NAMES)[number];
-
-/**
- * Pick the {@link FORWARDED_ADAPTER_LIMIT_NAMES} entries the adapter
- * advertises as numbers, shaped for a `requestDevice` descriptor's
- * `requiredLimits`. Absent / non-numeric entries are omitted so the
- * device keeps the WebGPU spec default for them.
- */
-export function forwardedAdapterLimits(
-  // Structural over the three explicit names only — a real
-  // `GPUSupportedLimits` (no string index signature) satisfies this,
-  // so the signature survives a future move off the file-local
-  // `GPUAdapterLike` shim onto @webgpu/types.
-  limits: Partial<Record<ForwardedAdapterLimitName, number>> | undefined
-): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const key of FORWARDED_ADAPTER_LIMIT_NAMES) {
-    const value = limits?.[key];
-    if (typeof value === 'number') out[key] = value;
-  }
-  return out;
 }
 
 /** Result of a successful renderer construction. */
@@ -294,117 +254,64 @@ export type WebGPUDeviceRequest =
       webgpuModule?: Promise<typeof import('three/webgpu')>;
     };
 
-interface GPUAdapterLike {
-  readonly features: ReadonlySet<string>;
-  readonly limits: Record<string, number | undefined>;
-  requestDevice: (descriptor: {
-    requiredFeatures?: string[];
-    requiredLimits?: Record<string, number>;
-  }) => Promise<unknown>;
-}
-
-type NavigatorWithGPU = Navigator & {
-  gpu?: {
-    requestAdapter?: (options?: {
-      featureLevel?: 'core' | 'compatibility';
-      powerPreference?: 'low-power' | 'high-performance';
-    }) => Promise<GPUAdapterLike | null>;
-  };
-};
-
-async function requestCoreAdapter(): Promise<GPUAdapterLike | null> {
-  const gpu = (navigator as NavigatorWithGPU).gpu;
-  if (!gpu?.requestAdapter) return null;
-  let adapter: GPUAdapterLike | null = null;
-  try {
-    adapter = await gpu.requestAdapter({
-      featureLevel: 'core',
-      powerPreference: 'high-performance',
-    });
-  } catch {
-    // Older browsers reject the `featureLevel` option — fall through.
-  }
-  return adapter ?? gpu.requestAdapter().catch(() => null);
-}
-
 function prefetchTslMaterialsWhenUsable(hasGpu: boolean, requireNativeAdapter?: boolean): void {
   if (shouldPrefetchTsl(hasGpu, requireNativeAdapter))
     void loadTslMaterials().catch(() => undefined);
 }
 
+function coreDeviceRequest(
+  rendererOverride: 'webgl' | 'webgpu' | undefined,
+  preRequestedDevice?: Promise<CoreDeviceRequest>
+): Promise<CoreDeviceRequest> {
+  return preRequestedDevice ?? requestCoreDevice(rendererOverride);
+}
+
+function deviceRequestErrorMessage(error: unknown): string {
+  return error instanceof Error ? formatErrorForDisplay(error) : getErrorMessage(error);
+}
+
 /**
- * Start adapter/device acquisition, the lazy TSL and `three/webgpu` chunk
- * fetches, and — when `requireNativeAdapter` is set — the fallback decision
- * itself. The one place this negotiation happens, for both the bootstrap-time
- * call (before `SceneManager` exists) and `createWebGPURenderer`'s own fresh
- * request.
+ * Consume a core device request started by the early entry, or negotiate a
+ * fresh one for direct callers and device-loss recovery.
  */
 export async function requestWebGPUDevice(
   rendererOverride?: 'webgl' | 'webgpu',
-  requireNativeAdapter?: boolean
+  requireNativeAdapter?: boolean,
+  preRequestedDevice?: Promise<CoreDeviceRequest>
 ): Promise<WebGPUDeviceRequest> {
-  const hasGpu = (navigator as NavigatorWithGPU).gpu !== undefined;
-  // Start the TSL chunk before waiting for the adapter when this session can
-  // still use WebGPU. The awaited setup load retries if the prefetch fails.
+  const hasGpu = hasWebGPU();
+  // Direct callers still start the TSL load before adapter negotiation.
   prefetchTslMaterialsWhenUsable(hasGpu, requireNativeAdapter);
-  const adapter = await requestCoreAdapter();
-  if (!adapter) {
+  const core = await coreDeviceRequest(rendererOverride, preRequestedDevice);
+  if (core.kind === 'unavailable') {
     if (lacksRequiredNativeDevice(requireNativeAdapter, hasGpu, false, undefined)) {
       return { fallback: true };
     }
     return { fallback: false, device: undefined };
   }
-  const adapterMax = adapter.limits?.maxVertexBuffers;
-  const minVertexBuffers = 8;
-  if (
-    typeof adapterMax === 'number' &&
-    adapterMax < minVertexBuffers &&
-    rendererOverride !== 'webgpu'
-  ) {
+
+  if (core.kind === 'insufficient') {
+    const adapterMax = core.adapter.limits.maxVertexBuffers;
     log.warning(
       Modules.RENDERER,
       `WebGPU adapter advertises maxVertexBuffers=${adapterMax}, below the WebGPU spec minimum ` +
-        `of ${minVertexBuffers}. Auto-falling back to the default WebGLRenderer ` +
+        'of 8. Auto-falling back to the default WebGLRenderer ' +
         'path. Override with `?renderer=webgpu` to force WebGPU anyway (for debugging).'
     );
     return { fallback: true };
   }
 
-  const requestedMax = typeof adapterMax === 'number' ? Math.min(adapterMax, 16) : undefined;
-  const requiredLimits = requestedDeviceLimits(adapter.limits, requestedMax);
-  logRequestedDeviceLimits(adapter.limits, requiredLimits, requestedMax);
-
-  // Fetch the `three/webgpu` chunk WHILE the device is requested (~125 ms on
-  // an RTX 3070), not after. A failed requestDevice under
-  // `requireNativeAdapter` can leave this download unused. A failed prefetch
-  // is retried wherever `loadThreeWebGPU` actually imports the module.
-  const webgpuModule = import('three/webgpu');
-  void webgpuModule.catch(() => undefined);
-
-  let device: unknown;
-  try {
-    device = await adapter.requestDevice({
-      requiredFeatures: [...adapter.features],
-      requiredLimits,
-    });
-  } catch (err) {
-    log.warning(Modules.RENDERER, `WebGPU requestDevice failed (${err}).`);
+  logRequestedDeviceLimits(core.adapter.limits, core.requiredLimits, core.requestedMax);
+  if (core.requestFailed) {
+    log.warning(
+      Modules.RENDERER,
+      `WebGPU requestDevice failed (${deviceRequestErrorMessage(core.requestError)}).`
+    );
   }
-
-  if (lacksRequiredNativeDevice(requireNativeAdapter, hasGpu, true, device)) {
+  if (lacksRequiredNativeDevice(requireNativeAdapter, hasGpu, true, core.device)) {
     return { fallback: true };
   }
-
-  return { fallback: false, device, webgpuModule };
-}
-
-function requestedDeviceLimits(
-  limits: GPUAdapterLike['limits'],
-  requestedMax: number | undefined
-): Record<string, number> {
-  const requiredLimits: Record<string, number> = forwardedAdapterLimits(limits);
-  if (requestedMax !== undefined) requiredLimits.maxVertexBuffers = requestedMax;
-  return requiredLimits;
+  return { fallback: false, device: core.device, webgpuModule: core.webgpuModule };
 }
 
 function logRequestedDeviceLimits(
@@ -632,7 +539,7 @@ function resolveWebGPUDeviceRequest(options: CreateWebGPUOptions): Promise<WebGP
 /**
  * Construct a `WebGPURenderer`. Consumes a pre-requested device or starts a
  * fresh request with raised limits to bypass three's compat-mode defaults
- * (see {@link forwardedAdapterLimits}). Performs `await renderer.init()`
+ * (see `forwardedAdapterLimits` in `early-device-request.ts`). Performs `await renderer.init()`
  * before returning.
  *
  * Returns `{ fallback: true }` so the caller can drop to WebGL when the
