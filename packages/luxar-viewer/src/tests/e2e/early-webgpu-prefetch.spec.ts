@@ -32,6 +32,32 @@ for (const renderer of ['webgpu', 'WEBGPU']) {
   });
 }
 
+test('requests the adapter before the viewer entry runs', async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as Window & { adapterRequests?: number }).adapterRequests = 0;
+    Object.defineProperty(navigator, 'gpu', {
+      configurable: true,
+      value: {
+        requestAdapter: async () => {
+          (window as Window & { adapterRequests?: number }).adapterRequests! += 1;
+          return null;
+        },
+      },
+    });
+  });
+  const { release } = await blockViewerEntry(page);
+  try {
+    await page.goto('/?renderer=webgpu', { waitUntil: 'commit' });
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as Window & { adapterRequests?: number }).adapterRequests)
+      )
+      .toBe(2);
+  } finally {
+    release();
+  }
+});
+
 for (const scenario of [
   { name: 'WebGL URL', path: '/?renderer=webgl', stored: null },
   { name: 'default WebGL', path: '/', stored: null },

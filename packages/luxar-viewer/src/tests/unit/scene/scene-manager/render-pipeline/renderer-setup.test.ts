@@ -72,6 +72,10 @@ import {
   selectBackend,
 } from '../../../../../scene/scene-manager/render-pipeline/renderer-setup';
 import { log, Modules } from '../../../../../utils/log';
+import {
+  preRequestWebGPUAdapter,
+  takePreRequestedWebGPUAdapter,
+} from '../../../../../scene/scene-manager/render-pipeline/early-adapter-request';
 
 describe('selectBackend', () => {
   const originalEnv = { ...import.meta.env };
@@ -246,6 +250,23 @@ describe('createWebGPURenderer', () => {
     releaseDevice({});
     expect(await creating).toMatchObject({ fallback: false });
     expect(webgpuImport.calls).toBe(2);
+  });
+
+  it('consumes an early adapter request once without renegotiating', async () => {
+    const adapter = makeAdapter({ maxVertexBuffers: 16 });
+    const requestAdapter = vi.fn().mockResolvedValue(adapter);
+    stubNavigatorGpu(requestAdapter);
+
+    preRequestWebGPUAdapter();
+    expect(requestAdapter).toHaveBeenCalledOnce();
+    const early = takePreRequestedWebGPUAdapter();
+    expect(early).toBeDefined();
+    expect(takePreRequestedWebGPUAdapter()).toBeUndefined();
+
+    const result = await requestWebGPUDevice('webgpu', false, early);
+    expect(result).toMatchObject({ fallback: false });
+    expect(requestAdapter).toHaveBeenCalledOnce();
+    expect(adapter.requestDevice).toHaveBeenCalledOnce();
   });
 
   it('forceWebGL diagnostic mode: skips navigator.gpu and sets forceWebGL on renderer', async () => {

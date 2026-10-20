@@ -26,6 +26,11 @@ SceneManager body stays an orchestrator instead of a megaclass.
 
 ## Invariants
 
+`early-adapter-request.ts` holds the small core-adapter request shared by the
+standalone prefetch entry and renderer setup. The standalone entry starts it
+while the viewer bundle downloads; bootstrap consumes it once. Direct callers
+and device-loss recovery request a fresh adapter.
+
 - **No back-references to SceneManager.** Each helper receives its
   dependencies explicitly (function arguments or
   `WebGLContextRecoveryDeps`). The SceneManager wires them up but the

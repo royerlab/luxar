@@ -38,7 +38,9 @@ So the accessor sits in a leaf that imports nothing at runtime.
 
 `loadTslMaterials()` must resolve before the first material is constructed on
 the WebGPU path. The standalone HTML entry prefetches the registry before the
-main viewer bundle runs; bootstrap also starts adapter/device acquisition and
+main viewer bundle runs and starts adapter negotiation at the same time; bootstrap
+consumes that request once and starts device acquisition. Embedded mounts start
+adapter/device acquisition in bootstrap instead. Bootstrap also
 requests the registry before awaiting the adapter. `SceneManager.init` still
 awaits it before constructing a material:
 

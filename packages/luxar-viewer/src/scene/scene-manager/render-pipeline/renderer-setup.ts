@@ -56,6 +56,7 @@ import {
 import { notifier } from '../../../utils/cross-layer/notifier';
 export { selectBackend } from './backend-selection';
 import { shouldPrefetchTsl } from './backend-selection';
+import { hasWebGPU, requestCoreAdapter, type GPUAdapterLike } from './early-adapter-request';
 
 /**
  * Point the backend-dependent rendering paths at `renderer`. Every renderer
@@ -294,42 +295,15 @@ export type WebGPUDeviceRequest =
       webgpuModule?: Promise<typeof import('three/webgpu')>;
     };
 
-interface GPUAdapterLike {
-  readonly features: ReadonlySet<string>;
-  readonly limits: Record<string, number | undefined>;
-  requestDevice: (descriptor: {
-    requiredFeatures?: string[];
-    requiredLimits?: Record<string, number>;
-  }) => Promise<unknown>;
-}
-
-type NavigatorWithGPU = Navigator & {
-  gpu?: {
-    requestAdapter?: (options?: {
-      featureLevel?: 'core' | 'compatibility';
-      powerPreference?: 'low-power' | 'high-performance';
-    }) => Promise<GPUAdapterLike | null>;
-  };
-};
-
-async function requestCoreAdapter(): Promise<GPUAdapterLike | null> {
-  const gpu = (navigator as NavigatorWithGPU).gpu;
-  if (!gpu?.requestAdapter) return null;
-  let adapter: GPUAdapterLike | null = null;
-  try {
-    adapter = await gpu.requestAdapter({
-      featureLevel: 'core',
-      powerPreference: 'high-performance',
-    });
-  } catch {
-    // Older browsers reject the `featureLevel` option — fall through.
-  }
-  return adapter ?? gpu.requestAdapter().catch(() => null);
-}
-
 function prefetchTslMaterialsWhenUsable(hasGpu: boolean, requireNativeAdapter?: boolean): void {
   if (shouldPrefetchTsl(hasGpu, requireNativeAdapter))
     void loadTslMaterials().catch(() => undefined);
+}
+
+function coreAdapterRequest(
+  preRequestedAdapter?: Promise<GPUAdapterLike | null>
+): Promise<GPUAdapterLike | null> {
+  return preRequestedAdapter ?? requestCoreAdapter();
 }
 
 /**
@@ -341,13 +315,14 @@ function prefetchTslMaterialsWhenUsable(hasGpu: boolean, requireNativeAdapter?: 
  */
 export async function requestWebGPUDevice(
   rendererOverride?: 'webgl' | 'webgpu',
-  requireNativeAdapter?: boolean
+  requireNativeAdapter?: boolean,
+  preRequestedAdapter?: Promise<GPUAdapterLike | null>
 ): Promise<WebGPUDeviceRequest> {
-  const hasGpu = (navigator as NavigatorWithGPU).gpu !== undefined;
+  const hasGpu = hasWebGPU();
   // Start the TSL chunk before waiting for the adapter when this session can
   // still use WebGPU. The awaited setup load retries if the prefetch fails.
   prefetchTslMaterialsWhenUsable(hasGpu, requireNativeAdapter);
-  const adapter = await requestCoreAdapter();
+  const adapter = await coreAdapterRequest(preRequestedAdapter);
   if (!adapter) {
     if (lacksRequiredNativeDevice(requireNativeAdapter, hasGpu, false, undefined)) {
       return { fallback: true };
