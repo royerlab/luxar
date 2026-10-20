@@ -68,6 +68,37 @@ def _selected_metric(
     return np.asarray(values, dtype=float), label, peak, resolved_metric
 
 
+def _psnr_basis(result: CalibrationResult) -> tuple[float, str]:
+    """``(offset_db, axis label)``: plot PSNR on the basis the terminal prints.
+
+    The terminal table quotes the robust peak (``p99.99 - floor``, as ``fit``
+    and ``compare`` do); ``cal.json`` stores full-range curves. The two differ
+    by one constant per volume, added here so the report and the terminal show
+    the same numbers. A ``cal.json`` without a robust peak stays full range.
+    """
+    if math.isfinite(result.robust_data_range) and result.robust_data_range > 0:
+        return result.robust_offset_db(), "PSNR (dB, robust peak p99.99 − floor)"
+    return 0.0, "PSNR (dB, full range max − floor)"
+
+
+def _plot_ceiling_db(result: CalibrationResult) -> float:
+    """Noise ceiling on the plotted basis (RMS noise; legacy median fallback)."""
+    if not math.isnan(result.psnr_ceiling_robust_db):
+        return result.psnr_ceiling_robust_db
+    return result.noise_floor.psnr_max_db + _psnr_basis(result)[0]
+
+
+def _noise_annotation(result: CalibrationResult) -> str:
+    """One annotation line for the noise estimate, on the plotted basis."""
+    ceiling = _plot_ceiling_db(result)
+    ceil_str = f"{ceiling:.1f}" if math.isfinite(ceiling) else ">60"
+    if math.isfinite(result.noise_sigma_rms):
+        return f"RMS noise σ = {result.noise_sigma_rms:.4g}, ceiling ≈ {ceil_str} dB"
+    return (
+        f"median-voxel σ̂ = {result.noise_floor.sigma_hat:.4f}, ceiling = {ceil_str} dB"
+    )
+
+
 def _knee_display_idx(result: CalibrationResult) -> Optional[int]:
     """Index of the operating point (``k_knee``) in the sweep, or None.
 
@@ -92,16 +123,19 @@ def _plot_rate_distortion(
     ax_gap: "Axes",
     result: CalibrationResult,
 ) -> None:
+    off, psnr_label = _psnr_basis(result)
     ks = np.asarray(result.k_values_effective, dtype=float)
-    held = np.asarray(result.held_out_psnr_db, dtype=float)
+    held = np.asarray(result.held_out_psnr_db, dtype=float) + off
     selected, selected_label, selected_peak, resolved_metric = _selected_metric(result)
-    train = np.asarray(result.train_psnr_db, dtype=float)
-    full = np.asarray(result.full_psnr_db, dtype=float)
+    if resolved_metric != "gain":
+        selected = selected + off
+    train = np.asarray(result.train_psnr_db, dtype=float) + off
+    full = np.asarray(result.full_psnr_db, dtype=float) + off
     # Robust-peak SSIM (what `fit` / `compare` headline) when recorded.
     ssim = np.asarray(result.full_ssim_robust or result.full_ssim, dtype=float)
     fit_t = np.asarray(result.fit_times_seconds, dtype=float)
     k_star = selected_peak.k_star
-    psnr_ceiling = result.noise_floor.psnr_max_db
+    psnr_ceiling = _plot_ceiling_db(result)
 
     # PSNR panel
     ax_psnr.plot(ks, held, "o-", color="C1", label="held-out")
@@ -114,7 +148,7 @@ def _plot_rate_distortion(
         ax_psnr.text(
             ks[0],
             psnr_ceiling,
-            f"  noise floor = {psnr_ceiling:.1f} dB",
+            f"  noise ceiling ≈ {psnr_ceiling:.1f} dB",
             va="bottom",
             ha="left",
             fontsize=8,
@@ -144,7 +178,7 @@ def _plot_rate_distortion(
         )
     _safe_log_x(ax_psnr)
     ax_psnr.set_xlabel("Effective splat count K")
-    ax_psnr.set_ylabel("PSNR (dB)")
+    ax_psnr.set_ylabel(psnr_label)
     ax_psnr.set_title("Reconstruction PSNR vs K")
     ax_psnr.legend(loc="best", fontsize=9)
 
@@ -181,10 +215,13 @@ def _plot_rate_distortion(
 
 
 def _plot_blind_spot(fig: "Figure", ax: "Axes", result: CalibrationResult) -> None:
+    off, psnr_label = _psnr_basis(result)
     ks = np.asarray(result.k_values_effective, dtype=float)
     held, held_label, selected_peak, resolved_metric = _selected_metric(result)
-    train = np.asarray(result.train_psnr_db, dtype=float)
-    psnr_ceiling = result.noise_floor.psnr_max_db
+    if resolved_metric != "gain":
+        held = held + off
+    train = np.asarray(result.train_psnr_db, dtype=float) + off
+    psnr_ceiling = _plot_ceiling_db(result)
     k_star = selected_peak.k_star
     star_idx = result.k_values_requested.index(k_star)
 
@@ -201,7 +238,7 @@ def _plot_blind_spot(fig: "Figure", ax: "Axes", result: CalibrationResult) -> No
         ax.text(
             ks[0],
             psnr_ceiling,
-            f"  noise floor = {psnr_ceiling:.1f} dB",
+            f"  noise ceiling ≈ {psnr_ceiling:.1f} dB",
             va="bottom",
             ha="left",
             fontsize=8,
@@ -230,7 +267,7 @@ def _plot_blind_spot(fig: "Figure", ax: "Axes", result: CalibrationResult) -> No
         )
     _safe_log_x(ax)
     ax.set_xlabel("Effective splat count K")
-    ax.set_ylabel("Gain (dB)" if resolved_metric == "gain" else "PSNR (dB)")
+    ax.set_ylabel("Gain (dB)" if resolved_metric == "gain" else psnr_label)
     ax.set_title("Blind-spot cross-validation")
     ax.legend(loc="best", fontsize=10)
 
@@ -261,6 +298,19 @@ def _mid_slices(V: np.ndarray) -> List[np.ndarray]:
     while V.ndim > 3:
         V = V[V.shape[0] // 2]
     return _mid_slices(V)
+
+
+def _montage_target(volume: np.ndarray, result: CalibrationResult) -> np.ndarray:
+    """The volume on the fits' scale: the floor ``cal`` subtracted, clipped at 0.
+
+    The per-K fits were made on the floor-subtracted volume, so a raw target
+    would put the whole floor into the error column.
+    """
+    floor = result.fit_config.get("floor_subtracted")
+    V = np.asarray(volume, dtype=np.float32)
+    if floor is None or tuple(V.shape) != tuple(result.volume_shape):
+        return V
+    return np.clip(V - float(floor), 0.0, None)
 
 
 def _plot_slice_montage(
@@ -421,7 +471,6 @@ def render_calibration_report(
         fig, ax = plt.subplots(1, 1, figsize=(9, 6))
         _plot_blind_spot(fig, ax, result)
         # Annotation: peak detection summary
-        nf = result.noise_floor
         annotation = (
             f"K* = {selected_peak.k_star:,}  "
             f"(metric: {metric_description}, type: {selected_peak.type}, "
@@ -437,10 +486,7 @@ def render_calibration_report(
                 f"psnr_minmax K* = {result.held_out_peak.k_star:,} "
                 f"(type: {result.held_out_peak.type})\n"
             )
-        annotation += (
-            f"σ̂ = {nf.sigma_hat:.4f}, "
-            f"ceiling = {'>60' if math.isinf(nf.psnr_max_db) else f'{nf.psnr_max_db:.1f}'} dB"
-        )
+        annotation += _noise_annotation(result)
         fig.text(
             0.02,
             0.02,
@@ -466,7 +512,8 @@ def render_calibration_report(
             rendered_star = _render_splat_path(splat_paths[star_idx], shape)
             rendered_high = _render_splat_path(splat_paths[-1], shape)
 
-            n_rows = 1 if volume.ndim == 2 else 3
+            target = _montage_target(volume, result)
+            n_rows = 1 if target.ndim == 2 else 3
             fig, axes_grid = plt.subplots(
                 n_rows,
                 5,
@@ -476,7 +523,7 @@ def render_calibration_report(
             _plot_slice_montage(
                 fig,
                 axes_grid,
-                volume,
+                target,
                 rendered_low,
                 rendered_star,
                 rendered_high,

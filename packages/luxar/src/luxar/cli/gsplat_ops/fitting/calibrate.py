@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -78,8 +79,8 @@ def _print_regime_warnings(result: "CalibrationResult") -> None:
     sig = result.noise_floor.sigma_hat
     if math.isfinite(sig) and sig < 1e-4:
         aprint(
-            "  ⚠ σ̂≈0 (noise-free/deconvolved): the blind-spot peak may not "
-            "appear; prefer --k-star-metric psnr_fg_weighted "
+            "  ⚠ median-voxel σ̂≈0 (noise-free/deconvolved): the blind-spot "
+            "peak may not appear; prefer --k-star-metric psnr_fg_weighted "
             "(and --auto-region)."
         )
     if result.not_converged:
@@ -482,13 +483,62 @@ def _run_post_sweep(
     return False
 
 
+def _resolve_keep_fits(
+    keep_fits: Optional[Path],
+    pdf_report: Optional[Path],
+    stack: contextlib.ExitStack,
+    output_json: Path,
+) -> "tuple[Optional[Path], bool]":
+    """``(directory for the per-K fits or None, whether it is temporary)``.
+
+    ``--keep-fits`` wins. ``--pdf`` alone keeps the fits in a temporary
+    directory that ``stack`` deletes once the report is written: the report's
+    slice page renders K_min / K* / K_max, and K* is only known at the end.
+    The directory sits beside ``cal.json``, not in ``$TMPDIR``: a run killed
+    without cleanup (a Slurm timeout) leaves it where the user will see it,
+    rather than filling a small node-local ``/tmp``.
+    """
+    import tempfile
+
+    if keep_fits is not None:
+        keep_fits = Path(keep_fits)
+        keep_fits.mkdir(parents=True, exist_ok=True)
+        aprint(f"Per-K fits will be saved under {keep_fits}")
+        return keep_fits, False
+    if pdf_report is None:
+        return None, False
+    output_json.parent.mkdir(parents=True, exist_ok=True)
+    temp = Path(
+        stack.enter_context(
+            tempfile.TemporaryDirectory(
+                prefix=f"{output_json.stem}-fits-", dir=output_json.parent
+            )
+        )
+    )
+    aprint(
+        f"--pdf: per-K fits are kept in a temporary directory ({temp}) for the "
+        "report's slice page and deleted afterwards (pass --keep-fits DIR to "
+        "keep them)."
+    )
+    return temp, True
+
+
 def _write_cal_outputs(
     result: "CalibrationResult",
     volume: "Any",
     output_json: Path,
     pdf_report: Optional[Path],
+    *,
+    splat_paths: Optional["list[str]"] = None,
 ) -> None:
-    """Write ``cal.json`` and, when asked, the PDF report."""
+    """Write ``cal.json`` and, when asked, the PDF report.
+
+    ``splat_paths`` (the per-K fits the report's slice page renders) defaults
+    to ``result.splat_paths``; it is passed separately when the fits live in a
+    temporary directory that ``cal.json`` must not reference.
+    """
+    if splat_paths is None:
+        splat_paths = result.splat_paths
     # 5. Write JSON
     with asection("Writing results"):
         output_json.parent.mkdir(parents=True, exist_ok=True)
@@ -508,7 +558,7 @@ def _write_cal_outputs(
                     result=result,
                     volume=volume,
                     output_path=pdf_report,
-                    splat_paths=result.splat_paths,
+                    splat_paths=splat_paths,
                 )
                 aprint(f"Wrote {pdf_report}")
             except ImportError as exc:
@@ -517,20 +567,8 @@ def _write_cal_outputs(
 
 
 def _robust_offset_db(result: "CalibrationResult") -> float:
-    """dB to ADD to a full-range PSNR to restate it on the robust peak.
-
-    PSNR is ``10 log10(peak^2 / MSE)`` and the peak is one constant per volume,
-    so moving from the full range (``max - min``) to the robust peak
-    (``p99.99 - min``, the ``fit``/``compare`` headline) is a constant
-    ``20 log10(robust / full)`` — every curve shifts together and K* does not
-    move. ``0`` for a ``cal.json`` that predates the robust peak.
-    """
-    import math
-
-    full, robust = result.data_range, result.robust_data_range
-    if math.isfinite(full) and math.isfinite(robust) and full > 0 and robust > 0:
-        return 20.0 * math.log10(robust / full)
-    return 0.0
+    """dB to ADD to a full-range PSNR to restate it on the robust peak."""
+    return result.robust_offset_db()
 
 
 def _fmt_db(x: float) -> str:
@@ -612,11 +650,54 @@ def _print_stored_note(result: "CalibrationResult", k_star: int) -> None:
     )
 
 
+def _noise_lines(result: "CalibrationResult") -> "list[str]":
+    """The summary's noise line(s), on the SAME robust-peak basis as the table.
+
+    Prefers the RMS noise (what a held-out MSE averages, on the
+    floor-subtracted reference the table is scored against). A ``cal.json`` that predates it only has the median-voxel ensemble
+    ``sigma_hat`` on the full range: that one is restated on the robust peak
+    and labelled as a median, which under shot noise reads far too optimistic.
+    """
+    import math
+
+    from luxar.gsplats.calibration.noise_floor import MASKED_SIGMA_MAX_SCALE_RATIO
+
+    sigma, ceil_db = result.noise_sigma_rms, result.psnr_ceiling_robust_db
+    if math.isfinite(sigma) and not math.isnan(ceil_db):
+        peak = result.robust_data_range
+        share = (
+            f" ({100.0 * sigma / peak:.1f}% of the robust peak)"
+            if math.isfinite(peak) and peak > 0
+            else ""
+        )
+        ceil_str = f"{ceil_db:.1f} dB" if math.isfinite(ceil_db) else "unbounded"
+        lines = [
+            f"  Noise:          RMS σ = {sigma:.4g}{share} → held-out PSNR "
+            f"ceiling ≈ {ceil_str} (robust peak, as in the table)"
+        ]
+        ratio = result.noise_scale_ratio
+        if math.isfinite(ratio) and ratio > MASKED_SIGMA_MAX_SCALE_RATIO:
+            lines.append(
+                "                  (fine structure also reads as noise here "
+                f"[scale ratio {ratio:.1f}], so the ceiling may read low)"
+            )
+        return lines
+    nf_sigma, nf_ceil = result.noise_floor.sigma_hat, result.noise_floor.psnr_max_db
+    sigma_str = f"{nf_sigma:.4f}" if math.isfinite(nf_sigma) else "—"
+    if math.isfinite(nf_ceil):
+        ceil_str = f"{nf_ceil + _robust_offset_db(result):.1f} dB"
+    else:
+        ceil_str = ">60 dB" if math.isinf(nf_ceil) else "—"
+    return [
+        f"  Noise floor:    median-voxel σ = {sigma_str} → ceiling {ceil_str} "
+        "(robust peak; a median under-reads shot noise, so this is optimistic)"
+    ]
+
+
 def _print_cal_summary(
     result: "CalibrationResult", input_path: Path, elapsed: float, *, quiet: bool
 ) -> None:
     """The terminal summary table (or, under ``--quiet``, its warnings)."""
-    import math
 
     if not quiet:
         aprint("\n" + "═" * 64)
@@ -632,15 +713,8 @@ def _print_cal_summary(
                 f"of full {tuple(result.original_volume_shape or [])}"
             )
             aprint("                  (Volume / PSNR_full above are for this crop)")
-        sigma = result.noise_floor.sigma_hat
-        ceil_db = result.noise_floor.psnr_max_db
-        sigma_str = f"{sigma:.4f}" if math.isfinite(sigma) else "—"
-        ceil_str = (
-            f"{ceil_db:.1f} dB"
-            if math.isfinite(ceil_db)
-            else (">60 dB" if math.isinf(ceil_db) else "—")
-        )
-        aprint(f"  Noise floor:    σ = {sigma_str}, PSNR ceiling = {ceil_str}")
+        for line in _noise_lines(result):
+            aprint(line)
         aprint("")
         selected_peak, selected_metric = _print_cal_table(result)
         # Headline = the K* under the metric the user actually selected.
@@ -776,6 +850,7 @@ def run_calibrate_command(
         fit_kwargs["verbose"] = False
         # 2. Load volume (reuse the loader used by `compare` and `fit`)
         with (
+            contextlib.ExitStack() as stack,
             asection(f"Calibration: {input_path.name}"),
             cpu_threads_for(
                 fit_kwargs["device"],
@@ -856,11 +931,12 @@ def run_calibrate_command(
             # The resolved spacing shapes every K's fit (see _apply_cal_spacing).
             _apply_cal_spacing(fit_kwargs, input_frame)
 
-            # 3. Prepare the optional per-K outputs.
-            if keep_fits is not None:
-                keep_fits = Path(keep_fits)
-                keep_fits.mkdir(parents=True, exist_ok=True)
-                aprint(f"Per-K fits will be saved under {keep_fits}")
+            # 3. Prepare the optional per-K outputs. The PDF's slice page needs
+            # the per-K fits, so --pdf alone keeps them in a temporary directory
+            # (said now, not after a sweep that can take hours).
+            keep_fits, temp_fits = _resolve_keep_fits(
+                keep_fits, pdf_report, stack, output_json
+            )
 
             # 4. Run sweep
             def _on_progress(i: int, n: int, msg: str) -> None:
@@ -873,6 +949,8 @@ def run_calibrate_command(
                 r.original_volume_shape = original_shape
                 r.input_frame = input_frame or None
                 r.fit_config.setdefault("preset", preset)
+                if temp_fits:
+                    r.splat_paths = None  # deleted with the temporary directory
                 if region_info is not None:
                     r.calibration_region = region_info
                 return r
@@ -897,6 +975,7 @@ def run_calibrate_command(
                     sweep_control=control,
                 )
                 elapsed = time.perf_counter() - t0
+            splat_paths = result.splat_paths  # before _stamp drops temporary ones
             _stamp(result)
             # The sweep is done: write the COMPLETE cal.json now, so a later
             # step (exponent fit, whole-input read) can never leave it partial.
@@ -940,8 +1019,11 @@ def run_calibrate_command(
 
             interrupted = _run_post_sweep(result, _post_sweep, skip=interrupted)
 
-            # 5-6. Write JSON (+ optional PDF).
-            _write_cal_outputs(result, volume, output_json, pdf_report)
+            # 5-6. Write JSON (+ optional PDF). Temporary fits are deleted with
+            # the stack, so cal.json does not point at them (see _stamp).
+            _write_cal_outputs(
+                result, volume, output_json, pdf_report, splat_paths=splat_paths
+            )
 
         # 7. Print formatted table
         _print_cal_summary(result, input_path, elapsed, quiet=quiet)

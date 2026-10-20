@@ -668,8 +668,23 @@ crop under `input_frame`.
 
 `--pdf` needs matplotlib (`pip install matplotlib`, or the `luxar[demos]`
 extra); `cal` checks for it before the sweep and exits at once when it is
-missing. The per-K slice montages of `--keep-fits` are pages of that report, so
-`--keep-fits` alone needs nothing extra.
+missing. The report's slice page renders the per-K fits, so `--pdf` without
+`--keep-fits` keeps them in a temporary directory beside `cal.json` (said
+before the sweep; a run killed without cleanup leaves it there, not in `/tmp`)
+and deletes them once the report is written. Rendering that page re-renders
+three fits on the CPU and is not free: about 1.8 min for a 37 Mvox volume at
+K=64,000; `--keep-fits DIR` keeps them and
+records their paths in `cal.json`. `--keep-fits` alone needs nothing extra.
+Every PSNR in the report is on the same robust peak (p99.99 - floor) as the
+terminal table, and the axes say so.
+
+The summary's noise line is the RMS noise of the floor-subtracted volume (the
+in-plane Haar band binned by local intensity, the estimator `compare` uses
+inside its mask) and the held-out PSNR ceiling it implies, on the table's
+robust-peak basis. Shot noise makes the bright voxels dominate a held-out MSE,
+so the median-voxel ensemble `noise_floor.sigma_hat` (still in `cal.json`)
+reads the quiet background and puts the ceiling far too high on fluorescence.
+A long grid point prints an in-fit progress line at most every 30 s.
 
 **Options**: `--k-grid` (explicit comma-separated K values), `--n-grid` (default 10), `--k-min`/`--k-max` (default: from the volume, above), `--early-stop/--no-early-stop`, `--extend-below/--no-extend-below`, `--progression` (exp/power), `--power`, `--mask-seed`, `--mask-fraction` (default 0.05), `--preset` (default n2s), `--config`, `--floor` (background floor / DC-offset suppression, default `auto` — K* is measured on floor-suppressed data, matching `fit`; pass `none` for the legacy hard-min behavior), `--device/-d`, `--k-star-metric` (psnr_foreground default / psnr_minmax / psnr_fg_weighted / gain), `--fg-bg-ratio` (default 1, equal total foreground/background weight for `psnr_fg_weighted`), `--auto-region/--no-auto-region` + `--region-size`/`--region-strategy` (calibrate on a content-rich sub-region), `--feature-metric`, `--saturation-exponent`, `--rd-model/--no-rd-model`, `--fit-exponent`/`--exponent-scales` (measure the saturation exponent alpha instead of assuming the default), `--pdf` (multi-page PDF report), `--keep-fits` (persist per-K fits), `--quiet/-q`, plus volume-loader pass-through (`--channel/-c`, `--timepoint`, `--array-key`, `--axes`). For sparse or deconvolved volumes, prefer `psnr_fg_weighted`: it balances signal fidelity against background haze. `gain` remains a useful reported diagnostic, but its K* is identical to `psnr_minmax` because the predict-zero baseline is constant across K.
 

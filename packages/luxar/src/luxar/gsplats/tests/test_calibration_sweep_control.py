@@ -520,3 +520,154 @@ def test_a_falling_plateau_is_resolved_before_stopping(
     assert (peak.k_star, peak.type) == (k_star, "peak")
     # the old rule would have stopped at 3130 on a plateau with K* = 392
     assert find_k_star(_A549_KS[:6], values[:6]).k_star in (392, 1566)
+
+
+# -----------------------------------------------------------------------------
+# In-fit progress (FitHeartbeat) and the held-out noise ceiling
+# -----------------------------------------------------------------------------
+
+
+class TestFitHeartbeat:
+    def test_emits_at_most_once_per_interval(self) -> None:
+        from luxar.gsplats.calibration.sweep import FitHeartbeat
+
+        now = [0.0]
+        lines: List[str] = []
+        beat = FitHeartbeat(
+            31000, 20000, lines.append, interval_s=30.0, clock=lambda: now[0]
+        )
+        for it, t in [(25, 10.0), (50, 29.9), (75, 31.0), (100, 40.0), (125, 62.0)]:
+            now[0] = t
+            beat(it, None, {"rel_l2": 0.25})
+        assert len(lines) == 2
+        assert "K=31000: iteration 75/20000, relL2 0.2500" in lines[0]
+        assert "iteration 125/20000" in lines[1]
+        assert "can stop early" in lines[0]
+
+    def test_point_context_chains_the_heartbeat_and_drops_the_cull(self) -> None:
+        from luxar.gsplats.calibration.sweep import FitHeartbeat, PointContext
+
+        seen: List[int] = []
+        ctx = PointContext.__new__(PointContext)
+        ctx.fit_kwargs = {
+            "n_iters": 500,
+            "iter_callback": lambda it, pred, info: seen.append(it),
+        }
+        ctx.heartbeat = None
+        plain = ctx._fit_kwargs_for(1000)
+        assert plain["cull_retention"] is None
+        assert plain["iter_callback"] is ctx.fit_kwargs["iter_callback"]
+
+        lines: List[str] = []
+        ctx.heartbeat = lines.append
+        chained = ctx._fit_kwargs_for(1000)
+        chained["iter_callback"](25, None, {})
+        assert seen == [25]  # the configured callback still runs
+        assert not isinstance(chained["iter_callback"], FitHeartbeat)
+        assert "iter_callback" in ctx.fit_kwargs  # the shared kwargs are untouched
+
+    def test_run_sweep_routes_in_fit_lines_to_the_point(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def run(self: Any, K: int) -> Dict[str, Any]:
+            self.heartbeat(f"inside K={K}")
+            return _stub_run({K: 30.0}, [])(self, K)
+
+        monkeypatch.setattr(driver_module.PointContext, "run", run)
+        got: List[tuple] = []
+        calibrate(
+            _tiny_volume(),
+            [1000, 2000],
+            fit_kwargs=_FIT,
+            compute_rd_model=False,
+            progress_callback=lambda i, n, m: got.append((i, n, m)),
+        )
+        assert (0, 2, "inside K=1000") in got
+        assert (1, 2, "inside K=2000") in got
+
+
+class TestHeldOutNoiseCeiling:
+    def _shot_noise_volume(self) -> np.ndarray:
+        """A dark, quiet background (90%) and a bright, noisy slab (10%)."""
+        rng = np.random.default_rng(3)
+        V = rng.normal(100.0, 2.0, (20, 64, 64)).astype(np.float32)
+        V[:2] = rng.normal(1000.0, 40.0, (2, 64, 64))
+        return V
+
+    def test_rms_sigma_follows_the_bright_voxels_not_the_median(self) -> None:
+        sigma, ratio = driver_module._rms_noise_of(self._shot_noise_volume())
+        # RMS of 2 (90 %) and 40 (10 %) = sqrt(0.9 * 4 + 0.1 * 1600) ~ 12.8
+        assert 10.0 < sigma < 15.5
+        assert 0.8 < ratio < 1.3  # white noise: both scales agree
+        from luxar.gsplats.calibration import estimate_noise_floor
+
+        median_sigma = estimate_noise_floor(self._shot_noise_volume()).sigma_hat
+        assert median_sigma < 3.0  # the median reads the quiet background
+
+    def test_ceiling_db(self) -> None:
+        assert driver_module._ceiling_db(1.0, 100.0) == pytest.approx(40.0)
+        assert math.isinf(driver_module._ceiling_db(0.0, 100.0))
+        assert math.isnan(driver_module._ceiling_db(float("nan"), 100.0))
+
+    def test_calibrate_records_the_ceiling_on_the_robust_peak(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(
+            driver_module.PointContext,
+            "run",
+            _stub_run({1000: 30.0, 2000: 31.0}, []),
+        )
+        r = calibrate(
+            self._shot_noise_volume(),
+            [1000, 2000],
+            fit_kwargs={**_FIT, "floor": "none"},
+            compute_rd_model=False,
+        )
+        assert 10.0 < r.noise_sigma_rms < 15.5
+        assert r.psnr_ceiling_robust_db == pytest.approx(
+            20 * math.log10(r.robust_data_range / r.noise_sigma_rms)
+        )
+        r.to_json(tmp_path / "cal.json")
+        back = CalibrationResult.from_json(tmp_path / "cal.json")
+        assert back.noise_sigma_rms == pytest.approx(r.noise_sigma_rms)
+        assert back.psnr_ceiling_robust_db == pytest.approx(r.psnr_ceiling_robust_db)
+        assert back.noise_scale_ratio == pytest.approx(r.noise_scale_ratio)
+
+    def test_old_cal_json_hydrates_nan(self, tmp_path: Path) -> None:
+        import json
+
+        path = tmp_path / "cal.json"
+        _minimal_result().to_json(path)
+        raw = json.loads(path.read_text())
+        for key in ("noise_sigma_rms", "noise_scale_ratio", "psnr_ceiling_robust_db"):
+            raw.pop(key)
+        path.write_text(json.dumps(raw))
+        back = CalibrationResult.from_json(path)
+        assert math.isnan(back.noise_sigma_rms)
+        assert math.isnan(back.psnr_ceiling_robust_db)
+
+
+def _minimal_result() -> CalibrationResult:
+    from luxar.gsplats.calibration import NoiseFloor, find_k_star
+
+    ks, held = [1000, 2000, 4000], [30.0, 31.0, 30.5]
+    return CalibrationResult(
+        k_values_requested=ks,
+        k_values_effective=ks,
+        held_out_psnr_db=held,
+        train_psnr_db=held,
+        held_out_mse=[1e-3] * 3,
+        full_psnr_db=held,
+        full_ssim=[0.9] * 3,
+        held_out_peak=find_k_star(ks, held),
+        noise_floor=NoiseFloor(0.01, 0.01, 0.01, 0.01, 40.0),
+        fit_times_seconds=[1.0] * 3,
+        splat_paths=None,
+        mask_seed=0,
+        mask_fraction=0.05,
+        donut_radius=1,
+        fit_config={},
+        volume_shape=[8, 8, 8],
+        volume_dtype="float32",
+        timestamp="2026-01-01T00:00:00",
+    )
