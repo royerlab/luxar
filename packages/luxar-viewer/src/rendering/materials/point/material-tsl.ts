@@ -39,6 +39,7 @@ import {
 } from './shader-tsl';
 import { copyRuntimeUniforms, POINT_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
 import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
+import { copyTSLNodeOverride } from '../_shared/tsl-node-override';
 import type { PointMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
@@ -605,6 +606,8 @@ export class PointTSLMaterial
 
     // Runtime state a fresh clone would reset (POINT_RUNTIME_UNIFORMS, ../_shared/runtime-uniforms.ts).
     copyRuntimeUniforms(this, cloned, POINT_RUNTIME_UNIFORMS);
+
+    copyTSLNodeOverride(this, cloned);
 
     return cloned as this;
   }

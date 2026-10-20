@@ -57,6 +57,7 @@ import { texture, uniform } from 'three/tsl';
 import { NodeMaterial, NodeUpdateType } from 'three/webgpu';
 import { SOFT_DISPOSE_FLAG } from '../../material-manager/soft-dispose-flag';
 import type { TSLNode } from './tsl-helpers';
+import { bindTSLNodeOverride } from './tsl-node-override';
 
 /** A material's leaf set: name → TSL leaf (`uniform()` or `texture()`), or absent. */
 export type TSLLeafSet = object;
@@ -255,9 +256,7 @@ export function applySharedTSLGraph<T extends TSLLeafSet>(
       forwardedInputsByMaterial.delete(material);
     });
   }
-  material.vertexNode = graph.vertexNode;
-  material.colorNode = graph.colorNode;
-  material.depthNode = graph.depthNode;
+  bindTSLNodeOverride(material, graph);
   return graph;
 }
 

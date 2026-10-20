@@ -44,6 +44,7 @@ import {
 } from './shader-tsl';
 import { copyRuntimeUniforms, GSPLAT_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
 import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
+import { copyTSLNodeOverride } from '../_shared/tsl-node-override';
 import type { GSplatMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
@@ -648,6 +649,8 @@ export class GSplatTSLMaterial
       this.uniforms.uLabelColorMode.value === 1,
       this.uniforms.uLabelFilterIndex.value
     );
+
+    copyTSLNodeOverride(this, cloned);
 
     return cloned as this;
   }

@@ -32,6 +32,7 @@ import {
 } from './shader-tsl';
 import { copyRuntimeUniforms, LINE_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
 import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
+import { copyTSLNodeOverride } from '../_shared/tsl-node-override';
 import {
   isOrthographicProjection,
   type ProjectionVariantMaterial,
@@ -655,6 +656,8 @@ export class LineTSLMaterial
     // width). No-op when still on the placeholder.
     const lineTex = this.uniforms.uLineTex?.value as THREE.DataTexture | null | undefined;
     if (lineTex) cloned.updateLineTexture(lineTex);
+
+    copyTSLNodeOverride(this, cloned);
 
     return cloned as this;
   }

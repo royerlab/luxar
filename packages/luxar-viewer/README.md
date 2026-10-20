@@ -128,6 +128,28 @@ materials.
 The viewer's own WebGPU code remains lazily loaded; a host that imports
 `three/webgpu` for its factory controls when that dependency loads.
 
+To change a built-in Points, Lines, GSplats, or Mesh TSL material, use
+`setTSLNodeOverride` on that material after it is created. The callback receives
+the material's original output nodes and returns only the outputs to replace:
+
+```ts
+import { setTSLNodeOverride } from '@luxar/viewer';
+import { mul, vec4 } from 'three/tsl';
+
+setTSLNodeOverride(material, ({ colorNode }) => ({
+  colorNode: mul(colorNode, vec4(1, 0.5, 1, 1)),
+}));
+```
+
+The callback runs again when Luxar rebuilds the TSL graph (for example, after a
+colormap or gamma variant change), and follows the material when it is cloned.
+It must return new nodes without mutating the original nodes, which are shared
+by materials of the same configuration. Pass `null` to restore the built-in
+graph. This hook applies to Luxar's built-in shared-graph TSL materials; a
+custom `NodeMaterial` uses its own node properties. On WebGL, use the material's
+GLSL `onBeforeCompile` hook. Keep the two backend implementations equivalent
+when an extension is intended to work in both renderers.
+
 ### `LuxarAppOptions`
 
 | Option             | Type                  | Default         | Notes                                                                                                                                                                                                                                                                   |
