@@ -475,6 +475,26 @@ def announce_denoised_quality_basis(ctx: FitPipelineCtx, is_tiled: bool) -> None
     )
 
 
+def seeds_line(
+    parsed_seeds: "int | float | None", *, progressive: bool, tile: Optional[str]
+) -> str:
+    """The ``Seeds:`` line; warns about ``auto`` once, where it is the heuristic.
+
+    Progressive ``auto`` is a fixed 50,000 budget, and a ``--tile k/M`` worker's
+    parent already warned for the whole fit, so neither repeats the warning.
+    """
+    if parsed_seeds is not None:
+        return f"Seeds: {parsed_seeds}"
+    if progressive or tile is not None:
+        return "Seeds: auto"
+    return (
+        "Seeds: auto. ⚠ auto sizes the budget from the volume's linear "
+        "extent, not its content (100 to 10,000 seeds per fit or tile), "
+        "which badly under-seeds anything past a small test volume; pass "
+        "--seeds K from `luxar gsplat cal`, or a ratio."
+    )
+
+
 def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any, Any]":
     """Build the merged fit config and parse the seed / downscale options.
 
@@ -546,10 +566,7 @@ def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any
 
     # 4. Parse seeds
     parsed_seeds = parse_seeds(ctx.seeds)
-    if parsed_seeds is not None:
-        aprint(f"Seeds: {parsed_seeds}")
-    else:
-        aprint("Seeds: auto")
+    aprint(seeds_line(parsed_seeds, progressive=ctx.progressive, tile=ctx.tile))
 
     # 4b. Inject per-tile denoise params for tiled fitting
     if ctx.denoise and ctx.denoise_effective_h is not None and is_tiled:

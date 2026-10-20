@@ -305,6 +305,7 @@ def resolve_jobs(
     """
     from luxar.gsplats.utils.device import (
         WorkerLimit,
+        is_unified_memory_device,
         resolve_auto_worker_limit,
         resolve_torch_device,
     )
@@ -312,6 +313,7 @@ def resolve_jobs(
     if isinstance(jobs, str) and jobs.strip().lower() == "auto":
         free: Optional[int] = None
         require_device_memory = False
+        unified = False
         try:
             from luxar.gsplats.metrics import _gpu_free_memory
 
@@ -319,6 +321,7 @@ def resolve_jobs(
             require_device_memory = getattr(dev, "type", None) == "cuda"
             if require_device_memory:
                 free = _gpu_free_memory(dev)
+                unified = is_unified_memory_device(dev.index or 0)
         except Exception:
             free = None
 
@@ -327,6 +330,7 @@ def resolve_jobs(
             free_device_memory=free,
             require_device_memory=require_device_memory,
             dtype_bytes=dtype_bytes,
+            unified_memory=unified,
         )
         if num_tiles < limit.count:
             return WorkerLimit(max(1, num_tiles), "task count")

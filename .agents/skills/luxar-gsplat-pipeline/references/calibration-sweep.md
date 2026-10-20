@@ -127,3 +127,20 @@ grid's top. Use `--no-early-stop` and an explicit `--k-max` when you need the
 whole curve. A curve that never spans 0.3 dB never stops early: it runs the full
 grid. And the single-point decline rule can cut a noisy peak: a 0.3 dB dip
 before the real maximum ends the sweep at the dip.
+
+## Sparse puncta (FISH spots)
+
+Held-out PSNR averages over every masked voxel; on sparse, diffraction-limited
+puncta the spot centres are a tiny share of them, so the curve is flat and K\*
+lands far below what the spots need. `cal` detects spots on the floor-subtracted
+volume and records, per K, the median rendered/reference peak at them
+(`spot_peak_ratio` in `cal.json`). When a larger K rendered the spots better
+and K\* reached under 95% of the sweep's best, it warns and names the first grid
+K within 98% of that best (comparing renders with renders cancels the noise bias
+of the reference peak). Under `--region`/`--auto-region` it restates that K as a
+whole-volume `--seeds`. EASI-FISH level-0 crops: 27-93% of the best at K\* on
+sparse crops, 99% on a dense one; an Allen DNA crop reached 91%, so textured
+nuclei can trigger it too. K\* itself is unchanged.
+
+Never fit real data with `--seeds auto`: it sizes 100-10,000 seeds from the
+volume's linear extent, not its content.

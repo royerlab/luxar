@@ -60,6 +60,27 @@ def _fake_result(k_grid: list[int], psnr: list[float]) -> Any:
     )
 
 
+def test_spot_warning_reaches_cal_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from luxar.cli.gsplat_ops.fitting import calibrate as cal_cli
+    from luxar.gsplats.calibration import CalibrationResult
+
+    result = _fake_result([1000, 4000], [38.0, 37.0])
+    result.k_values_effective = [800, 3000]
+    result.spot_count = 40
+    result.spot_peak_ratio = [0.5, 0.9]
+    path = tmp_path / "cal.json"
+    result.to_json(path)
+
+    lines: list[str] = []
+    monkeypatch.setattr(cal_cli, "aprint", lambda message: lines.append(str(message)))
+    cal_cli._print_regime_warnings(CalibrationResult.from_json(path))
+    output = "\n".join(lines)
+    assert "small bright structures: K*=1,000" in output
+    assert "--seeds 4,000" in output
+
+
 def _run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

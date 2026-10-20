@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from .curve_analysis import HeldOutPeak, find_k_star
+from .spots import SpotReference, spot_peak_ratio
 from .sweep_control import (
     SweepControl,
     estimate_remaining_seconds,
@@ -59,6 +60,7 @@ _CURVE_KEYS = (
     "full_psnr",
     "full_ssim",
     "full_ssim_robust",
+    "spot_peak_ratio",
 )
 
 
@@ -144,6 +146,8 @@ class PointContext:
     stored_min_extent_max_mass_share: float
     heartbeat: Optional[Callable[[str], None]] = None
     """Where in-fit progress lines go (:class:`FitHeartbeat`); ``None`` = silent."""
+    spots: Optional[SpotReference] = None
+    """Detected puncta to score each render against (:mod:`.spots`); ``None`` skips."""
 
     def _fit_kwargs_for(self, K: int) -> Dict[str, Any]:
         """The per-K fit kwargs: no cull (applied here), plus the heartbeat."""
@@ -205,6 +209,11 @@ class PointContext:
             rendered = render_to_volume_tensor(
                 splats, shape=self.V_filled.shape, device=self.render_device
             )
+            spot_ratio = (
+                spot_peak_ratio(rendered, self.spots)
+                if self.spots is not None and self.spots.n > 0
+                else float("nan")
+            )
             record: Dict[str, Any] = _per_k_metrics(
                 rendered,
                 self.ref_dev,
@@ -217,6 +226,7 @@ class PointContext:
                 robust_range=self.robust_range,
             )
             del rendered  # now the squared-error volume (reused in place)
+        record["spot_peak_ratio"] = spot_ratio
         record.update(
             k=int(K),
             eff=int(splats.n_splats),

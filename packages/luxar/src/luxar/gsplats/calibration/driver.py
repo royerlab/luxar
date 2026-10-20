@@ -36,6 +36,7 @@ from .masking import cv_mask, donut_median_fill
 from .metrics import _psnr_db, held_out_gain_db, predict_zero_baseline_mse
 from .noise_floor import estimate_masked_noise, estimate_noise_floor
 from .result import CalibrationResult, _json_safe
+from .spots import detect_spots
 from .sweep import (
     PointContext,
     ProgressCallback,
@@ -297,6 +298,7 @@ class _ResultParts:
     compute_rd_model: bool
     control: SweepControl
     record_sweep: bool
+    spot_count: Optional[int] = None
 
 
 def _density(
@@ -429,6 +431,8 @@ def _assemble(
         k_star_stored=stored[ks.index(selected.k_star)]
         if selected.k_star in ks
         else None,
+        spot_count=parts.spot_count,
+        spot_peak_ratio=list(curve["spot_peak_ratio"]),
     )
 
 
@@ -592,6 +596,7 @@ def calibrate(
     # foreground mask so we can strip background-domination from the held-out
     # metric.
     baseline_mse = predict_zero_baseline_mse(V, mask)
+    spots = detect_spots(V)
     fg_weighted_mask, fg_otsu_threshold = foreground_mask_otsu_smoothed(V)
 
     # Resolve the render device ONCE and hoist the loop-invariant device copies
@@ -625,6 +630,7 @@ def calibrate(
         cull_retention=cull_retention,
         stored_min_extent=stored_min_extent,
         stored_min_extent_max_mass_share=share,
+        spots=spots,
     )
     control = sweep_control or SweepControl(early_stop=False, extend_below=False)
     parts = _ResultParts(
@@ -658,6 +664,7 @@ def calibrate(
         compute_rd_model=compute_rd_model,
         control=control,
         record_sweep=sweep_control is not None,
+        spot_count=None if spots is None else spots.n,
     )
     del fg_weighted_mask
 

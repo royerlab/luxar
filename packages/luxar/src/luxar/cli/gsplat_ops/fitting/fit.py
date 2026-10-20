@@ -315,7 +315,9 @@ def run_fit_volume(
             "reports): a tiled fit divides it across the tiles that contain "
             "signal instead of giving every tile the full count. A K below "
             "the non-empty tile count gives one seed per such tile. A ratio is "
-            "scale-free and is applied per tile unchanged."
+            "scale-free and is applied per tile unchanged. 'auto' (the "
+            "default) sizes from the linear extent, not the content: 100 to "
+            "10,000 seeds per fit or tile, too few for most real volumes."
         ),
     ),
     iters: Optional[int] = typer.Option(

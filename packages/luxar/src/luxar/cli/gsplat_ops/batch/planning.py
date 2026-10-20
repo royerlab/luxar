@@ -2042,12 +2042,24 @@ def _announce_seed_split(
     lower bound and leave the exact non-empty divisor to each ``--tile k/M``
     task. Task output does not reach this console: the local pool captures it
     and Slurm sends it to a log. Content plans ignore ``--seeds`` because
-    per-box budgets come from the density model.
+    per-box budgets come from the density model. An ``auto`` budget gets the
+    one-time warning the tile workers no longer print.
     """
-    if mode == "content" or not fit_args.get("seeds"):
+    if mode == "content":
         return
     from luxar.cli.gsplat_config import parse_seeds
-    from luxar.cli.gsplat_ops.fitting.fit_utils import announce_seed_split_lower_bound
+    from luxar.cli.gsplat_ops.fitting.fit_utils import (
+        announce_seed_split_lower_bound,
+        seeds_line,
+    )
+
+    seeds = fit_args.get("seeds")
+    if not seeds or str(seeds).strip().lower() == "auto":
+        # The tasks are `fit --tile k/M` workers, which stay quiet about auto:
+        # warn once here for the whole batch.
+        if "progressive" not in fit_args:
+            aprint(seeds_line(None, progressive=False, tile=None))
+        return
 
     # batch does not parse --seeds itself (it forwards the string verbatim, and
     # each task's own `fit` validates it), so guard: a malformed value must fail

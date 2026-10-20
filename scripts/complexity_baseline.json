@@ -303,7 +303,7 @@
       13
     ],
     "packages/luxar/src/luxar/gsplats/batch/local_runner.py::run_batch_local": [
-      16
+      12
     ],
     "packages/luxar/src/luxar/gsplats/batch/merge_orchestrator.py::_build_part_for_tile": [
       11

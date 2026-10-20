@@ -27,6 +27,15 @@ from luxar.gsplats.merged_quality import (
 
 
 @pytest.fixture(autouse=True)
+def _discrete_gpus(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Model every CUDA device as discrete, so the suite reads the same on a
+    unified-memory host (GB10, Jetson); unified tests opt back in."""
+    import luxar.gsplats.utils.device as _device
+
+    monkeypatch.setattr(_device, "is_unified_memory_device", lambda index: False)
+
+
+@pytest.fixture(autouse=True)
 def _pin_worker_thread_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OMP_NUM_THREADS", "1")
     monkeypatch.setenv("MKL_NUM_THREADS", "1")
@@ -492,6 +501,15 @@ def test_finalize_real_promotion_clears_stale_empty_marker(tmp_path: Path) -> No
     assert not Path(str(out) + ".empty").exists()
 
 
+def _finish(pool_kwargs, results):  # type: ignore[no-untyped-def]
+    """Report ``results`` through ``on_done`` as the real pool does, then return them."""
+    on_done = pool_kwargs.get("on_done")
+    for done, res in enumerate(results, start=1):
+        if on_done is not None:
+            on_done(res, done, len(results))
+    return results
+
+
 def _plan_single_tile_manifest(tmp_path: Path, n_t: int = 1):  # type: ignore[no-untyped-def]
     from luxar.cli.gsplat_ops.batch.planning import (
         ContentKnobs,
@@ -587,7 +605,9 @@ def test_run_batch_local_reports_resolved_gpu_mapping(
 
     def _fake_pool(task_ids, *, env_builder, **kwargs):  # type: ignore[no-untyped-def]
         assert env_builder(task_ids[0])["CUDA_VISIBLE_DEVICES"] == "1"
-        return [TaskResult(key=task_ids[0], returncode=1, output="stop")]
+        return _finish(
+            kwargs, [TaskResult(key=task_ids[0], returncode=1, output="stop")]
+        )
 
     monkeypatch.setattr(lr, "run_task_pool", _fake_pool)
 
@@ -622,7 +642,7 @@ def test_run_batch_local_cpu_forces_device_and_reports_hidden_cuda(
         argv = argv_builder(task_id)
         assert argv[-2:] == ["--device", "cpu"]
         assert env_builder(task_id)["CUDA_VISIBLE_DEVICES"] == ""
-        return [TaskResult(key=task_id, returncode=1, output="stop")]
+        return _finish(kwargs, [TaskResult(key=task_id, returncode=1, output="stop")])
 
     monkeypatch.setattr(lr, "run_task_pool", _fake_pool)
 
@@ -669,7 +689,7 @@ def test_no_resume_replaces_stale_output_only_after_successful_refit(
         staging = _staging_path(stale_out, token)
         staging.mkdir()
         (staging / "FRESH").write_text("new")
-        return [TaskResult(key=task0, returncode=0, output="")]
+        return _finish(kw, [TaskResult(key=task0, returncode=0, output="")])
 
     monkeypatch.setattr(lr, "run_task_pool", _fake_pool)
     monkeypatch.setattr(
@@ -701,7 +721,7 @@ def test_no_resume_failed_refit_keeps_previous_output(
 
     def _fake_pool(task_ids, *, argv_builder, **kw):  # type: ignore[no-untyped-def]
         argv_builder(task0)
-        return [TaskResult(key=task0, returncode=1, output="boom")]
+        return _finish(kw, [TaskResult(key=task0, returncode=1, output="boom")])
 
     monkeypatch.setattr(lr, "run_task_pool", _fake_pool)
 
@@ -710,6 +730,39 @@ def test_no_resume_failed_refit_keeps_previous_output(
 
     # The previous valid result is still there for the user to fall back on.
     assert (stale_out / "STALE").exists()
+
+
+def test_finished_tile_is_promoted_before_the_run_ends(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A tile lands under its final name as soon as its worker finishes.
+
+    Promoting only after every task returned left nothing viewable or
+    resumable until the whole job ended: an interrupted run refit every tile,
+    and `batch-fit status` read 0 done while tiles sat finished in staging.
+    """
+    import luxar.gsplats.batch.local_runner as lr
+    from luxar.gsplats.batch.task_pool import TaskResult
+
+    manifest, out_dir = _plan_single_tile_manifest(tmp_path, n_t=2)
+    first, second = (job.task_id for job in manifest.jobs)
+    out0 = out_dir / "tiles" / manifest.jobs[0].output_filename
+    token = f"{socket.gethostname()}-{os.getpid()}"
+
+    def _fake_pool(task_ids, *, argv_builder, on_done, **kw):  # type: ignore[no-untyped-def]
+        argv_builder(first)
+        _staging_path(out0, token).mkdir()
+        on_done(TaskResult(key=first, returncode=0, output=""), 1, 2)
+        assert out0.exists()  # promoted while the second task still "runs"
+        argv_builder(second)
+        raise _StopRun()  # e.g. Ctrl-C before the second tile finishes
+
+    monkeypatch.setattr(lr, "run_task_pool", _fake_pool)
+    with pytest.raises(_StopRun):
+        lr.run_batch_local(manifest, out_dir, gpus="cpu", verbose=False)
+
+    assert out0.exists()
+    assert not _staging_path(out0, token).exists()
 
 
 def test_no_resume_forces_merge_rebuild(tmp_path: Path, monkeypatch) -> None:
