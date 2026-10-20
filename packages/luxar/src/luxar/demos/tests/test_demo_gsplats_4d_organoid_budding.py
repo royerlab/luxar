@@ -219,6 +219,7 @@ def test_manifest_lists_the_dataset_as_local_compute() -> None:
 
     spec = load_manifest()["datasets"][demo.DATASET_NAME]
     assert spec["bucket"] == "local-compute" and spec["redistribute"] is True
+    assert demo.DEMO_META["requirements"]["compute"] == "heavy"
 
 
 def _no_network(*_args: object, **_kwargs: object) -> None:

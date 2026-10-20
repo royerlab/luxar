@@ -124,7 +124,8 @@ DEMO_META = {
         # The Zenodo source (167 frames + lineage) the fallback refit needs while
         # the precomputed fits are not hosted yet; see DATASET_NAME.
         "download_mb": 345,
-        "compute": "medium",
+        # Fits are not hosted yet, so a first run refits all 167 frames.
+        "compute": "heavy",
         "gpu": "optional",
         "local_data": None,
     },
