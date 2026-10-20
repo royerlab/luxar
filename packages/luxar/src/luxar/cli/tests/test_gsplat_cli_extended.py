@@ -223,6 +223,18 @@ class TestPresets:
         for name, preset in PRESETS.items():
             assert "n_iters" in preset, f"Preset '{name}' missing n_iters"
 
+    def test_presets_stop_on_relative_progress(self) -> None:
+        from luxar.cli.gsplat_config import EARLY_STOP_REL_TOL
+
+        for name, preset in PRESETS.items():
+            assert preset["early_stop_rel_tol"] == EARLY_STOP_REL_TOL, name
+
+    def test_yaml_null_restores_the_plain_early_stop(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "plain.yaml"
+        cfg.write_text("early_stop_rel_tol: null\n")
+        assert load_fit_config(config_path=cfg)["early_stop_rel_tol"] is None
+        assert load_fit_config()["early_stop_rel_tol"] == 1e-3
+
     def test_draft_is_fastest(self) -> None:
         assert PRESETS["draft"]["n_iters"] < PRESETS["standard"]["n_iters"]
         assert PRESETS["standard"]["n_iters"] < PRESETS["hifi"]["n_iters"]
@@ -707,6 +719,7 @@ scheduler_type: "plateau"  # LR scheduler: plateau or exponential
 patience: 15          # Iterations before LR reduction
 lr_reduction_factor: 0.9  # LR multiplier on plateau
 early_stop_patience: 400  # Stop after N iters without improvement
+early_stop_rel_tol: 0.001  # Also stop when the window improved the loss by less than this fraction (null=off)
 
 # --- Dynamic Operations ---
 enable_dynamic_ops: true  # Enable splat relocation during optimization

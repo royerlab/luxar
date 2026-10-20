@@ -202,11 +202,13 @@ def calibrate_command(
         "--preset",
         help=(
             "Fit preset: draft, standard, hifi, ultra, n2s. "
-            "Default 'n2s' matches the manuscript's blind-spot protocol "
+            "Default 'n2s' is the blind-spot protocol's budget "
             "(n_iters=20000, early_stop_patience=500, cull_retention=0.999) "
             "so the held-out PSNR curve has enough optimizer budget to enter "
-            "the overfit regime at high K. Lower presets undertrain at high K "
-            "and bias K* upward."
+            "the overfit regime at high K. Like every preset it also stops a "
+            "fit once its loss improves by less than 0.1% per patience window "
+            "(early_stop_rel_tol=0.001; set it to null in --config for the "
+            "plain rule). Lower presets undertrain at high K and bias K* upward."
         ),
     ),
     config: Optional[Path] = typer.Option(

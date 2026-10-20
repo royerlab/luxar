@@ -351,7 +351,7 @@
       19
     ],
     "packages/luxar/src/luxar/gsplats/fitting/optimization.py::run_optimization_loop": [
-      37
+      36
     ],
     "packages/luxar/src/luxar/gsplats/fitting/preprocessing.py::_generate_seeds": [
       12

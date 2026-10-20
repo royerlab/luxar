@@ -1142,6 +1142,7 @@ Main fitting function with automatic optimizations.
 - `sigma_min_diag`: Minimum Gaussian size per axis
 - `sigma_max_diag`: Maximum Gaussian size per axis
 - `early_stop_patience`: Iterations without improvement before stopping (default: 300)
+- `early_stop_rel_tol`: Also stop once the best loss improved by less than this fraction over the `early_stop_patience` window (default: `None`, off; every CLI preset sets `0.001`)
 - `min_extent`: After the fit, drop sub-voxel "specks" whose geometric-mean spatial sigma is below this many fitted voxels (default: 0.6; `0` disables). The removed count and brightness share land in `stats["min_extent_removed"]` / `stats["min_extent_removed_mass_share"]`, and the stored quality is re-scored on the pruned set. Measured on nine fits: 8-70% fewer splats, held-out PSNR within -0.07 dB (+0.40 dB on a Tribolium light-sheet stack) — table in [`fitting/README.md`](fitting/README.md#splat_hygienepy---closing-speck-pruning). Pruning is skipped (with a note, `min_extent_skipped`) when it would remove more than `min_extent_max_mass_share` (default 0.02) of the brightness
 - `relocation_reseed_sigma_vox`: Sigma (voxels) a relocated splat is reseeded at (default `None` = 0.5; opt-in)
 - `device`: PyTorch device (auto-detect if `None` or `"auto"`)
@@ -1599,6 +1600,7 @@ hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_tiled_fitting.py -v
 - Simple images may converge late
 - Try reducing `early_stop_patience` for more aggressive stopping
 - Note that early stopping is on by default (controlled by `early_stop_patience`, default 300)
+- `early_stop_rel_tol=1e-3` (the CLI presets' value) also ends a fit whose loss is still creeping down by tiny amounts
 
 **Out of Memory**
 - Reduce `peaks_per_scale` in candidate generation

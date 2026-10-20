@@ -310,6 +310,20 @@ def _validate_core_hyperparameters(parameters: FitParameters) -> None:
         raise ValueError("gradient_clip must be positive if specified")
 
 
+def _validate_early_stop_rel_tol(rel_tol: object) -> None:
+    """``early_stop_rel_tol`` is None or a number in [0, 1)."""
+    if rel_tol is None:
+        return
+    if isinstance(rel_tol, bool) or not isinstance(rel_tol, (int, float)):
+        # YAML 1.1 reads `1e-3` (no dot) as a string; say so.
+        raise ValueError(
+            f"early_stop_rel_tol must be a number, got {rel_tol!r} "
+            "(in YAML write 0.001 or 1.0e-3, not 1e-3)"
+        )
+    if not 0.0 <= rel_tol < 1.0:
+        raise ValueError("early_stop_rel_tol must be in [0, 1) if specified")
+
+
 def _validate_scheduler_parameters(parameters: FitParameters) -> None:
     """Validate learning-rate scheduler parameters in public order."""
     if parameters.patience < 1:
@@ -321,6 +335,7 @@ def _validate_scheduler_parameters(parameters: FitParameters) -> None:
         and parameters.early_stop_patience < 1
     ):
         raise ValueError("early_stop_patience must be >= 1 if specified")
+    _validate_early_stop_rel_tol(parameters.early_stop_rel_tol)
     if parameters.scheduler_type not in ["plateau", "exponential"]:
         raise ValueError("scheduler_type must be 'plateau' or 'exponential'")
 
@@ -574,6 +589,7 @@ def prepare_fit_config(
         patience=patience,
         lr_reduction_factor=lr_reduction_factor,
         early_stop_patience=early_stop_patience,
+        early_stop_rel_tol=parameters.early_stop_rel_tol,
         enable_dynamic_ops=fitter.enable_dynamic_ops,
         dynamic_config=fitter.dynamic_config,
         dynamic_ops_verbose=dynamic_ops_verbose,

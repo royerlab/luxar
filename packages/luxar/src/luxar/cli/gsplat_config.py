@@ -52,39 +52,59 @@ class FitPreset(str, Enum):
 # ``n2s`` is the canonical name for the protocol — ``ultra``'s optimiser budget,
 # but at ``max_eccentricity=10``, kept explicit so it's clear which preset is the
 # "paper reference".
+# Every preset also stops on RELATIVE progress: once the best loss improves by
+# less than 0.1% over its ``early_stop_patience`` window. The plain rule waited
+# for no improvement at all, so a fit creeping down by 1e-6 per eval ran out its
+# budget. Measured on four volumes (Allen hiPSC DNA, IDR 5514375, a Tribolium
+# light-sheet crop, a FlyLight neuron crop; RTX 3070): `cal` 1.0-7.3x faster
+# (Allen 2510 -> 344 s), `fit` 1.0-3.2x. K* under the default psnr_foreground
+# criterion was unchanged (on Allen's flat curve the psnr_minmax K* moved) and
+# foreground PSNR losses were at most 0.10 dB. The Python API keeps
+# ``early_stop_rel_tol=None``; YAML ``early_stop_rel_tol: null`` restores the
+# plain rule here. The paper's Noise2Self tables use the Python API and are
+# unchanged; to reproduce the CLI recipe timings in the consumer-GPU and
+# tiled-fitting supplementary documents, set ``early_stop_rel_tol: null``.
+EARLY_STOP_REL_TOL = 1e-3
+
 PRESETS: Dict[str, Dict[str, Any]] = {
     "draft": {
         "n_iters": 2_000,
         "early_stop_patience": 200,
+        "early_stop_rel_tol": EARLY_STOP_REL_TOL,
         "max_eccentricity": 10.0,
         "cull_retention": 0.999,
     },
     "standard": {
         "n_iters": 5_000,
         "early_stop_patience": 300,
+        "early_stop_rel_tol": EARLY_STOP_REL_TOL,
         "max_eccentricity": 10.0,
         "cull_retention": 0.999,
     },
     "hifi": {
         "n_iters": 10_000,
         "early_stop_patience": 400,
+        "early_stop_rel_tol": EARLY_STOP_REL_TOL,
         "max_eccentricity": 15.0,
         "cull_retention": 0.999,
     },
     "ultra": {
         "n_iters": 20_000,
         "early_stop_patience": 500,
+        "early_stop_rel_tol": EARLY_STOP_REL_TOL,
         "max_eccentricity": 20.0,
         "cull_retention": 0.999,
     },
-    # Canonical alias for the manuscript's blind-spot protocol; ``ultra``'s budget
-    # (n_iters=20000, early_stop_patience=500, cull_retention=0.999) but at
-    # max_eccentricity=10 (``ultra`` uses 20), and the default for
-    # ``luxar gsplat cal``.  Kept named so users can pick the "paper" preset
-    # explicitly when reproducing supp_doc results.
+    # The blind-spot protocol's CLI preset; ``ultra``'s budget (n_iters=20000,
+    # early_stop_patience=500, cull_retention=0.999) but at max_eccentricity=10
+    # (``ultra`` uses 20), plus the relative early stop every preset carries,
+    # and the default for ``luxar gsplat cal``. The paper's Noise2Self tables
+    # call the Python API (no relative stop) and are unchanged; CLI recipe
+    # timings in the supplementary documents need ``early_stop_rel_tol: null``.
     "n2s": {
         "n_iters": 20_000,
         "early_stop_patience": 500,
+        "early_stop_rel_tol": EARLY_STOP_REL_TOL,
         "max_eccentricity": 10.0,
         "cull_retention": 0.999,
     },
@@ -280,6 +300,7 @@ def dump_default_config(preset: str = DEFAULT_FIT_PRESET) -> str:
         f"patience: {_fmt(vals.get('patience'))}          # Iterations before LR reduction",
         f"lr_reduction_factor: {_fmt(vals.get('lr_reduction_factor'))}  # LR multiplier on plateau",
         f"early_stop_patience: {_fmt(vals.get('early_stop_patience'))}  # Stop after N iters without improvement",
+        f"early_stop_rel_tol: {_fmt(vals.get('early_stop_rel_tol'))}  # Also stop when the window improved the loss by less than this fraction (null=off)",
         "",
         "# --- Dynamic Operations ---",
         f"enable_dynamic_ops: {_fmt(vals.get('enable_dynamic_ops'))}  # Enable splat relocation during optimization",

@@ -671,6 +671,41 @@ def _print_stored_note(result: "CalibrationResult", k_star: int) -> None:
     )
 
 
+#: How close (dB, either side) the best held-out score must sit to the RMS
+#: ceiling for the summary to call the sweep noise-limited.
+AT_CEILING_MARGIN_DB = 0.3
+
+
+def _at_ceiling_lines(
+    result: "CalibrationResult", ceil_db: float, ratio: float
+) -> "list[str]":
+    """A note when the best held-out score already sits at the noise ceiling.
+
+    Only for a ceiling whose scale check passed (``ratio`` measured and within
+    the limit), and only when the best whole-volume held-out PSNR is within
+    :data:`AT_CEILING_MARGIN_DB` of it, on either side. Both numbers are
+    whole-volume, so the note says that foreground detail can still change.
+    """
+    import math
+
+    if not (math.isfinite(ratio) and math.isfinite(ceil_db)):
+        return []
+    held = [x for x in result.held_out_psnr_db if math.isfinite(x)]
+    if not held:
+        return []
+    best = max(held) + _robust_offset_db(result)
+    if abs(best - ceil_db) > AT_CEILING_MARGIN_DB:
+        return []
+    return [
+        f"                  At the noise ceiling: the best held-out PSNR ({best:.2f} dB)"
+        f" is within {AT_CEILING_MARGIN_DB:g} dB",
+        "                  of it, so on held-out voxels more K mostly fits noise. "
+        "Both are whole-volume",
+        "                  figures; foreground detail can still improve (fg held-out "
+        "column).",
+    ]
+
+
 def _noise_lines(result: "CalibrationResult") -> "list[str]":
     """The summary's noise line(s), on the SAME robust-peak basis as the table.
 
@@ -702,6 +737,8 @@ def _noise_lines(result: "CalibrationResult") -> "list[str]":
                 "                  (fine structure also reads as noise here "
                 f"[scale ratio {ratio:.1f}], so the ceiling may read low)"
             )
+        else:
+            lines.extend(_at_ceiling_lines(result, ceil_db, ratio))
         return lines
     nf_sigma, nf_ceil = result.noise_floor.sigma_hat, result.noise_floor.psnr_max_db
     sigma_str = f"{nf_sigma:.4f}" if math.isfinite(nf_sigma) else "—"

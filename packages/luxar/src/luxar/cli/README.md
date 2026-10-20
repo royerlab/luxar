@@ -406,7 +406,7 @@ hand-run `--tile k/M`, which refuses `--region`. The internal
 `--tile-region` worker handoff is a different thing — one apodized tile of a
 grid over the full volume — and cannot be combined with `--region`.
 
-**Presets:** `draft` (fast preview), `standard` (balanced), `hifi` (high quality), `ultra` (max quality). With no `--preset`, `fit` uses `standard` (5000 iterations with early stopping); a `--config` without `--preset` layers on top of `standard`. The Python `fit_gaussian_splats` keeps its own signature defaults (1000 iterations). `--lr`, `--loss`, `--seed-method`, `--downscale`, `--cull-retention` and `--reseed-sigma` are listed under **Advanced** in `fit --help`.
+**Presets:** `draft` (fast preview), `standard` (balanced), `hifi` (high quality), `ultra` (max quality). With no `--preset`, `fit` uses `standard` (5000 iterations with early stopping); a `--config` without `--preset` layers on top of `standard`. The Python `fit_gaussian_splats` keeps its own signature defaults (1000 iterations). Every preset also stops on relative progress (`early_stop_rel_tol: 0.001`): a fit ends once its best loss improved by less than 0.1% over the `early_stop_patience` window, instead of running out its budget on improvements of a few parts per million. On four test volumes this made `fit` 1.0-3.2x and `cal` 1.0-7.3x faster; K\* under the default `psnr_foreground` criterion was unchanged (on a flat curve the `psnr_minmax` K\* moved) and foreground PSNR losses were at most 0.10 dB. `early_stop_rel_tol: null` in a `--config` restores the plain rule. The paper's Noise2Self tables use the Python API and are unchanged; to reproduce the CLI recipe timings in the consumer-GPU and tiled-fitting supplementary documents, set `early_stop_rel_tol: null`. `--lr`, `--loss`, `--seed-method`, `--downscale`, `--cull-retention` and `--reseed-sigma` are listed under **Advanced** in `fit --help`.
 
 `--cull-retention` removes, after fitting, the weakest splats that together contribute less than `(1 - value)` of the total amplitude. Every preset uses `0.999` (near-lossless), as does `--tiling content`; `0` keeps every splat. An aggressive `0.95` drops the bottom 5% of cumulative amplitude, and on a sparse, heavy-tailed volume that can be most of the splats. A `--tile k/M` worker applies the cull to its own tile, and `batch-fit` does the same before merging, so `--flat` approximates rather than exactly matches one global cull over the merged splats. The fit summary reports the compression of the SAVED (post-cull) store, and its quality: a whole-volume fit and a `--progressive` fit re-score the culled splats, so the stored `psnr_db` (and, for a whole-volume fit, SSIM/MSE/foreground PSNR) describe the saved model, with the pre-cull line printed separately and labelled. Two scores stay pre-cull by design: a progressive fit's per-pass ladder (`pass_psnrs`), and on a tiled partition each part's own tile score; the merged whole-volume score of a tiled fit is measured on the saved set. If a re-score fails, one warning is printed, the pre-cull score stands, and the reason is recorded as `quality_error`.
 
@@ -684,7 +684,21 @@ inside its mask) and the held-out PSNR ceiling it implies, on the table's
 robust-peak basis. Shot noise makes the bright voxels dominate a held-out MSE,
 so the median-voxel ensemble `noise_floor.sigma_hat` (still in `cal.json`)
 reads the quiet background and puts the ceiling far too high on fluorescence.
+When that estimate passes its own scale check and the best held-out score sits within
+0.3 dB of the ceiling (either side), the summary adds an "At the noise ceiling" line:
+on held-out voxels more K mostly fits noise. Both figures are whole-volume, so the
+line points at the fg held-out column, where detail can still improve (on the Allen
+hiPSC stack the whole-volume score is at the ceiling while the foreground still
+gains 0.07 dB from K = 107635 to 512000). A failed scale check prints the "may read
+low" caveat instead and never the note.
 A long grid point prints an in-fit progress line at most every 30 s.
+
+On a CPU, `cal --preset standard --n-grid 5` is the quicker first look: about
+0.5-0.8x of the default sweep's total iterations (and so of its CPU time) on four
+test volumes, with K\* one coarse grid step from the default's on a peaked curve;
+on a creeping curve read the knee instead. `--preset draft` under-trains the top
+point and is not safe for K\*. Measurements: the pipeline skill's
+calibration-sweep reference.
 
 **Options**: `--k-grid` (explicit comma-separated K values), `--n-grid` (default 10), `--k-min`/`--k-max` (default: from the volume, above), `--early-stop/--no-early-stop`, `--extend-below/--no-extend-below`, `--progression` (exp/power), `--power`, `--mask-seed`, `--mask-fraction` (default 0.05), `--preset` (default n2s), `--config`, `--floor` (background floor / DC-offset suppression, default `auto` — K* is measured on floor-suppressed data, matching `fit`; pass `none` for the legacy hard-min behavior), `--device/-d`, `--k-star-metric` (psnr_foreground default / psnr_minmax / psnr_fg_weighted / gain), `--fg-bg-ratio` (default 1, equal total foreground/background weight for `psnr_fg_weighted`), `--auto-region/--no-auto-region` + `--region-size`/`--region-strategy` (calibrate on a content-rich sub-region), `--feature-metric`, `--saturation-exponent`, `--rd-model/--no-rd-model`, `--fit-exponent`/`--exponent-scales` (measure the saturation exponent alpha instead of assuming the default), `--pdf` (multi-page PDF report), `--keep-fits` (persist per-K fits), `--quiet/-q`, plus volume-loader pass-through (`--channel/-c`, `--timepoint`, `--array-key`, `--axes`). For sparse or deconvolved volumes, prefer `psnr_fg_weighted`: it balances signal fidelity against background haze. `gain` remains a useful reported diagnostic, but its K* is identical to `psnr_minmax` because the predict-zero baseline is constant across K.
 
