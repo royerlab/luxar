@@ -21,6 +21,7 @@ describe('early TSL prefetch decision', () => {
 
   it('defaults to WebGL on Linux + Chromium while the WebGPU rows are held (#3172)', () => {
     stubLinuxChromiumWithGpu();
+    vi.stubEnv('VITE_LUXAR_WEBGPU_STAGED_RULES', '');
     expect(selectBackend(undefined)).toEqual({
       backend: 'webgl',
       source: 'platform-policy',

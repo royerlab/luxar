@@ -1,11 +1,16 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   candidateRules,
+  defaultPlatformRules,
   detectBrowserPlatform,
   matchAdapterRule,
   STAGED_WEBGPU_PLATFORM_RULES,
   WEBGPU_PLATFORM_RULES,
 } from '../../../../../scene/scene-manager/render-pipeline/backend-policy';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('detectBrowserPlatform', () => {
   it('reads OS and browser from client hints when present', () => {
@@ -52,8 +57,14 @@ describe('detectBrowserPlatform', () => {
 
 describe('platform rules', () => {
   it('admits no platform until cold load is within 0.15 s (#3172)', () => {
+    vi.stubEnv('VITE_LUXAR_WEBGPU_STAGED_RULES', '');
     expect(WEBGPU_PLATFORM_RULES).toEqual([]);
     expect(candidateRules({ os: 'linux', browser: 'chromium' })).toEqual([]);
+  });
+
+  it('includes the staged platform when explicitly enabled', () => {
+    vi.stubEnv('VITE_LUXAR_WEBGPU_STAGED_RULES', '1');
+    expect(defaultPlatformRules()).toEqual(STAGED_WEBGPU_PLATFORM_RULES);
   });
 
   it('stages only Linux + Chromium + NVIDIA', () => {
