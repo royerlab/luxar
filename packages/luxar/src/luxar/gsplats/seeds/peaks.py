@@ -61,7 +61,8 @@ def seed_from_peaks(
         PyTorch device ('cuda', 'mps', 'cpu', or None for auto).
     seed : int or torch.Generator, optional
         Seed or generator for intensity-weighted sampling. An integer uses a
-        local generator and does not change PyTorch's global RNG state.
+        local generator and does not change PyTorch's global RNG state. On MPS,
+        sampling uses the CPU, so a supplied generator must be a CPU generator.
 
     Returns
     -------
@@ -130,7 +131,9 @@ def seed_from_peaks(
 
             probs = intensities / intensities.sum()
             sampling_device = (
-                torch.device("cpu") if dev.type == "mps" and seed is not None else dev
+                torch.device("cpu")
+                if torch.device(dev).type == "mps" and seed is not None
+                else dev
             )
             generator = (
                 torch.Generator(device=sampling_device).manual_seed(seed)
