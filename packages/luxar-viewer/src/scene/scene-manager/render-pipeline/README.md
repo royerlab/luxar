@@ -26,6 +26,16 @@ SceneManager body stays an orchestrator instead of a megaclass.
 
 ## Invariants
 
+`early-device-request.ts` holds the core adapter/device request shared by the
+standalone prefetch entry and renderer setup. The standalone entry starts it
+while the viewer bundle downloads; bootstrap consumes it once. Direct callers
+and device-loss recovery request a fresh device. Under the platform policy
+(`BackendSelection.platformRules`) it is also where the adapter vendor is
+checked: an adapter matching no rule resolves `policy-rejected` before the
+device request or the `three/webgpu` download starts, so the early request can
+begin as soon as the entry runs without downloading WebGPU code for a session
+that will fall back to WebGL.
+
 - **No back-references to SceneManager.** Each helper receives its
   dependencies explicitly (function arguments or
   `WebGLContextRecoveryDeps`). The SceneManager wires them up but the

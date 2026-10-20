@@ -796,8 +796,8 @@ print(f"Recommended K* = {result.held_out_peak.k_star:,}")
 print(
     f"Curve type     = {result.held_out_peak.type}"
 )  # peak | plateau | signal_limited | low_k_optimal
-print(f"Noise floor σ̂ = {result.noise_floor.sigma_hat:.4f}")
-print(f"PSNR ceiling   = {result.noise_floor.psnr_max_db:.1f} dB")
+print(f"RMS noise σ    = {result.noise_sigma_rms:.4g}")  # intensity units
+print(f"PSNR ceiling   = {result.psnr_ceiling_robust_db:.1f} dB")  # RMS noise, robust peak
 
 # Persist or re-load the sweep curves
 result.to_json(Path("cal.json"))
@@ -837,7 +837,8 @@ bottom-edge K*, foreground K*-metric, per-point `cal.json` checkpoints) are in
 - `held_out_psnr_db`, `train_psnr_db`, `held_out_mse` — at each K, against the original volume.
 - `full_psnr_db`, `full_ssim` — over the whole volume against the original (cross-run comparable).
 - `held_out_peak` (`HeldOutPeak`) — recommended `k_star`, curve `type`, `confidence_db`.
-- `noise_floor` (`NoiseFloor`) — `sigma_hat`, the three component estimators, `psnr_max_db`.
+- `noise_floor` (`NoiseFloor`) — `sigma_hat`, the three component estimators, `psnr_max_db` (a median-voxel, full-range estimate).
+- `noise_sigma_rms`, `noise_scale_ratio`, `psnr_ceiling_robust_db` — the RMS noise a held-out MSE averages and the held-out PSNR ceiling on the robust peak (what `gsplat cal` prints and the PDF draws).
 - `fit_times_seconds`, `splat_paths` (when `keep_fits` is set), `mask_seed`, `mask_fraction`, `donut_radius`, `fit_config`, `volume_shape`, `timestamp`.
 - `to_json(path)` / `CalibrationResult.from_json(path)` — round-trip serialisation; non-finite floats become `null`.
 
@@ -845,9 +846,9 @@ bottom-edge K*, foreground K*-metric, per-point `cal.json` checkpoints) are in
 
 `luxar.gsplats.calibration_report.render_calibration_report(result, volume, output_path, splat_paths=None)` produces a 3-page matplotlib PDF mirroring the manuscript's per-dataset figures:
 
-1. **Rate-distortion** — PSNR (train / held-out / full) vs K, SSIM vs K, fit-time vs K, train-vs-held-out gap, with K\* annotated and the noise-floor PSNR ceiling overlaid.
+1. **Rate-distortion** — PSNR (train / held-out / full) vs K, SSIM vs K, fit-time vs K, train-vs-held-out gap, with K\* annotated and the noise ceiling overlaid, all on the robust peak (p99.99 - floor) the terminal table uses.
 2. **Blind-spot cross-validation** — train + held-out PSNR with the overfitting region shaded.
-3. **Reconstruction slice montages** — target / K_min / K\* / K_max + per-pixel error map. Requires the per-K fits to have been persisted via `--keep-fits`; otherwise the page degrades to a placeholder.
+3. **Reconstruction slice montages** — target / K_min / K\* / K_max + per-pixel error map. Needs the per-K fits: `gsplat cal --pdf` keeps them in a temporary directory for this page unless `--keep-fits DIR` keeps them for good; a Python caller passing no `splat_paths` gets a placeholder page.
 
 The report module imports matplotlib lazily so it does not inflate cold-start cost when `--pdf` is not set.
 

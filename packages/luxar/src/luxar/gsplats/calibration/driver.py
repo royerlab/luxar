@@ -34,7 +34,7 @@ from .curve_analysis import (
 )
 from .masking import cv_mask, donut_median_fill
 from .metrics import _psnr_db, held_out_gain_db, predict_zero_baseline_mse
-from .noise_floor import estimate_noise_floor
+from .noise_floor import estimate_masked_noise, estimate_noise_floor
 from .result import CalibrationResult, _json_safe
 from .sweep import (
     PointContext,
@@ -240,6 +240,32 @@ def _noise_floor_of(V: np.ndarray) -> Any:
     return estimate_noise_floor(Vn_norm)
 
 
+def _rms_noise_of(V: np.ndarray) -> Tuple[float, float]:
+    """``(sigma, scale_ratio)``: the RMS noise a held-out MSE averages.
+
+    Measured on the floor-subtracted volume, the very reference the held-out
+    scores are computed against, with the intensity-binned in-plane estimator
+    ``compare`` uses inside its mask, here over the whole volume. Shot noise
+    makes the bright voxels dominate an MSE, so this RMS, not the median-voxel
+    ``sigma_hat``, is the noise the held-out PSNR is limited by. On the two
+    tester volumes the best held-out score sits within about 0.1 dB of it (on
+    one the curve is still climbing; on the other the estimator's own scale
+    check flags fine structure in the band), where ``sigma_hat`` put the
+    ceiling 4 and 31 dB higher.
+    """
+    noise = estimate_masked_noise(V, np.ones(V.shape, dtype=bool))
+    return float(noise.sigma), float(noise.scale_ratio)
+
+
+def _ceiling_db(sigma: float, peak: float) -> float:
+    """``20 log10(peak / sigma)``; ``inf`` at zero noise, ``nan`` if unknown."""
+    if not (math.isfinite(sigma) and math.isfinite(peak)) or peak <= 0.0:
+        return float("nan")
+    if sigma <= 0.0:
+        return float("inf")
+    return 20.0 * math.log10(peak / sigma)
+
+
 @dataclass
 class _ResultParts:
     """Everything a :class:`CalibrationResult` needs besides the per-K records.
@@ -263,6 +289,8 @@ class _ResultParts:
     baseline_mse: float
     data_range: float
     robust_data_range: float
+    noise_sigma_rms: float
+    noise_scale_ratio: float
     k_star_metric: str
     feature_method: str
     saturation_exponent: float
@@ -393,6 +421,11 @@ def _assemble(
         robust_data_range=parts.robust_data_range,
         k_values_fitted=[int(x) for x in curve["n_fitted"]],
         k_values_stored=stored,
+        noise_sigma_rms=parts.noise_sigma_rms,
+        noise_scale_ratio=parts.noise_scale_ratio,
+        psnr_ceiling_robust_db=_ceiling_db(
+            parts.noise_sigma_rms, parts.robust_data_range
+        ),
         k_star_stored=stored[ks.index(selected.k_star)]
         if selected.k_star in ks
         else None,
@@ -537,6 +570,7 @@ def calibrate(
     )
     # Floor subtracted ONCE (default "auto"), so K* is measured the way you fit.
     V, applied_floor, floor_strategy = _resolve_cal_floor(V, floor_spec)
+    noise_sigma_rms, noise_scale_ratio = _rms_noise_of(V)
 
     if keep_fits is not None:
         keep_fits = Path(keep_fits)
@@ -616,6 +650,8 @@ def calibrate(
         baseline_mse=baseline_mse,
         data_range=data_range,
         robust_data_range=robust_range,
+        noise_sigma_rms=noise_sigma_rms,
+        noise_scale_ratio=noise_scale_ratio,
         k_star_metric=k_star_metric,
         feature_method=feature_method,
         saturation_exponent=saturation_exponent,

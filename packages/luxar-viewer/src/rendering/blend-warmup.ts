@@ -107,11 +107,11 @@ export interface SourceWarmupState {
   objects: Set<THREE.Object3D>;
   disposeHandler: () => void;
   /**
-   * Program variants this source USES (variant fingerprint → blend mode),
+   * Program variants this source USES (variant fingerprint → blend mode and side),
    * whether it owns the keeper for them or shares one compiled for an
    * identical material on another node. Released in `clearSource`.
    */
-  variants: Map<string, BlendingMode>;
+  variants: Map<string, { mode: BlendingMode; side?: THREE.Side }>;
 }
 
 /** Counters for `getPerf().blendWarmup` and the unit tests. */
@@ -583,6 +583,28 @@ function createCompileObject(source: THREE.Object3D, material: THREE.Material): 
   return compileObject;
 }
 
+/** Match render()'s two draws for transparent double-sided materials. */
+function warmupKeepers(
+  keeper: THREE.Material,
+  pipelineVariants: boolean
+): Array<{ material: THREE.Material; side?: THREE.Side }> {
+  if (
+    !pipelineVariants ||
+    !keeper.transparent ||
+    keeper.side !== THREE.DoubleSide ||
+    keeper.forceSinglePass
+  ) {
+    return [{ material: keeper }];
+  }
+  const front = keeper.clone();
+  keeper.side = THREE.BackSide;
+  front.side = THREE.FrontSide;
+  return [
+    { material: keeper, side: THREE.BackSide },
+    { material: front, side: THREE.FrontSide },
+  ];
+}
+
 /**
  * The warm-up service itself — one instance per session (the module keeps the
  * default one; the constructor's three injection points exist for tests).
@@ -787,29 +809,44 @@ export class BlendWarmupManager {
       }
 
       keeper.applyBlendingMode(mode);
-      // WebGPU: the blend state is part of the pipeline, so every mode is its own
-      // variant (the cross-source dedupe below still shares it between nodes).
-      const variantFingerprint =
-        buildBlendWarmupFingerprint(keeper, object, true) +
-        (this.pipelineVariants ? `@@mode:${mode}` : '');
-      if (state.variants.has(variantFingerprint)) {
-        keeper.dispose();
-        this.stats.dedupedWithinSource += 1;
-        continue;
+      // compileAsync queues both draws by material reference, then builds after
+      // Three restores DoubleSide; neither back/front node-builder key is warmed.
+      // WebGL compile resolves each side synchronously, so it needs no split.
+      for (const candidate of warmupKeepers(keeper, this.pipelineVariants)) {
+        this.enqueueVariantKeeper(sourceMaterial, object, state, mode, candidate);
       }
-      state.variants.set(variantFingerprint, mode);
-      this.registerVariantUser(variantFingerprint, sourceMaterial);
-
-      const owner = this.variantOwner.get(variantFingerprint);
-      if (owner && owner !== sourceMaterial && this.sourceStates.has(owner)) {
-        keeper.dispose();
-        this.stats.dedupedAcrossSources += 1;
-        continue;
-      }
-
-      this.variantOwner.set(variantFingerprint, sourceMaterial);
-      this.queueKeeper(sourceMaterial, object, keeper, state);
     }
+  }
+
+  private enqueueVariantKeeper(
+    sourceMaterial: THREE.Material,
+    object: THREE.Object3D,
+    state: SourceWarmupState,
+    mode: BlendingMode,
+    candidate: { material: THREE.Material; side?: THREE.Side }
+  ): void {
+    // WebGPU: blend state is part of the pipeline, so every mode is its own
+    // variant (cross-source dedupe still shares it between nodes).
+    const variantFingerprint =
+      buildBlendWarmupFingerprint(candidate.material, object, true) +
+      (this.pipelineVariants ? `@@mode:${mode}` : '');
+    if (state.variants.has(variantFingerprint)) {
+      candidate.material.dispose();
+      this.stats.dedupedWithinSource += 1;
+      return;
+    }
+    state.variants.set(variantFingerprint, { mode, side: candidate.side });
+    this.registerVariantUser(variantFingerprint, sourceMaterial);
+
+    const owner = this.variantOwner.get(variantFingerprint);
+    if (owner && owner !== sourceMaterial && this.sourceStates.has(owner)) {
+      candidate.material.dispose();
+      this.stats.dedupedAcrossSources += 1;
+      return;
+    }
+
+    this.variantOwner.set(variantFingerprint, sourceMaterial);
+    this.queueKeeper(sourceMaterial, object, candidate.material, state);
   }
 
   private registerVariantUser(variantFingerprint: string, sourceMaterial: THREE.Material): void {
@@ -844,6 +881,7 @@ export class BlendWarmupManager {
   private adoptVariant(
     variantFingerprint: string,
     mode: BlendingMode,
+    side: THREE.Side | undefined,
     newOwner: THREE.Material
   ): void {
     const state = this.sourceStates.get(newOwner);
@@ -855,6 +893,7 @@ export class BlendWarmupManager {
       return;
     }
     keeper.applyBlendingMode(mode);
+    if (side !== undefined) keeper.side = side;
     this.variantOwner.set(variantFingerprint, newOwner);
     this.queueKeeper(newOwner, object, keeper, state);
     this.stats.ownershipTransfers += 1;
@@ -863,14 +902,14 @@ export class BlendWarmupManager {
 
   /** Release `sourceMaterial`'s variant registrations, transferring owned ones. */
   private releaseVariants(sourceMaterial: THREE.Material, state: SourceWarmupState): void {
-    for (const [variantFingerprint, mode] of state.variants) {
+    for (const [variantFingerprint, { mode, side }] of state.variants) {
       const users = this.variantUsers.get(variantFingerprint);
       users?.delete(sourceMaterial);
       if (this.variantOwner.get(variantFingerprint) !== sourceMaterial) continue;
       this.variantOwner.delete(variantFingerprint);
       const heir = users?.values().next().value;
       if (heir && !this.tearingDown) {
-        this.adoptVariant(variantFingerprint, mode, heir);
+        this.adoptVariant(variantFingerprint, mode, side, heir);
       } else {
         this.variantUsers.delete(variantFingerprint);
       }

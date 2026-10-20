@@ -50,6 +50,7 @@ import {
   requestWebGPUDevice,
   selectBackend,
 } from '../scene/scene-manager/render-pipeline/renderer-setup';
+import { takePreRequestedWebGPUDevice } from '../scene/scene-manager/render-pipeline/early-device-request';
 
 /**
  * Options for {@link bootstrapStandalone}.
@@ -379,7 +380,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     appOptions.preRequestedWebGPUDevice = requestWebGPUDevice(
       appOptions.renderer,
       backendSelection.requireNativeAdapter,
-      backendSelection.platformRules
+      backendSelection.platformRules,
+      takePreRequestedWebGPUDevice()
     );
     void appOptions.preRequestedWebGPUDevice.catch(() => undefined);
   }

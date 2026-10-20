@@ -500,6 +500,7 @@ export class PointTSLMaterial
   }
 
   applyBlendingMode(mode: BlendingMode): void {
+    const wasNormal = this.userData.blendingMode === 'normal';
     // A runtime mode switch takes FULL ownership of the blending state:
     // clear the constructor's explicit depthTest/transparent overrides
     // so the mode-derived state below (and every later rebuild) wins.
@@ -554,12 +555,13 @@ export class PointTSLMaterial
     this.userData.depthTest = state.depthTest;
 
     // The TSL factory reads `blendingMode` to decide the shader-output
-    // shape (`max`, `opaque`, and `volumetric` are build-time branches).
+    // shape (`max`, `opaque`, `volumetric`, and the normal-only density
+    // alpha compensation are build-time branches).
     // Crossing any of them changes the graph; rebuild so the colorNode
     // reflects the new branch. userData.blendingMode
     // is already the new mode, so the rebuild's factory config picks
     // up the right branch.
-    if (definesChanged) {
+    if (definesChanged || wasNormal !== (mode === 'normal')) {
       this.rebuildGraph();
     }
   }

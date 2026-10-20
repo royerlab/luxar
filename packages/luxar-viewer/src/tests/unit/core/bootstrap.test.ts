@@ -128,6 +128,11 @@ import {
 import { resetRootDocumentPrefetchForTests } from '../../../cache/root-document-prefetch';
 import { loadTslMaterials } from '../../../rendering/tsl/load';
 import {
+  preRequestWebGPUDevice,
+  takePreRequestedWebGPUDevice,
+} from '../../../scene/scene-manager/render-pipeline/early-device-request';
+import { WEBGPU_PLATFORM_RULES } from '../../../scene/scene-manager/render-pipeline/backend-policy';
+import {
   defaultUserSettings,
   saveUserSettings,
   resetUserSettingsForTests,
@@ -215,6 +220,7 @@ describe('bootstrapStandalone', () => {
   });
 
   afterEach(() => {
+    void takePreRequestedWebGPUDevice();
     mocks.disposeCleanups.splice(0).forEach((cleanup) => cleanup());
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
     delete window.__luxarBuild;
@@ -279,6 +285,65 @@ describe('bootstrapStandalone', () => {
       expect(requestAdapter).toHaveBeenCalledTimes(1);
       expect(await options.preRequestedWebGPUDevice).toEqual({ fallback: true });
       expect(requestDevice).not.toHaveBeenCalled();
+      expect(loadTslMaterials).not.toHaveBeenCalled();
+    });
+
+    it('consumes the device requested by the early entry once', async () => {
+      const device = {};
+      const requestDevice = vi.fn().mockResolvedValue(device);
+      const requestAdapter = vi.fn().mockResolvedValue({
+        features: new Set<string>(),
+        limits: { maxVertexBuffers: 16 },
+        requestDevice,
+      });
+      vi.stubGlobal('navigator', { ...navigator, gpu: { requestAdapter } });
+
+      preRequestWebGPUDevice('webgpu');
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, renderer: 'webgpu' },
+      });
+
+      expect(requestAdapter).toHaveBeenCalledTimes(1);
+      expect(requestDevice).toHaveBeenCalledTimes(1);
+      const options = mocks.init.mock.calls[0]?.[0] as {
+        preRequestedWebGPUDevice?: Promise<unknown>;
+      };
+      const result = (await options.preRequestedWebGPUDevice) as {
+        fallback: boolean;
+        device: unknown;
+      };
+      expect(result.fallback).toBe(false);
+      expect(result.device).toBe(device);
+      expect(takePreRequestedWebGPUDevice()).toBeUndefined();
+    });
+
+    it('consumes an early platform-policy request that rejected the adapter vendor', async () => {
+      vi.stubEnv('VITE_LUXAR_USE_LEGACY_WEBGL', '0');
+      const requestDevice = vi.fn();
+      const requestAdapter = vi.fn().mockResolvedValue({
+        info: { vendor: 'amd' },
+        features: new Set<string>(),
+        limits: { maxVertexBuffers: 16 },
+        requestDevice,
+      });
+      vi.stubGlobal('navigator', {
+        ...navigator,
+        userAgentData: { platform: 'Linux', brands: [{ brand: 'Chromium' }] },
+        gpu: { requestAdapter },
+      });
+      const onPolicyMatch = vi.fn();
+
+      preRequestWebGPUDevice(undefined, WEBGPU_PLATFORM_RULES, onPolicyMatch);
+      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+
+      const options = mocks.init.mock.calls[0]?.[0] as {
+        preRequestedWebGPUDevice?: Promise<unknown>;
+      };
+      expect(await options.preRequestedWebGPUDevice).toEqual({ fallback: true });
+      expect(requestAdapter).toHaveBeenCalledTimes(1);
+      expect(requestDevice).not.toHaveBeenCalled();
+      expect(onPolicyMatch).not.toHaveBeenCalled();
       expect(loadTslMaterials).not.toHaveBeenCalled();
     });
 

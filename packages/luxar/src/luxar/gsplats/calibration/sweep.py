@@ -10,6 +10,7 @@ which :func:`curves` turns into the per-K lists ``CalibrationResult`` stores.
 
 from __future__ import annotations
 
+import functools
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,6 +62,60 @@ _CURVE_KEYS = (
 )
 
 
+#: Least wall-clock time between two in-fit progress lines of one grid point.
+HEARTBEAT_INTERVAL_S = 30.0
+
+
+class FitHeartbeat:
+    """A fit ``iter_callback`` that reports progress INSIDE one grid point.
+
+    A single high-K fit can run for many minutes; without this the sweep is
+    silent until the point ends. The callback rides on the fitter's own
+    evaluation iterations (no extra work) and emits at most one line per
+    ``interval_s`` of wall-clock time.
+    """
+
+    def __init__(
+        self,
+        K: int,
+        n_iters: Optional[int],
+        emit: Callable[[str], None],
+        *,
+        interval_s: float = HEARTBEAT_INTERVAL_S,
+        clock: Callable[[], float] = time.perf_counter,
+    ) -> None:
+        self.K, self.n_iters, self.emit = int(K), n_iters, emit
+        self.interval_s, self.clock = float(interval_s), clock
+        self.t0 = clock()
+        self.last = self.t0
+
+    def __call__(self, it: int, _pred: Any, info: Dict[str, Any]) -> None:
+        now = self.clock()
+        if now - self.last < self.interval_s:
+            return
+        self.last = now
+        total = f"/{self.n_iters}" if self.n_iters else ""
+        rel = info.get("rel_l2")
+        rel_txt = f", relL2 {float(rel):.4f}" if rel is not None else ""
+        self.emit(
+            f"  K={self.K}: iteration {int(it)}{total}{rel_txt}, "
+            f"{format_duration(now - self.t0)} into this fit (it can stop "
+            "early on convergence)"
+        )
+
+
+def _chain_callbacks(first: Any, second: Any) -> Any:
+    """One ``iter_callback`` calling both (a configured one keeps working)."""
+    if first is None:
+        return second
+
+    def both(it: int, pred: Any, info: Dict[str, Any]) -> None:
+        first(it, pred, info)
+        second(it, pred, info)
+
+    return both
+
+
 @dataclass
 class PointContext:
     """Everything one grid point needs: the fit target, device copies, scoring.
@@ -87,6 +142,18 @@ class PointContext:
     cull_retention: Optional[float]
     stored_min_extent: Optional[float]
     stored_min_extent_max_mass_share: float
+    heartbeat: Optional[Callable[[str], None]] = None
+    """Where in-fit progress lines go (:class:`FitHeartbeat`); ``None`` = silent."""
+
+    def _fit_kwargs_for(self, K: int) -> Dict[str, Any]:
+        """The per-K fit kwargs: no cull (applied here), plus the heartbeat."""
+        kwargs = {**self.fit_kwargs, "cull_retention": None}
+        if self.heartbeat is not None:
+            beat = FitHeartbeat(K, kwargs.get("n_iters"), self.heartbeat)
+            kwargs["iter_callback"] = _chain_callbacks(
+                kwargs.get("iter_callback"), beat
+            )
+        return kwargs
 
     def _cull(self, splats: Any) -> Any:
         from luxar.gsplats.fit_gsplats import _post_fit_cull
@@ -130,7 +197,7 @@ class PointContext:
 
         t0 = time.perf_counter()
         fitted = fit_gaussian_splats(
-            self.V_filled, seeds=int(K), **{**self.fit_kwargs, "cull_retention": None}
+            self.V_filled, seeds=int(K), **self._fit_kwargs_for(int(K))
         )
         splats = self._cull(fitted)
         elapsed = time.perf_counter() - t0
@@ -287,6 +354,7 @@ def run_sweep(
     for i, K in enumerate(grid):
         if progress_callback is not None:
             progress_callback(i, n, f"fit K={K}")
+            ctx.heartbeat = functools.partial(progress_callback, i, n)
         records.append(ctx.run(int(K)))
         mine = records[n_before:]
         stopped = early and i + 1 < n and should_stop(mine, key, control)

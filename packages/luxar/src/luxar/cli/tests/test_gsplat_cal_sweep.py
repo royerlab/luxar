@@ -217,3 +217,132 @@ def test_content_density_from_an_unfinished_cal_warns(
     density = _resolve_density(out, None, None, 0.44, None, None)
     assert density.k_star_reference > 0
     assert "status is 'interrupted'" in capsys.readouterr().out
+
+
+def test_summary_ceiling_is_on_the_table_basis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    curve = {1000: 30.0, 2000: 32.0, 4000: 31.0}
+    monkeypatch.setattr(driver_module.PointContext, "run", _stub(curve, []))
+    code, output, out = _cal(tmp_path, "--k-grid", "1000,2000,4000")
+    assert code == 0, output
+    cal = json.loads(out.read_text())
+    assert cal["noise_sigma_rms"] > 0
+    assert "held-out PSNR ceiling ≈" in output
+    assert f"{cal['psnr_ceiling_robust_db']:.1f} dB (robust peak, as in the table)" in (
+        output
+    )
+
+
+def test_noise_line_restates_a_legacy_ceiling_on_the_robust_peak() -> None:
+    from luxar.cli.gsplat_ops.fitting.calibrate import _noise_lines
+    from luxar.gsplats.calibration import CalibrationResult, NoiseFloor, find_k_star
+
+    ks, held = [1000, 2000, 4000], [30.0, 31.0, 30.5]
+    res = CalibrationResult(
+        k_values_requested=ks,
+        k_values_effective=ks,
+        held_out_psnr_db=held,
+        train_psnr_db=held,
+        held_out_mse=[1e-3] * 3,
+        full_psnr_db=held,
+        full_ssim=[0.9] * 3,
+        held_out_peak=find_k_star(ks, held),
+        noise_floor=NoiseFloor(0.0029, 0.0029, 0.0029, 0.0, 50.8),
+        fit_times_seconds=[1.0] * 3,
+        splat_paths=None,
+        mask_seed=0,
+        mask_fraction=0.05,
+        donut_radius=1,
+        fit_config={},
+        volume_shape=[8, 8, 8],
+        volume_dtype="float32",
+        timestamp="2026-01-01T00:00:00",
+        data_range=1597.1,
+        robust_data_range=119.1,
+    )
+    (line,) = _noise_lines(res)
+    # 50.8 dB on the full range is 28.3 dB on the robust peak (-22.55 dB).
+    assert "ceiling 28.3 dB" in line and "median-voxel" in line
+    res.noise_sigma_rms, res.psnr_ceiling_robust_db = 7.29, 24.26
+    res.noise_scale_ratio = 2.0
+    lines = _noise_lines(res)
+    assert "RMS σ = 7.29 (6.1% of the robust peak)" in lines[0]
+    assert "ceiling ≈ 24.3 dB" in lines[0]
+    assert "may read low" in lines[1]
+
+
+def test_pdf_alone_keeps_the_fits_temporarily_for_the_slice_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("matplotlib")
+    base = _stub({1000: 30.0, 2000: 32.0, 4000: 31.0}, [])
+
+    def run(self: Any, K: int) -> Dict[str, Any]:
+        record = base(self, K)
+        path = self.keep_fits / f"k{K}.gsplats.zarr"
+        path.mkdir()
+        record["path"] = str(path)
+        return record
+
+    seen: Dict[str, Any] = {}
+
+    def render(*, result: Any, volume: Any, output_path: Path, splat_paths: Any):
+        seen["paths"] = list(splat_paths)
+        seen["exist"] = [Path(p).exists() for p in splat_paths]
+        output_path.write_bytes(b"%PDF")
+
+    import luxar.gsplats.calibration_report as report
+
+    monkeypatch.setattr(driver_module.PointContext, "run", run)
+    monkeypatch.setattr(report, "render_calibration_report", render)
+    pdf = tmp_path / "cal.pdf"
+    code, output, out = _cal(tmp_path, "--k-grid", "1000,2000,4000", "--pdf", str(pdf))
+    assert code == 0, output
+    notice = output.index("--pdf: per-K fits are kept in a temporary directory")
+    assert notice < output.index("fit K=1000")  # said before the sweep
+    assert len(seen["paths"]) == 3 and all(seen["exist"])
+    # Beside cal.json, not in $TMPDIR (a killed run must not fill /tmp).
+    assert all(Path(p).parent.parent == tmp_path for p in seen["paths"])
+    assert not any(Path(p).exists() for p in seen["paths"])  # cleaned up
+    assert json.loads(out.read_text())["splat_paths"] is None
+    assert pdf.exists()
+
+
+def test_keep_fits_with_pdf_keeps_them_and_records_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("matplotlib")
+    base = _stub({1000: 30.0, 2000: 32.0, 4000: 31.0}, [])
+
+    def run(self: Any, K: int) -> Dict[str, Any]:
+        record = base(self, K)
+        path = self.keep_fits / f"k{K}.gsplats.zarr"
+        path.mkdir()
+        record["path"] = str(path)
+        return record
+
+    import luxar.gsplats.calibration_report as report
+
+    monkeypatch.setattr(driver_module.PointContext, "run", run)
+    monkeypatch.setattr(
+        report,
+        "render_calibration_report",
+        lambda *, result, volume, output_path, splat_paths: output_path.write_bytes(
+            b"%PDF"
+        ),
+    )
+    fits = tmp_path / "fits"
+    code, output, out = _cal(
+        tmp_path,
+        "--k-grid",
+        "1000,2000,4000",
+        "--pdf",
+        str(tmp_path / "cal.pdf"),
+        "--keep-fits",
+        str(fits),
+    )
+    assert code == 0, output
+    assert "temporary directory" not in output
+    paths = json.loads(out.read_text())["splat_paths"]
+    assert len(paths) == 3 and all(Path(p).exists() for p in paths)

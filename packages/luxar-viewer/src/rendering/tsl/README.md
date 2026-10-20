@@ -38,11 +38,14 @@ So the accessor sits in a leaf that imports nothing at runtime.
 ## The ordering contract
 
 `loadTslMaterials()` must resolve before the first material is constructed on
-the WebGPU path. For explicit and env-var WebGPU selections, the standalone
-HTML entry prefetches the registry before the main bundle runs; bootstrap also
-requests it while acquiring the adapter. Under the platform policy, the early
-entry skips prefetch; the device request fetches TSL once the adapter vendor
-matches a rule. `SceneManager.init` still
+the WebGPU path. The standalone HTML entry starts adapter/device acquisition
+before the main viewer bundle runs, and bootstrap consumes that request once
+(embedded mounts start it in bootstrap instead). For explicit and env-var
+WebGPU selections the entry also prefetches the registry at once, and
+bootstrap requests it again before awaiting the adapter. Under the platform
+policy neither does: only the adapter request starts early, and the device
+request, the `three/webgpu` chunk and the registry all wait until the adapter
+vendor matches a rule. `SceneManager.init` still
 awaits it before constructing a material:
 
 ```
