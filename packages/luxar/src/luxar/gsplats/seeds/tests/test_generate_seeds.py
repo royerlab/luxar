@@ -11,9 +11,11 @@ import warnings
 
 import numpy as np
 import pytest
+import torch
 
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.seeds import generate_seeds
+from luxar.gsplats.seeds.peaks import seed_from_peaks
 
 HAS_SCIPY = importlib.util.find_spec("scipy") is not None
 
@@ -356,6 +358,90 @@ class TestSpecialCases:
 
 class TestReproducibility:
     """Test reproducibility."""
+
+    def test_numpy_integer_seed_and_invalid_types(self) -> None:
+        volume = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
+        expected = seed_from_peaks(volume, n_seeds=8, seed=42, device="cpu")
+        actual = seed_from_peaks(volume, n_seeds=8, seed=np.int64(42), device="cpu")
+        np.testing.assert_array_equal(actual.centers, expected.centers)
+
+        for invalid in (True, 42.0, "42"):
+            with pytest.raises(TypeError, match="seed"):
+                seed_from_peaks(volume, n_seeds=8, seed=invalid, device="cpu")
+            with pytest.raises(TypeError, match="seed"):
+                seed_from_peaks(volume, seed=invalid, device="cpu")
+
+    def test_seed_warns_when_peaks_is_not_selected(self) -> None:
+        volume = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
+        with pytest.warns(UserWarning, match="Parameter 'seed'.*not used"):
+            generate_seeds(volume, method="edges", seed=42, device="cpu")
+
+    def test_peaks_seed_is_independent_of_global_rng(self) -> None:
+        volume = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
+
+        with torch.random.fork_rng(devices=[]):
+            for make_seeds in (
+                seed_from_peaks,
+                lambda v, **kw: generate_seeds(v, method="peaks", **kw),
+            ):
+                torch.random.default_generator.manual_seed(1)
+                before = torch.random.get_rng_state().clone()
+                first = make_seeds(volume, n_seeds=8, seed=42, device="cpu")
+                assert torch.equal(torch.random.get_rng_state(), before)
+
+                torch.random.default_generator.manual_seed(99)
+                before = torch.random.get_rng_state().clone()
+                second = make_seeds(volume, n_seeds=8, seed=42, device="cpu")
+                assert torch.equal(torch.random.get_rng_state(), before)
+
+                third = make_seeds(volume, n_seeds=8, seed=43, device="cpu")
+                assert len(first.centers) == 8
+                np.testing.assert_array_equal(first.centers, second.centers)
+                np.testing.assert_array_equal(first.amplitudes, second.amplitudes)
+                assert not np.array_equal(first.centers, third.centers)
+
+    def test_peaks_accepts_generator(self) -> None:
+        volume = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
+        generator = torch.Generator().manual_seed(42)
+        before = generator.get_state().clone()
+        global_before = torch.random.get_rng_state().clone()
+
+        generated = generate_seeds(
+            volume, method="peaks", n_seeds=8, seed=generator, device="cpu"
+        )
+        expected = seed_from_peaks(volume, n_seeds=8, seed=42, device="cpu")
+
+        assert not torch.equal(generator.get_state(), before)
+        assert torch.equal(torch.random.get_rng_state(), global_before)
+        np.testing.assert_array_equal(generated.centers, expected.centers)
+
+    @pytest.mark.parametrize(
+        "device",
+        [
+            pytest.param(
+                "cuda",
+                marks=pytest.mark.skipif(
+                    not torch.cuda.is_available(), reason="CUDA not available"
+                ),
+            ),
+            pytest.param(
+                "mps",
+                marks=pytest.mark.skipif(
+                    not torch.backends.mps.is_available(), reason="MPS not available"
+                ),
+            ),
+        ],
+    )
+    def test_peaks_seed_on_gpu_does_not_use_global_rng(self, device: str) -> None:
+        volume = np.linspace(1, 2, 50**3, dtype=np.float32).reshape(50, 50, 50)
+        device_rng = torch.cuda if device == "cuda" else torch.mps
+        before = device_rng.get_rng_state().clone()
+
+        first = seed_from_peaks(volume, n_seeds=8, seed=42, device=device)
+        second = seed_from_peaks(volume, n_seeds=8, seed=42, device=device)
+
+        assert torch.equal(device_rng.get_rng_state(), before)
+        np.testing.assert_array_equal(first.centers, second.centers)
 
     def test_reproducible_results(self, simple_2d_image) -> None:
         """Test results are reproducible for deterministic methods."""

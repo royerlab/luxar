@@ -423,6 +423,11 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     )
 
 
+def _set_default_peaks_seed(seed_method: str, seed_kwargs: dict[str, Any]) -> None:
+    if "peaks" in {method.strip() for method in seed_method.lower().split(",")}:
+        seed_kwargs.setdefault("seed", 42)
+
+
 def _generate_seeds(
     V: np.ndarray,
     target_count: int | None,
@@ -460,6 +465,8 @@ def _generate_seeds(
         Generated seed centers (N, ndim)
     """
     from luxar.gsplats.seeds import generate_seeds
+
+    _set_default_peaks_seed(seed_method, seed_kwargs)
 
     # Generate seeds using specified method (returns GSplatData)
     # Pass target_count so intelligent seeding methods get proper budget allocation:
