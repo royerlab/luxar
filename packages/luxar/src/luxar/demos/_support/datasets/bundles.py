@@ -148,6 +148,7 @@ def load_dataset_bundle(
     cache_root: Optional[Path] = None,
     manifest: Optional[dict] = None,
     verbose: bool = True,
+    include_stats: bool = False,
 ) -> list | None:
     """Manifest-driven counterpart of :func:`load_precomputed_bundle`.
 
@@ -173,6 +174,9 @@ def load_dataset_bundle(
         cache_root: Override the cache root (tests).
         manifest: Pre-loaded manifest (tests).
         verbose: Print progress.
+        include_stats: Load each member's fitting stats too, for a caller that
+            records per-part fit provenance from them (the local-fit path of
+            the same demo loads them, so the two scenes then agree).
 
     Returns:
         ``list[GSplatData]``, or ``None`` when the caller should build the data.
@@ -216,6 +220,7 @@ def load_dataset_bundle(
             validate_lfs=False,
             stamp=stamp,
             verbose=verbose,
+            include_stats=include_stats,
         )
 
 
@@ -291,6 +296,7 @@ def _extract_bundle_and_load(
     validate_lfs: bool,
     stamp: Optional[str] = None,
     verbose: bool = True,
+    include_stats: bool = False,
 ) -> list:
     """Extract the requested members of *bundle_path* into *cache_dir* and load them.
 
@@ -333,7 +339,7 @@ def _extract_bundle_and_load(
 
     results = []
     for fname in file_names:
-        gsplats = GSplatData.load(cache_dir / fname, include_stats=False)
+        gsplats = GSplatData.load(cache_dir / fname, include_stats=include_stats)
         if verbose:
             aprint(f"Loaded {fname}: {len(gsplats.amplitudes):,} splats")
         results.append(gsplats)

@@ -62,3 +62,19 @@ class TestVerifyFileChecksum:
             is False
         )
         assert capsys.readouterr().out == ""
+
+
+def test_is_download_failure_separates_the_network_from_faults() -> None:
+    """A caller may route around the network failing, never a checksum or fault."""
+    import requests
+
+    from luxar.demos import is_download_failure
+    from luxar.demos._support.downloads.download import RETRIES_EXHAUSTED
+
+    assert is_download_failure(requests.exceptions.ConnectionError("offline"))
+    assert is_download_failure(requests.exceptions.Timeout("slow"))
+    assert is_download_failure(requests.exceptions.HTTPError("503"))
+    assert is_download_failure(RuntimeError(RETRIES_EXHAUSTED))
+    assert not is_download_failure(ValueError("failed checksum verification"))
+    assert not is_download_failure(RuntimeError("the cache write is damaged"))
+    assert not is_download_failure(FileNotFoundError("bad in-repo copy"))

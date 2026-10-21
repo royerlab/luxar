@@ -96,8 +96,11 @@ RECORDS = {
     "cc-by": {
         "title": "Luxar demo datasets: permissively licensed (CC-BY, CC0, public domain)",
         "license": "cc-by-4.0",
-        "zenodo_doi": "10.5281/zenodo.22804363",
-        "zenodo_record": "22804363",
+        # v2.1.0 (published 2026-10-21) added the budding-organoid frame bundle
+        # and the four EASI-FISH channel archives; every earlier file carries
+        # over byte-identical, so the existing pins still hold.
+        "zenodo_doi": "10.5281/zenodo.23524429",
+        "zenodo_record": "23524429",
         "zenodo_conceptdoi": "10.5281/zenodo.21912279",
         "base_url": None,
         "published": True,
@@ -491,17 +494,8 @@ DATASETS: dict[str, dict] = {
         # Zenodo deposition (R2 override retired 2026-09-18).
     ),
     "gsplats_4d_organoid_budding": dict(
-        bucket="local-compute",
-        # Redistributable (CC BY 4.0), and local-compute only because the fits
-        # are not hosted yet: the demo fetches its source from Zenodo 6828906
-        # and refits.
-        # TODO(Loic): once a cc-by record carries the per-frame fit bundle
-        # `organoid_budding_frames.gsplats.zarr.zip` (the demo's BUNDLE_NAME),
-        # promote this to bucket="zenodo", record="cc-by" with an `acquisition`
-        # block (not comparable: the record holds only the authors'
-        # deconvolved 8-bit crops) and the bundle's sha256 and size in `files`.
-        # Then restore the demo's `load_dataset_bundle` call (TODO at BUNDLE_NAME).
-        redistribute=True,
+        bucket="zenodo",
+        record="cc-by",
         license="cc-by-4.0",
         source=(
             "LSTree light-sheet recordings, Zenodo 6828906 (recording "
@@ -514,12 +508,25 @@ DATASETS: dict[str, dict] = {
             "4864 (2022). doi:10.1038/s41467-022-32465-z. Data: "
             "doi:10.5281/zenodo.6828906 (CC BY 4.0)."
         ),
-        reason="CC BY 4.0 and redistributable, but no Zenodo record carries the fits yet.",
-        strategy=(
-            "Fetch 167 rgb_grid frames + the lineage XML from Zenodo 6828906 by "
-            "range requests (~345 MB), unmix the membranes as red - green, and "
-            "fit both channels locally (GPU, ~1 h on an 8 GB card)."
+        acquisition=dict(
+            description=(
+                "167 of the authors' deconvolved rgb_grid frames of recording "
+                "002 (every fourth, T0244 standing in for the empty T0245): "
+                "8-bit RGB crops of the organoid, fitted per frame and channel"
+            ),
+            comparable=False,
+            reason=(
+                "the record holds only the authors' deconvolved 8-bit crops, not "
+                "the ~700 GB raw acquisition (available from the authors on "
+                "request), so no stored size describes what was imaged"
+            ),
         ),
+        # ONE file: `organoid_budding_frames.gsplats.zarr.zip`, the demo's
+        # BUNDLE_NAME, a flat STORED zip of the 334 per-frame fit archives (167
+        # frames x 2 channels) named exactly as the demo's local caches. The
+        # lineage XML is not re-hosted; the demo still range-fetches it from
+        # Zenodo 6828906. Like every hosted-only dataset the PINS live in the
+        # committed manifest (`_files_for` returns it when nothing is on disk).
     ),
     "gsplats_cell_tracking": dict(
         bucket="zenodo",
@@ -730,16 +737,8 @@ DATASETS: dict[str, dict] = {
         ),
     ),
     "gsplats_easifish_lha": dict(
-        bucket="local-compute",
-        # Redistributable (CC BY 4.0) like `gsplats_flylight_mcfo`, and
-        # local-compute for the same reason: the fits are not hosted yet.
-        # TODO(Loic): once a cc-by record carries the four finished archives as
-        # `easifish_{dapi,slc17a6,gpr83,bdnf}.gsplats.zarr.zip` (the demo's
-        # `archive_path`, zipped), promote this to bucket="zenodo",
-        # record="cc-by" with an `acquisition` block, and resolve them in the
-        # demo's `resolve_channel_paths` with `ensure_dataset` (falling back to
-        # the local build).
-        redistribute=True,
+        bucket="zenodo",
+        record="cc-by",
         license="cc-by-4.0",
         source=(
             "Janelia figshare 10.25378/janelia.13622819, EASI-FISH example "
@@ -752,11 +751,21 @@ DATASETS: dict[str, dict] = {
             "doi:10.1016/j.cell.2021.11.024. Data CC BY 4.0, "
             "doi:10.25378/janelia.13622819."
         ),
-        reason="CC BY 4.0 and redistributable, but no Zenodo record is published yet.",
-        strategy=(
-            "Download the 34.9 GB CZI from figshare, stitch its two tiles, "
-            "and fit the four channels locally (GPU, ~2.5 h)."
+        acquisition=dict(
+            description=(
+                "LHA3_R3_medium.czi, two unstitched tiles x 4 channels x 591 x "
+                "1920 x 1920 uint16 (34.9 GB as published); stitched, then the "
+                "mRNA channels fitted at xy/2 and DAPI at z/2, xy/4"
+            ),
+            comparable=True,
+            # The CZI as published (the demo's CZI_BYTES): the whole file every
+            # fit is derived from, the same denominator the scene caption uses.
+            stored_bytes=34_861_369_536,
         ),
+        # FOUR files, one per channel: `easifish_{dapi,slc17a6,gpr83,bdnf}
+        # .gsplats.zarr.zip`, DEFLATED, each keeping its store directory as the
+        # internal prefix like the other hosted gsplat archives. Pins live in the
+        # committed manifest, as for every hosted-only dataset.
     ),
     # For this dataset, `redistribute=False` governs re-hosting the dataset
     # itself: the raw recording or a fitted archive derived from it. It does

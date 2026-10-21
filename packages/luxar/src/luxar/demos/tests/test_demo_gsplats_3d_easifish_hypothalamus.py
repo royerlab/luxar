@@ -467,11 +467,159 @@ def test_stitch_refuses_a_bad_layout_or_registration() -> None:
         _demo._check_offset(_demo.TileOffset((0, 1), 0, 0, 0.93), 128)
 
 
-def test_resolution_is_hosting_agnostic(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Whatever resolves the fits, the scene gets one archive per channel."""
-    sentinel = {ch.key: Path(ch.key) for ch in _demo.CHANNELS}
-    monkeypatch.setattr(_demo, "recompute_channel_paths", lambda: sentinel)
-    assert set(_demo.resolve_channel_paths()) == {ch.key for ch in _demo.CHANNELS}
+def test_resolution_order_is_local_then_hosted_then_recompute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Finished local fits first, then the hosted zips, then the CZI recipe."""
+    from luxar.demos import DatasetUnavailable
+
+    def built() -> dict[str, Path]:
+        return {ch.key: Path(f"built_{ch.key}") for ch in _demo.CHANNELS}
+
+    def finished() -> dict[str, Path]:
+        return {ch.key: Path(f"finished_{ch.key}") for ch in _demo.CHANNELS}
+
+    requested: list[list[str]] = []
+
+    def hosted(name: str, *, file_names: list[str]):
+        from luxar.demos._support.datasets.data_fetch import ResolvedDataset
+
+        assert name == _demo.DATASET
+        requested.append(list(file_names))
+        return ResolvedDataset(
+            [Path("cache") / n for n in file_names], {n: "ab" * 32 for n in file_names}
+        )
+
+    monkeypatch.setattr(_demo, "recompute_channel_paths", built)
+    monkeypatch.setattr(_demo, "local_channel_paths", finished)
+    monkeypatch.setattr(_demo, "ensure_dataset", hosted)
+    assert _demo.resolve_channel_paths() == finished()
+    assert requested == []  # complete local fits never touch the network
+
+    monkeypatch.setattr(_demo, "local_channel_paths", lambda: None)
+    paths = _demo.resolve_channel_paths()
+    names = [f"easifish_{ch.key}.gsplats.zarr.zip" for ch in _demo.CHANNELS]
+    assert requested == [names]
+    assert paths == {
+        ch.key: Path("cache") / f"easifish_{ch.key}.gsplats.zarr.zip"
+        for ch in _demo.CHANNELS
+    }
+    assert paths.input_digests == {n: "ab" * 32 for n in names}
+
+    def unavailable(*_a: object, **_k: object):
+        raise DatasetUnavailable("pending upload")
+
+    monkeypatch.setattr(_demo, "ensure_dataset", unavailable)
+    monkeypatch.setattr(_demo, "_stitch_record", lambda _p: {"complete": True})
+    assert _demo.resolve_channel_paths() == built()
+    monkeypatch.setattr(_demo, "ensure_dataset", hosted)
+    monkeypatch.setattr(_demo, "local_channel_paths", finished)
+    monkeypatch.setattr(_demo, "RECOMPUTE", True)
+    assert _demo.resolve_channel_paths() == built()
+
+
+def test_hosted_http_error_does_not_start_a_czi_download(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import requests
+
+    def unavailable(*_a: object, **_k: object):
+        raise requests.exceptions.HTTPError("503 Service Unavailable")
+
+    def unexpected_recompute() -> dict[str, Path]:
+        pytest.fail("the CZI recipe must not start without an existing input")
+
+    monkeypatch.setattr(_demo, "RECOMPUTE", False)
+    monkeypatch.setattr(_demo, "CZI_ARG", None)
+    monkeypatch.setattr(_demo, "local_channel_paths", lambda: None)
+    monkeypatch.setattr(_demo, "ensure_dataset", unavailable)
+    monkeypatch.setattr(_demo, "OME_ZARR", tmp_path / "missing.ome.zarr")
+    monkeypatch.setattr(_demo, "recompute_channel_paths", unexpected_recompute)
+    with pytest.raises(RuntimeError, match="--recompute"):
+        _demo.resolve_channel_paths()
+
+
+def test_hosted_http_error_uses_a_cached_stitch_or_user_czi(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import requests
+
+    from luxar._zarr_compat import open_group
+
+    def unavailable(*_a: object, **_k: object):
+        raise requests.exceptions.HTTPError("503 Service Unavailable")
+
+    built = {ch.key: Path(ch.key) for ch in _demo.CHANNELS}
+    monkeypatch.setattr(_demo, "RECOMPUTE", False)
+    monkeypatch.setattr(_demo, "local_channel_paths", lambda: None)
+    monkeypatch.setattr(_demo, "ensure_dataset", unavailable)
+    monkeypatch.setattr(_demo, "recompute_channel_paths", lambda: built)
+    stitched = tmp_path / "stitched.ome.zarr"
+    open_group(str(stitched), mode="w").attrs["easifish_stitch"] = {"complete": True}
+    monkeypatch.setattr(_demo, "OME_ZARR", stitched)
+    monkeypatch.setattr(_demo, "CZI_ARG", None)
+    assert _demo.resolve_channel_paths() == built
+    monkeypatch.setattr(_demo, "OME_ZARR", tmp_path / "missing.ome.zarr")
+    monkeypatch.setattr(_demo, "CZI_ARG", Path("my.czi"))
+    assert _demo.resolve_channel_paths() == built
+
+
+def _empty_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from luxar.demos._support.datasets import data_fetch
+
+    monkeypatch.setattr(data_fetch, "_DEFAULT_CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", tmp_path / "no-lfs")
+
+
+def test_an_offline_download_falls_back_to_the_local_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Offline, the download layer raises what robust_download really raises."""
+    import requests
+
+    from luxar.demos._support.downloads import download
+
+    def offline(*_a: object, **_k: object) -> Path:
+        raise requests.exceptions.ConnectionError("Failed to resolve 'zenodo.org'")
+
+    _empty_cache(monkeypatch, tmp_path)
+    monkeypatch.setattr(download, "robust_download", offline)
+    assert _demo.hosted_channel_paths() is None
+
+
+def test_a_hosted_archive_that_fails_its_checksum_still_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from luxar.demos._support.downloads import download
+
+    def corrupt(_url: str, output_path: Path, **_k: object) -> Path:
+        Path(output_path).write_bytes(b"not the archive")
+        return Path(output_path)
+
+    _empty_cache(monkeypatch, tmp_path)
+    monkeypatch.setattr(download, "robust_download", corrupt)
+    with pytest.raises(ValueError, match="checksum"):
+        _demo.hosted_channel_paths()
+
+
+def test_czi_without_recompute_warns_when_fits_are_ready(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ready = {ch.key: Path(ch.key) for ch in _demo.CHANNELS}
+    monkeypatch.setattr(_demo, "local_channel_paths", lambda: ready)
+    monkeypatch.setattr(_demo, "CZI_ARG", Path("my.czi"))
+    assert _demo.resolve_channel_paths() == ready
+    assert "--czi is ignored" in capsys.readouterr().out
+
+
+def test_the_hosted_archive_names_match_the_manifest() -> None:
+    manifest_path = _DEMO_PATH.parent / "data_manifest.json"
+    spec = json.loads(manifest_path.read_text())["datasets"][_demo.DATASET]
+    assert [f["name"] for f in spec["files"]] == [
+        _demo.hosted_archive_name(ch) for ch in _demo.CHANNELS
+    ]
 
 
 def test_a_scene_older_than_a_fit_is_rebuilt(
@@ -494,12 +642,46 @@ def test_a_scene_older_than_a_fit_is_rebuilt(
     assert not _demo.scene_is_fresh(scene, {"dapi": fit})
 
 
-def test_the_manifest_declares_the_dataset_as_redistributable_cc_by() -> None:
+def test_switching_between_hosted_and_local_fits_rebuilds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """File times cannot tell a hosted zip from a local build; the digests can."""
+    import os
+
+    from luxar._zarr_compat import open_group
+
+    monkeypatch.setattr(_demo, "scene_is_current", lambda *a, **k: True)
+    name = _demo.hosted_archive_name(_demo.CHANNELS[0])
+    pin = "cd" * 32  # whatever ensure_dataset verified, not the manifest pin
+    hosted = tmp_path / name
+    hosted.write_bytes(b"zip")
+    local = tmp_path / "easifish_dapi.gsplats.zarr"
+    local.mkdir()
+    scene = tmp_path / "scene.luxar.zarr"
+    root = open_group(str(scene), mode="w")
+    for path in (hosted, local):
+        os.utime(path, (1_000, 1_000))
+    os.utime(scene, (2_000, 2_000))
+
+    hosted_paths = _demo.ChannelPaths({"dapi": hosted}, {name: pin})
+    assert _demo.scene_is_fresh(scene, {"dapi": local})  # local scene, local fit
+    assert not _demo.scene_is_fresh(scene, hosted_paths)
+    root.attrs["input_digests"] = {name: pin}
+    os.utime(scene, (2_000, 2_000))
+    assert _demo.scene_is_fresh(scene, hosted_paths)  # hosted scene, hosted fit
+    assert not _demo.scene_is_fresh(scene, {"dapi": local})
+    # A re-pinned archive (another verified digest) rebuilds.
+    assert not _demo.scene_is_fresh(
+        scene, _demo.ChannelPaths({"dapi": hosted}, {name: "ef" * 32})
+    )
+
+
+def test_the_manifest_hosts_the_dataset_on_the_cc_by_record() -> None:
     manifest_path = _DEMO_PATH.parent / "data_manifest.json"
     spec = json.loads(manifest_path.read_text())["datasets"][_demo.DATASET]
     assert spec["license"] == "cc-by-4.0"
-    assert spec["redistribute"] is True
-    assert spec["bucket"] == "local-compute" and spec["files"] == []
+    assert spec["bucket"] == "zenodo" and spec["record"] == "cc-by"
+    assert spec["acquisition"]["stored_bytes"] == _demo.CZI_BYTES
     assert _demo.DATASET in _demo.DEMO_META["caches"]
 
 
@@ -570,6 +752,15 @@ def test_scene_text_states_its_size_against_the_raw_czi(tmp_path: Path) -> None:
     assert description.endswith(
         "Scene size: 111 MB on disk, from the 34.9 GB raw CZI (≈315x smaller)."
     )
+    # CC BY 4.0 attribution travels with the store: data DOI, licence link and
+    # the changes made, before the size sentence the restater rewrites.
+    assert (
+        "Data: doi:10.25378/janelia.13622819, CC BY 4.0 "
+        "(https://creativecommons.org/licenses/by/4.0/); changed by stitching the "
+        "two tiles, block-mean downsampling (mRNA xy/2; DAPI z/2, xy/4), "
+        "background subtraction, Gaussian-splat fitting and rescaling to "
+        "pre-expansion micrometres. Scene size: "
+    ) in description
     assert any(
         "splats • 111 MB, ≈315x smaller than the raw CZI • Wang et al. 2021" in t
         for t in texts

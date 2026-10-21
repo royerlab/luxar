@@ -82,6 +82,13 @@ def test_the_empty_export_frame_is_drawn_from_its_predecessor() -> None:
     assert demo.frame_member(demo.source_frame(244)).endswith("grid-T0244.vti")
     assert "_t0244." in demo._frame_cache_name("nuclei", 244)
     assert all(demo.source_frame(f) == f for f in demo.FRAMES if f != 244)
+    # So the frames actually drawn step by 4 except 3 then 5 around that slot,
+    # which is what the docstring and the scene description state.
+    drawn = [demo.source_frame(f) for f in demo.FRAMES]
+    steps = [b - a for a, b in zip(drawn, drawn[1:], strict=False)]
+    assert sorted(set(steps)) == [3, 4, 5]
+    assert steps.count(3) == steps.count(5) == 1
+    assert steps.index(3) + 1 == steps.index(5)
 
 
 def test_stand_in_slot_shows_the_stand_in_lineage(monkeypatch) -> None:
@@ -216,12 +223,94 @@ def test_fetch_source_refuses_bytes_that_miss_the_pinned_digest(
         demo.fetch_source()
 
 
-def test_manifest_lists_the_dataset_as_local_compute() -> None:
+def test_manifest_hosts_the_frame_bundle_on_the_cc_by_record() -> None:
     from luxar.demos import load_manifest
 
     spec = load_manifest()["datasets"][demo.DATASET_NAME]
-    assert spec["bucket"] == "local-compute" and spec["redistribute"] is True
-    assert demo.DEMO_META["requirements"]["compute"] == "heavy"
+    assert spec["bucket"] == "zenodo" and spec["record"] == "cc-by"
+    assert [f["name"] for f in spec["files"]] == [demo.BUNDLE_NAME]
+    assert spec["acquisition"]["comparable"] is False
+    assert demo.DEMO_META["requirements"]["compute"] == "medium"
+
+
+def test_hosted_fits_split_the_bundle_per_channel(monkeypatch) -> None:
+    """Members are requested CHANNELS x FRAMES and split back per channel."""
+    monkeypatch.setattr(demo, "FRAMES", (0, 4))
+    calls = {}
+
+    def fake_bundle(name, bundle, names, *, recompute, include_stats):
+        calls.update(name=name, bundle=bundle, include_stats=include_stats)
+        return list(names)
+
+    monkeypatch.setattr(demo, "load_dataset_bundle", fake_bundle)
+    fits = demo.hosted_fits()
+    assert calls == {
+        "name": demo.DATASET_NAME,
+        "bundle": demo.BUNDLE_NAME,
+        "include_stats": True,
+    }
+    for ch in demo.CHANNELS:
+        assert fits[ch["name"]] == [
+            demo._frame_cache_name(ch["name"], f) for f in (0, 4)
+        ]
+
+
+def _empty_cache(monkeypatch, tmp_path: Path) -> None:
+    """Point the manifest resolver at an empty cache, so the bundle must download."""
+    from luxar.demos._support.datasets import data_fetch
+
+    monkeypatch.setattr(data_fetch, "_DEFAULT_CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", tmp_path / "no-lfs")
+
+
+def test_an_offline_bundle_download_falls_back_to_the_local_build(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Offline, the download layer raises what robust_download really raises."""
+    import requests
+
+    from luxar.demos._support.downloads import download
+
+    def offline(*_args, **_kwargs):
+        raise requests.exceptions.ConnectionError("Failed to resolve 'zenodo.org'")
+
+    _empty_cache(monkeypatch, tmp_path)
+    monkeypatch.setattr(download, "robust_download", offline)
+    assert demo.hosted_fits() is None
+
+
+def test_a_bundle_that_fails_its_checksum_still_raises(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from luxar.demos._support.downloads import download
+
+    def corrupt(_url, output_path, **_kwargs):
+        Path(output_path).write_bytes(b"not the bundle")
+        return Path(output_path)
+
+    _empty_cache(monkeypatch, tmp_path)
+    monkeypatch.setattr(download, "robust_download", corrupt)
+    with pytest.raises(ValueError, match="checksum"):
+        demo.hosted_fits()
+
+
+def test_an_unavailable_bundle_falls_back_to_the_local_build(monkeypatch) -> None:
+    from luxar.demos import DatasetUnavailable
+
+    def unavailable(*_args, **_kwargs):
+        raise DatasetUnavailable("pending upload")
+
+    monkeypatch.setattr(demo, "load_dataset_bundle", unavailable)
+    assert demo.hosted_fits() is None
+
+
+def test_other_fetch_faults_are_not_swallowed(monkeypatch) -> None:
+    def damaged(*_args, **_kwargs):
+        raise RuntimeError("the cache write is damaged")
+
+    monkeypatch.setattr(demo, "load_dataset_bundle", damaged)
+    with pytest.raises(RuntimeError, match="damaged"):
+        demo.hosted_fits()
 
 
 def _no_network(*_args: object, **_kwargs: object) -> None:
@@ -375,6 +464,15 @@ def test_scene_text_states_its_size_against_the_source(
         "Scene size: 88.6 MB on disk, from the 462 MB source frames and "
         "lineage (≈5.2x smaller)."
     )
+    # CC BY 4.0 attribution travels with the store: data DOI, licence link and
+    # the changes made, before the size sentence the restater rewrites.
+    assert (
+        "Data: doi:10.5281/zenodo.6828906, CC BY 4.0 "
+        "(https://creativecommons.org/licenses/by/4.0/); changed by unmixing the "
+        "membrane channel (red minus green), showing every fourth frame (T0244 "
+        "standing in for the empty T0245), Gaussian-splat fitting and overlaying "
+        "the published lineage as smoothed trails. Scene size: "
+    ) in description
     assert (
         "Light-sheet • membranes + nuclei • lineage • 88.6 MB, ≈5.2x smaller "
         "than the source frames and lineage • de Medeiros et al. 2022"

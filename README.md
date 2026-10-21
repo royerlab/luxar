@@ -39,7 +39,7 @@ Three ideas carry most of the design:
   Gaussians and shipped as geometry rather than voxels: a 3.6 GB light-sheet
   stack becomes 2 MB, a 400-timepoint time-lapse 81 MB.
 
-**[demos.luxarviewer.dev](https://demos.luxarviewer.dev)** hosts 88 live demos
+**[demos.luxarviewer.dev](https://demos.luxarviewer.dev)** hosts 90 live demos
 with nothing to install. Already have a scene? Open it in the hosted viewer at
 `https://luxarviewer.dev/?src=<url>`. To build your own, start at
 [Quick start](#quick-start); if your data is an image volume, start at
@@ -1024,7 +1024,7 @@ committed under [`.agents/skills/`](.agents/skills/) and symlinked into
 | Document | Description |
 |----------|-------------|
 | **[Documentation site](https://royerlab.github.io/luxar/)** | Tutorials, guides, format specs, and the generated Python + TypeScript API reference |
-| **[Live demo gallery](https://demos.luxarviewer.dev)** | 88 demos as interactive scenes in the browser |
+| **[Live demo gallery](https://demos.luxarviewer.dev)** | 90 demos as interactive scenes in the browser |
 | **[Hosted viewer](https://luxarviewer.dev)** | Open any reachable scene: `luxarviewer.dev/?src=<url>` |
 | [Demo Site Runbook](docs/guides/developer/DEMO_SITE_RUNBOOK.md) | How the two sites above are hosted and published |
 | [Python Package README](packages/luxar/README.md) | Full Python API documentation |
@@ -1074,14 +1074,14 @@ is credited on the recording itself:
 
 | Record | Contents | Cite |
 |---|---|---|
-| Permissively licensed (CC-BY, CC0, public domain) | 46 files, 1.2 GiB | [10.5281/zenodo.21912279](https://doi.org/10.5281/zenodo.21912279) |
+| Permissively licensed (CC-BY, CC0, public domain) | 51 files, 1.4 GiB | [10.5281/zenodo.21912279](https://doi.org/10.5281/zenodo.21912279) |
 | ShareAlike (CC BY-SA 4.0) | 3 files, 20 MiB | [10.5281/zenodo.21912281](https://doi.org/10.5281/zenodo.21912281) |
 | Zebrafish histone timelapse (253 + 51 timepoints) | 2 files, 6.5 GiB | [10.5281/zenodo.21912283](https://doi.org/10.5281/zenodo.21912283) |
 | *Drosophila* embryogenesis (500 timepoints) | 1 file, 1.1 GiB | [10.5281/zenodo.22118694](https://doi.org/10.5281/zenodo.22118694) |
 
-These records cover 25 of the 33 demo datasets. Those 33 are the datasets tracked
-by the data manifest; the other eight (Gaia, IllustrisTNG, Acto3D, Tribolium, FlyLight
-MCFO, EASI-FISH, the budding organoid, Dip-C) are built locally because redistribution is
+These records cover 27 of the 33 demo datasets. Those 33 are the datasets tracked
+by the data manifest; the other six (Gaia, IllustrisTNG, Acto3D, Tribolium, FlyLight
+MCFO, Dip-C) are built locally because redistribution is
 not permitted or not yet arranged, or because regeneration is cheap. The remaining demos fetch their
 catalogs straight from the upstream providers credited in [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).
 

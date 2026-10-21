@@ -13,13 +13,14 @@ luxar demo # browse every demo that uses these files</pre>
 <h3>How the Gaussian-splat files were produced</h3>
 <p>Each source volume was fitted with the Luxar gsplat pipeline (<code>luxar gsplat fit</code>) on a GPU. These are lossy representations built for visualisation and interactive exploration; they are not a substitute for the source imagery in quantitative analysis.</p>
 <p><strong>Choosing the splat count.</strong> The number of Gaussians K was calibrated per dataset by Noise2Self blind-spot cross-validation (<code>luxar gsplat cal</code>), and then checked by refitting at the candidate count and scoring the reconstruction against the whole source volume. The second step is not a formality. The cross-validated estimate is computed over a five percent mask of held-out voxels, and on these datasets it disagreed with the direct measurement in both directions: for one dataset it favoured half the splat budget that measurement showed to be better, and for another it predicted a gain of about 1.5 dB where refitting delivered under 0.3 dB. Where two candidate budgets fell within roughly a decibel of each other, the choice was made from renders of both at matched magnification, because at that margin the metric and the eye disagree. Additional Gaussians capture real structure and photon noise alike, and peak signal-to-noise ratio rewards the two equally.</p>
+<p>Two datasets size K differently. The organoid bundle sets each frame&rsquo;s budget from that frame, one splat per 12 occupied voxels, clipped to 2,000&ndash;120,000 for the membranes and 2,000&ndash;60,000 for the nuclei. The EASI-FISH mRNA channels transfer a splat density, measured by <code>luxar gsplat cal</code> on a reference region of each channel, to every content-adaptive tile; the DAPI channel uses a fixed budget of 600,000 splats.</p>
 <h3>Level of detail</h3>
 <p>These files carry level-of-detail structure so a viewer can show something immediately and refine it as the camera approaches, instead of waiting for a whole fit to arrive. Two independent mechanisms are used, and a file may carry both:</p>
 <ul>
 <li><strong>Progressive (additive) ladders.</strong> A leaf is stored as an ordered series of chunks whose union is the complete fit, so any prefix is a valid, dimmer rendering of the whole object. Every file in this record carries one.</li>
 <li><strong>Substitutive levels.</strong> The Milky Way dust volume and the seven cell-tracking timelapses additionally carry coarse levels of merged representative Gaussians, at one quarter, one sixteenth and one sixty-fourth of the full count, each of which <em>replaces</em> the level below rather than adding to it. The viewer selects a level from the fraction of the screen the object occupies, so the choice is independent of display resolution.</li>
 </ul>
-<p>The whole-slide pathology images use a third arrangement: spatial tiles, each carrying its own coarse and fine levels, so that panning and zooming over a gigapixel slide loads only the tiles in view at only the detail required.</p>
+<p>The whole-slide pathology images and the EASI-FISH hypothalamus volumes use a third arrangement: spatial tiles, each carrying its own coarse and fine levels, so that panning and zooming over a gigapixel slide or a tissue slab loads only the tiles in view at only the detail required.</p>
 <h3>Reconstruction quality</h3>
 <p>Two figures are reported per file, and both are stamped inside the archive itself rather than only quoted here:</p>
 <ul>
@@ -29,7 +30,7 @@ luxar demo # browse every demo that uses these files</pre>
 <p>The foreground figure is the honest one for sparse microscopy and astronomy data. Where a volume is mostly empty, a global PSNR is dominated by correctly reconstructed emptiness and can look excellent while the structure of interest is poorly represented. A low foreground figure is also not automatically a defect: on a noisy channel it partly measures photon noise that a sum of Gaussians declines to reproduce, which is desirable behaviour that this metric charges for. Where that applies it is noted against the dataset.</p>
 <p>To read the stamps from a downloaded file, so that nothing here has to be taken on trust:</p>
 <pre>luxar gsplat info &lt;file&gt;.gsplats.zarr.zip</pre>
-<p>Each archive also records the grid and element type of the volume it was fitted from, which is what makes the compression ratio quoted against it reproducible rather than asserted.</p>
+<p>Many archives also record the grid and element type of the volume they were fitted from, which is what makes the compression ratio quoted against them reproducible rather than asserted. The cell-tracking, h2afva, FlyLight, neuromast and EASI-FISH archives do not carry that record.</p>
 <h3>Contents</h3>
 <table>
 <tbody>
@@ -244,6 +245,34 @@ luxar demo # browse every demo that uses these files</pre>
 <td>41.6 / 37.1</td>
 </tr>
 <tr>
+<td><code>easifish_bdnf.gsplats.zarr.zip</code></td>
+<td>24.7 MB</td>
+<td>1,462,424</td>
+<td>24 parts x 4 coarse-to-fine levels</td>
+<td>not scored</td>
+</tr>
+<tr>
+<td><code>easifish_dapi.gsplats.zarr.zip</code></td>
+<td>9.3 MB</td>
+<td>494,065</td>
+<td>16 parts x 4 coarse-to-fine levels</td>
+<td>not scored</td>
+</tr>
+<tr>
+<td><code>easifish_gpr83.gsplats.zarr.zip</code></td>
+<td>25.6 MB</td>
+<td>1,647,363</td>
+<td>26 parts x 4 coarse-to-fine levels</td>
+<td>not scored</td>
+</tr>
+<tr>
+<td><code>easifish_slc17a6.gsplats.zarr.zip</code></td>
+<td>23.6 MB</td>
+<td>1,465,215</td>
+<td>24 parts x 4 coarse-to-fine levels</td>
+<td>not scored</td>
+</tr>
+<tr>
 <td><code>flylight_mcfo_63x.gsplats.zarr.zip</code></td>
 <td>7.7 MB</td>
 <td>660,035</td>
@@ -329,6 +358,13 @@ luxar demo # browse every demo that uses these files</pre>
 <td>43.3&ndash;56.8 / 32.0&ndash;39.7 (per frame)</td>
 </tr>
 <tr>
+<td><code>organoid_budding_frames.gsplats.zarr.zip</code></td>
+<td>98.8 MB</td>
+<td>7,711,607</td>
+<td>334 per-frame stores (167 frames x 2 channels)</td>
+<td>42.7&ndash;61.5 / 25.6&ndash;52.9 (per frame)</td>
+</tr>
+<tr>
 <td><code>blastocyst_ch0.gsplats.zarr.zip</code></td>
 <td>0.2 MB</td>
 <td>12,916</td>
@@ -368,6 +404,7 @@ luxar demo # browse every demo that uses these files</pre>
 <li><code>gsplats_3d_h2afva_decimation</code> (25.4 MB, cc-by-4.0). Source: h2afva single stack at four decimation levels (Royer lab). Attribution: Royer lab, Chan Zuckerberg Biohub San Francisco. Acquired for Zebrahub: Lange, M. et al. A multimodal zebrafish developmental atlas reveals the state-transition dynamics of late-vertebrate pluripotent axial progenitors. Cell 187, 6742-6759.e17 (2024). CC BY 4.0.</li>
 <li><code>gsplats_3d_h2afva_stack</code> (20.8 MB, cc-by-4.0). Source: h2afva zebrafish histone light-sheet, single stack (Royer lab). Attribution: Royer lab, Chan Zuckerberg Biohub San Francisco. Acquired for Zebrahub: Lange, M. et al. A multimodal zebrafish developmental atlas reveals the state-transition dynamics of late-vertebrate pluripotent axial progenitors. Cell 187, 6742-6759.e17 (2024). CC BY 4.0.</li>
 <li><code>gsplats_4d_neuromast_2ch</code> (142.8 MB, cc-by-4.0). Source: Neuromast 2-channel light-sheet timelapse (iSIM). This version 2 pair is refitted with the axial voxel scale corrected to 0.25/0.1083 = 2.308 (version 1 used 2.5, stretching z by 8.3&nbsp;%), on the raw intensity basis with no post-fit cull, giving 64,000 splats per frame across 100 frames. The per-timepoint PSNR ranges published in version 1 were measured on the superseded redundancy-culled build and are deliberately not carried over to these files. The table above therefore reads &ldquo;not scored&rdquo; for this pair, meaning no quality figure is stamped in the archives themselves; per-timepoint PSNR measured against the Z-corrected sources by an external scoring run is reported in Supplementary Document 14 of the accompanying manuscript. Attribution: Adrian Jacobo (Chan Zuckerberg Biohub San Francisco); used with permission (CC BY 4.0). This imaging is unpublished; for the biology of the organ it shows, see the data author's work on lateral-line sensory organs: Erzberger, A., Jacobo, A., Dasgupta, A. &amp; Hudspeth, A. J. Mechanochemical symmetry breaking during morphogenesis of lateral-line sensory organs. Nature Physics 16, 949&ndash;957 (2020). doi:10.1038/s41567-020-0894-9.</li>
+<li><code>gsplats_4d_organoid_budding</code> (98.8 MB, cc-by-4.0). Source: LSTree light-sheet recordings, Zenodo 6828906 (recording 002-P21-25X-Budding: deconvolved rgb_grid frames + MaMuT lineage). Attribution: de Medeiros, G., Ortiz, R., Strnad, P., Boni, A., Moos, F., Repina, N., Challet Meylan, L., Maurer, F. &amp; Liberali, P. Multiscale light-sheet organoid imaging framework. Nature Communications 13, 4864 (2022). doi:10.1038/s41467-022-32465-z. Data: doi:10.5281/zenodo.6828906 (CC BY 4.0). Derived product: one bundle of 334 per-frame Gaussian-splat fits, 167 frames of each of the two channels &mdash; membranes (mem9-GFP), unmixed as red minus green from the authors&rsquo; deconvolved 8-bit RGB export, and nuclei (H2B-mCherry) &mdash; each frame a single leaf with a 4-rung progressive ladder. The table quotes the range over both channels; per channel, the membranes score 42.7&ndash;59.8 / 25.6&ndash;48.6 dB and the nuclei 43.8&ndash;61.5 / 38.7&ndash;52.9 dB. The tracked lineage is not part of this record: the demo fetches it from Zenodo 6828906.</li>
 <li><code>gsplats_celegans</code> (80.8 MB, cc-by-4.0). Source: Zenodo 6460303 (mskcc_confocal C. elegans). Attribution: Santella, A., Kovacevic, I., Bao, Z., Hirsch, P. 3D+time nuclei tracking dataset of confocal fluorescence microscopy time series of C. elegans embryo. Zenodo (2022). CC BY 4.0.</li>
 <li><code>gsplats_cell_tracking</code> (632.4 MB, cc0-1.0). Source: Kaggle competition &ldquo;Biohub - Cell Tracking During Development&rdquo; (zebrafish light-sheet crops + GEFF ground-truth lineages). Attribution: Biohub cell-tracking challenge data (CC0); imaging by the Royer group, CZ Biohub SF. Derived product: per-crop 4D Gaussian-splat fits with substitutive LOD, seven of the nine annotated crops.</li>
 <li><code>gsplats_cells3d</code> (1.3 MB, cc0-1.0). Source: scikit-image (data.cells3d) - Allen Institute for Cell Science. Attribution: scikit-image sample data.</li>
@@ -375,6 +412,7 @@ luxar demo # browse every demo that uses these files</pre>
 <li><code>gsplats_cryoem_virus</code> (10.6 MB, cc0-1.0). Source: EMDB EMD-5384. Attribution: EMDB entry EMD-5384 (PBCV-1 capsid, five-fold averaged map). Primary citation: Zhang, X. et al. PNAS 108, 14837-14842 (2011). EMDB data are released without restriction.</li>
 <li><code>gsplats_ct_totalsegmentator</code> (7.0 MB, cc-by-4.0). Source: TotalSegmentator (Wasserthal et al. 2023). Attribution: Wasserthal, J. et al. TotalSegmentator: Robust Segmentation of 104 Anatomic Structures in CT Images. Radiology: Artificial Intelligence 5 (2023). CC BY 4.0.</li>
 <li><code>gsplats_dapi</code> (0.1 MB, cc-by-4.0). Source: IDR idr0062 (image 6001240; Nessys, Blin et al. 2019). Attribution: Blin, G. et al. Nessys: A new set of tools for the automated detection of nuclei within intact tissues. PLOS Biology 17 (2019). Image from IDR idr0062. CC BY 4.0.</li>
+<li><code>gsplats_easifish_lha</code> (83.2 MB, cc-by-4.0). Source: Janelia figshare 10.25378/janelia.13622819, EASI-FISH example data round 3 (LHA3_R3_medium.czi). Attribution: Wang Y, Eddison M, Fleishman G, et al. (Tillberg and Sternson labs, HHMI Janelia), EASI-FISH for thick tissue defines lateral hypothalamus spatio-molecular organization, Cell 184(26) (2021), doi:10.1016/j.cell.2021.11.024. Data CC BY 4.0, doi:10.25378/janelia.13622819. Derived product: four archives, one per channel &mdash; DAPI nuclei and the single-mRNA puncta of Slc17a6, Gpr83 and Bdnf &mdash; each a spatial partition whose parts carry four coarse-to-fine levels, each with a progressive ladder. Changes made to the source: the file&rsquo;s two tiles were stitched (no stitched product is published); the volume was block-mean downsampled (mRNA channels xy/2; DAPI z/2, xy/4); each channel&rsquo;s background floor was subtracted; each channel was fitted as Gaussian splats; and coordinates were rescaled to micrometres of tissue by dividing out the 2x linear expansion used in the authors&rsquo; own analysis. Dataset authors (as listed on the figshare record): Wang, Y., Eddison, M., Fleishman, G., Weigert, M., Xu, S., Henry, F. E., Wang, T., Lemire, A., Schmidt, U., Yang, H., Rokicki, K., Goina, C., Svoboda, K., Myers, E. W., Saalfeld, S., Korff, W., Sternson, S. M. &amp; Tillberg, P. W. Licence: <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.</li>
 <li><code>gsplats_flylight_mcfo_63x</code> (7.7 MB, cc-by-4.0). Source: Janelia FlyLight Gen1 MCFO, line VT019012, slide 20140423_20_D5, 63x confocal (stitched unaligned_stack.h5j). Attribution: Janelia FlyLight Project Team, HHMI Janelia Research Campus &mdash; Meissner et al., eLife 12:e80660 (2023), doi:10.7554/eLife.80660; MCFO method: Nern, Pfeiffer &amp; Rubin, PNAS 112(22) (2015), doi:10.1073/pnas.1506763112; VT driver lines: Tirian &amp; Dickson, bioRxiv 198648 (2017), doi:10.1101/198648. Imagery CC BY 4.0.</li>
 <li><code>gsplats_kidney</code> (2.1 MB, cc0-1.0). Source: scikit-image (data.kidney). Attribution: scikit-image sample data (CC0).</li>
 <li><code>gsplats_milkyway_dust</code> (10.6 MB, cc-by-4.0). Source: Zenodo 3993082 (3D dust map). Attribution: Leike, R., Glatzle, M., Ensslin, T. Galactic extinction within 400pc in cartesian coordinates. Zenodo (2020). CC BY 4.0.</li>

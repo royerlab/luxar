@@ -1455,10 +1455,10 @@ change what the earlier sections tell you to do.
   Recovery is a rebuild from the record archives (§8.3) plus a redeploy, not a
   repoint. Do not plan around a fallback that does not exist — confirm with
   `rclone lsf r2:luxar-demos/data --dirs-only` rather than assuming.
-- Gallery, derived from `scripts/gallery/manifest.json` on 2026-09-25: 88
-  tiles and 86 videos. Every tile retains a still; two are deliberately
+- Gallery, derived from `scripts/gallery/manifest.json` on 2026-10-20: 90
+  tiles and 88 videos. Every tile retains a still; two are deliberately
   still-only (§8.2).
-- 95 stable `/d/` routes (§8.1.1).
+- 97 stable `/d/` routes (§8.1.1).
 - **Tiles and `/d/` routes open the STANDALONE viewer**,
   `https://luxarviewer.dev/?src=<data URL>`, in a new tab — not the gallery's
   own copy. The gallery used to ship a second viewer build at `/viewer/`, so
