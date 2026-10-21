@@ -281,6 +281,13 @@ stats (saved under `fitting/`); the CLI adds `voxel_unit`, `voxel_size_source`
 and, for a crop, `source_region`. A physical fit's `dimension_metadata` names the
 axes with their unit, which `gsplat convert` turns into µm scene dimensions.
 
+Two cases where the recorded spacing is not the answer as it stands. Expansion
+microscopy records the EXPANDED gel's voxel size: divide by the linear expansion
+factor (EASI-FISH: 2) for biological µm, after fitting on the expanded grid. And
+when z is much coarser than xy (EASI-FISH: 0.42 vs 0.23 µm), halving xy gives
+near-isotropic voxels at a quarter of the voxels and fit cost, losing lateral
+detail below the z step. Measured cases: [fitting real data](../../../../../.agents/skills/luxar-gsplat-pipeline/references/fitting-real-data-lessons.md).
+
 ### Tiled Fitting for Large Volumes
 
 For volumes that exceed GPU memory, tiled fitting splits the data into overlapping tiles with cosine (Hann) apodization and fits each tile independently:
@@ -387,7 +394,7 @@ result = fit_gaussian_splats(image, seeds=custom_seeds)
 
 - **Edges + grid by default**: `method="auto"` combines edge detection and grid coverage; multiscale decomposition is excluded by default for speed
 - **Decomposition scales**: `[1, 2, 4, 8, 16, 32, 64]` span fine details to large structures (used only when decomposition is requested explicitly)
-- **Volume-proportional density**: the auto seed budget is `max(100, int(total_voxels ** (1 / ndim) / 2))`, capped at 10,000
+- **Volume-proportional density**: the auto seed budget is `max(100, int(total_voxels ** (1 / ndim) / 2))`, capped at 10,000. It ignores content (128 seeds for a 256³ tile, 225 for a 92 Mvoxel EASI-FISH volume), so give real data an explicit count from `cal` or a per-voxel budget
 - **Dimension-agnostic**: Works seamlessly with 2D images, 3D volumes, and 4D+ hypercubes (validated to 4D)
 
 ### Outlier-Robust Normalization
@@ -409,6 +416,34 @@ result = fit_gaussian_splats(image, norm_percentile=5.0)
 - **norm_percentile=0.0**: Clean data without outliers (maximum sensitivity)
 - **norm_percentile=1.0**: Typical datasets with occasional outliers
 - **norm_percentile=5.0**: Noisy data or datasets with many outliers
+
+### Fitting a Time-Lapse Frame by Frame
+
+`batch-fit` resolves one floor and one intensity range for a whole time-lapse.
+A Python loop over frames must do it by hand, or brightness flickers between
+frames: pass every frame the same `norm_range` so the fitter does not
+renormalize each one (the budding-organoid demo uses `(0.0, 255.0)` on an 8-bit
+export the authors had already scaled per frame, which avoids a second
+per-frame normalization) and, on deconvolved exports that are already
+zero outside the specimen, `floor="none"`. Budget seeds per occupied voxel with
+a floor for small frames and a cap sized on each channel's largest frame, and
+key any per-frame cache on the whole recipe. Measured budgets:
+[fitting real data](../../../../../.agents/skills/luxar-gsplat-pipeline/references/fitting-real-data-lessons.md).
+
+### Check an Export's Channels Before Fitting
+
+A multichannel RGB export can blend its channels, and the unmixing must invert
+the actual blend. The LSTree organoid export is a MAX composite: red =
+max(membranes, nuclei), green = blue = nuclei. The data show it (red is never
+below green; where red exceeds green, red stays flat as green rises while
+red − green falls with slope ≈ −1) and the authors' code says so
+(`make_composite(..., mode='max')`). Fitted as membranes, red draws every
+nucleus twice, and no display setting removes that afterwards. Invert a max with
+`np.where(red > green, red, 0)`; subtracting green, the inverse of an additive
+blend, under-read the membranes there (0.68-0.93 of their mass kept). The same
+export was also rescaled per frame and channel to its own percentiles, so read an
+export's provenance for its intensity scaling too. Measured detail:
+[fitting real data](../../../../../.agents/skills/luxar-gsplat-pipeline/references/fitting-real-data-lessons.md).
 
 ### Important Limitations
 

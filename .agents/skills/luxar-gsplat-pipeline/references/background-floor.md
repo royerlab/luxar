@@ -2,8 +2,8 @@
 
 Loaded from the `luxar-gsplat-pipeline` skill's "Background floor suppression"
 section, which carries the knob list and the decision rule. This file holds how a
-floor is resolved under tiling and `batch-fit`, and the measurement behind
-"stay on `auto`".
+floor is resolved under tiling and `batch-fit`, the measurement behind
+"stay on `auto`", and how seeds start relative to the floor.
 
 ## How the floor is resolved under tiling and batch-fit
 
@@ -65,3 +65,19 @@ luxar gsplat fit volume.tiff out.gsplats.zarr                 # --floor auto (de
 luxar gsplat fit volume.tiff out.gsplats.zarr --floor p10     # subtract 10th percentile
 luxar gsplat cal volume.tiff cal.json --floor none            # legacy (no floor)
 ```
+
+## Seeds start above the pedestal
+
+Seeding samples 90% of the voxel value (`SEED_AMPLITUDE_SCALE`) so overlapping
+seeds start below their target. That factor now applies to the signal above the
+floor; it used to apply to the raw value, so a seed 10 counts above a 405-count
+pedestal sampled 0.9 x 415 = 373, below the floor, and started at amplitude 0. Such
+seeds never recovered, and the speck prune and cull removed them. On an Allen
+hiPSC DNA stack (pedestal 405, robust peak 119) `fit --seeds 16000` stored 1,834
+splats where `cal` (which subtracts the floor first) predicted about 13,100; with
+the fix it stores 12,394 and foreground PSNR rises 18.5 → 19.5 dB. On EASI-FISH
+(a 209-237 count pedestal) most seeds had started dead, which was most of the
+"~90% of seeds culled" and of the puncta recall loss first blamed on the prune.
+Data without a pedestal is unchanged within GPU run-to-run jitter. Refitting a
+pedestal store made before the fix gives a different, larger result; quality
+figures measured on such data before the fix are not comparable with new ones.

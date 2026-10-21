@@ -187,20 +187,27 @@ def test_splat_budget_is_proportional_and_clipped_per_channel() -> None:
     assert demo.splat_budget(big, "nuclei") == 60_000
 
 
-def test_membranes_are_unmixed_from_the_additive_composite() -> None:
-    # The export stores (min(255, m + n), n, n): membranes m, nuclei n.
-    m = np.array([0, 40, 40, 0, 200], np.int16)
-    n = np.array([0, 0, 30, 90, 100], np.int16)
-    rgb = np.stack([np.minimum(m + n, 255), n, n], axis=-1).astype(np.uint8)
-    np.testing.assert_array_equal(
-        demo.channel_volume(rgb, "membranes"), [0, 40, 40, 0, 155]
-    )
+def test_membranes_are_unmixed_from_the_max_composite() -> None:
+    # The export stores (max(m, n), n, n): membranes m, nuclei n (LSTree's
+    # make_composite(..., mode='max')).
+    rng = np.random.default_rng(0)
+    m = rng.integers(0, 256, 2000).astype(np.uint8)
+    n = rng.integers(0, 256, 2000).astype(np.uint8)
+    rgb = np.stack([np.maximum(m, n), n, n], axis=-1)
+    membranes = demo.channel_volume(rgb, "membranes")
+    assert membranes.dtype == np.uint8
+    visible = m > n
+    # Exactly the membrane wherever it is brighter than the nucleus ...
+    np.testing.assert_array_equal(membranes[visible], m[visible])
+    # ... and 0 wherever the nucleus hides it (m <= n), including m == n.
+    assert not membranes[~visible].any()
+    assert (~visible).sum() > 0 and visible.sum() > 0
     np.testing.assert_array_equal(demo.channel_volume(rgb, "nuclei"), n)
 
 
 def test_cache_names_change_with_the_recipe(monkeypatch) -> None:
     before = demo._frame_cache_name("membranes", 0)
-    assert "red-minus-green" in before and "_max120000_" in before
+    assert "red-where-gt-green" in before and "_max120000_" in before
     assert "_green_" in demo._frame_cache_name("nuclei", 0)
     monkeypatch.setattr(demo, "SPLATS_MIN", 1000)
     assert demo._frame_cache_name("membranes", 0) != before
@@ -469,7 +476,8 @@ def test_scene_text_states_its_size_against_the_source(
     assert (
         "Data: doi:10.5281/zenodo.6828906, CC BY 4.0 "
         "(https://creativecommons.org/licenses/by/4.0/); changed by unmixing the "
-        "membrane channel (red minus green), showing every fourth frame (T0244 "
+        "membrane channel (red where it exceeds green), showing every fourth "
+        "frame (T0244 "
         "standing in for the empty T0245), Gaussian-splat fitting and overlaying "
         "the published lineage as smoothed trails. Scene size: "
     ) in description

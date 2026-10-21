@@ -46,6 +46,13 @@ Convenience constructors: `Dimensions.default_2d()`, `default_3d()`,
 The first 2-3 `display=True` dims are the viewport axes; non-displayed dims (time,
 channel, z-stack) become nD slider axes navigated with keys `1`-`9` and `[` / `]`.
 
+A discrete axis's `step` must be exactly representable, with `range=(0, (n-1)*step)`.
+Author the round interval (`step=10.0` minutes, not a measured `0.1667` h): the
+slider is an `<input type="range">` that snaps to `min + k*step`, and with a
+non-round float `(n-1)*step` can land a hair past `max`, so the browser clamps
+to the previous stop and the last timepoint cannot be selected (measured on the
+zebrafish demo: the slider ended at 298.02 of a declared 300.022 min).
+
 ## add_points
 
 ```python

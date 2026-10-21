@@ -185,3 +185,23 @@ Do not use the data-loading monitor's visible "N reqs": it is
 count. `requestCount` itself excludes the document, bundle, WASM, and zip-open probes,
 so it remains a lower bound. For an on-disk store, `luxar info --stats` is the offline
 companion that projects full-load chunk count.
+
+## Many small parts: pack the chunks
+
+A content-tiled `batch-fit` merge with per-part `levels` makes many tiny nodes.
+The EASI-FISH scene (4 channels, 90 lod groups over 360 nodes, 2.37 M splats) was
+16.9 k files of ~2 KB chunks, far under the 16-256 KB target, and the opening view
+cost 3,447 requests: 53 s to settle at 50 ms latency / 50 Mbps. `luxar optimize
+--dry-run` reported nothing to re-chunk, because every node already fit one
+chunk; the requests are per node. `luxar optimize --pack` (one object per node of
+≤ 64 KB of chunks) cut the overview to 887 requests and 18 s, first paint 424 →
+301 ms, for the same 42-43 MB of session bytes. Pack any scene built from a
+many-part tree before hosting it.
+
+A `levels` merge (`batch-fit --merge-recipe levels`) gives every leaf an
+equal-count ladder; `--merge-breakpoints` applies to `--merge-recipe stream`
+only. To front-load light afterwards, re-ladder every leaf and keep the
+structure: `luxar gsplat additive in.gsplats.zarr out.gsplats.zarr -b
+equi-energy:4 -m self_energy` makes each first rung the few splats that carry
+the most light. That suits sparse bright content (puncta); on a uniform nuclei
+field equi-energy lost (see [lod-recipe-measurements.md](lod-recipe-measurements.md)).

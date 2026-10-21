@@ -459,6 +459,9 @@ All methods sample seed amplitudes from the input volume and scale them by
 below the target intensity avoids initial over-prediction when splats overlap,
 which would otherwise trigger the asymmetric over-prediction penalty and risk
 divergence. The optimizer raises amplitudes as needed during fitting.
+The sampled values still carry the volume's background pedestal; the fitter
+removes the pedestal before re-applying the factor (`_rescale_init_amps` in
+`fitting/preprocessing.py`), so the 0.9 shrinks only the signal above the floor.
 
 ### Peak Detection Algorithm
 

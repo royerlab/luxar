@@ -54,15 +54,28 @@ and, as a set, against the SHA-256 digest pinned below.
 What the frames are: the record does not carry the raw light-sheet stacks (the
 paper's ~700 GB of imaging is available from the authors on request). The
 ``rgb_grid`` frames are the authors' own export of the DECONVOLVED two-channel
-volume, cropped to the organoid, scaled to 8 bits and stored as RGB voxels.
-Green (duplicated into blue) is the nuclei channel. Red is NOT the membrane
-channel alone: it is membranes plus nuclei, added and clipped at 255, so every
-nucleus appears in red too. The demo unmixes the membranes as red - green
-(clipped at 0) and fits both channels at their native 2.0 x 0.26 x 0.26 um
-voxel size. Evidence for the additive model, on frames T0301 and T0601: red is
-never below green; inside nuclei (green > 60) red equals green in 99% / 94% of
-voxels; and where both channels are present, red - green does not depend on
-green while red itself rises with it.
+volume, cropped to the organoid and stored as RGB voxels. Each channel of each
+frame was scaled to 8 bits on its OWN 0.2 / 99.99th percentiles, so intensity
+is not comparable between frames. Green (duplicated into blue) is the nuclei
+channel. Red is NOT the membrane channel alone: the two channels were blended
+as a MAX composite, red = max(membranes, nuclei), so every nucleus appears in
+red too. LSTree's own code says so (config ``blending_mode=max``;
+``make_composite(..., mode='max')`` in ``mesh_tasks.py``). The data agree:
+red is never below green, and where red exceeds a non-zero green, red stays
+flat as green rises while red - green falls with a slope of about -1, which an
+additive blend would not do; saturation does not explain it (red is 255 in at
+most 1.1% of voxels below green 192). Inside nuclei (green > 60) red equals
+green in 99% / 94% of voxels on T0301 / T0601, which under a max blend only
+says the nuclei are at least as bright as any membrane there. The demo therefore takes the membranes as red where it exceeds
+green, and 0 elsewhere (the membrane is unrecoverable where the nuclei are at
+least as bright), and fits both channels at their native 2.0 x 0.26 x 0.26 um
+voxel size. Subtracting green instead would under-read the membrane by the
+nuclear value at every mixed voxel: it keeps 0.93 / 0.92 / 0.68 of the
+membrane mass on T0301 / T0320 / T0601.
+The unmixed membranes have hard holes where nuclei hide them, which caps the
+membranes' headline PSNR (median 35.9 dB foreground) whatever the budget; away
+from the holes the fits match about as well as the earlier red - green fits
+matched theirs. See the notes above SPLATS_MIN.
 
 Imaging:
 --------
@@ -107,7 +120,7 @@ were made, and what --recompute runs:
 
 1. **Fetch**   the 167 frames + lineage by range requests (cached, checksummed)
 2. **Decode**  each VTK ImageData frame (zlib + base64, stdlib only)
-3. **Fit**     each frame and channel (membranes unmixed as red - green) as 3D
+3. **Fit**     each frame and channel (membranes unmixed as red where red > green) as 3D
                Gaussian splats on the shared 8-bit
                intensity scale, with a splat budget proportional to the
                organoid's occupied voxels (cached per frame)
@@ -282,19 +295,19 @@ SOURCE_BYTES = SOURCE_FRAME_BYTES + LINEAGE_BYTES
 RAW_LABEL = "source frames and lineage"
 #: First guess at the served scene's size (the reference build); the build
 #: measures the real one and restates it if the caption would change.
-SCENE_BYTES_ESTIMATE = 88_569_352
+SCENE_BYTES_ESTIMATE = 89_086_907
 
 #: Voxel size of every rgb_grid frame, (z, y, x) in microns.
 VOXEL_SIZE_ZYX = (2.0, 0.26, 0.26)
 
-#: The export is an additive composite: green and blue both carry the nuclei n,
-#: and red carries the membranes m PLUS the nuclei, red = min(255, m + n). So the
-#: membranes are unmixed as clip(red - green, 0); see `channel_volume`.
+#: The export is a max composite: green and blue both carry the nuclei n, and
+#: red = max(m, n) for the membranes m. So the membranes are unmixed as red where
+#: red > green, else 0; see `channel_volume`.
 #: ``voxels_per_seed`` / ``splats_max`` set each channel's splat budget.
 CHANNELS = (
     {
         "name": "membranes",
-        "unmix": "red-minus-green",
+        "unmix": "red-where-gt-green",
         "voxels_per_seed": 12.0,
         # Thin sheets need more splats than nuclei: see the budget note below.
         "splats_max": 120_000,
@@ -323,24 +336,45 @@ CHANNELS = (
 #: A voxel counts as occupied above this 8-bit value (it sets the budget only).
 OCCUPIED_THRESHOLD = 16
 #: Splat budget = occupied voxels / the channel's ``voxels_per_seed``, clipped
-#: to [SPLATS_MIN, the channel's ``splats_max``]. The export is deconvolved, so
-#: there is no noise peak to calibrate K* against; budgets were set on
-#: foreground PSNR against the frame (1000 iterations, RTX 3070):
+#: to [SPLATS_MIN, the channel's ``splats_max``]. The cap bounds the REQUESTED
+#: seeds; the stored count is lower after the prune and cull. The export is
+#: deconvolved, so there is no noise peak to calibrate K* against; budgets were
+#: set on foreground PSNR against the frame (1000 iterations, RTX 3070). The
+#: membrane rows below were scored against the earlier red - green target:
 #:
 #:   nuclei, frame 332:    4k / 8k / 16k seeds   39.8 / 44.0 / 47.0 dB
 #:   membranes, frame 320: 1 per 24 / 12 / 6 voxels   38.4 / 40.5 / 42.9 dB
 #:   membranes, frame 480: 33k / 60k / 67k / 120k     41.3 / 44.0 / 46.4 / 46.5
 #:   membranes, frame 600: 60k / 82k / 120k / 165k    38.6 / 40.4 / 44.3 / 44.7
 #:
-#: One seed per 12 voxels holds ~40-46 dB on both channels. A 60k cap cost the
+#: One seed per 12 voxels held ~40-46 dB on both channels. A 60k cap cost the
 #: large late membrane frames ~6 dB (frame 600), so membranes cap at 120k:
 #: about 1.9x the bytes on those frames (0.57 -> 1.06 MB) for +5.7 dB. Raising
 #: it further bought 0.4 dB.
+#:
+#: The max-composite target (red where red > green, else 0) has hard holes
+#: where a nucleus hides the membrane: it steps from the membrane value straight
+#: to 0 there; on the frames with nucleus occlusion (4 of 5 measured), 57-94% of
+#: a fit's foreground error sits within 2 voxels of those edges, which caps
+#: the headline PSNR whatever the budget. The median
+#: membrane foreground PSNR is 35.9 dB against this target (42.6 dB for the old
+#: fits against theirs: different targets, not a quality loss). On 5 frames,
+#: outside a 2-voxel xy band around the holes, the new fits match their target
+#: within about +-3 dB of the old fits' scores against the old target. Probe
+#: against the new target (headline / outside the band): T0321 at 1 seed per
+#: 12 / 6 / 3 voxels 35.7 / 36.1 / 35.2 dB and 42.7 / 45.2 / 46.2 dB; T0601 at
+#: 1 per 12 uncapped (203,858 seeds) 35.5 / 44.2 dB. More voxels clear
+#: OCCUPIED_THRESHOLD under this target (+6% T0301, +8% T0321, +24% T0601), so
+#: the late frames request more seeds than the cap (T0601: 203,858 against
+#: 164,639 before; both clipped to 120,000, at most 93,949 stored). Raising
+#: the membrane cap to ~200k buys about +1 dB headline (+3 dB outside the
+#: band) on late frames for ~1.6x the splats; the cap stays at 120k.
 #: SPLATS_MIN: the founder-cell frames are small enough that the per-voxel rule
 #: gives a few hundred seeds; frame 24's membranes scored 21-22 dB at 500 and
-#: 1,000 seeds and 48 dB at 2,000. The min-extent cull still removes up to
-#: two thirds of those seeds on the smallest frames, so early membrane frames
-#: stay uneven (25.6-48.3 dB foreground; frame 64 keeps 641 splats).
+#: 1,000 seeds and 48 dB at 2,000 (old target). The min-extent cull still
+#: removes up to two thirds of those seeds on the smallest frames, so early
+#: membrane frames stay uneven (25.4-48.1 dB foreground against the hole
+#: target; frame 64 keeps 631 splats).
 SPLATS_MIN = 2000
 N_ITERS = 1000
 
@@ -366,6 +400,9 @@ COLOUR_GENERATIONS = 3
 #: stops they wash out to white, at -2.5 the bud and the lineage both read and
 #: the single founder cell is still visible.
 EXPOSURE_STOPS = -2.5
+#: Both layers additive. In review renders, volumetric nuclei over additive
+#: membranes came out nearly black with the membranes gone, and both layers
+#: volumetric (absorption 1) gave an opaque blue mass hiding the membranes.
 BLENDING_MODE = "additive"
 #: Volumetric absorption (used only when BLENDING_MODE is "volumetric").
 ABSORPTION = 1.0
@@ -543,18 +580,19 @@ def _channel(name: str) -> dict:
 def channel_volume(voxels: np.ndarray, name: str) -> np.ndarray:
     """One channel's uint8 volume out of the export's RGB voxels.
 
-    Green is the nuclei. Red is membranes + nuclei, added and clipped at 255,
-    so the membranes are red - green (zero where the nuclei saturate red).
-    Masking instead (keeping red only where it exceeds green) would keep the
-    nuclear signal added at every membrane voxel that borders a nucleus.
+    Green is the nuclei. Red is the max of membranes and nuclei, so where red
+    exceeds green it IS the membrane value, and where it does not the membrane
+    is hidden under a nucleus at least as bright and is set to 0. Subtracting
+    green instead would under-read every membrane voxel that borders a nucleus
+    by the nuclear value.
     """
     unmix = _channel(name)["unmix"]
-    red = voxels[..., 0].astype(np.int16)
-    green = voxels[..., 1].astype(np.int16)
+    red = voxels[..., 0]
+    green = voxels[..., 1]
     if unmix == "green":
-        return voxels[..., 1].copy()
-    if unmix == "red-minus-green":
-        return np.clip(red - green, 0, 255).astype(np.uint8)
+        return green.copy()
+    if unmix == "red-where-gt-green":
+        return np.where(red > green, red, 0).astype(np.uint8)
     raise ValueError(f"unknown unmix {unmix!r}")
 
 
@@ -599,9 +637,10 @@ def fit_frame(
         # The export is already background-free outside the organoid (zeros),
         # and a frame-dependent floor would make a timelapse flicker.
         floor="none",
-        # ONE intensity scale for every frame: the authors' 8-bit export is
-        # scaled once for the whole recording, so 255 means the same in every
-        # frame and the organoid's brightening and dimming survive the fit.
+        # A fixed scale, not a per-frame one: the authors already rescaled each
+        # frame and channel to its own percentiles when exporting to 8 bits, so
+        # (0, 255) fits each frame as exported instead of normalizing it a
+        # SECOND time. Brightness is therefore not comparable across frames.
         norm_range=(0.0, 255.0),
         voxel_size=VOXEL_SIZE_ZYX,
         source_dtype="uint8",
@@ -946,9 +985,9 @@ def create_luxar_scene(
                 "trails and markers coloured by lineage. Data: "
                 "doi:10.5281/zenodo.6828906, CC BY 4.0 "
                 "(https://creativecommons.org/licenses/by/4.0/); changed by "
-                "unmixing the membrane channel (red minus green), showing every "
-                "fourth frame (T0244 standing in for the empty T0245), "
-                "Gaussian-splat fitting and overlaying the published lineage as "
+                "unmixing the membrane channel (red where it exceeds green), "
+                "showing every fourth frame (T0244 standing in for the empty "
+                "T0245), Gaussian-splat fitting and overlaying the published lineage as "
                 "smoothed trails. Scene size: "
                 f"{compression_note(SOURCE_BYTES, scene_bytes, RAW_LABEL)}."
             )

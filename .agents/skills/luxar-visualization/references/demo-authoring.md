@@ -30,6 +30,24 @@ the record first, update its `sha256`/`bytes`, append the outgoing digest to
 diff. Copying a replacement over an LFS-tracked file applies only to the retained
 Dip-C payload; regenerate afterwards and verify its `sha256`/`bytes` change.
 
+A hosted gsplat archive is `ZIP_DEFLATED` with the store directory as its
+internal prefix; a multi-frame bundle is a flat `ZIP_STORED` zip of per-frame
+archives named as the demo looks them up ("File Formats" in
+`packages/luxar/src/luxar/demos/data/README.md`).
+
+## Stating a scene's size or compression ratio
+
+Both sides are on-disk bytes: the served scene (sum of its file sizes, after any
+`luxar optimize --pack`) against the source as stored or as the demo read it,
+named in the text. Not computed voxel bytes, and not data the fit never read
+(the organoid compares with the 462 MB of extracted frames and lineage it used,
+not the ~700 GB acquisition). The caption is part of the scene, so the size is
+known only after writing it: `demos/_scene_size.py` builds into a scratch
+sibling, restates the text until the figure converges, then renames onto the
+served path; `demos/_caption.py` (`compression_caption`, `compression_note`) is
+the wording. Quote element counts as the finest level summed over parts, never
+a gallery card's figure (`docs/guides/developer/DEMO_SITE_RUNBOOK.md` §7.6).
+
 ## The cinematic camera in a bundled demo
 
 **In a bundled demo this exact call fails required tests.** Demos run under the

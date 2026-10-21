@@ -193,8 +193,9 @@ An index into the measured sections, not a substitute for them.
 | Elongated streak artifacts | lower `max_eccentricity` — no `fit` flag, set it in a `--config` YAML (`--dump-config` writes a template). It only starts binding once the fit is converged, and there it measured 2.65 dB ([references/cli-options.md](references/cli-options.md)) |
 | Result far bigger than needed | `decimate --target N` / `-f 0.1`, or `cull --target vol.npy -p 95` — not a lower `--cull-retention` and a refit |
 | Boxy steps at tile boundaries | suspect the SOURCE (mosaic seams, coverage count), not the fit — measure the artefact's period first |
-| First paint costs hundreds of requests | you picked a partition recipe on byte size — "First paint cost" under "Choosing a LOD recipe"; prefer `overview`, or raise `--max-elements` |
+| First paint costs hundreds of requests | you picked a partition recipe on byte size — "First paint cost" under "Choosing a LOD recipe"; prefer `overview`, or raise `--max-elements`; on a many-part tree already built, `luxar optimize --pack` (3,447 → 887 requests, [references/first-paint-requests.md](references/first-paint-requests.md)) |
 | Fit is slow, exploring | `--preset draft` (2,000 iters) for the search, one `hifi` run at the end |
+| Fitting someone else's export (RGB composite, per-frame time-lapse, FISH puncta, expanded tissue, many-part scene) | [references/fitting-real-data-lessons.md](references/fitting-real-data-lessons.md) |
 
 `--seed-method` matters on structure the default misses: `peaks` (sparse
 point-like maxima) and `decomposition` (blobs, slow) must be asked for, and `auto`

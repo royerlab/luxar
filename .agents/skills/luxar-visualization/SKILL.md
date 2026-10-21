@@ -266,6 +266,7 @@ the `add_*` call or it is lost. Five things about that round-trip surprise peopl
   `plasma`/`viridis` turn residual haze into blue/purple fog.
 - **A stored window only means anything for that exact store.** Any refit, rescale
   or re-encode moves it. Say so in a comment next to the constant.
+- **Several fluorescence layers wash out under per-layer defaults**; set each layer's brightness ([references/multichannel-fluorescence.md](references/multichannel-fluorescence.md)).
 
 Framing is authored too. The viewer's default fits the bounding box with margin,
 which leaves an object small; bake a `CameraConfig` derived from the LOADED bounds
