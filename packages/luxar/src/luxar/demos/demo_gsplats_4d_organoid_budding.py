@@ -148,7 +148,7 @@ Where the per-frame fits come from, in order:
 1. a complete local fit cache (``~/.cache/luxar/gsplats_4d_organoid_budding/
    local/``, written by an earlier refit), used without the network;
 2. the Luxar cc-by Zenodo record (``organoid_budding_frames.gsplats.zarr.zip``,
-   98.8 MB, sha256-pinned in the data manifest), so no GPU is needed;
+   99.7 MB, sha256-pinned in the data manifest), so no GPU is needed;
 3. a refit from the Zenodo 6828906 source, when neither is available (offline
    with nothing cached, say) or with --recompute, which skips 1 and 2.
 
@@ -168,7 +168,7 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "mixed",
     "requirements": {
-        # The hosted per-frame fit bundle (98.8 MB) plus the lineage XML
+        # The hosted per-frame fit bundle (99.7 MB) plus the lineage XML
         # (0.9 MB, still range-fetched from Zenodo 6828906). The fallback refit
         # instead fetches ~345 MB of source frames.
         "download_mb": 100,
