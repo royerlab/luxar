@@ -229,6 +229,10 @@ def test_manifest_hosts_the_frame_bundle_on_the_cc_by_record() -> None:
     spec = load_manifest()["datasets"][demo.DATASET_NAME]
     assert spec["bucket"] == "zenodo" and spec["record"] == "cc-by"
     assert [f["name"] for f in spec["files"]] == [demo.BUNDLE_NAME]
+    assert (spec["files"][0]["sha256"], spec["files"][0]["bytes"]) == (
+        "6eb32ed7eb4f5eadf8e283e4aaa2de0adb6956396f71bd9def4c96b5913edfe3",
+        99_653_154,
+    )
     assert spec["acquisition"]["comparable"] is False
     assert demo.DEMO_META["requirements"]["compute"] == "medium"
 

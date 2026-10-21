@@ -495,8 +495,11 @@
       "files": [
         {
           "name": "organoid_budding_frames.gsplats.zarr.zip",
-          "sha256": "09d37adf82fe99c886f515fae42e17242eab599a04a5966bd1980b931bf3c73a",
-          "bytes": 98772846
+          "sha256": "6eb32ed7eb4f5eadf8e283e4aaa2de0adb6956396f71bd9def4c96b5913edfe3",
+          "bytes": 99653154,
+          "superseded_sha256": [
+            "09d37adf82fe99c886f515fae42e17242eab599a04a5966bd1980b931bf3c73a"
+          ]
         }
       ]
     },
