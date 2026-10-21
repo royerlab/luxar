@@ -940,7 +940,9 @@
       "timelapse": {
         "framePoint": 0.9
       },
-      "note": "framePoint 0.9 frames the still at about acquisition frame 598 of the 0-664 shown range (0.9 x 664 = 597.6; the nearest shown frames are 596 and 600), next to the demo's baked opening frame 600, where the organoid has budded; the video plays the whole growth from one cell. Data CC BY 4.0 (Zenodo 6828906); the attribution and changes statement travel in the scene description."
+      "note": "framePoint 0.9 frames the still at about acquisition frame 598 of the 0-664 shown range (0.9 x 664 = 597.6; the nearest shown frames are 596 and 600), next to the demo's baked opening frame 600, where the organoid has budded; the video plays the whole growth from one cell. Data CC BY 4.0 (Zenodo 6828906); the attribution and changes statement travel in the scene description. Framing: fillTarget 0.6 and exposure -1.0. At the 0.95 default the still lit 57.9% of the frame perimeter and cropped the bud away; widening the frame then let auto-exposure brighten by +0.93 stops and wash the core white, so exposure is pinned (0 still read near-white; -1.0 keeps the nuclei blue and membranes orange). Border-lit 2.6%.",
+      "fillTarget": 0.6,
+      "exposure": -1.0
     },
     {
       "id": "gsplats_3d_easifish_hypothalamus",
@@ -950,7 +952,8 @@
       "script": "demo_gsplats_3d_easifish_hypothalamus.py",
       "dataset": "datasets/demos/gsplats_3d_easifish_hypothalamus.luxar.zarr",
       "citation": "Wang et al. 2021 (Tillberg and Sternson labs, HHMI Janelia)",
-      "note": "Data CC BY 4.0 (figshare doi:10.25378/janelia.13622819); the attribution and changes statement travel in the scene description."
+      "note": "Data CC BY 4.0 (figshare doi:10.25378/janelia.13622819); the attribution and changes statement travel in the scene description. Framing: fillTarget 0.85. At 0.95 the slab ran off the sides (43.5% of the frame perimeter lit at the +20 degree rock pose); 0.85 keeps the whole slab in a square tile (border-lit 12.1%).",
+      "fillTarget": 0.85
     }
   ]
 }
