@@ -45,7 +45,8 @@ License: CC BY 4.0
 Recording: 002-P21-25X-Budding (one of seven main-figure recordings)
 
 Only the parts this demo uses are fetched, by HTTP range requests into the
-archive: every fourth ``rgb_grid/grid-T*.vti`` frame (about 345 MB transferred,
+archive: every fourth ``rgb_grid/grid-T*.vti`` frame, T0001, T0005, ..., T0665,
+except that the empty T0245 is replaced by T0244 (about 345 MB transferred,
 455 MB extracted) and the lineage ``mamut_deconv.xml`` (0.9 MB transferred,
 6.7 MB extracted). Each member is CRC-checked against the archive directory
 and, as a set, against the SHA-256 digest pinned below.
@@ -70,7 +71,10 @@ Microscope:  LS1-Live dual-illumination, inverted-detection light-sheet
 Organism:    mouse intestinal organoid, H2B-mCherry / mem9-GFP
 Voxel size:  2.0 x 0.26 x 0.26 um (ZYX)
 Temporal:    667 frames, 10 min apart (experiment.json records 0.1667 h)
-Shown:       167 frames, every fourth (40 min apart)
+Shown:       167 frames, every fourth (40 min apart). The one exception is
+             the slot of T0245, whose export is empty: it shows T0244 at
+             T0245's nominal time, so the acquisition frames actually drawn
+             step by 4 everywhere except 3 then 5 around that slot.
 
 The compression figure:
 -----------------------
@@ -98,6 +102,9 @@ DOI: 10.1038/s41467-022-32465-z
 WORKFLOW:
 =========
 
+The hosted fits replace steps 1-4 (see the end of USAGE); this is how they
+were made, and what --recompute runs:
+
 1. **Fetch**   the 167 frames + lineage by range requests (cached, checksummed)
 2. **Decode**  each VTK ImageData frame (zlib + base64, stdlib only)
 3. **Fit**     each frame and channel (membranes unmixed as red - green) as 3D
@@ -123,9 +130,18 @@ Options:
     --no-serve:    Generate the scene without launching the viewer
     --serve-only:  Just serve a previously generated scene
 
-The per-frame fits are not hosted yet, so the demo refits from the Zenodo
-source and caches every frame; a later run reuses the cache without touching
-the network.
+Where the per-frame fits come from, in order:
+
+1. a complete local fit cache (``~/.cache/luxar/gsplats_4d_organoid_budding/
+   local/``, written by an earlier refit), used without the network;
+2. the Luxar cc-by Zenodo record (``organoid_budding_frames.gsplats.zarr.zip``,
+   98.8 MB, sha256-pinned in the data manifest), so no GPU is needed;
+3. a refit from the Zenodo 6828906 source, when neither is available (offline
+   with nothing cached, say) or with --recompute, which skips 1 and 2.
+
+The 0.9 MB lineage XML always comes from Zenodo 6828906. Every download is
+cached and verified by hash, so a later run with a cached bundle or local fits
+(and the lineage) does not touch the network.
 
 Output:
     - Scene saved to:  datasets/demos/gsplats_4d_organoid_budding.luxar.zarr
@@ -139,11 +155,13 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "mixed",
     "requirements": {
-        # The Zenodo source (167 frames + lineage) the fallback refit needs while
-        # the precomputed fits are not hosted yet; see DATASET_NAME.
-        "download_mb": 345,
-        # Fits are not hosted yet, so a first run refits all 167 frames.
-        "compute": "heavy",
+        # The hosted per-frame fit bundle (98.8 MB) plus the lineage XML
+        # (0.9 MB, still range-fetched from Zenodo 6828906). The fallback refit
+        # instead fetches ~345 MB of source frames.
+        "download_mb": 100,
+        # The hosted fits only need stacking; a refit (--recompute, or the
+        # bundle unavailable) is heavy.
+        "compute": "medium",
         "gpu": "optional",
         "local_data": None,
     },
@@ -172,11 +190,15 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, DimensionsConfig, ViewerConfig
 from luxar.demos import (
+    BundleMemberNotFound,
+    DatasetUnavailable,
     add_demo_caption,
     detect_device,
     download_zip_members,
     hsv_to_rgb,
+    is_download_failure,
     launch_viewer,
+    load_dataset_bundle,
     local_fit_path,
     parse_demo_flags,
     print_data_provenance,
@@ -204,16 +226,12 @@ from luxar.utils.paths import get_demos_output_dir
 # Configuration
 # =============================================================================
 
-#: Manifest key (and cache directory) for the per-frame fits. The manifest lists
-#: it as local-compute: the fits are not hosted, so the demo refits from the
-#: Zenodo source.
+#: Manifest key (and cache directory) for the per-frame fits, hosted on the
+#: cc-by Zenodo record (v2.1.0 onwards).
 DATASET_NAME = "gsplats_4d_organoid_budding"
-#: Bundle of every per-frame fit cache, named exactly as `_frame_cache_name`.
-#: TODO(Loic): once a cc-by record carries this bundle and the manifest entry is
-#: promoted to bucket="zenodo", resolve it in `main` before the refit with
-#: ``load_dataset_bundle(DATASET_NAME, BUNDLE_NAME, names)`` (names in CHANNELS
-#: then FRAMES order; split the returned list per channel). Calling it now would
-#: return None for a local-compute dataset, which a demo gate forbids.
+#: Hosted bundle of every per-frame fit, a flat STORED zip whose 334 members
+#: are named exactly as `_frame_cache_name` (CHANNELS x FRAMES); resolved by
+#: `hosted_fits` through `load_dataset_bundle`.
 BUNDLE_NAME = "organoid_budding_frames.gsplats.zarr.zip"
 CACHE_DIR = Path.home() / ".cache" / "luxar" / DATASET_NAME
 
@@ -226,9 +244,12 @@ LINEAGE_MEMBER = f"{RECORDING}/mamut_deconv.xml"
 
 #: Acquisition frames in the recording (T0001..T0667, 10 min apart).
 N_SOURCE_FRAMES = 667
-#: Every FRAME_STEP-th frame is shown: 167 frames, 40 min apart.
+#: Every FRAME_STEP-th frame slot is shown: 167 slots, 40 min apart.
 FRAME_STEP = 4
-#: Zero-based acquisition frames shown (T0001, T0005, ..., T0665).
+#: Zero-based acquisition frame SLOTS shown (T0001, T0005, ..., T0665). Each
+#: slot keeps its nominal time; the frame actually drawn in it is
+#: `source_frame(slot)`, which differs only where FRAME_STAND_INS says so, so
+#: the drawn frames step by 4 except 3 then 5 around T0245's slot.
 FRAMES = tuple(range(0, N_SOURCE_FRAMES, FRAME_STEP))
 #: Shown frames whose export is empty in the record, mapped to the acquisition
 #: frame drawn in their place. T0245 is a 2 x 15 x 15 crop of zeros in both
@@ -625,6 +646,39 @@ def cached_fits() -> Optional[dict[str, list[GSplatData]]]:
         }
 
 
+def hosted_fits() -> Optional[dict[str, list[GSplatData]]]:
+    """Every frame's fits from the hosted bundle, or ``None`` to build locally.
+
+    ``None`` when ``--recompute`` is set, and when the bundle is not obtainable:
+    not cached and the download fails (offline, timeout, HTTP error), or member
+    names a changed fit recipe no longer matches. A checksum that will not verify
+    (``ValueError``) and every other fault still raise. Once the bundle is cached
+    (and verified by hash) and extracted, a rerun reads it without the network.
+    Stats are loaded so the per-part fit provenance matches the local path.
+    """
+    names = [_frame_cache_name(ch["name"], f) for ch in CHANNELS for f in FRAMES]
+    try:
+        loaded = load_dataset_bundle(
+            DATASET_NAME,
+            BUNDLE_NAME,
+            names,
+            recompute=RECOMPUTE,
+            include_stats=True,
+        )
+    except (DatasetUnavailable, BundleMemberNotFound, OSError, RuntimeError) as exc:
+        # OSError covers `requests` errors; DatasetUnavailable is one too, but
+        # other FileNotFoundErrors (a bad in-repo copy) are faults.
+        routable = isinstance(exc, (DatasetUnavailable, BundleMemberNotFound))
+        if not (routable or is_download_failure(exc)):
+            raise
+        aprint(f"Hosted fits unavailable ({exc}); building them locally.")
+        return None
+    if loaded is None:
+        return None
+    n = len(FRAMES)
+    return {ch["name"]: loaded[i * n : (i + 1) * n] for i, ch in enumerate(CHANNELS)}
+
+
 def fit_all_frames(frame_paths: list[Path]) -> dict[str, list[GSplatData]]:
     """Fit every shown frame for both channels, in FRAMES order."""
     fits: dict[str, list[GSplatData]] = {ch["name"]: [] for ch in CHANNELS}
@@ -889,7 +943,13 @@ def create_luxar_scene(
                 f"light-sheet, {len(FRAMES)} frames 40 min apart: from one cell to "
                 "a budding mini-gut. Membranes (bop_orange) and nuclei (bop_blue) "
                 "as Gaussian splats; the founder cell's tracked lineage as fading "
-                "trails and markers coloured by lineage. Scene size: "
+                "trails and markers coloured by lineage. Data: "
+                "doi:10.5281/zenodo.6828906, CC BY 4.0 "
+                "(https://creativecommons.org/licenses/by/4.0/); changed by "
+                "unmixing the membrane channel (red minus green), showing every "
+                "fourth frame (T0244 standing in for the empty T0245), "
+                "Gaussian-splat fitting and overlaying the published lineage as "
+                "smoothed trails. Scene size: "
                 f"{compression_note(SOURCE_BYTES, scene_bytes, RAW_LABEL)}."
             )
 
@@ -1022,9 +1082,11 @@ def main() -> None:
             aprint(f"No scene at {output_path}. Run without --serve-only first.")
         return
 
-    # A fully cached local fit needs no source and no network; otherwise refit
-    # from the Zenodo source (see BUNDLE_NAME for the hosted path to come).
+    # A complete local fit cache first (no source, no network); then the hosted
+    # bundle; otherwise refit from the Zenodo source. --recompute skips both.
     fits = cached_fits()
+    if fits is None:
+        fits = hosted_fits()
     if fits is None:
         warn_if_no_cuda_gpu()
         frame_paths, lineage_path = fetch_source()

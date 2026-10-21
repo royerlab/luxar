@@ -65,8 +65,9 @@ BIOLOGICAL MICROMETRES (the tissue was expanded):
     micrometres: the slab is ~124 x 217 x 417 um of tissue (expanded: ~249 x
     435 x 834 um). The fits and their quality figures are on the expanded grid.
 
-FIT RECIPE (every step caches under the demo's ``local/`` dir; a re-run resumes
-at the first missing one):
+FIT RECIPE (what built the hosted fits, and what ``--recompute`` runs; every
+step caches under the demo's ``local/`` dir, and a re-run resumes at the first
+missing one):
     1. Fetch ``LHA3_R3_medium.czi`` from figshare (sha256-pinned, resumable),
        or use a copy passed with ``--czi PATH`` (checked against the same hash).
     2. Stitch, then write a local OME-Zarr with two levels: xy/2 (0.42 x 0.46 x
@@ -98,8 +99,8 @@ WHY THE mRNA CHANNELS ARE FITTED AT xy/2:
     puncta may well merge or fade at xy/2; a like-for-like check (scoring the
     xy/2 fit against the full-resolution spots) has not been done. Full resolution is
     4x the voxels (4.1 G against 1.03 G per channel): roughly 4x the ~2.5 h
-    GB10 build, and host RAM well past the >= 32 GB floor, for a demo every
-    user rebuilds on first run until the fits are hosted. DAPI drops one level
+    GB10 build, and host RAM well past the >= 32 GB floor, for fits any user
+    can rebuild with ``--recompute``. DAPI drops one level
     more (z/2, xy/4): nuclei are many voxels across and serve as context.
     The cost is sub-voxel spot detail: puncta closer than ~0.5 um (expanded)
     can merge.
@@ -148,12 +149,32 @@ USAGE:
 
     --no-serve:    Build the scene but don't launch the viewer.
     --serve-only:  Skip the build, just serve the already-built scene.
-    --czi PATH:    Use a local copy of LHA3_R3_medium.czi instead of
-                   downloading it (verified against the pinned sha256).
+    --recompute:   Build the fits from the figshare CZI (the recipe above,
+                   resuming any cached step; needs a CUDA GPU) instead of
+                   using finished local or hosted ones.
+    --czi PATH:    When the recipe runs, use a local copy of
+                   LHA3_R3_medium.czi instead of downloading it (verified
+                   against the pinned sha256). Ignored, with a warning, when
+                   finished fits are used; add --recompute to force the build.
     --keep-stale:  Reuse an existing scene even if this demo's code changed.
 
-    No hosted copy of the fits is published yet, so the first run builds them.
-    Measured on an NVIDIA GB10 (128 GB unified memory):
+    The four finished fits come from the first source that has them:
+
+    1. locally finished archives from an earlier build (``local/``), if all
+       four are complete, used without the network;
+    2. the Luxar cc-by Zenodo record
+       (``easifish_{dapi,slc17a6,gpr83,bdnf}.gsplats.zarr.zip``, 83.2 MB in
+       all, sha256-pinned in the data manifest; cached and verified, so a
+       rerun does not download them again);
+    3. the recipe above, from the figshare CZI, when neither is available
+       (offline with nothing cached, say). --recompute goes straight here.
+
+    From finished fits the demo only builds and packs the scene: no GPU, under
+    ten minutes on a laptop (7.5 min measured on an Apple-silicon Mac, mostly
+    the two packing passes).
+
+    Building the fits locally, measured on an NVIDIA GB10 (128 GB unified
+    memory):
 
     - Disk: the 34.9 GB CZI plus ~5 GB of derived files (3.2 GB OME-Zarr,
       ~0.4 GB of fits, the 0.11 GB scene, ~0.26 GB in filesystem blocks).
@@ -165,7 +186,8 @@ USAGE:
     - GPU: CUDA. Workers are sized with ``--jobs-per-gpu auto`` and capped at
       three; a card with less memory simply runs fewer at once.
     - Time: about 2.5 hours of fitting. Later runs reuse the cached fits and
-      rebuild the scene only when the demo's code or a fit changed.
+      rebuild the scene only when the demo's code or a fit changed (on either
+      path; switching between the hosted and the local fits also rebuilds it).
 
 OUTPUT:
     - Scene saved to: datasets/demos/gsplats_3d_easifish_hypothalamus.luxar.zarr
@@ -183,11 +205,14 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
-        # The 34.9 GB raw CZI. No hosted fit exists yet (see the manifest
-        # entry), so a first run downloads it and refits.
-        "download_mb": 34862,
-        "compute": "heavy",
-        "gpu": "required",
+        # The four hosted per-channel fit archives (83.2 MB) on the cc-by
+        # Zenodo record. `--recompute` instead downloads the 34.9 GB raw CZI
+        # and refits on a CUDA GPU (see USAGE).
+        "download_mb": 83,
+        # The hosted path builds and packs the scene from finished fits: no
+        # fitting, no GPU.
+        "compute": "medium",
+        "gpu": "optional",
         "local_data": None,
     },
     "caches": ["gsplats_easifish_lha"],
@@ -220,9 +245,12 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
     BUILDER_FINGERPRINT_ATTR,
+    DatasetUnavailable,
     add_demo_caption,
     demo_source_fingerprint,
     download_with_checksum,
+    ensure_dataset,
+    is_download_failure,
     launch_viewer,
     local_fit_path,
     parse_demo_flags,
@@ -444,6 +472,8 @@ FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 KEEP_STALE = FLAGS["keep_stale"]
+#: ``--recompute``: build the fits from the figshare CZI even when hosted.
+RECOMPUTE = FLAGS["recompute"]
 #: ``--czi PATH``: a copy of the CZI the user already has.
 CZI_ARG = parse_path_arg("czi")
 FINGERPRINT = demo_source_fingerprint(__file__)
@@ -884,12 +914,10 @@ def fit_channel(ch: Channel, floor: Optional[float]) -> Path:
     return final
 
 
-def finish_channel(ch: Channel, merged: Path) -> Path:
-    """Front-load every leaf's ladder, then scale to biological micrometres.
+def _finish_recipe(ch: Channel) -> tuple[str, str, str]:
+    """``(recipe, scale, translation)`` of :func:`finish_channel` for ``ch``.
 
-    Both steps rewrite the tree structure-preservingly (partition parts and
-    their ``levels`` groups keep their shape) and touch no fit, so a change to
-    either costs about a minute per channel, never a refit.
+    Read from the stitched OME-Zarr's level metadata, so it needs that store.
     """
     from luxar._zarr_compat import open_group
 
@@ -907,14 +935,37 @@ def finish_channel(ch: Channel, merged: Path) -> Path:
         {"ladder_args": LADDER_ARGS, "scale": scale, "translation": translation},
         sort_keys=True,
     )
+    return recipe, scale, translation
+
+
+def _recipe_stamp(final: Path) -> Path:
+    return final.with_name(f"{final.name}.recipe.json")
+
+
+def _finished_is_current(ch: Channel, merged: Path, recipe: str) -> bool:
+    """Whether ``archive_path(ch)`` was finished from ``merged`` with ``recipe``."""
     final = archive_path(ch)
-    stamp = final.with_name(f"{final.name}.recipe.json")
-    if (
+    stamp = _recipe_stamp(final)
+    return (
         final.exists()
+        and merged.exists()
         and stamp.exists()
         and stamp.read_text() == recipe
         and final.stat().st_mtime >= merged.stat().st_mtime
-    ):
+    )
+
+
+def finish_channel(ch: Channel, merged: Path) -> Path:
+    """Front-load every leaf's ladder, then scale to biological micrometres.
+
+    Both steps rewrite the tree structure-preservingly (partition parts and
+    their ``levels`` groups keep their shape) and touch no fit, so a change to
+    either costs about a minute per channel, never a refit.
+    """
+    recipe, scale, translation = _finish_recipe(ch)
+    final = archive_path(ch)
+    stamp = _recipe_stamp(final)
+    if _finished_is_current(ch, merged, recipe):
         return final
     stamp.unlink(missing_ok=True)
     laddered = final.with_name(f"laddered_{ch.key}.gsplats.zarr")
@@ -973,14 +1024,89 @@ def recompute_channel_paths() -> dict[str, Path]:
 # =============================================================================
 # Data loading
 # =============================================================================
-def resolve_channel_paths() -> dict[str, Path]:
-    """The four per-channel archives, built locally from the figshare CZI.
+class ChannelPaths(dict[str, Path]):
+    """Archives by channel key, plus the digests ``ensure_dataset`` verified.
 
-    The dataset is CC BY 4.0 and redistributable, but its fits are not hosted
-    yet (the manifest lists it as ``local-compute``), so they are always built
-    here and cached. Once a record carries them, the manifest entry moves to the
-    ``zenodo`` bucket and this function resolves them with ``ensure_dataset``.
+    ``input_digests`` is what the scene stamps for these inputs (empty for a
+    local build), the same pairing as ``ResolvedDataset``.
     """
+
+    def __init__(
+        self, paths: dict[str, Path], input_digests: Optional[dict[str, str]] = None
+    ) -> None:
+        super().__init__(paths)
+        self.input_digests = dict(sorted((input_digests or {}).items()))
+
+
+def local_channel_paths() -> Optional[dict[str, Path]]:
+    """The four locally finished archives if all are complete, else ``None``.
+
+    Complete means what :func:`finish_channel` would accept without redoing
+    anything: the stitched OME-Zarr and the merged fit are present and the
+    finished archive carries the current recipe stamp. Checked with no network.
+    """
+    if _stitch_record(OME_ZARR) is None:
+        return None
+    paths = {}
+    for ch in CHANNELS:
+        if not _finished_is_current(ch, merged_path(ch), _finish_recipe(ch)[0]):
+            return None
+        paths[ch.key] = archive_path(ch)
+    return paths
+
+
+def hosted_archive_name(ch: Channel) -> str:
+    """The channel's archive on the cc-by Zenodo record: ``archive_path``, zipped."""
+    return f"{archive_path(ch).name}.zip"
+
+
+def hosted_channel_paths() -> Optional[dict[str, Path]]:
+    """The four hosted per-channel ``.zip`` archives, or ``None`` if unobtainable.
+
+    Resolved through ``ensure_dataset`` (cache, then the cc-by record), each
+    checksum-verified against the manifest pin; a cached, verified copy is used
+    without the network. ``None`` only for a routable absence: nothing usable
+    cached and the download fails (offline, timeout, HTTP error). A digest that
+    will not verify (``ValueError``) and every other fault still raise.
+    """
+    try:
+        resolved = ensure_dataset(
+            DATASET, file_names=[hosted_archive_name(ch) for ch in CHANNELS]
+        )
+    except (OSError, RuntimeError) as exc:
+        # OSError covers `requests` errors and DatasetUnavailable; any other
+        # FileNotFoundError (a bad in-repo copy) is a fault.
+        if not (isinstance(exc, DatasetUnavailable) or is_download_failure(exc)):
+            raise
+        aprint(f"Hosted fits unavailable ({exc}); building them locally.")
+        return None
+    by_name = {path.name: path for path in resolved}
+    return ChannelPaths(
+        {ch.key: by_name[hosted_archive_name(ch)] for ch in CHANNELS},
+        resolved.input_digests,
+    )
+
+
+def resolve_channel_paths() -> dict[str, Path]:
+    """The four per-channel archives, from the first source that has them.
+
+    1. Locally finished archives, if all four are complete (no network).
+    2. The hosted ``easifish_<key>.gsplats.zarr.zip`` archives on the cc-by
+       Zenodo record.
+    3. The whole recipe from the figshare CZI (resuming any cached step).
+
+    ``--recompute`` goes straight to 3.
+    """
+    if not RECOMPUTE:
+        for source in (local_channel_paths, hosted_channel_paths):
+            paths = source()
+            if paths is not None:
+                if CZI_ARG is not None:
+                    aprint(
+                        "⚠️  --czi is ignored: the fits are already available; "
+                        "pass --recompute to rebuild them from that CZI."
+                    )
+                return paths
     return recompute_channel_paths()
 
 
@@ -1072,7 +1198,11 @@ def create_luxar_scene(
                 "level of detail. Coordinates are biological micrometres (the "
                 "tissue was imaged after 2x linear expansion). Zoom in on a "
                 "coloured cell to resolve its transcripts. Press L for the "
-                "Layers panel. Scene size: "
+                "Layers panel. Data: doi:10.25378/janelia.13622819, CC BY 4.0 "
+                "(https://creativecommons.org/licenses/by/4.0/); changed by "
+                "stitching the two tiles, block-mean downsampling (mRNA xy/2; "
+                "DAPI z/2, xy/4), background subtraction, Gaussian-splat fitting "
+                "and rescaling to pre-expansion micrometres. Scene size: "
                 f"{compression_note(CZI_BYTES, scene_bytes, RAW_LABEL)}."
             )
             for ch in CHANNELS:
@@ -1180,14 +1310,27 @@ def build_scene(paths: dict[str, Path], output_path: Path) -> int:
 def scene_is_fresh(output_path: Path, archives: dict[str, Path]) -> bool:
     """Whether the built scene can be served as-is.
 
-    Current means two things: :func:`scene_is_current` (this demo's code and
-    the zarr writer are unchanged, ``--keep-stale`` honoured) AND the scene is
-    newer than every per-channel archive, so a re-finished fit rebuilds it.
+    Current means three things: :func:`scene_is_current` (this demo's code and
+    the zarr writer are unchanged, ``--keep-stale`` honoured); the scene is
+    newer than every per-channel archive, so a re-finished fit rebuilds it; and
+    it was built from the same inputs, hosted or local, so switching between
+    the hosted archives and a local build (or a re-pinned archive) rebuilds it
+    whatever the file times say.
     """
+    from luxar._zarr_compat import read_node_attrs
+
     if not scene_is_current(output_path, FINGERPRINT, keep_stale=KEEP_STALE):
         return False
     built = output_path.stat().st_mtime
-    return all(path.stat().st_mtime <= built for path in archives.values())
+    if not all(path.stat().st_mtime <= built for path in archives.values()):
+        return False
+    # What ensure_dataset verified for these inputs (empty for a local build),
+    # i.e. what a scene built from them stamps. Not the manifest's current pin:
+    # a superseded but still-accepted cached copy must not rebuild every run.
+    expected = getattr(archives, "input_digests", {})
+    attrs = read_node_attrs(output_path) or {}
+    stamped = attrs.get("input_digests") or {}
+    return KEEP_STALE or stamped == expected
 
 
 def main() -> None:

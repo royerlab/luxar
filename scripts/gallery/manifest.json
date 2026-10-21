@@ -928,6 +928,29 @@
       "citation": "ESM Atlas cluster map (Candido et al. 2026)",
       "fillTarget": 0.85,
       "note": "Captured at fillTarget 0.85, not the 0.95 default: final coverage=88.5%, final lit=69.4%, dropped=0. Border-lit fell from 36.6% to 14.9%; unlike bird_plumage_colorspace, where border contact is deliberate composition, this roughly isotropic cloud was simply cropped at the default. The first capture's advisory suggested 0.85. The follow-on advisory suggested 0.75; that is the standing over-suggestion for residual border contact and was not followed."
+    },
+    {
+      "id": "gsplats_4d_organoid_budding",
+      "title": "4D Budding Intestinal Organoid (lineage)",
+      "geometry": "mixed",
+      "category": "microscopy",
+      "script": "demo_gsplats_4d_organoid_budding.py",
+      "dataset": "datasets/demos/gsplats_4d_organoid_budding.luxar.zarr",
+      "citation": "de Medeiros et al., Nat Commun 2022 (Liberali lab)",
+      "timelapse": {
+        "framePoint": 0.9
+      },
+      "note": "framePoint 0.9 frames the still at about acquisition frame 598 of the 0-664 shown range (0.9 x 664 = 597.6; the nearest shown frames are 596 and 600), next to the demo's baked opening frame 600, where the organoid has budded; the video plays the whole growth from one cell. Data CC BY 4.0 (Zenodo 6828906); the attribution and changes statement travel in the scene description."
+    },
+    {
+      "id": "gsplats_3d_easifish_hypothalamus",
+      "title": "3D Spatial Transcriptomics (EASI-FISH, Mouse Hypothalamus)",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_easifish_hypothalamus.py",
+      "dataset": "datasets/demos/gsplats_3d_easifish_hypothalamus.luxar.zarr",
+      "citation": "Wang et al. 2021 (Tillberg and Sternson labs, HHMI Janelia)",
+      "note": "Data CC BY 4.0 (figshare doi:10.25378/janelia.13622819); the attribution and changes statement travel in the scene description."
     }
   ]
 }

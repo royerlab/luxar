@@ -1,12 +1,12 @@
 {
   "cc-by": {
-    "deposition": "22804363",
-    "doi": "10.5281/zenodo.22804363",
+    "deposition": "23524429",
+    "doi": "10.5281/zenodo.23524429",
     "title": "Luxar demo datasets: permissively licensed (CC-BY, CC0, public domain)",
     "license": "cc-by-4.0",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "language": "eng",
-    "publication_date": "2026-09-17",
+    "publication_date": "2026-10-21",
     "keywords": [
       "Gaussian splatting",
       "volume visualization",
@@ -124,6 +124,31 @@
         "identifier": "10.1038/s41567-020-0894-9",
         "relation": "references",
         "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.22912049",
+        "relation": "isSupplementTo",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.1038/s41467-022-32465-z",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.6828906",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.1016/j.cell.2021.11.024",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.25378/janelia.13622819",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
       }
     ],
     "notes": "Copyright (C) 2026 Loïc A. Royer for the derived Gaussian-splat and point-catalog files in this record. Rights in the underlying source datasets remain with their respective holders, listed per dataset in the description. Items derived from CC0 or public-domain sources carry no additional copyright claim.",
@@ -131,9 +156,9 @@
       "code:codeRepository": "https://github.com/royerlab/luxar"
     },
     "submitted": true,
-    "description_sha256": "aa848f4cd55df4fc562f6724585db86afd716233316150cf09005ec7ad5a296a",
-    "description_chars": 24115,
-    "zenodo_modified": "2026-09-18T05:59:54.747107+00:00"
+    "description_sha256": "9d612c4cc0bcef0dc1a0459c2ac62d93ff26e54d8cb3f01618706ee6e27781c7",
+    "description_chars": 28141,
+    "zenodo_modified": "2026-10-21T05:02:59.523183+00:00"
   },
   "cc-by-sa": {
     "deposition": "21912282",
@@ -175,6 +200,11 @@
         "identifier": "10.5281/zenodo.1211599",
         "relation": "isDerivedFrom",
         "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.22912049",
+        "relation": "isSupplementTo",
+        "scheme": "doi"
       }
     ],
     "notes": "Copyright (C) 2026 Loïc A. Royer for the derived files in this record, released under CC BY-SA 4.0 as required by the ShareAlike terms of their sources. Rights in the underlying datasets remain with their respective holders.",
@@ -184,7 +214,7 @@
     "submitted": true,
     "description_sha256": "78ed4ec7b56918ecfcc21f912fcf972c01f035a9c6a9b32913356a008c0e7807",
     "description_chars": 6856,
-    "zenodo_modified": "2026-09-02T21:22:08.610882+00:00"
+    "zenodo_modified": "2026-09-23T17:29:02.977879+00:00"
   },
   "h2afva": {
     "deposition": "22807312",
@@ -228,6 +258,11 @@
         "identifier": "10.1016/j.cell.2024.09.047",
         "relation": "isDerivedFrom",
         "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.22912049",
+        "relation": "isSupplementTo",
+        "scheme": "doi"
       }
     ],
     "notes": "Copyright (C) 2026 Loïc A. Royer for the derived Gaussian-splat files in this record. Rights in the underlying light-sheet recording remain with its holders. Released under CC BY 4.0.",
@@ -237,7 +272,7 @@
     "submitted": true,
     "description_sha256": "05635760271cd5571f932a79a24e829be74805e82e40a5d86b0e57cc4e41e8d3",
     "description_chars": 6297,
-    "zenodo_modified": "2026-09-18T06:00:07.782525+00:00"
+    "zenodo_modified": "2026-09-23T17:29:25.744090+00:00"
   },
   "droso-timelapse": {
     "deposition": "22804386",
@@ -284,6 +319,11 @@
         "identifier": "10.5281/zenodo.21912280",
         "relation": "isPartOf",
         "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.22912049",
+        "relation": "isSupplementTo",
+        "scheme": "doi"
       }
     ],
     "notes": "Copyright (C) 2026 Loïc A. Royer for the derived Gaussian-splat files in this record. Rights in the underlying light-sheet recording remain with its holders. Released under CC BY 4.0.",
@@ -307,7 +347,7 @@
     "submitted": true,
     "description_sha256": "6e7ebf6f61f52a3c174e4897c8ac2277e58ea6b02ba17f02f8812e334fcbc825",
     "description_chars": 3824,
-    "zenodo_modified": "2026-09-19T04:51:47.049762+00:00"
+    "zenodo_modified": "2026-09-23T17:29:29.486314+00:00"
   },
   "benchmark-volumes": {
     "deposition": "22820799",
@@ -400,6 +440,11 @@
         "identifier": "10.1126/science.abi6983",
         "relation": "isDerivedFrom",
         "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.22912049",
+        "relation": "isSupplementTo",
+        "scheme": "doi"
       }
     ],
     "notes": null,
@@ -407,7 +452,7 @@
     "submitted": true,
     "description_sha256": "97cfcada907af729714e045f272903f1314f720585c2fdd2b9d1c5b7034cc724",
     "description_chars": 16208,
-    "zenodo_modified": "2026-09-18T05:58:58.920373+00:00"
+    "zenodo_modified": "2026-09-23T17:29:35.893999+00:00"
   },
   "supplementary-videos": {
     "deposition": "22825093",
@@ -481,6 +526,11 @@
         "identifier": "10.1126/science.abm9506",
         "relation": "isDerivedFrom",
         "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.22912049",
+        "relation": "isSupplementTo",
+        "scheme": "doi"
       }
     ],
     "notes": null,
@@ -488,7 +538,7 @@
     "submitted": true,
     "description_sha256": "376fcc51e1654ee6cd2a406be3988bde3da9d5ab822347a3441620b1b1071e4b",
     "description_chars": 22042,
-    "zenodo_modified": "2026-09-21T19:14:30.103580+00:00"
+    "zenodo_modified": "2026-09-23T17:29:40.683848+00:00"
   },
-  "_captured_utc": "2026-09-22T16:08:50Z"
+  "_captured_utc": "2026-10-21T05:18:48Z"
 }

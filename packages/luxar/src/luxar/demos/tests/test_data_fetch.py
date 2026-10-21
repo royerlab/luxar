@@ -1937,16 +1937,16 @@ def test_every_shipped_record_agrees_with_its_published_flag():
 
 
 def test_neuromast_resolves_to_published_cc_by_record_not_r2():
-    """The Z-corrected neuromast pair resolves to cc-by v2.0.0, not R2."""
+    """The Z-corrected neuromast pair resolves to the cc-by record (v2.1.0), not R2."""
     m = load_manifest()
     spec = m["datasets"]["gsplats_4d_neuromast_2ch"]
     assert spec.get("files"), "neuromast dataset lost its file pins"
     record = data_fetch.resolved_record(m, spec)
-    assert record["zenodo_record"] == "22804363"
+    assert record["zenodo_record"] == "23524429"
     for f in spec["files"]:
         url = data_fetch.zenodo_file_url(record, f["name"])
         assert url == (
-            f"https://zenodo.org/records/22804363/files/{f['name']}?download=1"
+            f"https://zenodo.org/records/23524429/files/{f['name']}?download=1"
         )
         assert "data.luxarviewer.dev/inputs/neuromast-z-2713" not in url
 

@@ -5,8 +5,8 @@
     "cc-by": {
       "title": "Luxar demo datasets: permissively licensed (CC-BY, CC0, public domain)",
       "license": "cc-by-4.0",
-      "zenodo_doi": "10.5281/zenodo.22804363",
-      "zenodo_record": "22804363",
+      "zenodo_doi": "10.5281/zenodo.23524429",
+      "zenodo_record": "23524429",
       "zenodo_conceptdoi": "10.5281/zenodo.21912279",
       "base_url": null,
       "published": true
@@ -481,15 +481,24 @@
       ]
     },
     "gsplats_4d_organoid_budding": {
-      "bucket": "local-compute",
-      "redistribute": true,
+      "bucket": "zenodo",
+      "record": "cc-by",
       "license": "cc-by-4.0",
       "source": "LSTree light-sheet recordings, Zenodo 6828906 (recording 002-P21-25X-Budding: deconvolved rgb_grid frames + MaMuT lineage)",
       "attribution": "de Medeiros, G., Ortiz, R., Strnad, P., Boni, A., Moos, F., Repina, N., Challet Meylan, L., Maurer, F. & Liberali, P. Multiscale light-sheet organoid imaging framework. Nature Communications 13, 4864 (2022). doi:10.1038/s41467-022-32465-z. Data: doi:10.5281/zenodo.6828906 (CC BY 4.0).",
-      "reason": "CC BY 4.0 and redistributable, but no Zenodo record carries the fits yet.",
-      "strategy": "Fetch 167 rgb_grid frames + the lineage XML from Zenodo 6828906 by range requests (~345 MB), unmix the membranes as red - green, and fit both channels locally (GPU, ~1 h on an 8 GB card).",
+      "acquisition": {
+        "description": "167 of the authors' deconvolved rgb_grid frames of recording 002 (every fourth, T0244 standing in for the empty T0245): 8-bit RGB crops of the organoid, fitted per frame and channel",
+        "comparable": false,
+        "reason": "the record holds only the authors' deconvolved 8-bit crops, not the ~700 GB raw acquisition (available from the authors on request), so no stored size describes what was imaged"
+      },
       "dir": "gsplats_4d_organoid_budding",
-      "files": []
+      "files": [
+        {
+          "name": "organoid_budding_frames.gsplats.zarr.zip",
+          "sha256": "09d37adf82fe99c886f515fae42e17242eab599a04a5966bd1980b931bf3c73a",
+          "bytes": 98772846
+        }
+      ]
     },
     "gsplats_cell_tracking": {
       "bucket": "zenodo",
@@ -795,15 +804,39 @@
       "files": []
     },
     "gsplats_easifish_lha": {
-      "bucket": "local-compute",
-      "redistribute": true,
+      "bucket": "zenodo",
+      "record": "cc-by",
       "license": "cc-by-4.0",
       "source": "Janelia figshare 10.25378/janelia.13622819, EASI-FISH example data round 3 (LHA3_R3_medium.czi)",
       "attribution": "Wang Y, Eddison M, Fleishman G, et al. (Tillberg and Sternson labs, HHMI Janelia), EASI-FISH for thick tissue defines lateral hypothalamus spatio-molecular organization, Cell 184(26) (2021), doi:10.1016/j.cell.2021.11.024. Data CC BY 4.0, doi:10.25378/janelia.13622819.",
-      "reason": "CC BY 4.0 and redistributable, but no Zenodo record is published yet.",
-      "strategy": "Download the 34.9 GB CZI from figshare, stitch its two tiles, and fit the four channels locally (GPU, ~2.5 h).",
+      "acquisition": {
+        "description": "LHA3_R3_medium.czi, two unstitched tiles x 4 channels x 591 x 1920 x 1920 uint16 (34.9 GB as published); stitched, then the mRNA channels fitted at xy/2 and DAPI at z/2, xy/4",
+        "comparable": true,
+        "stored_bytes": 34861369536
+      },
       "dir": "gsplats_easifish_lha",
-      "files": []
+      "files": [
+        {
+          "name": "easifish_dapi.gsplats.zarr.zip",
+          "sha256": "e577cd93dd59f9c914505e151dda7dada93b5729c84b26938b3d577e86998630",
+          "bytes": 9310310
+        },
+        {
+          "name": "easifish_slc17a6.gsplats.zarr.zip",
+          "sha256": "bb0c234de8f6a452543ec05e474030821e8181b8517009a0081b62d127015587",
+          "bytes": 23575101
+        },
+        {
+          "name": "easifish_gpr83.gsplats.zarr.zip",
+          "sha256": "c4027e3023f5a71bb5ee8449017d96f635e5ca998a68ff62c321b9986bed5175",
+          "bytes": 25586130
+        },
+        {
+          "name": "easifish_bdnf.gsplats.zarr.zip",
+          "sha256": "3b52a2446fe1cbe55401d7bc3b3608c59abb62a070ab59f9bf8cbd7631c59c5c",
+          "bytes": 24743775
+        }
+      ]
     },
     "gsplats_tribolium": {
       "bucket": "local-compute",
