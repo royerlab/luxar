@@ -510,11 +510,60 @@ def test_resolution_order_is_local_then_hosted_then_recompute(
         raise DatasetUnavailable("pending upload")
 
     monkeypatch.setattr(_demo, "ensure_dataset", unavailable)
+    monkeypatch.setattr(_demo, "_stitch_record", lambda _p: {"complete": True})
     assert _demo.resolve_channel_paths() == built()
     monkeypatch.setattr(_demo, "ensure_dataset", hosted)
     monkeypatch.setattr(_demo, "local_channel_paths", finished)
     monkeypatch.setattr(_demo, "RECOMPUTE", True)
     assert _demo.resolve_channel_paths() == built()
+
+
+def test_hosted_http_error_does_not_start_a_czi_download(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import requests
+
+    def unavailable(*_a: object, **_k: object):
+        raise requests.exceptions.HTTPError("503 Service Unavailable")
+
+    def unexpected_recompute() -> dict[str, Path]:
+        pytest.fail("the CZI recipe must not start without an existing input")
+
+    monkeypatch.setattr(_demo, "RECOMPUTE", False)
+    monkeypatch.setattr(_demo, "CZI_ARG", None)
+    monkeypatch.setattr(_demo, "local_channel_paths", lambda: None)
+    monkeypatch.setattr(_demo, "ensure_dataset", unavailable)
+    monkeypatch.setattr(_demo, "OME_ZARR", tmp_path / "missing.ome.zarr")
+    monkeypatch.setattr(_demo, "recompute_channel_paths", unexpected_recompute)
+    with pytest.raises(RuntimeError, match="--recompute"):
+        _demo.resolve_channel_paths()
+
+
+def test_hosted_http_error_uses_a_cached_stitch_or_user_czi(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import requests
+
+    from luxar._zarr_compat import open_group
+
+    def unavailable(*_a: object, **_k: object):
+        raise requests.exceptions.HTTPError("503 Service Unavailable")
+
+    built = {ch.key: Path(ch.key) for ch in _demo.CHANNELS}
+    monkeypatch.setattr(_demo, "RECOMPUTE", False)
+    monkeypatch.setattr(_demo, "local_channel_paths", lambda: None)
+    monkeypatch.setattr(_demo, "ensure_dataset", unavailable)
+    monkeypatch.setattr(_demo, "recompute_channel_paths", lambda: built)
+    stitched = tmp_path / "stitched.ome.zarr"
+    open_group(str(stitched), mode="w").attrs["easifish_stitch"] = {"complete": True}
+    monkeypatch.setattr(_demo, "OME_ZARR", stitched)
+    monkeypatch.setattr(_demo, "CZI_ARG", None)
+    assert _demo.resolve_channel_paths() == built
+    monkeypatch.setattr(_demo, "OME_ZARR", tmp_path / "missing.ome.zarr")
+    monkeypatch.setattr(_demo, "CZI_ARG", Path("my.czi"))
+    assert _demo.resolve_channel_paths() == built
 
 
 def _empty_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -166,8 +166,9 @@ USAGE:
        (``easifish_{dapi,slc17a6,gpr83,bdnf}.gsplats.zarr.zip``, 83.2 MB in
        all, sha256-pinned in the data manifest; cached and verified, so a
        rerun does not download them again);
-    3. the recipe above, from the figshare CZI, when neither is available
-       (offline with nothing cached, say). --recompute goes straight here.
+    3. the recipe above when the stitched OME-Zarr is cached or ``--czi``
+       supplies the CZI. To download the 34.9 GB CZI and rebuild, pass
+       ``--recompute``. That flag goes straight to the recipe.
 
     From finished fits the demo only builds and packs the scene: no GPU, under
     ten minutes on a laptop (7.5 min measured on an Apple-silicon Mac, mostly
@@ -1078,7 +1079,7 @@ def hosted_channel_paths() -> Optional[dict[str, Path]]:
         # FileNotFoundError (a bad in-repo copy) is a fault.
         if not (isinstance(exc, DatasetUnavailable) or is_download_failure(exc)):
             raise
-        aprint(f"Hosted fits unavailable ({exc}); building them locally.")
+        aprint(f"Hosted fits unavailable ({exc}).")
         return None
     by_name = {path.name: path for path in resolved}
     return ChannelPaths(
@@ -1093,7 +1094,8 @@ def resolve_channel_paths() -> dict[str, Path]:
     1. Locally finished archives, if all four are complete (no network).
     2. The hosted ``easifish_<key>.gsplats.zarr.zip`` archives on the cc-by
        Zenodo record.
-    3. The whole recipe from the figshare CZI (resuming any cached step).
+    3. The recipe from a cached stitch or ``--czi`` input; downloading the CZI
+       requires ``--recompute``.
 
     ``--recompute`` goes straight to 3.
     """
@@ -1107,6 +1109,11 @@ def resolve_channel_paths() -> dict[str, Path]:
                         "pass --recompute to rebuild them from that CZI."
                     )
                 return paths
+        if CZI_ARG is None and _stitch_record(OME_ZARR) is None:
+            raise RuntimeError(
+                "Hosted fits are unavailable. Retry, or pass --recompute to "
+                "download the 34.9 GB CZI and build the fits."
+            )
     return recompute_channel_paths()
 
 
