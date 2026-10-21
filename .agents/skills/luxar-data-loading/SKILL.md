@@ -174,6 +174,15 @@ reads only that slice, so a huge nD movie is never pulled into RAM whole.
   'imagecodecs' package" on an older install → `pip install imagecodecs`.
 - **Anisotropic stack looks squashed** → the fit is in voxel units (see "Physical
   voxel size" above); refit with `--physical` (or `--voxel-size Z,Y,X`).
+- **Expansion microscopy reads too large** → the recorded voxel size describes the
+  EXPANDED gel. Divide by the linear expansion factor for biological µm (EASI-FISH:
+  `ex=2` in the authors' code); fit on the expanded grid and scale by 1/ex last.
+- **z far coarser than xy** → halving xy toward isotropy cuts the voxels (and fit cost) 4x
+  at the cost of lateral detail; see the gsplat-pipeline skill's
+  `references/fitting-real-data-lessons.md`.
+- **An RGB export** → its channels may be blended (the LSTree organoid export is a
+  max composite, red = max(membranes, nuclei)); find out whether and how (max vs
+  sum) from the data and the authors' code before unmixing (same reference).
 
 ## Next step
 

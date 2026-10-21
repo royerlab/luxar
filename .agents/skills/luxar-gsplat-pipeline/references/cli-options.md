@@ -46,7 +46,7 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 | `--tile-size` | 256 | tile edge in voxels. One uniform grid everywhere (#2838): a trailing sliver thinner than the overlap is FOLDED into its predecessor, which then spans up to `tile_size + overlap - 1` voxels (287 at 256/32 = 1.41x the voxels in 3D). Size this for that worst case — it is the GPU-memory knob |
 | `--overlap` | 32 | inter-tile overlap voxels (Hann-stitched) |
 | `--tile` | none | fit a single tile `N/M` (e.g. `3/16`) — Slurm-ready |
-| `--jobs` / `-j` | 1 | concurrent tiles on one GPU; `auto` accounts for GPU memory plus shared host RAM/CPU limits |
+| `--jobs` / `-j` | 1 | concurrent tiles on one GPU; `auto` accounts for GPU memory plus shared host RAM/CPU limits. A CUDA integrated GPU (GB10, Jetson) is sized as ONE pool from host `MemAvailable`, ~3 GB + 64 B/voxel per worker (measured), because its GPU free-memory query leaves out page cache (sized as two pools, a 128 GB GB10 got 8 workers and 3 GB free). `LUXAR_AUTO_WORKER_HARD_CAP` caps it |
 | `--keep-tiles` | false | keep per-tile temp outputs after merge |
 
 ### Content-adaptive tiling (`--tiling content`) — needs a density

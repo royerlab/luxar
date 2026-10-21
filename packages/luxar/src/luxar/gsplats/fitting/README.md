@@ -180,7 +180,11 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 4. **Pre-initialized amplitude rescaling**: Brings `init_amps` onto the
    normalized `[0, 1]` scale the optimizer works on. Which rescaling applies
    depends on the amplitude convention: raw-image-sampled amplitudes (what the
-   seeding methods produce) become `(a - image_min) / intensity_range`, while
+   seeding methods produce, `s * v` with `s = SEED_AMPLITUDE_SCALE`) become
+   `s * (a / s - image_min) / intensity_range`, so the factor applies to the
+   signal above the floor, not to the pedestal (applied to the raw value, it
+   would push a seed just above a 405-count pedestal below the floor, to an
+   amplitude of exactly 0 that never recovers), while
    background-relative ones (what a previous fit returns — see item 1) become
    `a / intensity_range`. A `seeds=GSplatData` carries either kind and records
    no provenance, so the caller declares it with

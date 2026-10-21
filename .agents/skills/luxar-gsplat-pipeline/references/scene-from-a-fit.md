@@ -35,6 +35,13 @@ for name, path, cmap in [("membrane", "mem.gsplats.zarr", "bop_orange"),
     scene.add_gsplats_from_file(name, path, colormap=cmap)
 ```
 
+Each channel is auto-exposed on its own, so overlapping additive channels add up:
+four EASI-FISH layers through a 250 µm slab washed to beige-white, and DAPI ended
+up about 200x below Gpr83 (100-200x below the three mRNA layers) once tuned by
+eye. Author per-layer brightness for a composite (`luxar-visualization` skill,
+`references/multichannel-fluorescence.md`), and unmix a composited export before
+fitting ([fitting-real-data-lessons.md](fitting-real-data-lessons.md)).
+
 For a scene you lay out yourself, `fitted_scene_defaults(path, **options)` returns
 convert's scene as values: `dimensions` / `viewer_config` for `create_scene`,
 `amplitude_bits` for `LuxarZarrCompiler(gsplat_amplitude_bits=...)`, and the

@@ -131,8 +131,8 @@ WHY ``--min-extent 0`` FOR THE mRNA CHANNELS:
     Those figures, and every quality figure quoted for this demo, assume the
     pedestal-seeding fix of PR #3226. Without it most seeds start dead on this
     dataset's 209-237 count background pedestal, which costs far more recall
-    and many more splats than the pruning does. This demo is meant to merge
-    after that PR.
+    and many more splats than the pruning does. Refits made without that fix
+    are not comparable with these figures.
 
 WHY THE EXPOSURE IS SET BY HAND:
     Each layer's brightness and colormap window are authored below (see

@@ -1433,6 +1433,19 @@ depth-2 BSP locally; `nuclear_pore_complex` is 41,288 elements published and
 9,874,128 across both local states after a demo change. Label the source of every
 number, and never put both in one table.
 
+### 7.6 Count each element once: the finest level, summed over parts
+
+A hosted record's "elements" figure, and the count to quote anywhere, is the
+finest level summed over partition parts. It is neither `gsplat info`'s
+all-leaves total (which adds every coarser level) nor a gallery card's number.
+The card generator (`build_gallery_data.py`, in the operator harness, not this
+repo) counts a streamed node's own `n_*` and its additive sub-LODs, counts
+`array_ref` recolourings again and sums every LOD level, so its figures run
+about 2x high on nested LOD layouts (zebrafish 242 M against 121 M splats; DESI
+39.0 M against 9.75 M points). Read the scene's root `zarr.json` and sum the
+finest-level `centers` / `positions` / `vertices` shapes, skipping `array_ref`
+nodes (§7.2), or use the count the scene's own description states.
+
 ---
 
 ## 8. Current state, and what a fresh operator needs
@@ -1583,6 +1596,12 @@ stale-generation incident below began with an unverified local archive:
 ```bash
 cd ~/luxar-zenodo-archives && shasum -c SHA256SUMS    # expect: 52 OK, 0 failed
 ```
+
+A new hosted gsplat archive follows the record's layout: a single store is
+`ZIP_DEFLATED` with the store directory as its internal prefix, and a
+multi-frame bundle is a flat `ZIP_STORED` zip of per-frame `.gsplats.zarr.zip`
+members named as the demo looks them up (see "File Formats" in
+`packages/luxar/src/luxar/demos/data/README.md`).
 
 Verified on 2026-09-25, the manifest declares one current checksum contract per
 artifact and contains no `hosted_sha256` fields: #2454 fixed the stale-cache

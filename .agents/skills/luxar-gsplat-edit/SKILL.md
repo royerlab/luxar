@@ -261,6 +261,18 @@ verdict on many clean, high-SNR volumes. JSON: `foreground_psnr_noise_ceiling_db
 compared against its full source volume is scored on the region it fitted (the
 fit stamp's mask); `--whole-volume` scores all of it.
 
+### Loading a partition or nested tree in Python
+
+`GSplatData.load` (`load_gsplats`) maps only a leaf or a `kind=lod` group of
+leaves to one `GSplatData`; a `kind=partition` root or a partition of `levels`
+groups (what `batch-fit --merge-recipe levels` writes) raises `ValueError`.
+Inspect it with `luxar gsplat info` or, without decoding chunks,
+`read_gsplat_tree_summary(open_group(path, mode="r"))`
+(`luxar.gsplats.io.tree_summary`, `open_group` from `luxar._zarr_compat`); take the default-rendered selection as one
+flat dataset with `load_default_gsplats`; walk the tree with
+`load_gsplat_node` (`luxar.gsplats.io.load_gsplats`; decodes every leaf).
+`gsplat flatten` writes a flat copy for tools that need one.
+
 ### Physical-unit fits: `render`/`compare` map them back to voxels
 
 If the fit was run with a physical `voxel_size`, the centres are in **microns**, not
