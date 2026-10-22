@@ -7,6 +7,7 @@ the shared ``app_gsplat`` Typer.
 from __future__ import annotations
 
 import shutil
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -93,6 +94,9 @@ def _part_provenance_count(records: list[Any]) -> int:
 def _print_fitting_value(
     key: str, value: Any, *, show_full_provenance: bool = False
 ) -> None:
+    if key in {"fit_provenance", "batch_provenance"} and not show_full_provenance:
+        aprint(f"  {key}: recorded (use --provenance for a summary)")
+        return
     if (
         key == "part_provenance"
         and isinstance(value, list)
@@ -113,6 +117,112 @@ def _print_fitting_value(
         aprint(f"  {key}: {value:.6f}")
     else:
         aprint(f"  {key}: {value}")
+
+
+def _fit_leaves(
+    fitting: dict[str, Any], label: str = "fit"
+) -> list[tuple[str, dict[str, Any]]]:
+    """Walk component records without treating a merged score as a leaf fit."""
+    parts = fitting.get("part_provenance")
+    if not isinstance(parts, list):
+        return [(label, fitting)]
+    leaves: list[tuple[str, dict[str, Any]]] = []
+    for part in parts:
+        if not isinstance(part, dict) or not isinstance(part.get("fitting"), dict):
+            continue
+        name = part.get("slot_id", part.get("coordinate", "?"))
+        leaves.extend(_fit_leaves(part["fitting"], f"{label}/{name}"))
+    return leaves
+
+
+def _provenance_stages(record: Any) -> dict[str, float]:
+    import math
+
+    timings = record.get("timings", {}) if isinstance(record, dict) else {}
+    return {
+        stage: float(value)
+        for stage, value in timings.items()
+        if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0
+    }
+
+
+def _provenance_quality(outcome: dict[str, Any]) -> float | None:
+    import math
+
+    score = outcome.get("foreground_psnr_db", outcome.get("psnr_db"))
+    if isinstance(score, (int, float)) and math.isfinite(score):
+        return float(score)
+    return None
+
+
+def _maybe_print_provenance(fitting: dict[str, Any], enabled: bool) -> None:
+    if enabled:
+        _print_provenance_summary(fitting)
+
+
+def _print_batch_stages(batch: Any) -> None:
+    if isinstance(batch, dict):
+        for stage, seconds in batch.get("timings", {}).items():
+            aprint(f"  batch {stage}: {float(seconds):.2f} s")
+
+
+def _print_provenance_summary(fitting: dict[str, Any]) -> None:
+    """Readable timings and outcome spread from old or versioned fit records."""
+    import statistics
+
+    leaves = _fit_leaves(fitting)
+    if not leaves:
+        aprint("\nFit provenance: no fitted parts")
+        return
+    stage_totals: dict[str, float] = {}
+    durations: list[tuple[float, str]] = []
+    stop_reasons: Counter[str] = Counter()
+    cull_total = 0
+    prune_total = 0
+    quality: list[float] = []
+    for label, leaf in leaves:
+        record = leaf.get("fit_provenance", {})
+        outcome = record.get("outcome", leaf) if isinstance(record, dict) else leaf
+        timings = _provenance_stages(record)
+        duration = sum(timings.values())
+        for stage, value in timings.items():
+            stage_totals[stage] = stage_totals.get(stage, 0.0) + value
+        if duration == 0:
+            duration = float(leaf.get("time_seconds") or 0)
+        durations.append((duration, label))
+        stop_reasons[str(outcome.get("early_stop_reason") or "iteration limit")] += 1
+        cull_total += int(outcome.get("n_culled") or 0)
+        prune_total += int(outcome.get("min_extent_removed") or 0)
+        score = _provenance_quality(outcome)
+        if score is not None:
+            quality.append(score)
+    aprint(f"\nFit provenance: {len(leaves)} fit(s)")
+    aprint(f"  Fit task time (sum): {sum(d for d, _ in durations):.2f} s")
+    for stage, seconds in sorted(stage_totals.items()):
+        aprint(f"  {stage}: {seconds:.2f} s")
+    if isinstance(fitting.get("save_seconds"), (int, float)):
+        aprint(f"  saving: {float(fitting['save_seconds']):.2f} s")
+    _print_batch_stages(fitting.get("batch_provenance"))
+    if len(durations) > 1:
+        aprint(
+            "  Slowest: "
+            + ", ".join(
+                f"{label} {seconds:.2f}s"
+                for seconds, label in sorted(durations, reverse=True)[:5]
+            )
+        )
+    aprint(
+        "  Stop reasons: "
+        + ", ".join(
+            f"{reason} {count}" for reason, count in sorted(stop_reasons.items())
+        )
+    )
+    aprint(f"  Culled: {cull_total}; min-extent pruned: {prune_total}")
+    if quality:
+        aprint(
+            "  Quality dB (min/median/max): "
+            f"{min(quality):.2f}/{statistics.median(quality):.2f}/{max(quality):.2f}"
+        )
 
 
 def _is_short_numeric_list(value: Any) -> bool:
@@ -344,7 +454,7 @@ def _report_image_volume(path: Path, reason: str) -> None:
 
 
 def _load_info_data(
-    path: Path, *, full_provenance: bool
+    path: Path, *, full_provenance: bool, provenance: bool = False
 ) -> tuple["Optional[GSplatData]", bool]:
     """Load a flat dataset, or print a valid tree summary or load failure."""
     from luxar.gsplats.gsplat_data import GSplatData
@@ -391,6 +501,7 @@ def _load_info_data(
                     _print_gsplat_tree_summary(
                         zarr_path,
                         show_full_provenance=full_provenance,
+                        show_provenance=provenance,
                         source_path=path,
                     )
                 except ValueError as summary_exc:
@@ -449,6 +560,7 @@ def _info_report(
     show_histograms: bool,
     bins: int,
     full_provenance: bool,
+    provenance: bool = False,
 ) -> bool:
     """Print a Gaussian splat dataset report and return whether it succeeded."""
     try:
@@ -456,7 +568,9 @@ def _info_report(
 
         from luxar.gsplats.utils.alpha import effective_amplitudes
 
-        data, report_succeeded = _load_info_data(path, full_provenance=full_provenance)
+        data, report_succeeded = _load_info_data(
+            path, full_provenance=full_provenance, provenance=provenance
+        )
         if data is None:
             return report_succeeded
         n_splats = len(data.amplitudes)
@@ -563,6 +677,7 @@ def _info_report(
                 source_grid_keys,
                 show_full_provenance=full_provenance,
             )
+            _maybe_print_provenance(data.stats, provenance)
 
         # ================================================================
         # Summary
@@ -616,6 +731,9 @@ def info_dataset(
         "--full-provenance",
         help="Print the complete nested fitting/part_provenance record",
     ),
+    provenance: bool = typer.Option(
+        False, "--provenance", help="Summarize fit stages, slow tiles, and outcomes"
+    ),
 ) -> None:
     """Show detailed information about a Gaussian splat dataset.
 
@@ -652,6 +770,7 @@ def info_dataset(
         show_histograms=show_histograms,
         bins=bins,
         full_provenance=full_provenance,
+        provenance=provenance,
     ):
         raise typer.Exit(1)
 
@@ -1181,6 +1300,7 @@ def _print_gsplat_tree_summary(
     path: Path,
     *,
     show_full_provenance: bool = False,
+    show_provenance: bool = False,
     source_path: Optional[Path] = None,
 ) -> None:
     """Report the node-tree shape of a partition / nested .gsplats.zarr.
@@ -1249,6 +1369,7 @@ def _print_gsplat_tree_summary(
                     fitting[key],
                     show_full_provenance=show_full_provenance,
                 )
+            _maybe_print_provenance(fitting, show_provenance)
         _print_normalization_block(root)
     finally:
         if tmp is not None and tmp.exists():

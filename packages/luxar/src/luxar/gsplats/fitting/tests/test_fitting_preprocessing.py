@@ -1018,7 +1018,7 @@ class TestInitAmpsProvenance:
         """An empty seed set must come back as an empty result, not a KeyError.
 
         ``GaussianSplatFitter.fit`` deliberately short-circuits ``N == 0`` and
-        returns an empty ``GSplatData`` with an empty ``stats`` dict, so the
+        returns an empty ``GSplatData`` with no optimization stats, so the
         ``verbose`` summary in ``fit_gaussian_splats`` (verbose defaults to True)
         has no timing/iteration record to print. It used to index them anyway and
         died with ``KeyError: 'time_seconds'`` — right after the rescaling report
@@ -1045,7 +1045,8 @@ class TestInitAmpsProvenance:
 
         assert result.n_splats == 0
         assert result.centers.shape == (0, 2)
-        assert result.stats == {}
+        assert result.stats["fit_provenance"]["outcome"]["n_splats"] == 0
+        assert result.stats["fit_provenance"]["config"]["seed_count"] == 0
 
 
 class TestCompressionRatio:

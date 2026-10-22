@@ -1460,6 +1460,103 @@ class TestMergeOrchestrator:
                     seed += 1
         return total
 
+    def test_partition_retains_full_fit_record_and_slot_region(
+        self, tmp_path: Path
+    ) -> None:
+        import zarr
+
+        from luxar.gsplats.batch.manifest import (
+            BatchManifest,
+            load_manifest,
+            output_filename,
+            save_manifest,
+        )
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out_dir = tmp_path / "batch"
+        tiles = out_dir / "tiles"
+        tiles.mkdir(parents=True)
+        for k in range(2):
+            tile = self._tile(4, k)
+            tile.stats["fit_provenance"] = {
+                "schema_version": 1,
+                "timings": {"optimization": float(k + 1)},
+                "config": {"seeds": 12, "floor": 2.0},
+                "outcome": {"final_rel_l2": 0.1 + k, "n_culled": k},
+                "loss_curve": [[1, 0.5, 0.2], [2, 0.3, 0.1]],
+            }
+            tile.save(tiles / output_filename(0, 0, k, 1, 1, 2))
+        manifest = BatchManifest(
+            n_timepoints=1,
+            n_channels=1,
+            n_tiles=2,
+            spatial_shape=(8, 8, 16),
+            tile_size=8,
+            tile_overlap=0,
+        )
+        save_manifest(manifest, out_dir)
+        final = merge_batch_results(manifest, out_dir, verbose=False)
+        parts = zarr.open_group(str(final), mode="r")["fitting"].attrs[
+            "part_provenance"
+        ]
+        batch = zarr.open_group(str(final), mode="r")["fitting"].attrs[
+            "batch_provenance"
+        ]
+        assert batch["timings"]["merge"] > 0
+        assert batch["timings"]["lod"] == 0
+        assert manifest.task_results["t0/c0/tile_1"]["elapsed_seconds"] >= 2.0
+        assert (
+            load_manifest(out_dir).task_results["t0/c0/tile_1"]["elapsed_seconds"]
+            >= 2.0
+        )
+        assert [part["slot_id"] for part in parts] == ["tile_0", "tile_1"]
+        assert [part["region"] for part in parts] == [
+            [[0, 8], [0, 8], [0, 8]],
+            [[0, 8], [0, 8], [8, 16]],
+        ]
+        assert [
+            part["fitting"]["fit_provenance"]["outcome"]["final_rel_l2"]
+            for part in parts
+        ] == pytest.approx([0.1, 1.1])
+        assert parts[1]["fitting"]["fit_provenance"]["loss_curve"] == [
+            [1, 0.5, 0.2],
+            [2, 0.3, 0.1],
+        ]
+        from typer.testing import CliRunner
+
+        from luxar.cli import app
+
+        report = CliRunner().invoke(
+            app, ["gsplat", "info", str(final), "--no-histograms", "--provenance"]
+        )
+        assert report.exit_code == 0, report.output
+        assert "Fit provenance: 2 fit(s)" in report.output
+        assert "batch merge:" in report.output
+        assert "Slowest: fit/tile_1" in report.output
+
+    def test_content_slot_regions_follow_saved_plan(self, tmp_path: Path) -> None:
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import _slot_regions
+        from luxar.gsplats.planner.spec import FitPlan, PlanBox
+
+        plan = FitPlan(
+            volume_shape=[8, 8, 16],
+            boxes=[
+                PlanBox([0, 8, 0, 8, 0, 5], 1, 4),
+                PlanBox([0, 8, 0, 8, 5, 16], 2, 8),
+            ],
+            overlap=0,
+            feature_method="intensity",
+            min_leaf=4,
+            max_leaf=16,
+        )
+        plan.to_json(tmp_path / "plan.json")
+        manifest = BatchManifest(mode="content", plan_path="plan.json", n_tiles=2)
+        assert _slot_regions(manifest, tmp_path) == [
+            [[0, 8], [0, 8], [0, 5]],
+            [[0, 8], [0, 8], [5, 16]],
+        ]
+
     @pytest.mark.parametrize("n_timepoints", [1, 2])
     @pytest.mark.parametrize("n_tiles", [1, 2])
     def test_batch_merge_finishes_scale_populations(

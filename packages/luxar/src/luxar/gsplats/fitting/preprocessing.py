@@ -6,6 +6,7 @@ Handles normalization, seed generation, and gradient dilution compensation.
 
 from __future__ import annotations
 
+import time
 import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
@@ -251,6 +252,7 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     _warn_inapplicable_seed_space(config)
 
     # Handle GSplatData seeds specially
+    seed_started = time.perf_counter()
     if isinstance(seeds, GSplatData):
         seed_centers = seeds.centers.copy()
         # Extract pre-initialized parameters from GSplatData
@@ -377,6 +379,7 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
 
     # Get dimensions
     d = V.ndim
+    seed_seconds = time.perf_counter() - seed_started
     N = int(seed_centers.shape[0])
 
     # Compute L1 regularization values as fractions of the learning rate
@@ -406,6 +409,7 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         V_normalized=V_normalized,
         V_tensor=V_tensor,
         seed_centers=seed_centers,
+        seed_seconds=seed_seconds,
         image_min=image_min,
         image_max=image_max,
         intensity_range=intensity_range,

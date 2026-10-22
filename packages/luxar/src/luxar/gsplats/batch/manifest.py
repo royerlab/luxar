@@ -219,6 +219,14 @@ class BatchManifest:
     # GPU + time
     gpu_name: str = ""
     estimated_seconds_per_task: float = 0.0
+    task_results: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    """Measured task wall times and outcomes, keyed by t/c/slot."""
+    task_attempts: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+    """Local worker attempts, including failed attempts before a resume."""
+    merge_lod_seconds: float = 0.0
+    planning_seconds: float = 0.0
+    command: List[str] = field(default_factory=list)
+    worker_count: int = 0
     slurm_time_limit: str = "02:00:00"
 
     # Slurm params

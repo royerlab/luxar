@@ -313,6 +313,23 @@ class _StopRun(Exception):
     """Abort a driven ``run_batch_local`` once argv has been captured."""
 
 
+def test_resume_keeps_failed_task_attempts(tmp_path: Path) -> None:
+    from luxar.gsplats.batch.local_runner import _preserve_prior_attempts
+    from luxar.gsplats.batch.manifest import BatchManifest, save_manifest
+
+    previous = BatchManifest(
+        task_attempts={
+            "t0/c0/tile_0": [
+                {"status": "failed", "returncode": 1, "elapsed_seconds": 3.0}
+            ]
+        }
+    )
+    save_manifest(previous, tmp_path)
+    resumed = BatchManifest()
+    _preserve_prior_attempts(resumed, tmp_path, resume=True)
+    assert resumed.task_attempts == previous.task_attempts
+
+
 def test_argv_staging_is_per_invocation(tmp_path: Path, monkeypatch) -> None:
     """The staging path threaded into the worker argv is pid-scoped.
 

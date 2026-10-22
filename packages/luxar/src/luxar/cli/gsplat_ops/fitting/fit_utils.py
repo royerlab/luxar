@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import os
 import socket
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -1886,6 +1887,7 @@ def rescale_and_save(
     from luxar.gsplats.gsplat_data import GSplatData
 
     is_leaf = isinstance(result, GSplatData)
+    save_started = time.perf_counter()
     with asection(f"Saving to {ctx.output_path.name}"):
         if (
             is_leaf
@@ -1911,7 +1913,25 @@ def rescale_and_save(
                 frame=ctx.fit_frame,
                 dimension_metadata=ctx.dimension_metadata,
             )
+            if ctx.output_path.is_dir():
+                _stamp_save_timing(ctx.output_path, time.perf_counter() - save_started)
     return result, n_splats, is_leaf
+
+
+def _stamp_save_timing(path: Path, elapsed: float) -> None:
+    """Finish directory-store timing after the writer returns, then rehash attrs."""
+    from luxar._zarr_compat import open_group
+    from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+    root = open_group(str(path), mode="r+")
+    fitting = root.require_group("fitting")
+    record = fitting.attrs.get("fit_provenance")
+    if isinstance(record, dict):
+        record["timings"]["saving"] = elapsed
+        fitting.attrs["fit_provenance"] = record
+    else:
+        fitting.attrs["save_seconds"] = elapsed
+    _stamp_content_hash(root)
 
 
 def build_fit_recipe_params(

@@ -129,6 +129,7 @@ class GaussianSplatFitter:
         # Step 1: Validate and prepare configuration
         started = time.perf_counter()
         config = prepare_fit_config(self, parameters)
+        resolved_config = _configuration_snapshot(config)
 
         # Clear cached rendering grids from previous fitting sessions
         from luxar.gsplats.models.gsplats.rendering_core import clear_grid_cache
@@ -138,6 +139,14 @@ class GaussianSplatFitter:
         # Step 2: Preprocess data and generate candidates
         preprocessed_data = preprocess_data(config)
         prepared = time.perf_counter()
+        resolved = {
+            "seed_count": preprocessed_data.N,
+            "floor": preprocessed_data.floor,
+            "l1_amp": preprocessed_data.l1_amp,
+            "l1_diag": preprocessed_data.l1_diag,
+            "max_abs_error": preprocessed_data.max_abs_error,
+            "rel_l2_target": preprocessed_data.rel_l2_target,
+        }
 
         # Handle edge case of no candidates
         if preprocessed_data.N == 0:
@@ -148,7 +157,12 @@ class GaussianSplatFitter:
                 cholesky_factors=np.zeros((0, tril_size(d)), dtype=np.float32),
                 stats={},
             )
-            empty.stats["fit_timings"] = {"preprocessing": prepared - started}
+            empty.stats["fit_timings"] = {
+                "preprocessing": prepared - started - preprocessed_data.seed_seconds,
+                "seeding": preprocessed_data.seed_seconds,
+            }
+            empty.stats["fit_resolved"] = resolved
+            empty.stats["fit_resolved_config"] = resolved_config
             return empty
 
         # Step 3: Initialize model and optimizer
@@ -165,11 +179,17 @@ class GaussianSplatFitter:
 
         # Step 6: Finalize and return results
         result = finalize_results(optimization_results, config, preprocessed_data)
+        finalized = time.perf_counter()
+        quality_seconds = result.stats.pop("quality_seconds", 0.0)
         result.stats["fit_timings"] = {
-            "preprocessing_and_seeding": prepared - started,
+            "preprocessing": prepared - started - preprocessed_data.seed_seconds,
+            "seeding": preprocessed_data.seed_seconds,
             "optimization": optimized - prepared,
-            "finalization_and_quality": time.perf_counter() - optimized,
+            "finalization": finalized - optimized - quality_seconds,
+            "quality_render": quality_seconds,
         }
+        result.stats["fit_resolved"] = resolved
+        result.stats["fit_resolved_config"] = resolved_config
         return result
 
 
@@ -180,6 +200,28 @@ def _collect_fit_parameters(values: dict[str, Any]) -> FitParameters:
     )
 
 
+def _configuration_snapshot(parameters: Any) -> dict[str, Any]:
+    """Keep scalar/short-array settings, never volume or seed payloads."""
+    config: dict[str, Any] = {}
+    excluded = {"V", "seeds", "iter_callback", "init_L", "init_amps"}
+    for field in fields(parameters):
+        if field.name in excluded:
+            continue
+        value = getattr(parameters, field.name)
+        if is_dataclass(value) and not isinstance(value, type):
+            value = asdict(value)
+        elif isinstance(value, torch.device):
+            value = str(value)
+        elif isinstance(value, np.ndarray):
+            if value.size > 16:
+                continue
+            value = value.tolist()
+        ok, safe = json_safe_value(value)
+        if ok:
+            config[field.name] = safe
+    return config
+
+
 def _fit_provenance(
     parameters: FitParameters, result: GSplatData, device: torch.device
 ) -> dict[str, Any]:
@@ -187,26 +229,22 @@ def _fit_provenance(
     from luxar import __version__
     from luxar.gsplats.io.save_gsplats import _FITTING_INFO_KEYS
 
-    config: dict[str, Any] = {}
-    for field in fields(parameters):
-        if field.name in {"V", "seeds", "iter_callback"}:
-            continue
-        value = getattr(parameters, field.name)
-        if is_dataclass(value):
-            value = asdict(value)
-        ok, safe = json_safe_value(value)
-        if ok:
-            config[field.name] = safe
+    config = _configuration_snapshot(parameters)
+    config.update(result.stats.pop("fit_resolved_config", {}))
     seeds = parameters.seeds
     config["seeds"] = (
         seeds if isinstance(seeds, (int, float)) or seeds is None else "explicit"
     )
     config["floor_spec"] = config.get("floor")
-    config["floor"] = result.stats.get("floor")
+    config.update(result.stats.pop("fit_resolved", {}))
+    config["floor"] = result.stats.get("floor", config.get("floor"))
     config["device"] = str(device)
     outcome: dict[str, Any] = {}
     for key in _FITTING_INFO_KEYS:
-        if key in {"fit_provenance", "part_provenance"} or key not in result.stats:
+        if (
+            key in {"fit_provenance", "part_provenance", "_fit_scale_population_bits"}
+            or key not in result.stats
+        ):
             continue
         ok, safe = json_safe_value(result.stats[key])
         if ok:
@@ -231,6 +269,7 @@ def _fit_provenance(
         "timings": result.stats.pop("fit_timings", {}),
         "outcome": outcome,
         "loss_curve": result.stats.pop("loss_curve", []),
+        "relocation_curve": result.stats.pop("relocation_curve", []),
     }
 
 
@@ -731,7 +770,7 @@ def fit_gaussian_splats(
         from arbol import aprint
 
         with asection("Optimization Complete"):
-            if not result.stats:
+            if "time_seconds" not in result.stats:
                 # No seed candidates: GaussianSplatFitter.fit returns an empty
                 # result with an empty stats dict before any optimization runs
                 # (a signal-free tile, or an empty GSplatData warm start), so
@@ -760,7 +799,6 @@ def fit_gaussian_splats(
 
     # Post-fit reductions: speck pruning, then the cumulative cull, then ONE
     # re-score so the stored quality describes the saved splat set.
-    reductions_started = time.perf_counter()
     result = _post_fit_reductions(
         result,
         V,
@@ -772,9 +810,6 @@ def fit_gaussian_splats(
         device=device,
         voxel_size=voxel_size,
         output_space=output_space,
-    )
-    result.stats.setdefault("fit_timings", {})["cull_prune_and_quality"] = (
-        time.perf_counter() - reductions_started
     )
 
     if not carry_scale_population:
@@ -836,9 +871,12 @@ def _post_fit_reductions(
     output_space: str,
 ) -> GSplatData:
     """Speck pruning + cumulative cull, then one re-score of the saved set."""
+    timings = result.stats.get("fit_timings", {})
     if result.n_splats == 0:
+        timings.update(pruning=0.0, culling=0.0, post_cull_quality=0.0)
         return result
     removed = 0
+    stage_started = time.perf_counter()
     if min_extent_vox > 0:
         from luxar.gsplats.fitting.splat_hygiene import fitted_voxel_unit
 
@@ -852,9 +890,13 @@ def _post_fit_reductions(
             result, min_extent_vox, unit, verbose=verbose, max_mass_share=max_mass_share
         )
         removed += n
+    timings["pruning"] = time.perf_counter() - stage_started
+    stage_started = time.perf_counter()
     if cull_retention is not None and 0 < cull_retention < 1.0 and result.n_splats > 0:
         result, n = _post_fit_cull(result, cull_retention, verbose=verbose)
         removed += n
+    timings["culling"] = time.perf_counter() - stage_started
+    stage_started = time.perf_counter()
     if removed > 0 and "psnr_db" in result.stats and result.n_splats > 0:
         _rescore_saved_model(
             result,
@@ -864,6 +906,8 @@ def _post_fit_reductions(
             voxel_size=voxel_size,
             output_space=output_space,
         )
+    timings["post_cull_quality"] = time.perf_counter() - stage_started
+    result.stats["fit_timings"] = timings
     return result
 
 

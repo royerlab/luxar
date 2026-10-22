@@ -26,7 +26,12 @@ from typing import Any, Callable, List, Optional, Tuple
 from arbol import aprint, asection
 
 from luxar.gsplats.batch.fit_command import build_task_fit_argv
-from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, save_manifest
+from luxar.gsplats.batch.manifest import (
+    BatchJob,
+    BatchManifest,
+    load_manifest,
+    save_manifest,
+)
 from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
 from luxar.gsplats.batch.task_pool import TaskResult, run_task_pool
 from luxar.gsplats.merged_quality import (
@@ -332,6 +337,14 @@ def _progress_line(
     return f"[{done}/{total}] FAILED {tag} (exit {res.returncode})"
 
 
+def _preserve_prior_attempts(
+    manifest: BatchManifest, output_dir: Path, resume: bool
+) -> None:
+    if resume and (output_dir / "manifest.json").exists():
+        previous = load_manifest(output_dir)
+        manifest.task_attempts.update(previous.task_attempts)
+
+
 def run_batch_local(
     manifest: BatchManifest,
     output_dir: Path,
@@ -373,6 +386,7 @@ def run_batch_local(
 
     # Persist the manifest so `batch-fit status` / `validate` (which load_manifest)
     # work against a local run's output, exactly as for a Slurm submit.
+    _preserve_prior_attempts(manifest, output_dir, resume)
     save_manifest(manifest, output_dir)
 
     gpu_indices = resolve_gpu_selection(gpus)
@@ -404,6 +418,7 @@ def run_batch_local(
     n_run = sum(0 if _skip(task_id) else 1 for task_id in task_ids)
     active_host_workers = _active_host_workers(active_workers, n_run)
     global_workers = max(1, min(sum(workers.values()), n_run))
+    manifest.worker_count = global_workers
 
     def _argv(task_id: int) -> list[str]:
         job = job_by_id[task_id]
@@ -457,6 +472,15 @@ def run_batch_local(
                 )
                 if failure is not None:
                     failures.append((res.key, failure))
+                label = "box" if manifest.mode == "content" else "tile"
+                key = f"t{job.timepoint}/c{job.channel}/{label}_{job.tile_index}"
+                manifest.task_attempts.setdefault(key, []).append(
+                    {
+                        "status": "failed" if failure is not None else "completed",
+                        "elapsed_seconds": res.elapsed_seconds,
+                        "returncode": res.returncode,
+                    }
+                )
             if verbose:
                 aprint(_progress_line(res, job, done, total, failure))
 
@@ -469,6 +493,7 @@ def run_batch_local(
             on_done=_on_done,
             verbose=verbose,
         )
+        save_manifest(manifest, output_dir)
 
     if failures:
 

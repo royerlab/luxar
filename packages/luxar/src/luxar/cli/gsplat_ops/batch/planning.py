@@ -18,6 +18,8 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import math
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
@@ -2235,6 +2237,7 @@ def plan_batch(
     resolved_gpu
         GPU name recorded in the manifest.
     """
+    planning_started = time.perf_counter()
     from luxar.cli.gsplat_config import (
         PRESETS,
         decode_flat_channel_index,
@@ -2701,6 +2704,8 @@ def plan_batch(
             )
         )
     manifest.jobs = jobs
+    manifest.planning_seconds = time.perf_counter() - planning_started
+    manifest.command = sys.argv.copy()
 
     return PlanResult(
         manifest=manifest,

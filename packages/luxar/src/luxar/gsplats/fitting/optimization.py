@@ -379,6 +379,19 @@ def _rank_final_iterate(
             )
 
 
+def _append_bounded_sample(curve: list[list[float]], sample: list[float]) -> None:
+    """Keep endpoints and a sparse history without growing with iteration count."""
+    curve.append(sample)
+    if len(curve) > 256:
+        curve[:] = [*curve[::2][:-1], curve[-1]]
+
+
+def _record_relocations(curve: list[list[float]], tracker: Any, iteration: int) -> None:
+    total = tracker.total_relocations
+    if total and (not curve or total > curve[-1][1]):
+        _append_bounded_sample(curve, [float(iteration), float(total)])
+
+
 def run_optimization_loop(
     components: ModelComponents,
     loss_fn: Callable[[torch.Tensor], torch.Tensor],
@@ -489,6 +502,7 @@ def run_optimization_loop(
     tracker = _DeviceBestState(V_t.device)
     current_metrics_t = tracker.metrics.clone()
     loss_curve: list[list[float]] = []
+    relocation_curve: list[list[float]] = []
     # Determine scheduler type once (avoid repeated string checks)
     _is_plateau_scheduler = (
         scheduler is not None and "Plateau" in type(scheduler).__name__
@@ -570,9 +584,9 @@ def run_optimization_loop(
                 current_metrics_t = torch.tensor(
                     [current_max_abs_error, current_rel_l2], device=V_t.device
                 )
-                loss_curve.append([float(it), best_loss, current_rel_l2])
-                if len(loss_curve) > 256:
-                    loss_curve = [*loss_curve[::2][:-1], loss_curve[-1]]
+                _append_bounded_sample(
+                    loss_curve, [float(it), best_loss, current_rel_l2]
+                )
 
                 # Update best_state metrics if this is at or near the best iteration
                 if best_iteration > 0 and it - best_iteration < _EVAL_INTERVAL:
@@ -629,6 +643,7 @@ def run_optimization_loop(
                 )
                 if relocation_tracker is not None:
                     relocation_tracker.advance_step()
+                    _record_relocations(relocation_curve, relocation_tracker, it)
 
         # Movie frame recording (runs on its own schedule, outside eval gate)
         if (
@@ -801,6 +816,7 @@ def run_optimization_loop(
         early_stop_reason=_stop_reason(converged_early, rule_reason),
         early_stop_rel_tol=config.early_stop_rel_tol,
         loss_curve=loss_curve,
+        relocation_curve=relocation_curve,
         actual_iters=actual_iters,
         best_iteration=best_iteration,
         best_from_final_step=best_from_final_step,

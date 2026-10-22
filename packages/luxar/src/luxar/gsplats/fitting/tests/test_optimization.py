@@ -16,10 +16,23 @@ from luxar.gsplats.fitting.config import (
 from luxar.gsplats.fitting.initialization import initialize_optimization
 from luxar.gsplats.fitting.losses import create_loss_function
 from luxar.gsplats.fitting.optimization import (
+    _append_bounded_sample,
     _compute_max_abs_error,
     _EarlyStopRule,
     run_optimization_loop,
 )
+
+
+def test_provenance_curve_preserves_endpoints_with_bounded_size() -> None:
+    curve: list[list[float]] = []
+    for iteration in range(10_000):
+        _append_bounded_sample(curve, [float(iteration), float(iteration) / 10])
+        assert len(curve) <= 256
+    assert curve[0] == [0.0, 0.0]
+    assert curve[-1] == [9999.0, 999.9]
+    assert all(
+        left[0] < right[0] for left, right in zip(curve, curve[1:], strict=False)
+    )
 
 
 @pytest.fixture
@@ -1031,6 +1044,7 @@ def test_fit_provenance_round_trips_with_bounded_curve(tmp_path) -> None:
     assert record["outcome"]["final_loss"] == pytest.approx(result.stats["final_loss"])
     assert record["outcome"]["n_splats"] == result.n_splats
     assert record["timings"]["optimization"] > 0
+    assert record["timings"]["saving"] > 0
     assert 1 <= len(record["loss_curve"]) <= 256
     assert record["loss_curve"][-1][0] <= 6
 

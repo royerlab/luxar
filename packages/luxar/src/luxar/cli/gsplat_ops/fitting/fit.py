@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -47,6 +48,49 @@ FIT_CLI_DOCS_URL = (
     "https://github.com/royerlab/luxar/blob/main/packages/luxar/src/luxar/"
     "cli/README.md#luxar-gsplat-fit"
 )
+
+
+def _stamp_fit_command(
+    result: Any, argv: list[str], preset: str | None, workers: str
+) -> None:
+    """Attach the invoking CLI to every leaf record, including merged tiles."""
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    stats = (
+        result.stats
+        if isinstance(result, GSplatData)
+        else result.meta.get("fit_stats", {})
+    )
+
+    def stamp(fitting: dict[str, Any]) -> None:
+        record = fitting.get("fit_provenance")
+        if isinstance(record, dict):
+            record["command"] = argv
+            record["config"]["preset"] = preset or "standard"
+            record["config"]["workers"] = workers
+        for part in fitting.get("part_provenance", []):
+            if isinstance(part, dict) and isinstance(part.get("fitting"), dict):
+                stamp(part["fitting"])
+
+    stamp(stats)
+
+
+def _stamp_cli_fit_provenance(
+    result: Any,
+    *,
+    preset: str | None,
+    workers: str,
+    started: float,
+    loaded_at: float,
+    fit_started: float,
+) -> None:
+    _stamp_fit_command(result, sys.argv.copy(), preset, workers)
+    stats = getattr(result, "stats", {})
+    record = stats.get("fit_provenance")
+    if isinstance(record, dict):
+        timings = record["timings"]
+        timings["loading"] = loaded_at - started
+        timings["cli_preprocessing"] = fit_started - loaded_at
 
 
 def _refuse_existing_output(
@@ -942,6 +986,7 @@ def run_fit_volume(
                         region=load_region,
                     )
                 aprint(f"Volume shape: {volume.shape}")
+            loaded_at = time.perf_counter()
 
             # 1a. Resolve the decomposition. `--tiling auto` → none (fits one
             # tile) / uniform / content (when a density is supplied). `content`
@@ -1219,6 +1264,7 @@ def run_fit_volume(
                     )
 
             # 6. Fit
+            fit_started = time.perf_counter()
             if tile is not None:
                 # Single-tile mode (Slurm-ready)
                 result = fit_single_tile(
@@ -1265,6 +1311,14 @@ def run_fit_volume(
                     )
 
             announce_denoised_quality_basis(ctx, is_tiled)
+            _stamp_cli_fit_provenance(
+                result,
+                preset=preset,
+                workers=str(jobs),
+                started=started,
+                loaded_at=loaded_at,
+                fit_started=fit_started,
+            )
 
             # 7. Rescale (if downscaled tiled) + save
             result, n_splats, is_leaf = rescale_and_save(
