@@ -30,8 +30,8 @@ keywords:
 # package.json by `make set-version`, and gated by `hatch run check-versions`.
 # Zero-padded CalVer, matching the `v<version>` git tag; PyPI displays the same
 # release with leading zeros stripped.
-version: "2026.10.19"
-date-released: "2026-10-19"
+version: "2026.10.22"
+date-released: "2026-10-22"
 doi: "10.5281/zenodo.22908222"
 preferred-citation:
   type: article
