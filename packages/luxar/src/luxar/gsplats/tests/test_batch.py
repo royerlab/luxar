@@ -6,6 +6,7 @@ import builtins
 import os
 import shutil
 import subprocess
+import sys
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
@@ -1536,6 +1537,26 @@ class TestMergeOrchestrator:
             consolidated["metadata"]["fitting"]["attributes"]["batch_provenance"]
             == batch
         )
+        report = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "luxar",
+                "gsplat",
+                "info",
+                str(final),
+                "--no-histograms",
+                "--provenance",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert report.returncode == 0, report.stderr
+        assert "Fit provenance: 2 fit(s)" in report.stdout
+        assert "batch merge:" in report.stdout
+        assert "Slowest: fit/tile_1" in report.stdout
+
         root_metadata = (final / "zarr.json").read_bytes()
         assert merge_batch_results(manifest, out_dir, verbose=False) == final
         assert (final / "zarr.json").read_bytes() == root_metadata
