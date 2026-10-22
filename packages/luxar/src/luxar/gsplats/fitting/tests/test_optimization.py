@@ -16,10 +16,23 @@ from luxar.gsplats.fitting.config import (
 from luxar.gsplats.fitting.initialization import initialize_optimization
 from luxar.gsplats.fitting.losses import create_loss_function
 from luxar.gsplats.fitting.optimization import (
+    _append_bounded_sample,
     _compute_max_abs_error,
     _EarlyStopRule,
     run_optimization_loop,
 )
+
+
+def test_provenance_curve_preserves_endpoints_with_bounded_size() -> None:
+    curve: list[list[float]] = []
+    for iteration in range(10_000):
+        _append_bounded_sample(curve, [float(iteration), float(iteration) / 10])
+        assert len(curve) <= 256
+    assert curve[0] == [0.0, 0.0]
+    assert curve[-1] == [9999.0, 999.9]
+    assert all(
+        left[0] < right[0] for left, right in zip(curve, curve[1:], strict=False)
+    )
 
 
 @pytest.fixture
@@ -1009,6 +1022,31 @@ def test_relative_early_stop_ends_a_fit_sooner(tmp_path) -> None:
         loaded = load_gsplats(path, include_stats=True)
         assert loaded.stats["early_stop_reason"] == result.stats["early_stop_reason"]
         assert loaded.stats["early_stop_rel_tol"] == result.stats["early_stop_rel_tol"]
+
+
+def test_fit_provenance_round_trips_with_bounded_curve(tmp_path) -> None:
+    from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+    from luxar.gsplats.io.load_gsplats import load_gsplats
+
+    vol = np.zeros((8, 8, 8), dtype=np.float32)
+    vol[3:5, 3:5, 3:5] = 1.0
+    result = fit_gaussian_splats(
+        vol, seeds=8, n_iters=6, floor="none", device="cpu", verbose=False
+    )
+    path = tmp_path / "fit.gsplats.zarr"
+    result.save(path)
+    record = load_gsplats(path, include_stats=True).stats["fit_provenance"]
+    assert record["schema_version"] == 1
+    assert record["config"]["seeds"] == 8
+    assert record["config"]["n_iters"] == 6
+    assert record["config"]["floor"] == result.stats["floor"]
+    assert record["environment"]["device"] == "cpu"
+    assert record["outcome"]["final_loss"] == pytest.approx(result.stats["final_loss"])
+    assert record["outcome"]["n_splats"] == result.n_splats
+    assert record["timings"]["optimization"] > 0
+    assert record["timings"]["saving"] > 0
+    assert 1 <= len(record["loss_curve"]) <= 256
+    assert record["loss_curve"][-1][0] <= 6
 
 
 def test_stop_message_names_the_rule_that_fired(capsys) -> None:

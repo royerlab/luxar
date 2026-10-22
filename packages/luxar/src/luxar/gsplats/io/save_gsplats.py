@@ -20,6 +20,7 @@ import datetime
 import os
 import shutil
 import tempfile
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -206,6 +207,7 @@ SUPPORTED_FORMAT_VERSIONS = SUPPORTED_GSPLATS_VERSIONS
 #: culling/filtering provenance). Single-sourced here so every writer (``GSplatData.save``
 #: and the ``lod --recipe`` CLI) selects the same fields.
 _FITTING_INFO_KEYS = (
+    "fit_provenance",
     "time_seconds",
     "iterations",
     "converged",
@@ -779,6 +781,7 @@ def write_gsplats_tree(
     provided, otherwise from ``fitting_info["source_dtype"]``. The explicit
     argument keeps encoding independent of whether fitting metadata is persisted.
     """
+    save_started = time.perf_counter()
     path = Path(path)
     pipeline_info = _with_root_normalization(pipeline_info, node)
     temp_dir, zarr_path = _resolve_zarr_path(path, compress)
@@ -824,6 +827,12 @@ def write_gsplats_tree(
             from luxar.gsplats.tree import total_splats
 
             artifact_n_splats = int(total_splats(node))
+        record = fitting_info.get("fit_provenance") if fitting_info else None
+        if isinstance(record, dict) and "saving" not in record.get("timings", {}):
+            record = dict(record)
+            record["timings"] = dict(record.get("timings", {}))
+            record["timings"]["saving"] = time.perf_counter() - save_started
+            fitting_info = dict(fitting_info or {}, fit_provenance=record)
         _finalize_gsplat_root(
             root,
             artifact_n_splats=artifact_n_splats,

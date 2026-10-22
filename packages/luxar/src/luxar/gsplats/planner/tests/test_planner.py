@@ -98,6 +98,21 @@ def test_planned_fit_carries_real_relocation_history(partition: bool) -> None:
         verbose=False,
     )
     stats = result.meta["fit_stats"] if partition else result.stats
+    parts = stats["part_provenance"]
+    assert parts
+    assert len(parts) <= len(plan.boxes)
+    assert all(part["slot_id"].startswith("box_") for part in parts)
+    for part in parts:
+        index = int(part["slot_id"].split("_")[1])
+        box = plan.boxes[index].box
+        assert part["region"] == [
+            [
+                max(0, box[i] - plan.overlap),
+                min(volume.shape[i // 2], box[i + 1] + plan.overlap),
+            ]
+            for i in (0, 2, 4)
+        ]
+        assert "fit_provenance" in part["fitting"]
     assert stats["dynamic_ops_relocation_events"] >= 0
     assert stats["dynamic_ops_unique_splats_relocated"] >= 0
     from luxar.gsplats.tree import total_splats

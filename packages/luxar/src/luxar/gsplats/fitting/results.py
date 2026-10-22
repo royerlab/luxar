@@ -4,6 +4,7 @@ Result finalization for Gaussian splat fitting.
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 if TYPE_CHECKING:
@@ -731,6 +732,8 @@ def finalize_results(
         "final_loss": optimization_results.best_loss,
         "final_max_abs_error": optimization_results.best_max_abs_error,
         "final_rel_l2": optimization_results.best_rel_l2,
+        "loss_curve": optimization_results.loss_curve,
+        "relocation_curve": optimization_results.relocation_curve,
         "converged": optimization_results.converged_early,
         "early_stopped": optimization_results.early_stopped,
         "early_stop_reason": optimization_results.early_stop_reason,
@@ -798,6 +801,7 @@ def finalize_results(
             cholesky_factors=voxel_space_arrays[1].astype(np.float32),
             truncation_radius=config.truncate,
         )
+    quality_started = time.perf_counter()
     try:
         import torch
 
@@ -866,5 +870,7 @@ def finalize_results(
         reason = f"{type(exc).__name__}: {exc}"
         stats["quality_error"] = reason
         aprint(f"Warning: post-fit quality metrics skipped ({reason})")
+
+    stats["quality_seconds"] = time.perf_counter() - quality_started
 
     return result

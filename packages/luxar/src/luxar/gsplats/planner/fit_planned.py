@@ -75,6 +75,8 @@ def _planned_merge_stats(
     delivered_splats: int,
     parallel_jobs: Optional[int] = None,
     partition: bool = False,
+    box_indices: Optional[Sequence[int]] = None,
+    plan: Optional[FitPlan] = None,
 ) -> dict[str, Any]:
     """Build common fit stats for flat and partition planned merges.
 
@@ -105,6 +107,22 @@ def _planned_merge_stats(
     _aggregate_relocation_diagnostics(stats, regions)
     sum_population_counts([region.stats for region in regions], stats, delivered_splats)
     aggregate_min_extent_stats([region.stats or {} for region in regions], stats)
+    if box_indices is not None and plan is not None:
+        from luxar.gsplats.merged_quality import collect_part_provenance
+
+        records = collect_part_provenance(
+            regions, values=[float(i) for i in box_indices], fit_reference=None
+        )
+        shape = (
+            int(plan.volume_shape[0]),
+            int(plan.volume_shape[1]),
+            int(plan.volume_shape[2]),
+        )
+        for record, index in zip(records, box_indices, strict=True):
+            bounds = _padded_bounds(plan.boxes[index], int(plan.overlap), shape)
+            record["slot_id"] = f"box_{index}"
+            record["region"] = [[bounds[i], bounds[i + 1]] for i in (0, 2, 4)]
+        stats["part_provenance"] = records
     return stats
 
 
@@ -755,6 +773,8 @@ def fit_planned(
             elapsed=elapsed,
             delivered_splats=int(total_splats(result)),
             partition=True,
+            box_indices=region_boxes,
+            plan=plan,
         )
         is_partition = isinstance(result, GSplatPartition)
         _score_planned_merge(
@@ -785,6 +805,8 @@ def fit_planned(
             volume_shape=tuple(int(s) for s in V.shape),
             elapsed=elapsed,
             delivered_splats=merged.n_splats,
+            box_indices=region_boxes,
+            plan=plan,
         )
     )
     _score_planned_merge(

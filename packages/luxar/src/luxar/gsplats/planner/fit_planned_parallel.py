@@ -536,6 +536,8 @@ def fit_planned_parallel(
             delivered_splats=int(total_splats(result)),
             parallel_jobs=jobs,
             partition=True,
+            box_indices=region_boxes,
+            plan=plan,
         )
         is_partition = isinstance(result, GSplatPartition)
         _score_planned_merge(
@@ -565,6 +567,8 @@ def fit_planned_parallel(
                 elapsed=elapsed,
                 delivered_splats=result.n_splats,
                 parallel_jobs=jobs,
+                box_indices=region_boxes,
+                plan=plan,
             )
         )
         _score_planned_merge(

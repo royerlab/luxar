@@ -327,7 +327,20 @@ See `packages/luxar-launcher/README.md` for the launcher source itself.
 Print dataset statistics for a `.gsplats.zarr` (splat count, dimensions, bounds, LOD structure).
 ```bash
 luxar gsplat info splats.gsplats.zarr
+luxar gsplat info splats.gsplats.zarr --provenance  # fit stages, slow tiles, outcomes
 ```
+
+New fits save a bounded `fitting/fit_provenance` record with the command, effective
+fit settings, environment, stage timings, final outcomes, and sampled loss and
+relocation histories. Tiled and batch merges retain those records under
+`fitting/part_provenance`, with spatial slot IDs and source voxel regions. Batch
+merges keep at most 32 samples per curve in each part; a single fit retains its
+full bounded history. The reported slowest parts are ranked by fit stages
+(preprocessing, seeding, optimization, and finalization) when those timings exist.
+Batch outputs also record planning, merge, and LOD times; the batch manifest keeps
+measured task times and local worker attempts. `--provenance` summarizes these
+records without printing the nested metadata. Use `--full-provenance` to inspect
+the raw records.
 
 #### `luxar gsplat view`
 Open a `.gsplats.zarr` in the web viewer. By default it builds the scene `gsplat convert` would write — image-convention orientation and opening camera, auto exposure, the same defaults — in a temporary directory that is removed on exit, and serves that, printing the Exposure line and a "Built a temporary scene" line. The build re-writes the splats (a partition/nested store is grafted node for node, which still copies its arrays): about 1 s for a 30k-splat fit and 8-11 s for 1M splats on a laptop CPU, roughly half of it auto exposure. `--auto-exposure/--no-auto-exposure`, `--target-brightness`, `--dim-order`, `--view` and `--colormap` work as on `convert`. `--raw` serves the store **directly** via `?src=` with no scene round-trip: the standalone `.gsplats.zarr` is a v3.4 node subtree the viewer renders as is (every tree shape; archives are extracted first), shown with its stored amplitudes and positional axes.

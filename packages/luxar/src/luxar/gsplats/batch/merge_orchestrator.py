@@ -19,6 +19,7 @@ additive partition parts sums to the true signal exactly as the flat concat does
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
@@ -125,11 +126,116 @@ def merge_batch_results(
         _w = uniform_per_part_lod_warning(manifest.mode, recipe)
         if _w:
             aprint(f"⚠ {_w}")
+    started = time.perf_counter()
+    manifest.merge_lod_seconds = 0.0
     if flat:
-        return _merge_flat(manifest, output_dir, channel_colors, force, verbose)
-    return _merge_partition(
-        manifest, output_dir, channel_colors, force, verbose, recipe, recipe_params
+        output, skipped = _merge_flat(
+            manifest, output_dir, channel_colors, force, verbose
+        )
+    else:
+        output, skipped = _merge_partition(
+            manifest, output_dir, channel_colors, force, verbose, recipe, recipe_params
+        )
+    if skipped:
+        return output
+    _stamp_batch_provenance(
+        output,
+        manifest,
+        Path(output_dir),
+        merge_seconds=max(
+            0.0, time.perf_counter() - started - manifest.merge_lod_seconds
+        ),
+        recipe=recipe,
     )
+    return output
+
+
+def _stamp_batch_provenance(
+    output: Path,
+    manifest: BatchManifest,
+    output_dir: Path,
+    *,
+    merge_seconds: float,
+    recipe: Optional[str],
+) -> None:
+    """Read task metadata only, then stamp measured batch stages on the root."""
+    from luxar._zarr_compat import consolidate, open_group
+    from luxar.gsplats.batch.manifest import save_manifest
+    from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+    from luxar.typing_utils.json_safe import json_safe_value
+
+    t_indices, c_indices = _tile_indices(manifest)
+    label = "box" if manifest.mode == "content" else "tile"
+    tiles_dir = output_dir / "tiles"
+    if tiles_dir.exists():
+        for t in t_indices:
+            for c in c_indices:
+                for k in range(manifest.n_tiles):
+                    path = _tile_path(
+                        tiles_dir,
+                        t,
+                        c,
+                        k,
+                        max(t_indices),
+                        max(c_indices),
+                        manifest.n_tiles,
+                        label,
+                    )
+                    key = f"t{t}/c{c}/{label}_{k}"
+                    if path is None:
+                        manifest.task_results[key] = {
+                            "status": "empty",
+                            "elapsed_seconds": 0.0,
+                        }
+                        continue
+                    source = open_group(str(path), mode="r")
+                    fitting = (
+                        dict(source["fitting"].attrs) if "fitting" in source else {}
+                    )
+                    record = fitting.get("fit_provenance", {})
+                    timings = (
+                        record.get("timings", {}) if isinstance(record, dict) else {}
+                    )
+                    elapsed = sum(
+                        value
+                        for value in timings.values()
+                        if isinstance(value, (int, float)) and value >= 0
+                    ) or fitting.get("time_seconds", 0.0)
+                    manifest.task_results[key] = {
+                        "status": "completed",
+                        "elapsed_seconds": elapsed,
+                        "timings": timings,
+                        "attempts": len(manifest.task_attempts.get(key, [])),
+                    }
+    root = open_group(str(output), mode="r+")
+    fitting_group = root.require_group("fitting")
+    _, batch_record = json_safe_value(
+        {
+            "schema_version": 1,
+            "command": manifest.command,
+            "timings": {
+                "planning": manifest.planning_seconds,
+                "merge": merge_seconds,
+                "lod": manifest.merge_lod_seconds,
+            },
+            "config": {
+                "mode": manifest.mode,
+                "n_tiles": manifest.n_tiles,
+                "recipe": recipe,
+                "preset": manifest.preset,
+                "fit_args": manifest.fit_args,
+            },
+            "environment": {
+                "gpu_name": manifest.gpu_name,
+                "worker_count": manifest.worker_count,
+            },
+        }
+    )
+    fitting_group.attrs["batch_provenance"] = batch_record
+    _stamp_content_hash(root)
+    consolidate(root)
+    if (output_dir / "manifest.json").exists():
+        save_manifest(manifest, output_dir)
 
 
 def _tile_indices(manifest: BatchManifest) -> Tuple[List[int], List[int]]:
@@ -459,6 +565,65 @@ def _single_part_provenance(part: "GSplatData") -> List[Dict[str, Any]]:
     from luxar.gsplats.merged_quality import collect_part_provenance
 
     return collect_part_provenance([part], values=[0.0], fit_reference=None)
+
+
+def _slot_regions(
+    manifest: BatchManifest, output_dir: Path
+) -> List[Optional[List[List[int]]]]:
+    """Regions in source voxel coordinates, in the worker's slot order."""
+    if manifest.mode == "content" and manifest.plan_path:
+        from luxar.gsplats.planner.fit_planned import _padded_bounds
+        from luxar.gsplats.planner.spec import FitPlan
+
+        path = Path(manifest.plan_path)
+        plan_path = path if path.is_absolute() else output_dir / path
+        if not plan_path.exists():
+            return [None] * manifest.n_tiles
+        plan = FitPlan.from_json(plan_path)
+        shape = (
+            int(plan.volume_shape[0]),
+            int(plan.volume_shape[1]),
+            int(plan.volume_shape[2]),
+        )
+        regions: List[Optional[List[List[int]]]] = []
+        for box in plan.boxes:
+            bounds = _padded_bounds(box, int(plan.overlap), shape)
+            regions.append([[bounds[i], bounds[i + 1]] for i in (0, 2, 4)])
+        return (
+            regions if len(regions) == manifest.n_tiles else [None] * manifest.n_tiles
+        )
+    if manifest.mode == "uniform" and manifest.spatial_shape:
+        from luxar.gsplats.tiling import compute_tile_specs
+
+        specs = compute_tile_specs(
+            tuple(manifest.spatial_shape),
+            manifest.tile_size,
+            manifest.tile_overlap,
+            fold_slivers=manifest.fold_tile_slivers,
+        )
+        regions = [
+            [[int(axis.start), int(axis.stop)] for axis in spec.slices]
+            for spec in specs
+        ]
+        return (
+            regions if len(regions) == manifest.n_tiles else [None] * manifest.n_tiles
+        )
+    return [None] * manifest.n_tiles
+
+
+def _mark_slot(
+    record: Dict[str, Any], index: int, label: str, region: Optional[List[List[int]]]
+) -> Dict[str, Any]:
+    record["slot_id"] = f"{label}_{index}"
+    record["region"] = region
+    return record
+
+
+def _record_lod_seconds(
+    manifest: BatchManifest, recipe: Optional[str], started: float
+) -> None:
+    if recipe is not None:
+        manifest.merge_lod_seconds += time.perf_counter() - started
 
 
 def _drop_root_quality(part: "GSplatData") -> None:
@@ -1125,7 +1290,7 @@ def _merge_partition(
     verbose: bool,
     recipe: Optional[str] = None,
     recipe_params: "Optional[RecipeParams]" = None,
-) -> Path:
+) -> tuple[Path, bool]:
     """Streaming tile-outer partition merge (the default, memory-safe path)."""
     from luxar.gsplats.io.save_gsplats import (
         resolve_amplitude_bits,
@@ -1141,12 +1306,13 @@ def _merge_partition(
     if final_path.exists() and not force:
         if verbose:
             aprint("  Final output exists, skipping")
-        return final_path
+        return final_path, True
 
     n_k = manifest.n_tiles
     t_indices, c_indices = _tile_indices(manifest)
     # Slot label MUST match what the fit array wrote (uniform=tile, content=box).
     label = "box" if manifest.mode == "content" else "tile"
+    slot_regions = _slot_regions(manifest, output_dir)
     # Reduction provenance for the pipeline/ group (None without a recipe),
     # plus the one background level every task subtracted (#1175) — the merge's
     # only chance to record it, since neither branch below has a root node whose
@@ -1184,6 +1350,7 @@ def _merge_partition(
             amplitude_bits = resolve_amplitude_bits("auto", source_dtype=source_dtype)
             root_attrs = _dimension_root_attrs(manifest.dimension_metadata, part.ndim)
             single_part_provenance = _single_part_provenance(part)
+            _mark_slot(single_part_provenance[0], 0, label, slot_regions[0])
             if recipe is None:
                 # Pass the authoritative stacked-time barrier here too (K==1,
                 # no recipe) so a single-tile timelapse gets per-timepoint chunk
@@ -1205,6 +1372,7 @@ def _merge_partition(
                 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
 
                 part.stats.update(floor_stats)
+                lod_started = time.perf_counter()
                 node = _finalize_part_node(
                     part,
                     recipe,
@@ -1213,6 +1381,7 @@ def _merge_partition(
                     # One part means no tiling: its "tile" is the whole volume.
                     cell=[(float("-inf"), float("inf"))] * part.ndim,
                 )
+                _record_lod_seconds(manifest, recipe, lod_started)
                 write_gsplats_tree(
                     final_path,
                     node,
@@ -1232,7 +1401,7 @@ def _merge_partition(
                         f"  Wrote single {recipe} lod: "
                         f"{part.n_splats:,} splats, {part.ndim}D"
                     )
-        return final_path
+        return final_path, False
 
     # K > 1 → streaming partition, one part per spatial tile.
     source_dtype = _source_dtype_for_tiles(tiles_dir, t_indices, c_indices, n_k, label)
@@ -1270,9 +1439,14 @@ def _merge_partition(
                     aprint(f"  {label} {k}: empty, skipping")
                 continue
             part_provenance.append(
-                collect_part_provenance([part], values=[float(k)], fit_reference=None)[
-                    0
-                ]
+                _mark_slot(
+                    collect_part_provenance(
+                        [part], values=[float(k)], fit_reference=None
+                    )[0],
+                    k,
+                    label,
+                    slot_regions[k],
+                )
             )
             part_stats.append(dict(part.stats, n_splats=part.n_splats))
             part.stats.pop("part_provenance", None)
@@ -1284,6 +1458,7 @@ def _merge_partition(
             # or — with a per-part recipe — a leaf-with-ladder / substitutive lod
             # group). Hand the tree node straight to the streaming writer; it
             # writes part_<i>/ then releases the splats.
+            lod_started = time.perf_counter()
             node = _finalize_part_node(
                 part,
                 recipe,
@@ -1291,6 +1466,7 @@ def _merge_partition(
                 manifest.n_timepoints,
                 cell=_cell_for_slot(slot_tree, slot_cells, k, part.ndim),
             )
+            _record_lod_seconds(manifest, recipe, lod_started)
             assert isinstance(node, (GSplatLeaf, GSplatLodGroup))
             kept += 1
             kept_slots.append(k)
@@ -1325,12 +1501,29 @@ def _merge_partition(
         if verbose:
             aprint(f"  Wrote kind=partition with {n_written} parts{recipe_label}")
 
-    return final_path
+    return final_path, False
 
 
 # ════════════════════════════════════════════════════════════════════════
 # Legacy: flat single-leaf 3-level fan-in (--flat)
 # ════════════════════════════════════════════════════════════════════════
+
+
+def _flat_final_path(
+    merged_dir: Path,
+    t_indices: List[int],
+    c_indices: List[int],
+    t_width: int,
+    c_width: int,
+) -> Path:
+    if len(c_indices) > 1:
+        return merged_dir / "final.gsplats.zarr"
+    if len(t_indices) > 1:
+        return merged_dir / "c00_4d.gsplats.zarr"
+    return (
+        merged_dir
+        / f"t{t_indices[0]:0{t_width}d}_c{c_indices[0]:0{c_width}d}.gsplats.zarr"
+    )
 
 
 def _merge_flat(
@@ -1339,7 +1532,7 @@ def _merge_flat(
     channel_colors: Optional[List[Tuple[float, float, float]]],
     force: bool,
     verbose: bool,
-) -> Path:
+) -> tuple[Path, bool]:
     """Legacy 3-level fan-in producing a single flat leaf (reloads all tiles)."""
     from luxar.gsplats.gsplat_data import GSplatData
 
@@ -1361,6 +1554,11 @@ def _merge_flat(
 
     t_w = max(2, len(str(max(t_indices))))
     c_w = max(2, len(str(max(c_indices))))
+    final_path = _flat_final_path(merged_dir, t_indices, c_indices, t_w, c_w)
+    if final_path.exists() and not force:
+        if verbose:
+            aprint("  Final output exists, skipping")
+        return final_path, True
 
     with asection("Level 1: Merging tiles per (timepoint, channel)"):
         for t_seq, t_real in enumerate(t_indices):
@@ -1472,11 +1670,6 @@ def _merge_flat(
         with asection("Level 3: Merging channels with colors"):
             final_path = merged_dir / "final.gsplats.zarr"
 
-            if final_path.exists() and not force:
-                if verbose:
-                    aprint("  Final output exists, skipping")
-                return final_path
-
             ch_files = [channel_paths[c] for c in range(n_c)]
             datasets = [GSplatData.load(p, include_stats=True) for p in ch_files]
             final = GSplatData.merge_with_channel_colors(datasets, channel_colors)
@@ -1490,7 +1683,7 @@ def _merge_flat(
 
             if verbose:
                 aprint(f"  Merged {n_c} channels -> {final.n_splats:,} splats")
-            return final_path
+            return final_path, False
 
     # No channel merge needed — pick the single-channel output or
     # the most "final" thing we have
@@ -1500,18 +1693,17 @@ def _merge_flat(
         # Multiple channels but no colors — concatenate
         with asection("Level 3: Concatenating channels"):
             final_path = merged_dir / "final.gsplats.zarr"
-            if not final_path.exists() or force:
-                ch_files = [channel_paths[c] for c in range(n_c)]
-                datasets = [GSplatData.load(p, include_stats=True) for p in ch_files]
-                final = GSplatData.concatenate(datasets)
-                final.save(
-                    final_path,
-                    amplitude_bits="auto",
-                    root_attrs=_dimension_root_attrs(
-                        manifest.dimension_metadata, final.ndim
-                    ),
-                )
-                if verbose:
-                    aprint(f"  Concatenated {n_c} channels")
+            ch_files = [channel_paths[c] for c in range(n_c)]
+            datasets = [GSplatData.load(p, include_stats=True) for p in ch_files]
+            final = GSplatData.concatenate(datasets)
+            final.save(
+                final_path,
+                amplitude_bits="auto",
+                root_attrs=_dimension_root_attrs(
+                    manifest.dimension_metadata, final.ndim
+                ),
+            )
+            if verbose:
+                aprint(f"  Concatenated {n_c} channels")
 
-    return final_path
+    return final_path, False

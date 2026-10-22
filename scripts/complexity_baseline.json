@@ -309,7 +309,7 @@
       11
     ],
     "packages/luxar/src/luxar/gsplats/batch/merge_orchestrator.py::_merge_flat": [
-      23
+      22
     ],
     "packages/luxar/src/luxar/gsplats/batch/merge_orchestrator.py::_merge_partition": [
       15

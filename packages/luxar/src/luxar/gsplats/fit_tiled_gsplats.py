@@ -1098,9 +1098,12 @@ def _merged_fit_stats(
     source_dtype: Optional[str],
     source_itemsize: Optional[int],
     source_stored_bytes: Optional[int],
+    provenance_results: Optional[Sequence[GSplatData]] = None,
+    tile_indices: Optional[Sequence[int]] = None,
+    tile_specs: Optional[Sequence[Any]] = None,
 ) -> dict[str, Any]:
     """Build the common root stats for flat and partition tile merges."""
-    stats = {
+    stats: dict[str, Any] = {
         "tiled_fitting": True,
         "progressive": progressive,
         "num_tiles": num_tiles,
@@ -1124,6 +1127,25 @@ def _merged_fit_stats(
     _aggregate_relocation_diagnostics(stats, results)
     _carry_agreed_voxel_size(stats, results)
     aggregate_min_extent_stats([result.stats or {} for result in results], stats)
+    from luxar.gsplats.merged_quality import collect_part_provenance
+
+    provenance_results = results if provenance_results is None else provenance_results
+    indices = (
+        list(tile_indices)
+        if tile_indices is not None
+        else list(range(len(provenance_results)))
+    )
+    records = collect_part_provenance(
+        provenance_results, values=[float(i) for i in indices], fit_reference=None
+    )
+    for record, index in zip(records, indices, strict=True):
+        record["slot_id"] = f"tile_{index}"
+        record["region"] = (
+            [[int(axis.start), int(axis.stop)] for axis in tile_specs[index].slices]
+            if tile_specs is not None and index < len(tile_specs)
+            else None
+        )
+    stats["part_provenance"] = records
     return stats
 
 
@@ -1658,6 +1680,9 @@ def merge_tile_results(
             source_dtype=source_dtype,
             source_itemsize=source_itemsize,
             source_stored_bytes=source_stored_bytes,
+            provenance_results=regions,
+            tile_indices=[i for i, _ in indexed],
+            tile_specs=grid_specs if len(grid_specs) == num_tiles else None,
         )
         sum_population_counts(
             [region.stats for region in regions], fit_stats, int(total_splats(node))
@@ -1722,6 +1747,9 @@ def merge_tile_results(
             source_dtype=source_dtype,
             source_itemsize=source_itemsize,
             source_stored_bytes=source_stored_bytes,
+            tile_specs=compute_tile_specs(
+                volume_shape, tile_size, overlap, fold_slivers=fold_tile_slivers
+            ),
         )
     )
     finish_population_stats(merged.stats)

@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Callable, Hashable, Optional, Sequence, TypeVar
@@ -65,6 +66,7 @@ class TaskResult:
     returncode: int
     output: str
     skipped: bool = False
+    elapsed_seconds: float = 0.0
 
     @property
     def ok(self) -> bool:
@@ -121,6 +123,7 @@ def run_task_pool(
             return TaskResult(key=key, returncode=-1, output="cancelled before launch")
         if skip_if is not None and skip_if(key):
             return TaskResult(key=key, returncode=0, output="", skipped=True)
+        started = time.perf_counter()
         try:
             cmd = [str(c) for c in argv_builder(key)]
             env = None
@@ -137,9 +140,15 @@ def run_task_pool(
                 key=key,
                 returncode=-1,
                 output=f"failed to build/launch worker: {exc!r}",
+                elapsed_seconds=time.perf_counter() - started,
             )
         stream = proc.stderr or proc.stdout or ""
-        return TaskResult(key=key, returncode=proc.returncode, output=stream)
+        return TaskResult(
+            key=key,
+            returncode=proc.returncode,
+            output=stream,
+            elapsed_seconds=time.perf_counter() - started,
+        )
 
     results: list[TaskResult] = []
     with ThreadPoolExecutor(max_workers=max(1, max_workers)) as ex:
