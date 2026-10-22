@@ -502,6 +502,7 @@ class OptimizationResults:
     # (it ran to ``n_iters``). The tolerance in force is recorded beside it.
     early_stop_reason: Optional[str] = None
     early_stop_rel_tol: Optional[float] = None
+    loss_curve: list[list[float]] = field(default_factory=list)
 
 
 @dataclass

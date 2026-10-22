@@ -488,6 +488,7 @@ def run_optimization_loop(
     # eval iterations (see _DeviceBestState). No per-iteration host sync.
     tracker = _DeviceBestState(V_t.device)
     current_metrics_t = tracker.metrics.clone()
+    loss_curve: list[list[float]] = []
     # Determine scheduler type once (avoid repeated string checks)
     _is_plateau_scheduler = (
         scheduler is not None and "Plateau" in type(scheduler).__name__
@@ -569,6 +570,9 @@ def run_optimization_loop(
                 current_metrics_t = torch.tensor(
                     [current_max_abs_error, current_rel_l2], device=V_t.device
                 )
+                loss_curve.append([float(it), best_loss, current_rel_l2])
+                if len(loss_curve) > 256:
+                    loss_curve = [*loss_curve[::2][:-1], loss_curve[-1]]
 
                 # Update best_state metrics if this is at or near the best iteration
                 if best_iteration > 0 and it - best_iteration < _EVAL_INTERVAL:
@@ -796,6 +800,7 @@ def run_optimization_loop(
         early_stopped=early_stopped,
         early_stop_reason=_stop_reason(converged_early, rule_reason),
         early_stop_rel_tol=config.early_stop_rel_tol,
+        loss_curve=loss_curve,
         actual_iters=actual_iters,
         best_iteration=best_iteration,
         best_from_final_step=best_from_final_step,

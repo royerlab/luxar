@@ -206,6 +206,7 @@ SUPPORTED_FORMAT_VERSIONS = SUPPORTED_GSPLATS_VERSIONS
 #: culling/filtering provenance). Single-sourced here so every writer (``GSplatData.save``
 #: and the ``lod --recipe`` CLI) selects the same fields.
 _FITTING_INFO_KEYS = (
+    "fit_provenance",
     "time_seconds",
     "iterations",
     "converged",

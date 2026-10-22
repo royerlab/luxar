@@ -1011,6 +1011,30 @@ def test_relative_early_stop_ends_a_fit_sooner(tmp_path) -> None:
         assert loaded.stats["early_stop_rel_tol"] == result.stats["early_stop_rel_tol"]
 
 
+def test_fit_provenance_round_trips_with_bounded_curve(tmp_path) -> None:
+    from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+    from luxar.gsplats.io.load_gsplats import load_gsplats
+
+    vol = np.zeros((8, 8, 8), dtype=np.float32)
+    vol[3:5, 3:5, 3:5] = 1.0
+    result = fit_gaussian_splats(
+        vol, seeds=8, n_iters=6, floor="none", device="cpu", verbose=False
+    )
+    path = tmp_path / "fit.gsplats.zarr"
+    result.save(path)
+    record = load_gsplats(path, include_stats=True).stats["fit_provenance"]
+    assert record["schema_version"] == 1
+    assert record["config"]["seeds"] == 8
+    assert record["config"]["n_iters"] == 6
+    assert record["config"]["floor"] == result.stats["floor"]
+    assert record["environment"]["device"] == "cpu"
+    assert record["outcome"]["final_loss"] == pytest.approx(result.stats["final_loss"])
+    assert record["outcome"]["n_splats"] == result.n_splats
+    assert record["timings"]["optimization"] > 0
+    assert 1 <= len(record["loss_curve"]) <= 256
+    assert record["loss_curve"][-1][0] <= 6
+
+
 def test_stop_message_names_the_rule_that_fired(capsys) -> None:
     """The verbose message must not describe a plain stop as a relative one."""
     _EarlyStopRule(patience=300, rel_tol=None).announce("plain", 900, 300)

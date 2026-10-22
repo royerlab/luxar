@@ -731,6 +731,7 @@ def finalize_results(
         "final_loss": optimization_results.best_loss,
         "final_max_abs_error": optimization_results.best_max_abs_error,
         "final_rel_l2": optimization_results.best_rel_l2,
+        "loss_curve": optimization_results.loss_curve,
         "converged": optimization_results.converged_early,
         "early_stopped": optimization_results.early_stopped,
         "early_stop_reason": optimization_results.early_stop_reason,
