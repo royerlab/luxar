@@ -1460,7 +1460,7 @@ class TestMergeOrchestrator:
                     seed += 1
         return total
 
-    def test_partition_retains_full_fit_record_and_slot_region(
+    def test_partition_retains_bounded_fit_record_and_slot_region(
         self, tmp_path: Path
     ) -> None:
         import zarr
@@ -1485,6 +1485,8 @@ class TestMergeOrchestrator:
                 "outcome": {"final_rel_l2": 0.1 + k, "n_culled": k},
                 "loss_curve": [[1, 0.5, 0.2], [2, 0.3, 0.1]],
             }
+            tile.stats["final_rel_l2"] = 0.1 + k
+            tile.stats["n_culled"] = k
             tile.save(tiles / output_filename(0, 0, k, 1, 1, 2))
         manifest = BatchManifest(
             n_timepoints=1,
@@ -1514,25 +1516,29 @@ class TestMergeOrchestrator:
             [[0, 8], [0, 8], [0, 8]],
             [[0, 8], [0, 8], [8, 16]],
         ]
-        assert [
-            part["fitting"]["fit_provenance"]["outcome"]["final_rel_l2"]
+        assert [part["fitting"]["final_rel_l2"] for part in parts] == pytest.approx(
+            [0.1, 1.1]
+        )
+        assert all(
+            "final_rel_l2" not in part["fitting"]["fit_provenance"]["outcome"]
             for part in parts
-        ] == pytest.approx([0.1, 1.1])
+        )
         assert parts[1]["fitting"]["fit_provenance"]["loss_curve"] == [
             [1, 0.5, 0.2],
             [2, 0.3, 0.1],
         ]
-        from typer.testing import CliRunner
+        import json
 
-        from luxar.cli import app
-
-        report = CliRunner().invoke(
-            app, ["gsplat", "info", str(final), "--no-histograms", "--provenance"]
+        consolidated = json.loads((final / "zarr.json").read_text())[
+            "consolidated_metadata"
+        ]
+        assert (
+            consolidated["metadata"]["fitting"]["attributes"]["batch_provenance"]
+            == batch
         )
-        assert report.exit_code == 0, report.output
-        assert "Fit provenance: 2 fit(s)" in report.output
-        assert "batch merge:" in report.output
-        assert "Slowest: fit/tile_1" in report.output
+        root_metadata = (final / "zarr.json").read_bytes()
+        assert merge_batch_results(manifest, out_dir, verbose=False) == final
+        assert (final / "zarr.json").read_bytes() == root_metadata
 
     def test_content_slot_regions_follow_saved_plan(self, tmp_path: Path) -> None:
         from luxar.gsplats.batch.manifest import BatchManifest
@@ -1545,7 +1551,7 @@ class TestMergeOrchestrator:
                 PlanBox([0, 8, 0, 8, 0, 5], 1, 4),
                 PlanBox([0, 8, 0, 8, 5, 16], 2, 8),
             ],
-            overlap=0,
+            overlap=2,
             feature_method="intensity",
             min_leaf=4,
             max_leaf=16,
@@ -1553,8 +1559,8 @@ class TestMergeOrchestrator:
         plan.to_json(tmp_path / "plan.json")
         manifest = BatchManifest(mode="content", plan_path="plan.json", n_tiles=2)
         assert _slot_regions(manifest, tmp_path) == [
-            [[0, 8], [0, 8], [0, 5]],
-            [[0, 8], [0, 8], [5, 16]],
+            [[0, 8], [0, 8], [0, 7]],
+            [[0, 8], [0, 8], [3, 16]],
         ]
 
     @pytest.mark.parametrize("n_timepoints", [1, 2])

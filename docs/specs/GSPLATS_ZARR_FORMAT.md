@@ -1108,6 +1108,26 @@ number. It is a JSON list in stacked-coordinate order:
 ]
 ```
 
+New fits also write `fitting/fit_provenance` with `schema_version: 1`. Its
+`command` is the argv for that fit (empty for a library call); `config` contains
+the effective settings; `environment` records software, host and device;
+`timings` records measured stages; and `outcome` records final fit and reduction
+metrics. `loss_curve` and `relocation_curve` contain at most 256 sampled points
+each on a leaf. A merged `part_provenance` entry keeps at most 32 samples per
+curve and omits outcome fields already present next to `fit_provenance` in its
+`fitting` map. A reader should use the surrounding field as the fallback.
+`saving` measures the original fit write; a later re-save preserves that value.
+
+For spatial parts, `slot_id` (`tile_<index>` or `box_<index>`) is the canonical
+source slot. `coordinate` is the stacking coordinate and can be zero for many
+independent spatial parts. `region` is a list of `[start, stop]` source-voxel
+bounds in axis order, with an exclusive stop. It describes the voxels fitted:
+uniform tiles include their overlap, and content boxes include the padded halo
+clamped to the volume. The retained splats of a content box occupy its core.
+`fitting/batch_provenance` also has `schema_version: 1`; its `command`, `config`,
+`environment`, and `timings` capture the batch settings and measured planning,
+merge, and LOD times. These records are optional on older stores.
+
 `fit_reference.kind` is one of `acquisition`, `preprocessed`, or `synthetic`;
 `note` is optional free text. Missing reference metadata means unknown. A reader
 may quote a bare component dB range only when **every** entry says

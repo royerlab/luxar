@@ -182,22 +182,32 @@ def _print_provenance_summary(fitting: dict[str, Any]) -> None:
     quality: list[float] = []
     for label, leaf in leaves:
         record = leaf.get("fit_provenance", {})
-        outcome = record.get("outcome", leaf) if isinstance(record, dict) else leaf
+        recorded_outcome = record.get("outcome") if isinstance(record, dict) else None
+        outcome = {
+            **leaf,
+            **(recorded_outcome if isinstance(recorded_outcome, dict) else {}),
+        }
         timings = _provenance_stages(record)
-        duration = sum(timings.values())
+        duration = sum(
+            timings.get(stage, 0.0)
+            for stage in ("preprocessing", "seeding", "optimization", "finalization")
+        )
         for stage, value in timings.items():
             stage_totals[stage] = stage_totals.get(stage, 0.0) + value
-        if duration == 0:
-            duration = float(leaf.get("time_seconds") or 0)
-        durations.append((duration, label))
-        stop_reasons[str(outcome.get("early_stop_reason") or "iteration limit")] += 1
+        if any(
+            stage in timings
+            for stage in ("preprocessing", "seeding", "optimization", "finalization")
+        ):
+            durations.append((duration, label))
+        reason = outcome.get("early_stop_reason", "unrecorded")
+        stop_reasons[str(reason or "iteration limit")] += 1
         cull_total += int(outcome.get("n_culled") or 0)
         prune_total += int(outcome.get("min_extent_removed") or 0)
         score = _provenance_quality(outcome)
         if score is not None:
             quality.append(score)
     aprint(f"\nFit provenance: {len(leaves)} fit(s)")
-    aprint(f"  Fit task time (sum): {sum(d for d, _ in durations):.2f} s")
+    aprint(f"  Fit stages (sum): {sum(d for d, _ in durations):.2f} s")
     for stage, seconds in sorted(stage_totals.items()):
         aprint(f"  {stage}: {seconds:.2f} s")
     if isinstance(fitting.get("save_seconds"), (int, float)):

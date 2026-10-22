@@ -250,6 +250,23 @@ def _json_safe_fitting(stats: dict[str, Any]) -> dict[str, Any]:
         ok, safe_value = json_safe_value(stats[key])
         if ok:
             fitting[key] = safe_value
+    record = fitting.get("fit_provenance")
+    if isinstance(record, dict):
+        record = dict(record)
+        outcome = record.get("outcome")
+        if isinstance(outcome, dict):
+            record["outcome"] = {
+                key: value
+                for key, value in outcome.items()
+                if key not in fitting or fitting[key] != value
+            }
+        for name in ("loss_curve", "relocation_curve"):
+            curve = record.get(name)
+            if isinstance(curve, list) and len(curve) > 32:
+                record[name] = [
+                    curve[round(i * (len(curve) - 1) / 31)] for i in range(32)
+                ]
+        fitting["fit_provenance"] = record
     return fitting
 
 

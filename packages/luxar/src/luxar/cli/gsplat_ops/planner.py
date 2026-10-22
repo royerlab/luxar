@@ -360,6 +360,17 @@ def _stamp_content_source_dtype(
                 fit_stats.setdefault("source_dtype", str(dtype))
 
 
+def _stamp_content_fit_command(
+    result: Any, command: Optional[list[str]], preset: Optional[str], workers: str
+) -> None:
+    """Attach CLI argv before either content save path writes the store."""
+    if command is None:
+        return
+    from luxar.cli.gsplat_ops.fitting.fit import _stamp_fit_command
+
+    _stamp_fit_command(result, command, preset, workers)
+
+
 def run_content_fit(
     input_path: Path,
     output: Optional[Path],
@@ -413,6 +424,7 @@ def run_content_fit(
     verbose: bool = True,
     region: Optional[str] = None,
     frame: Any = None,
+    fit_command: Optional[list[str]] = None,
 ) -> None:
     """Content-aware tiled fit: scan → BSP plan → budgeted fit → save.
 
@@ -565,6 +577,7 @@ def run_content_fit(
                     else None
                 ),
             )
+            _stamp_content_fit_command(box_result, fit_command, preset, "1")
             box_result.save(
                 output,
                 amplitude_bits="auto",
@@ -785,6 +798,7 @@ def run_content_fit(
 
         _stamp_content_floor(result, floor_level, floor_forward, floor_strategy)
         _stamp_content_source_dtype(result, source_dtype, vol)
+        _stamp_content_fit_command(result, fit_command, preset, str(n_jobs))
 
         output.parent.mkdir(parents=True, exist_ok=True)
         _save_fit_result(

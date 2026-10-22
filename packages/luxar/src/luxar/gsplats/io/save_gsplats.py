@@ -828,8 +828,11 @@ def write_gsplats_tree(
 
             artifact_n_splats = int(total_splats(node))
         record = fitting_info.get("fit_provenance") if fitting_info else None
-        if isinstance(record, dict):
+        if isinstance(record, dict) and "saving" not in record.get("timings", {}):
+            record = dict(record)
+            record["timings"] = dict(record.get("timings", {}))
             record["timings"]["saving"] = time.perf_counter() - save_started
+            fitting_info = dict(fitting_info or {}, fit_provenance=record)
         _finalize_gsplat_root(
             root,
             artifact_n_splats=artifact_n_splats,

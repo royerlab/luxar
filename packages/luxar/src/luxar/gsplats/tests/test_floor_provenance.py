@@ -674,7 +674,8 @@ def test_batch_merge_writes_the_block_for_a_single_tile_run(
         return _leaf(ndim=3, stats={"time_seconds": 1.0})
 
     monkeypatch.setattr(mo, "_build_part_for_tile", _fake_part)
-    final = mo._merge_partition(manifest, tmp_path, None, True, False)
+    final, skipped = mo._merge_partition(manifest, tmp_path, None, True, False)
+    assert not skipped
 
     assert _pipeline_attrs(final)["floor"] == pytest.approx(110.0)
 

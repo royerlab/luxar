@@ -1920,7 +1920,7 @@ def rescale_and_save(
 
 def _stamp_save_timing(path: Path, elapsed: float) -> None:
     """Finish directory-store timing after the writer returns, then rehash attrs."""
-    from luxar._zarr_compat import open_group
+    from luxar._zarr_compat import consolidate, open_group
     from luxar.gsplats.io.save_gsplats import _stamp_content_hash
 
     root = open_group(str(path), mode="r+")
@@ -1932,6 +1932,7 @@ def _stamp_save_timing(path: Path, elapsed: float) -> None:
     else:
         fitting.attrs["save_seconds"] = elapsed
     _stamp_content_hash(root)
+    consolidate(root)
 
 
 def build_fit_recipe_params(

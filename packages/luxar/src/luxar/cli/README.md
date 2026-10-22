@@ -334,7 +334,10 @@ New fits save a bounded `fitting/fit_provenance` record with the command, effect
 fit settings, environment, stage timings, final outcomes, and sampled loss and
 relocation histories. Tiled and batch merges retain those records under
 `fitting/part_provenance`, with spatial slot IDs and source voxel regions. Batch
-outputs also record planning, merge, and LOD times; the batch manifest keeps
+merges keep at most 32 samples per curve in each part; a single fit retains its
+full bounded history. The reported slowest parts are ranked by fit stages
+(preprocessing, seeding, optimization, and finalization) when those timings exist.
+Batch outputs also record planning, merge, and LOD times; the batch manifest keeps
 measured task times and local worker attempts. `--provenance` summarizes these
 records without printing the nested metadata. Use `--full-provenance` to inspect
 the raw records.

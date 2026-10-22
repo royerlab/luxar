@@ -65,7 +65,8 @@ def _stamp_fit_command(
     def stamp(fitting: dict[str, Any]) -> None:
         record = fitting.get("fit_provenance")
         if isinstance(record, dict):
-            record["command"] = argv
+            if not record.get("command"):
+                record["command"] = argv
             record["config"]["preset"] = preset or "standard"
             record["config"]["workers"] = workers
         for part in fitting.get("part_provenance", []):
@@ -1200,6 +1201,7 @@ def run_fit_volume(
                     verbose=verbose,
                     region=region,
                     frame=frame.frame,
+                    fit_command=sys.argv.copy(),
                 )
                 raise typer.Exit(0)
             tiled = resolved_tiling == "uniform"

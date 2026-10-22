@@ -147,8 +147,11 @@ def test_sequential_tile_merge_keeps_fit_records_and_regions() -> None:
             stats={
                 "fit_provenance": {
                     "schema_version": 1,
-                    "outcome": {"final_loss": float(index)},
-                    "loss_curve": [[1, float(index), 0.1]],
+                    "outcome": {
+                        "final_loss": float(index),
+                        "early_stop_reason": None,
+                    },
+                    "loss_curve": [[i, float(index), 0.1] for i in range(256)],
                 }
             },
         )
@@ -168,7 +171,14 @@ def test_sequential_tile_merge_keeps_fit_records_and_regions() -> None:
     parts = node.meta["fit_stats"]["part_provenance"]
     assert [p["slot_id"] for p in parts] == ["tile_0", "tile_1"]
     assert parts[1]["region"] == [[0, 4], [0, 4], [4, 8]]
+    import json
+
     assert parts[1]["fitting"]["fit_provenance"]["outcome"]["final_loss"] == 1.0
+    assert "early_stop_reason" in parts[1]["fitting"]["fit_provenance"]["outcome"]
+    curve = parts[1]["fitting"]["fit_provenance"]["loss_curve"]
+    assert len(curve) == 32
+    assert curve[0][0] == 0 and curve[-1][0] == 255
+    assert len(json.dumps(parts)) < 3000
 
 
 def test_partition_lod_density_uses_the_persisted_total_splat_count() -> None:

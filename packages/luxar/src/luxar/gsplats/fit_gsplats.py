@@ -226,8 +226,7 @@ def _fit_provenance(
     parameters: FitParameters, result: GSplatData, device: torch.device
 ) -> dict[str, Any]:
     """A bounded, JSON-safe record of the fit that produced this leaf."""
-    from luxar import __version__
-    from luxar.gsplats.io.save_gsplats import _FITTING_INFO_KEYS
+    from luxar.gsplats.io.save_gsplats import _FITTING_INFO_KEYS, GSPLATS_VERSION
 
     config = _configuration_snapshot(parameters)
     config.update(result.stats.pop("fit_resolved_config", {}))
@@ -259,7 +258,7 @@ def _fit_provenance(
         "command": [],
         "config": config,
         "environment": {
-            "luxar_version": __version__,
+            "luxar_version": GSPLATS_VERSION,
             "torch_version": torch.__version__,
             "cuda_version": torch.version.cuda,
             "host": socket.gethostname(),
