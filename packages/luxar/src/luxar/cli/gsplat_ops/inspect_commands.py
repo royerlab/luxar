@@ -1540,6 +1540,7 @@ def _print_doctor_info(
             show_histograms=histograms,
             bins=bins,
             full_provenance=full_provenance,
+            provenance=False,
         )
     elif store_kind == "scene":
         aprint("ℹ️ The gsplat info report does not apply to a Luxar scene.")
