@@ -4,6 +4,642 @@ All notable changes to Luxar are documented in this file.
 
 ## [Unreleased]
 
+## [2026.10.22] - 2026-10-22
+
+### October 2026
+
+#### WebGPU sessions recover from a lost GPU device
+
+A lost WebGPU device used to be terminal. three latches the loss and renders
+nothing afterwards, so the viewer could only ask for a reload. It now rebuilds
+the renderer on a fresh device, on the same canvas. Post-processing, the scene
+environment and picking move to the new renderer, and the geometry re-uploads
+from its CPU mirrors, the same way a lost WebGL context is restored. A failed
+rebuild is retried once after a second; only then does the viewer show the
+reload prompt. The kiosk watchdog's grace period now covers WebGPU recovery too.
+
+Embedders get `webgpu-device-restored` or `webgpu-device-unrecoverable` after
+`webgpu-device-lost`. Reload on the second one, not on the loss itself. The
+handler ignores `reason: 'destroyed'`, which an explicit device destroy reports.
+
+#### Gaussian splats on WebGPU return early like their WebGL twin
+
+On WebGPU, 10 million `normal`-blended splats cost about 70 ms of GPU time per
+frame, against 57 ms on WebGL. The shaders do the same arithmetic, but they were
+not built the same way. The GLSL vertex shader returns as soon as a splat is
+rejected: when the density guard thins it, when the label filter hides it, or when
+the near or coverage fade removes it. The TSL graph had no early return. It
+fetched and projected every splat, then chose the reject position at the end. In
+the 10 M gate scenes the density guard drops half of the splats, so on WebGPU half
+of the vertex work went to splats that were never drawn. The sorted modes paid
+the most, probably because a depth-sorted draw reads the splat texture in
+scattered order. The TSL vertex stage now nests each stage in an `If()`, so a
+rejected splat skips the work after its test, as it does in GLSL.
+
+Two smaller fixes come with it. The per-splat varyings are now `flat`, as the
+GLSL twin already declares them, so the rasterizer stops interpolating ten
+constant components per fragment. And the fragment work past the truncation test
+now sits in an `else` branch. In WGSL, `discard` only demotes the invocation to a
+helper, which keeps running to the end of the shader, so a plain discard did not
+save that work.
+
+Measured with the render gate on an RTX 3070 (Chrome, 5 rounds, `gpuMs` on
+WebGPU, WebGL in brackets): 10 M `normal` went from 71.2 ms to 54.0 ms (56.6 ms),
+10 M `volumetric` from 70.1 ms to 54.9 ms (58.0 ms), and 10 M `additive` from
+61.8 ms to 57.1 ms (60.1 ms). Without thinning, 1 M `normal` went from 9.71 ms to
+9.08 ms and 5 M `volumetric` from 53.2 ms to 50.8 ms. Most of the 10 M gain comes
+from the early return (10 M `normal` went from 69.5 ms to 53.7 ms with it and the
+`flat` varyings alone). The `flat` varyings give most of the 5 M `volumetric`
+gain. The fragment guard adds about 1.5% at 10 M `normal`, which is close to the
+noise floor. WebGL renders are unchanged because only the TSL graph changed, and
+WebGPU renders are bit-identical to before.
+
+#### Blend warm-up on WebGPU, and a slightly earlier WebGPU start
+
+The blend-mode warm-up now runs on WebGPU too. WebGPU keeps the blend state in
+the render pipeline, so each blend mode is warmed separately, through three's
+`compileAsync` against the scene's HDR target, so the next draw can reuse the
+pipeline. On Linux system Chrome with native WebGPU and the four-geometry gate
+scene, the first `/points` switch to `max` took 36.7-47.4 ms without warm-up
+and 29.8-38.0 ms with it (two cold pages per arm, through two animation frames
+and GPU queue completion). Earlier M4 Max timings used a canvas-target warm-up
+and are not comparable. The module is now `rendering/blend-warmup.ts`, and its
+class is `BlendWarmupManager`.
+
+A WebGPU session now fetches `three/webgpu` and the TSL material registry while
+the GPU device is still being requested, instead of after. On obsidian's RTX 3070
+the device request alone takes about 125 ms, and this saves about 25 ms of
+startup. The cold-start gap to WebGL is still about 0.3 s on that machine. It
+breaks down as about 220 ms of extra renderer setup, mostly the device request,
+plus a first full frame of about 142 ms against WebGL's 43-92 ms, because every
+pipeline compiles on that frame.
+
+#### WebGPU capability and diagnostics parity
+
+The WebGPU renderer now reports what it is actually running instead of fixed guesses. `maxMSAASamples` is 4 on a native WebGPU device (the only multisample count WebGPU allows besides 1), 0 on a device in compatibility mode, where three turns off its own MSAA, and the context's `MAX_SAMPLES` on the WebGL2 bridge. The colour depth follows the canvas format: 16 bits per channel for the `rgba16float` HDR-output canvas, 8 otherwise, with the bridge probed like the WebGL renderer.
+
+The perf snapshot's `rendererInfo` reads the right fields on WebGPU too. three's WebGPU `Info` keeps draw calls in `render.drawCalls` (its `render.calls` counts `render()` passes since startup) and programs in `memory.programs`, so the snapshot showed a climbing pass counter as "calls" and never a program count. A frame that skipped rendering now also restores WebGPU's per-frame counters.
+
+Uncaptured WebGPU errors (validation, out-of-memory, internal) go through the viewer's logger as Renderer errors instead of three's bare console line. Because a broken pipeline can fail on every frame, each distinct message is logged three times, then once more as a suppression note.
+
+Glass that refracts data keeps rendering its transmission backdrop at full resolution on WebGPU. WebGL's half-resolution setting shrinks a re-render of the scene that WebGPU never does; WebGPU only copies the framebuffer, and its whole refraction split already costs less than WebGL's. The reasoning is in the physical materials spec.
+
+#### Native WebGPU E2E project
+
+The Playwright suite can now run on real WebGPU. `pnpm test:e2e:webgpu` turns on an opt-in `chromium-webgpu` project that launches system Chrome with the WebGPU flags. On Linux that means ANGLE on Vulkan, but without Chrome's `Vulkan` compositor feature, which loses the first WebGL frame's context when headless. Playwright's bundled headless Chromium only offers a SwiftShader adapter, so the project uses system Chrome instead. Every viewer URL a spec has not pinned to a renderer gets `renderer=webgpu`, and `waitForLuxarReady` fails the test if the page came up on three's WebGL2 fallback or on a software adapter. A machine without a GPU therefore goes red instead of quietly re-running the WebGL suite.
+
+The specs that drive WebGL directly (`webgl-errors`, `context-restore` and the `WEBGL_lose_context` cases in `error-recovery`) skip there through one shared `skipUnlessWebGL` helper. On a WebGPU canvas, `getWebGLErrors` reads the renderer's uncaptured GPU errors, so the rendering specs' "no GL errors" checks hold on both backends. In that project the TSL parity spec runs its TSL side as native WGSL, so each parity case compares GLSL with WGSL on the GPU. The default `pnpm test:e2e` run and CI are unchanged.
+
+The first native runs needed three harness fixes. The bloom-pyramid readback was not compacting WebGPU's 256-byte row padding. The GLSL arm never applied the provoking-vertex alignment that production applies. And one mesh case demanded a bit-exact match on a shaded pixel, which native WGSL misses by one LSB. Where `WEBGL_provoking_vertex` is missing (ANGLE on Vulkan, for one), a mesh pick still reports a different corner of the same triangle on WebGL and on WebGPU. That is the documented exception in `MESH_NODE_SPEC.md` §6.5, and the parity spec now allows for it explicitly.
+
+#### Render gate: write missing gate stores, and record the host load
+
+`make render-gate` used to run the scene generator only when one particular
+store was absent, so a scene added to the manifest after `datasets/gate` was
+first generated, like `sp64_closeup_authored`, stayed missing and its case
+errored. The generator now takes `--missing`, which writes only the stores not
+on disk yet, and the make target always runs it that way (`REGEN=1` still
+rewrites everything). A suite case whose store is missing names the command that
+writes it.
+
+Every measured arm now records the host's 1-minute load average. The report
+header gives each arm's median and maximum and warns when the median exceeds
+half the logical CPUs, so perf numbers taken on a busy machine are flagged
+rather than read at face value.
+
+#### The default renderer now depends on the platform
+
+WebGPU is the intended renderer, but how it compares with WebGL depends on the machine. Measured with the render gate on both backends, it was 2-9% faster in GPU time on Linux with an NVIDIA card (Vulkan) and up to about 20% slower on Apple GPUs (Metal). The default backend is now chosen from a short table of measured platforms (`render-pipeline/backend-policy.ts`) instead of one global setting. The table is empty for now, so WebGL stays the default everywhere: WebGPU becomes a default only once its cold load is within 0.15 s of WebGL (#3172). Linux + Chromium + NVIDIA passed the GPU-speed measurement and waits as a staged row until then.
+
+The OS and browser are read from the user agent before any WebGPU work starts, so a platform without a row never requests an adapter or downloads WebGPU code. The GPU vendor comes from `GPUAdapter.info` and is checked before the device request; a software fallback adapter never qualifies. `?renderer=webgl|webgpu` and Settings › Advanced › Renderer still override the table, and the renderer log names the rule that decided. Stock Chrome on Linux does not yet expose a WebGPU adapter without flags, so even once active, the Linux row applies only where Chrome enables WebGPU on that hardware.
+
+#### WebGPU sessions without a native adapter use the WebGL renderer
+
+A WebGPU selection that didn't come from an explicit `?renderer=webgpu` (today
+that is `VITE_LUXAR_USE_WEBGPU=1`, and later the default) now needs a native
+WebGPU device. Without `navigator.gpu`, an adapter, or a successful
+`requestDevice`, the viewer builds `THREE.WebGLRenderer` instead of letting
+three run the TSL materials on its internal WebGL2 backend. That bridge is a
+path we barely test. The check runs before `three/webgpu` is imported, so these
+sessions don't download that chunk either. An explicit `?renderer=webgpu` still
+reaches the WebGL2 bridge for diagnostics, as does `?webgpuForceWebgl`.
+
+`RendererCapabilities.backendKind` (`'webgl'`, `'webgpu-native'` or
+`'webgpu-gl'`) now says which GPU API actually runs. `apiSurface` only says
+which renderer API the code talks to, and reads `webgpu` on both WebGPU
+flavours. The `Rendering API` log line prints both.
+
+#### MSAA controls reflect the active rendering backend
+
+MSAA requests now use sample counts the active backend can render. On native WebGPU, a 2x request becomes 4x instead of displaying 2x while rendering without MSAA. The settings menu shows only supported counts and hides MSAA where it is unavailable.
+
+On a backend without MSAA, applying settings turns MSAA off in the in-memory settings. The next settings save persists that choice, so moving the same scene to a capable device later leaves MSAA off until it is enabled again.
+
+#### Start WebGPU device acquisition before the viewer bundle
+
+The standalone viewer starts requesting a WebGPU adapter and device alongside
+its early material download. Renderer setup reuses that request once, so device
+acquisition can overlap the main viewer bundle download. WebGL sessions do not
+request a device, and device-loss recovery still requests a fresh one.
+
+#### Avoid copying WebGPU depth-sort results before upload
+
+The WebGPU sort path now uses the worker's transferred ordering buffer as the inactive sorted-index attribute, including geometries with spare capacity. This removes the main-thread copy before the attribute upload.
+
+#### Start WebGPU material downloads earlier
+
+Standalone WebGPU sessions now start fetching the material registry before the main viewer bundle runs, reducing cold-start delay while WebGL sessions keep the lazy payload out of their startup path.
+
+#### Built-in TSL material overrides
+
+Embedders can now use `setTSLNodeOverride` to replace output nodes on Luxar's
+Points, Lines, GSplats, and Mesh TSL materials. Overrides survive graph rebuilds
+and cloning, and can be removed to restore the built-in graph.
+
+#### Match WebGL blend warm-up to the host's scene target
+
+`LuxarLayer` now honours `getWarmupRenderTarget` on WebGL when compiling blend
+variants. Hosts using `EffectComposer` should return the current scene-pass
+render target, including after resize. Canvas-output hosts should return `null`;
+they still warm program links, but skip the tiny keeper draw because the private
+target would select a different program.
+
+#### SSIM is headlined on the robust peak, and the quality verdicts say what they measured
+
+`gsplat compare`, the fit summary, the merged-tile summary and `cal` computed SSIM
+on the full `max - floor` range, while PSNR already headlined a robust peak
+(reference p99.99 minus the floor). SSIM needs the robust peak more than PSNR
+does: its stabilising constants scale with the range, so a full range set by one
+hot pixel swamps the real local variance and pushes SSIM towards 1 for almost any
+reconstruction. On a nuclear-stain stack with maximum 2002 and p99.99 524, one fit
+read whole-volume SSIM 0.95 on the full range and about 0.20 on the robust range. The
+headline SSIM, whole and foreground, now uses the same robust peak as the PSNR
+headline, and the full-range figure is printed beside it, labelled.
+
+The JSON and stored keys are additive. `compare --output-json` gains
+`ssim_robust` and `foreground_ssim_robust`, and `ssim_headline` names the
+headline as `psnr_headline` already did. `ssim` and `foreground_ssim` keep their
+full-range meaning. Fitted stores stamp `ssim_robust` beside `ssim`, and `cal.json`
+gains `full_ssim_robust` beside `full_ssim`. The `cal` table's SSIM column now shows
+the robust figure (an older `cal.json` falls back to `full_ssim`). Computing both
+costs a second SSIM pass whenever the two peaks differ.
+
+`compare`'s noise verdict now states what was measured and what it may mean. "At"
+and "near the noise floor" carry "by this estimate" and a caveat: the noise sigma
+comes from the finest in-plane band, so real texture at that scale counts as
+noise and can make a smoothed fit look close to the ceiling. A score more than
+3 dB above the ceiling is "undetermined" with the reason spelled out. The
+residual is then smaller than the estimated noise, which means either the model
+is reproducing noise or the reference has fine structure the estimate counts as
+noise. The verdict no longer calls the second reading the likely one. An
+unreliable ceiling now says that the noise estimate failed its scale check. The
+CLI README and the gsplat skills explain how to read the verdict, and note that
+`cal`'s noise floor is a different, whole-volume estimate.
+
+`fit --denoise` scores its summary against the denoised input and now says so,
+pointing to `gsplat compare` for a score against the raw data. On the tiled
+paths it says that a tile's own line is scored against its denoised tile and the
+merged line against the raw input. `gsplat render` prints the level the fit
+subtracted (`image_min`), which the background-relative output leaves out and
+which must be added back before comparing with the raw volume.
+
+#### OME-TIFF and ImageJ TIFF axes select the channel and timepoint
+
+An OME-TIFF or ImageJ TIFF records its axis order (for example `ZCYX`), but
+`--channel` and `--timepoint` on one still demanded `--axes` and claimed the file
+had no discoverable channel or time axes. When the metadata was not written by a
+known Python writer (in practice Bio-Formats, Fiji or a vendor exporter), the
+loader now uses the declared order for an index given without `--axes`, as the
+OME-Zarr path already did, and always logs every axis with its size
+(`z=65, c=7, y=624, x=924`).
+
+Files written by tifffile, bioio or aicsimageio are not trusted: these fill in
+default axes when their caller names none (a CZYX array saved with `imagej=True`
+reads back as ZCYX, a z-stack as CYX, and bioio's `OmeTiffWriter.save` writes
+CZYX), and a file whose axes were named looks the same on disk. Their signature
+(OME `Creator` starting `tifffile`, `bioio` or `aicsimageio`, ImageJ
+`ImageJ=1.11a`) therefore keeps `--axes` required, as does an axis letter other than T/C/Z/Y/X or an index for an
+axis the file does not declare. Those refusals show the declared order and sizes.
+A load without an index ignores the declaration, `--axes` always overrides it, and
+a TIFF that cannot be read reports why instead of claiming it declares nothing. An
+out-of-range `--channel` or `--timepoint` on a zarr store read positionally (no
+`--axes`) is now a clear error rather than a zarr bounds exception, and a
+negative one is refused there too instead of silently indexing from the end.
+
+#### Usage errors on volume selection no longer print a traceback
+
+`luxar gsplat fit data.npy out.gsplats.zarr --channel 2` printed a clear message
+and then the same message again as a Python traceback. A channel, timepoint or
+`--axes` request the input cannot satisfy now raises `VolumeSelectionError` (a
+`ValueError` subclass), which `fit`, `cal` and `compare` report as a usage error
+(exit 2) with no traceback. Other exceptions are unchanged.
+
+#### Plain log output under NO_COLOR or when redirected
+
+arbol coloured every line, so `luxar demo run cloud > log 2>&1` filled the log
+with escape codes and `NO_COLOR` was ignored. Luxar now turns arbol's colour off
+when `NO_COLOR` is set or stdout is redirected to a file or pipe, and keeps it on
+under `FORCE_COLOR`. The policy runs at `import luxar` and at the start of every
+CLI command. A notebook keeps its colours, since its output stream is not a
+redirected file. The fit's amplitude histogram follows the same switch. The
+developer scripts under `scripts/` use arbol directly and still print colour.
+
+#### Install, remote viewing and skill snippet fixes
+
+The README now says that the CUDA build of PyTorch is about 3 GB to download and
+about 6 GB installed, and how to view a scene from a headless or remote machine:
+an `ssh -L` tunnel, or `--host 0.0.0.0`, which serves the data and viewer
+unauthenticated to anyone who can reach the machine. The Python
+examples in the agent skills use `device="auto"` instead of `device="cuda"`, so
+they also run on a CPU-only or Apple machine. The multichannel exposure snippet in
+the visualization skill now imports `CameraConfig` and `ViewerConfig` and shows
+how the camera reaches the scene. The CLI and gsplats READMEs open with a short
+pointer to the three-command path from a volume to the viewer.
+
+#### Faster WebGPU blend switches for meshes, points and lines
+
+Blend warm-up now pins both back and front render passes for transparent,
+double-sided meshes on WebGPU. Point and line materials also select the correct
+cached shader graph when a blend switch enters or leaves `normal` mode.
+
+#### Breaking: `add_gsplats_from_file` now builds `gsplat convert`'s scene for a fitted store
+
+Breaking: an existing script that adds a fitted `.gsplats.zarr` with
+`add_gsplats_from_file` and does not pass `fitted_defaults=False` now renders
+differently. Data-unit amplitudes with an auto-exposed `display_gain` replace
+per-splat normalisation, and a fresh default scene gets the fit's dimensions,
+column mapping and a y-down camera. To keep the previous behaviour exactly, add
+`fitted_defaults=False` to the call.
+
+The documented `scene.add_gsplats_from_file(name, "fit.gsplats.zarr")` example
+on `Dimensions.default_3d()` opened a fitted stack edge-on, saturated and missing
+from the Layers panel, while `luxar gsplat convert` on the same store looked
+right. For a FITTED store (one with a root `dimension_metadata`, or fitting
+provenance whose `source_shape` matches the centers) the adder now applies
+convert's defaults itself. It keeps the amplitudes in data units with an
+auto-exposed `display_gain` and unit labels, predicted under the tone mapping
+the scene has when the node is added. It also sets `layer=True` and convert's
+explicit `blending_mode` / `opacity` / `absorption`, and writes 8-bit amplitudes
+for a uint8 source. Node placement changes only on a fresh scene: when the node
+goes on the root scene and that scene's dimensions equal `Dimensions.default_3d()`
+(a scene explicitly created with it counts), with no camera and no geometry, the
+adder also sets convert's scene dimensions, maps the `z, y, x` columns onto
+`x, y, z` and adds the y-down XY camera. A second fitted add on that scene reuses
+the mapping. On any other scene the dimensions, camera and positional column
+mapping are left alone, and a log line names the `dim_order` and `create_scene`
+arguments for convert's layout. On a fresh scene the result has the same
+`content_hash` as `convert --no-center` (convert also centers by default). The
+store is loaded once, but resolving runs convert's projected-exposure prediction;
+for a very large store, `fitted_defaults=False` skips it.
+
+An explicit argument always wins: `dim_order` / `fill` / `fill_sigma` /
+`transform` / `nd_transform` keep your orientation and your scene, and `normalize_amplitudes`, `display_gain`,
+`amplitude_unit`, `amplitude_offset`, `source_data_range`, `intensity` or
+`offset` keep the old per-splat normalisation, since a window or gain authored
+against normalised amplitudes would otherwise be read in data units. Inside a
+`kind=lod` or `kind=partition` group nothing changes. Classical imports
+(`.ply` / `.splat` / `.spz`) and stores without axis names or fitting provenance
+keep the old behaviour. `fitted_defaults=True` applies the defaults to any
+`.gsplats.zarr` store.
+Every in-repo demo, the render-gate scene generator and the viewer fixture
+generator now pass `fitted_defaults=False`, so their output is unchanged.
+
+The decisions come from one function,
+`luxar.core.scene_defaults.resolve_fitted_scene`, which convert now calls too,
+so the CLI and Python paths cannot drift. `fitted_scene_defaults(path, ...)`
+returns the same scene as values (`dimensions`, `viewer_config`,
+`amplitude_bits`, adder `attrs`) for a scene you lay out yourself.
+`auto_exposure_attrs` moved from `luxar.gsplats.exposure` to
+`luxar.core.scene_exposure` and now delegates to convert's exposure resolver:
+without `dimensions=` it predicts for convert's own layout, so it gives convert's
+gain on a partition and accepts any column count. Convert's orientation and
+exposure modules moved from `luxar.cli.gsplat_ops` to
+`luxar.core.scene_orientation` and `luxar.core.scene_exposure`, next to the new
+`luxar.core.scene_defaults`.
+
+`--blending-mode volumetric` still has no auto exposure, and its emission is the
+same density the absorption acts on, so a small `--absorption` opened as
+saturated as additive. Convert now also prints the `--display-gain` additive auto
+exposure would use and the `--absorption` that gives about one optical depth at
+that gain. The `--display-gain` help now says the gain is absolute (brightness per
+data unit), not a multiplier, and its example no longer suggests 0.1.
+
+#### `fit` no longer starts most seeds dead on a background pedestal; `cal` quotes an honest noise ceiling
+
+Seeding samples 90% of the voxel value so overlapping seeds start below their
+target. That factor was applied to the raw value, pedestal included, and the
+floor was subtracted afterwards, so on data with a camera offset or background
+pedestal most seeds began at exactly zero amplitude, never recovered, and were
+removed by the post-fit cull. On an Allen Institute hiPSC DNA stack
+(pedestal 405 counts, robust peak 119) `fit --seeds 16000` stored 1,829 splats
+while `gsplat cal` promised about 13,100, because `cal` subtracts the floor
+before fitting and never hit the problem. The factor now applies to the signal
+above the pedestal, so `fit` and `cal` start their seeds the same way. The
+same holds for the explicit-seeding workflow,
+`fit_gaussian_splats(V, seeds=generate_seeds(V))`; a warm start from a previous
+fit's output is unchanged. Fits of data with a background pedestal (the default
+`--floor auto` finds one on most microscopy) now store more splats and fit
+better, so refitting an existing store gives a different result.
+
+The `gsplat cal` summary used to quote a noise-floor PSNR ceiling from a
+median-voxel estimate on the full intensity range, next to a table on the
+robust peak. Under shot noise the median reads the quiet background, so the
+ceiling sat 4 to 31 dB above the best held-out score. The summary now reports
+the RMS noise of the floor-subtracted volume (the intensity-binned estimator
+`compare` uses) and the held-out PSNR ceiling it implies on the table's
+robust-peak basis. On the two tester volumes the best held-out score sits
+within about 0.1 dB of it (one curve is still climbing; on the other the
+estimator's own scale check flags fine structure, and the summary says the
+ceiling may read low). The median estimate stays in `cal.json`
+as `noise_floor`, and the new `noise_sigma_rms`, `noise_scale_ratio` and
+`psnr_ceiling_robust_db` fields sit beside it.
+
+The `--pdf` report now plots every PSNR on the same robust peak as the
+terminal and labels its axes with the basis. `--pdf` without `--keep-fits`
+keeps the per-K fits in a temporary directory beside `cal.json` so the slice
+page renders, and says so before the sweep; the slice page's target is floor-subtracted like the
+fits. A long grid point prints an in-fit progress line at most every 30
+seconds instead of staying silent until it ends.
+
+#### Public shader source and material builder for embedders
+
+`@luxar/viewer` now exports `buildMaterial`, `ShaderSource`,
+`WebGLShaderSources`, and `BuildMaterialConfig` so embedders can provide GLSL3
+sources and a TSL factory for their own materials. The `ShaderSource.webgpu`
+factory is typed to return a `NodeMaterial`; its WebGPU type import does not
+load WebGPU code at runtime.
+
+#### `cal` flags sparse puncta it under-seeds; auto worker sizing understands unified memory; batch tiles are kept as they finish
+
+On sparse, diffraction-limited puncta (FISH spots) the held-out PSNR that picks
+K* is set by the background, because the spot centres are a tiny share of the
+held-out voxels. The curve comes out flat and K* lands well below what the
+spots need. `gsplat cal` now detects spots on the floor-subtracted volume and
+records, per K, the median ratio of the rendered peak to the reference peak at
+those spots (`spot_count` and `spot_peak_ratio` in `cal.json`). The reference
+peak carries its own noise, so even a perfect render of a dim spot scores below
+1; every grid point shares that bias, so `cal` compares K* with the best point
+of the same sweep. When a larger K rendered the spots better and K* reached
+less than 95% of that best, `cal` says so and names the first grid K within 98%
+of it. Under `--region` or `--auto-region` the suggestion is restated as a
+whole-volume `--seeds` with the same density transfer as K*, or as the
+`fit --tiling content` density flags when no whole-volume figure exists. On
+EASI-FISH level-0 crops K* reached 27%, 78% and 93% of the best on the three
+sparse crops and 99% on a dense one. On an Allen hiPSC DNA crop the chromatin
+maxima reached 91%, so the warning can also fire on textured nuclei. K* itself
+is chosen exactly as before.
+
+`batch-fit run --jobs-per-gpu auto` and `fit -j auto` checked GPU memory and
+host RAM as two separate pools. On a CUDA integrated GPU that shares host memory,
+such as a GB10 or a Jetson, they are one pool, and the device's free-memory
+figure leaves out page cache, so the worker count swung with cache state; on
+the EASI-FISH run it picked 8 workers and left 3 GB free. On such a device the
+workers are now sized from `MemAvailable` at about 3 GB plus 64 bytes per task
+voxel each, measured on a GB10 at 2.8 GB plus 62 bytes per voxel. Discrete
+GPUs and Apple MPS are sized as before.
+
+`batch-fit run` used to promote every finished tile to its final name only
+after the last task returned, so an interrupted run kept nothing and
+`batch-fit status` read zero while tiles sat finished in staging. Each tile is
+now promoted as soon as its worker exits.
+
+`fit` now warns when `--seeds` is left on `auto`, which sizes 100 to 10,000
+seeds from the volume's linear extent rather than its content. The `--min-extent`
+documentation records what speck pruning costs on puncta: with seeds starting
+alive on a pedestal, it kept spot recall within 0.01 of an unpruned fit.
+
+#### EASI-FISH spatial transcriptomics demo: from cell types to single mRNA molecules
+
+A new demo, `gsplats_3d_easifish_hypothalamus`, shows Janelia's public EASI-FISH
+example data (Wang et al., *Cell* 2021; Tillberg and Sternson labs): an expanded
+slab of mouse lateral hypothalamus imaged in four channels, DAPI nuclei plus the
+mRNA of *Slc17a6*, *Gpr83* and *Bdnf*. At the opening view the cells expressing
+each gene stand out in that gene's colour against grey nuclei. Zoom in on one and
+the colour resolves into individual transcripts, which is the scale change a
+partitioned scene with per-part level of detail is built for.
+
+The demo builds from the original source. It downloads the 34.9 GB CZI from
+figshare (DOI 10.25378/janelia.13622819, CC BY 4.0, sha256-pinned and resumable),
+stitches its two tiles from the recorded stage positions refined by normalised
+cross-correlation, and fits each channel with `gsplat batch-fit run`: content
+tiling for the punctate mRNA channels, uniform tiles for DAPI, and a per-part
+`levels` ladder from the streaming merge. Every leaf is then re-laddered with
+equal-energy rungs, so each part's first rung is the few splats carrying the
+most light, and the fits are scaled by the tissue's 2x linear expansion so the
+scene reads in biological micrometres. The mRNA channels pass `--min-extent 0`
+so no punctum is pruned, each channel subtracts a background floor resolved on
+its own array, and the scene is packed with `luxar optimize --pack`. Brightness
+and colormap windows are set per layer, because four additive channels at the
+default exposure sum to a beige wash, and the cinematic lens is turned off so
+puncta stay round at the frame edges.
+
+No fitted copy is hosted yet, so the first run needs a CUDA GPU, at least 32 GB
+of RAM, about 40 GB of disk and a few hours; `--czi PATH` reuses a copy of the
+file you already have. Every step is cached, and the scene is rebuilt only when
+the demo or a fit changed. Reading the CZI needs `czifile`, now part of the
+`demos` extra. The fit quality assumes the pedestal-seeding fix in #3226.
+
+#### Fits stop once the loss stops improving meaningfully; `cal` says when a sweep sits at the noise ceiling
+
+A fit used to stop early only after a full `early_stop_patience` window with no
+new best loss, so a fit whose loss was still creeping down by a few parts per
+million ran out its whole iteration budget. On an Allen Institute hiPSC DNA
+stack one `gsplat cal` point held relL2 at 0.4860 for about 9,600 iterations.
+`fit_gaussian_splats` now takes `early_stop_rel_tol`: the fit also stops once
+the best loss improved by less than that fraction over the patience window.
+Every CLI preset sets it to 0.001, so `fit`, `cal` and the tiled and batch
+workers use it; the Python default stays off. On four volumes (Allen hiPSC,
+IDR 5514375, a Tribolium light-sheet crop, a FlyLight neuron crop) `cal` got
+up to 7.3x faster (Allen: 2510 s to 344 s) and `fit` up to 3.2x. K\* under
+the default `psnr_foreground` criterion was unchanged beyond run-to-run noise
+(on Allen's flat curve the `psnr_minmax` K\* moved), and foreground PSNR losses
+were at most 0.10 dB. `early_stop_rel_tol: null` in a `--config` restores the
+old rule. The paper's Noise2Self tables use the Python API and are unchanged;
+to reproduce the CLI recipe timings in the consumer-GPU and tiled-fitting
+supplementary documents, set `early_stop_rel_tol: null`. A `batch-fit` run
+planned before this change and resumed after it fits its remaining tiles under
+the new rule, because the manifest stores only the preset name; the quality
+difference stays within the spread of plain-rule replicates, but its stored time
+estimates now run high. A tolerance written as
+`1e-3` in YAML is read as text; the error now says to write `0.001`.
+Each fit records why it stopped (`early_stop_reason`: plain, relative or
+converged) and the tolerance (`early_stop_rel_tol`) in its stats.
+
+When the noise estimate passes its scale check and the best held-out score is
+within 0.3 dB of the RMS noise ceiling, the `cal` summary adds a line saying
+that more K mostly fits noise on the held-out voxels, and that foreground
+detail can still improve.
+
+#### New demo: a budding intestinal organoid and its cell lineage
+
+`gsplats_4d_organoid_budding` follows one mouse intestinal organoid from a
+single cell to a budding mini-gut over about 110 hours of live light-sheet
+imaging (de Medeiros et al., Nat Commun 2022; Liberali lab, Zenodo 6828906,
+CC BY 4.0). Membranes and nuclei are two Gaussian-splat layers over 167 frames,
+40 minutes apart, 7.7 million splats in all. The founder cell's tracked
+lineage is drawn over them: a fading trail of the last three hours for each
+tracked cell (Lines) and a marker per cell (Points), coloured so that sister
+clones share neighbouring hues.
+
+The record has no raw stacks. The demo fits the authors' deconvolved 8-bit
+two-channel export of recording 002, rescaled per frame and channel. That
+export is a max composite: green holds the nuclei and red holds the brighter
+of membranes and nuclei, so the membranes are taken as red where it exceeds
+green and set to zero elsewhere before fitting. Fitting red as it is would
+draw every nucleus twice. The demo fetches only what it uses from the
+12 GB archive, about 345 MB by HTTP range requests, and pins the set with one
+SHA-256 digest; a run whose source or fits are already cached does not touch
+the network. One frame of the export (T0245) is an empty crop, so the frame 10
+minutes earlier stands in for it. Until the precomputed fits are hosted, the
+demo refits from the source, which takes about an hour on an 8 GB GPU.
+
+`luxar.demos.download_zip_members` is new. It extracts many members of one
+remote zip with a single read of the central directory, with the same size,
+CRC and path checks as `download_zip_member`. The organoid archive's directory
+is 5.4 MB, and reading it again for each of 168 members would cost more than
+the members themselves.
+
+#### Splat fits are reproducible across platforms
+
+The same CPU fit on the same data used to give different results on Linux and
+macOS, by up to 1 dB on a small tile. Seeding ranked candidates with NumPy's
+default `argsort`, whose order for equal values depends on the CPU's SIMD
+backend, so the flat background and the symmetric peaks of a blob came out in
+a different order on x86 and arm64. Seed deduplication, the grid top-up and the
+per-tile residual peak search all depend on that order, so the two machines
+started the fit from different seeds.
+
+Every sort that decides seed or peak order is now stable: brightest first, with
+equal values kept in array (C) order. `torch.topk` in the tiled peak search is
+replaced the same way. Fits are now the same on every platform up to
+floating-point rounding, which a short fit can amplify to a few tenths of a dB.
+
+Refitting data whose seeds had ties now starts from a different seed order, on
+Linux as well as macOS, so the result can change by up to about 1 dB on a short
+fit. On the tiled haze fixture, individual tiles moved by +0.94 and -0.75 dB.
+
+#### EASI-FISH demo states its compression against the raw CZI
+
+The EASI-FISH hypothalamus demo's caption and description now give the served
+scene's on-disk size and how many times smaller it is than the 34.9 GB raw CZI
+it was compiled from (≈315x on the reference build). The scene's size is
+measured after the pack, as the sum of its file sizes; the CZI's is its pinned,
+sha256-verified published size. Because the packed scene's size is only known
+after `luxar optimize --pack`, the build packs into a scratch store with an
+estimate, rewrites the two text attrs of the unpacked scene with the measured
+size, packs again, and only then renames the result onto the served path, so
+the stated figure is the size of the store it ends up in and an interrupted
+build never leaves a scene stating a wrong one. The
+ratio and size wording live in `luxar.demos._caption` (`compression_ratio`,
+`format_ratio`, `format_bytes`, `compression_caption`, `compression_note`) for
+other demos to reuse. The module docstring also explains why the mRNA channels
+are fitted at xy/2 rather than full resolution.
+
+#### Reproducible peaks seeding
+
+`seed_from_peaks` and `generate_seeds(method="peaks")` accept an integer seed or
+PyTorch generator for sampling without advancing the global RNG. Fits that
+select peaks seeding use a fixed seed by default; callers can override it
+through `seed_kwargs`.
+
+#### Budding-organoid demo states its compression against the source frames
+
+The budding intestinal organoid demo's caption and description now give the
+served scene's on-disk size and how many times smaller it is than the source
+it was built from: the 167 shown VTI frames as extracted from the Zenodo
+archive (T0244 standing in for the empty T0245) plus the lineage XML, 462 MB
+in all, against an 88.6 MB scene (≈5.2x). The source size is pinned beside the
+source digest and checked against the files whenever they are fetched, so a
+run built from cached fits states it without the source on disk. The ratio is
+modest because the published frames are already deconvolved, cropped, 8-bit
+and zlib-compressed; the ~700 GB raw acquisition, available only on request,
+is not the baseline. The scene is written into a scratch store, its two text
+attrs are restated with the measured size (restamping the content hash) until
+the figure stops changing, and only then is it renamed onto the served path.
+The scratch, measure, restate and rename steps moved into
+`luxar.demos._scene_size`, which the EASI-FISH demo now uses too.
+
+#### Organoid and EASI-FISH scenes carry their CC BY 4.0 attribution
+
+The budding-organoid and EASI-FISH hypothalamus demos now state their data
+attribution inside the scene, so it travels with the store wherever it is
+hosted. Each scene description gains a sentence giving the source data DOI, the
+CC BY 4.0 licence with its link, and the changes made to the data: for the
+organoid, membrane unmixing, the frame selection, splat fitting and the lineage
+overlay; for EASI-FISH, tile stitching, block-mean downsampling, background
+subtraction, splat fitting and rescaling to pre-expansion micrometres. The size
+sentence stays last and is still restated by the build. ACKNOWLEDGMENTS.md
+carries the same licence link and changes, and both demos are now gallery tiles.
+
+The organoid docstring now describes its frame selection exactly. It shows
+every fourth acquisition slot, but the slot of the empty T0245 draws T0244, so
+the frames actually drawn step by 4 everywhere except 3 then 5 around it.
+
+#### Organoid and EASI-FISH fits are hosted on Zenodo
+
+Both demos now load finished fits from the Luxar cc-by Zenodo record (v2.1.0,
+doi:10.5281/zenodo.23524429) instead of refitting on first run. The organoid
+demo resolves `organoid_budding_frames.gsplats.zarr.zip` (98.8 MB, 334
+per-frame stores) and still fetches only the 0.9 MB lineage from Zenodo 6828906;
+the EASI-FISH demo resolves its four per-channel archives (83.2 MB) instead of
+downloading the 34.9 GB CZI. Neither needs a GPU on the hosted path. A
+complete local fit cache from an earlier build still wins, with no network;
+the hosted fits come next. If the hosted download fails (offline, timeout, HTTP
+error), EASI-FISH resumes a local build only with a cached stitched OME-Zarr or
+an explicit `--czi PATH`; downloading the 34.9 GB CZI requires `--recompute`.
+The organoid demo still falls back to its smaller local build. A hosted file
+that fails its checksum still stops the run. `--recompute` forces the local
+build (now also on the EASI-FISH demo, which warns that `--czi` is ignored when
+finished fits are available). Cached hosted files are verified by hash and reused
+without the network. The EASI-FISH
+scene records which inputs it was built from, so switching between hosted and
+local fits rebuilds it. `luxar.demos.is_download_failure` tells a failed
+download apart from a checksum mismatch or a local fault. `load_dataset_bundle` gains an opt-in `include_stats`, which the organoid
+demo uses so its hosted scene keeps the same per-part fit provenance as a local
+build.
+
+The manifest points the cc-by record at v2.1.0; every earlier file carries over
+byte-identical, so no existing pin moved. The record text snapshots were
+re-captured, and the README's data table now counts 27 of the 33 datasets as
+hosted.
+
+#### Organoid demo: membranes unmixed from a max composite, not an additive one
+
+The budding-organoid demo fits the membranes of the LSTree `rgb_grid` export,
+whose red channel also carries the nuclei. That export is a MAX composite,
+`(max(m, n), n, n)`, not the additive `min(255, m + n)` the demo had assumed.
+LSTree's own pipeline says so (`blending_mode=max` in its `[VolumeGridTask]`
+configuration; `make_composite(..., mode='max')` in `mesh_tasks.py`), and so do
+the frames: where red exceeds a non-zero green, red stays flat as green rises
+while red − green falls with a slope of about −1, and saturation does not
+explain it (red is 255 in at most 1.1% of voxels below green 192). The demo now
+takes the membranes as `np.where(R > G, R, 0)`, exact wherever the membrane is
+the brighter channel and 0 where a nucleus hides it. Subtracting green, the
+inverse of an additive blend, under-read the membrane by the nuclear value at
+every mixed voxel and kept only 0.93, 0.92 and 0.68 of the membrane mass on
+frames T0301, T0320 and T0601.
+
+The same export was rescaled per frame and channel to its own 0.2 / 99.99th
+percentiles, so the demo no longer claims that brightness changes over time are
+preserved. The fixed `norm_range=(0, 255)` stays: it fits each frame as exported
+instead of normalizing it a second time.
+
+The per-frame cache names now carry `red-where-gt-green`, so earlier membrane
+fits are not reused; the nuclei fits are unchanged. The published v2.1.0 Zenodo
+bundle still holds the earlier membrane fits, whose names no longer match, so
+until a new record version replaces it the demo downloads the old bundle and
+then refits both channels locally (334 fits, about an hour on an 8 GB GPU) on a
+fresh machine. Existing local fits are reused where their cache names match.
+
+The new target has hard holes where nuclei hide the membrane, and no Gaussian
+fit reproduces a step: on the frames with nucleus occlusion (4 of the 5
+measured), 57-94% of the foreground error sits within 2 voxels of
+the hole edges. The median membrane foreground PSNR is 35.9 dB against this
+target, where the earlier fits scored 42.6 dB against theirs (robust peak); that difference
+is the harder target, not a worse fit. Scored like-for-like on five frames,
+outside a 2-voxel band around the holes the new fits match their target within
+about ±3 dB of the earlier fits' scores against the earlier target.
+
 ## [2026.10.19] - 2026-10-19
 
 ### October 2026
