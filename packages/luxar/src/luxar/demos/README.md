@@ -1133,7 +1133,7 @@ A mouse intestinal organoid growing from **one cell** into a budding mini-gut ov
 
 **Run**: `luxar demo run gsplats_4d_organoid_budding`
 
-**Requires**: by default about 100 MB of download and no GPU. The per-frame fits come from a complete local fit cache if an earlier refit left one (no network), else from the Luxar cc-by Zenodo record as one bundle (`organoid_budding_frames.gsplats.zarr.zip`, 98.8 MB, 334 per-frame stores, sha256-verified against the data manifest and cached, so a rerun does not download it again). The 0.9 MB lineage XML comes from Zenodo 6828906. A run from the hosted fits takes about a minute.
+**Requires**: by default about 100 MB of download and no GPU. The per-frame fits come from a complete local fit cache if an earlier refit left one (no network), else from the Luxar cc-by Zenodo record as one bundle (`organoid_budding_frames.gsplats.zarr.zip`, 99.7 MB, 334 per-frame stores, sha256-verified against the data manifest and cached, so a rerun does not download it again). The 0.9 MB lineage XML comes from Zenodo 6828906. A run from the hosted fits takes about a minute.
 
 With `-- --recompute`, or when neither is available (offline with nothing cached), the demo instead fetches its source from Zenodo 6828906 by HTTP range requests into the 12 GB archive (about 345 MB: 167 frames plus the lineage XML, SHA-256 pinned as a set) and refits every frame and channel. A CUDA GPU is strongly recommended (about an hour of fitting on an 8 GB RTX 3070, minutes per late frame on a CPU); the fits are cached per frame under `~/.cache/luxar/gsplats_4d_organoid_budding/local/`.
 
