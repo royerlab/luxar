@@ -97,10 +97,11 @@ RECORDS = {
         "title": "Luxar demo datasets: permissively licensed (CC-BY, CC0, public domain)",
         "license": "cc-by-4.0",
         # v2.1.0 (published 2026-10-21) added the budding-organoid frame bundle
-        # and the four EASI-FISH channel archives; every earlier file carries
-        # over byte-identical, so the existing pins still hold.
-        "zenodo_doi": "10.5281/zenodo.23524429",
-        "zenodo_record": "23524429",
+        # and the four EASI-FISH channel archives; v2.1.1 (2026-10-21) replaced
+        # only the organoid bundle with the max-composite membrane refit. Every
+        # other file carries over byte-identical, so the existing pins hold.
+        "zenodo_doi": "10.5281/zenodo.23548002",
+        "zenodo_record": "23548002",
         "zenodo_conceptdoi": "10.5281/zenodo.21912279",
         "base_url": None,
         "published": True,
