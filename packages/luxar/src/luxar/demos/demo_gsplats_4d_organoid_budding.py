@@ -249,7 +249,9 @@ BUNDLE_NAME = "organoid_budding_frames.gsplats.zarr.zip"
 #: SHA-256 of newline-joined, sorted top-level member names in the published
 #: bundle. Checked against CHANNELS x FRAMES so a recipe change cannot silently
 #: miss all hosted fits.
-BUNDLE_MEMBERS_SHA256 = "2f42eebf7f413d1256a6ed5bea734e32e7c7924504a45510f87541cefee449b4"
+BUNDLE_MEMBERS_SHA256 = (
+    "2f42eebf7f413d1256a6ed5bea734e32e7c7924504a45510f87541cefee449b4"
+)
 CACHE_DIR = Path.home() / ".cache" / "luxar" / DATASET_NAME
 
 SOURCE_URL = (

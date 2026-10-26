@@ -249,7 +249,11 @@ def test_manifest_hosts_the_frame_bundle_on_the_cc_by_record() -> None:
 
 
 def test_hosted_bundle_members_match_frame_cache_names() -> None:
-    names = [demo._frame_cache_name(ch["name"], f) for ch in demo.CHANNELS for f in demo.FRAMES]
+    names = [
+        demo._frame_cache_name(ch["name"], f)
+        for ch in demo.CHANNELS
+        for f in demo.FRAMES
+    ]
     assert len(names) == len(set(names)) == 334
     assert hashlib.sha256("\n".join(sorted(names)).encode()).hexdigest() == (
         demo.BUNDLE_MEMBERS_SHA256
