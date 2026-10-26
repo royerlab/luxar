@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import struct
 import zlib
 from pathlib import Path
@@ -240,8 +241,19 @@ def test_manifest_hosts_the_frame_bundle_on_the_cc_by_record() -> None:
         "6eb32ed7eb4f5eadf8e283e4aaa2de0adb6956396f71bd9def4c96b5913edfe3",
         99_653_154,
     )
+    assert spec["files"][0]["superseded_sha256"][-1] == (
+        "09d37adf82fe99c886f515fae42e17242eab599a04a5966bd1980b931bf3c73a"
+    )
     assert spec["acquisition"]["comparable"] is False
     assert demo.DEMO_META["requirements"]["compute"] == "medium"
+
+
+def test_hosted_bundle_members_match_frame_cache_names() -> None:
+    names = [demo._frame_cache_name(ch["name"], f) for ch in demo.CHANNELS for f in demo.FRAMES]
+    assert len(names) == len(set(names)) == 334
+    assert hashlib.sha256("\n".join(sorted(names)).encode()).hexdigest() == (
+        demo.BUNDLE_MEMBERS_SHA256
+    )
 
 
 def test_hosted_fits_split_the_bundle_per_channel(monkeypatch) -> None:
