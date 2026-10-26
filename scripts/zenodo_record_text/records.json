@@ -1,10 +1,10 @@
 {
   "cc-by": {
-    "deposition": "23524429",
-    "doi": "10.5281/zenodo.23524429",
+    "deposition": "23548002",
+    "doi": "10.5281/zenodo.23548002",
     "title": "Luxar demo datasets: permissively licensed (CC-BY, CC0, public domain)",
     "license": "cc-by-4.0",
-    "version": "2.1.0",
+    "version": "2.1.1",
     "language": "eng",
     "publication_date": "2026-10-21",
     "keywords": [
@@ -156,9 +156,9 @@
       "code:codeRepository": "https://github.com/royerlab/luxar"
     },
     "submitted": true,
-    "description_sha256": "9d612c4cc0bcef0dc1a0459c2ac62d93ff26e54d8cb3f01618706ee6e27781c7",
-    "description_chars": 28141,
-    "zenodo_modified": "2026-10-21T05:02:59.523183+00:00"
+    "description_sha256": "37607ac7d421b5ead305f40951ea1f73bbc67397a01ae52b0969c9fd63c74a7d",
+    "description_chars": 28641,
+    "zenodo_modified": "2026-10-21T23:37:57.429337+00:00"
   },
   "cc-by-sa": {
     "deposition": "21912282",
@@ -540,5 +540,5 @@
     "description_chars": 22042,
     "zenodo_modified": "2026-09-23T17:29:40.683848+00:00"
   },
-  "_captured_utc": "2026-10-21T05:18:48Z"
+  "_captured_utc": "2026-10-26T04:53:57Z"
 }
