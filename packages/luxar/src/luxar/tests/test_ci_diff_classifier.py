@@ -42,6 +42,8 @@ from pathlib import Path
 
 import pytest
 import yaml
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 REPO = Path(__file__).resolve().parents[5]
 WORKFLOW = REPO / ".github/workflows/ci.yml"
@@ -2046,6 +2048,25 @@ print-launcher-pkg-config-path:
     )
     if uses_shim or sys.platform.startswith("linux"):
         assert expected_diagnostic in proc.stderr
+
+
+def test_default_env_excludes_pyqt6_with_broken_stubs() -> None:
+    """The napari[all] dev dependency must not break the mypy CI gate."""
+    with (REPO / "pyproject.toml").open("rb") as stream:
+        pyproject = tomllib.load(stream)
+    requirements = [
+        Requirement(dependency)
+        for dependency in pyproject["tool"]["hatch"]["envs"]["default"]["dependencies"]
+    ]
+    pyqt6 = [
+        requirement
+        for requirement in requirements
+        if requirement.name.lower() == "pyqt6"
+    ]
+    assert len(pyqt6) == 1
+    assert pyqt6[0].marker is None
+    assert Version("6.11.0") in pyqt6[0].specifier
+    assert Version("6.12.0") not in pyqt6[0].specifier
 
 
 def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
