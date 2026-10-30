@@ -181,8 +181,9 @@ dev = [
     # upgrades are reviewed explicitly. Version 3.16 initially omitted the
     # macOS arm64 wheel for standard CPython 3.14, forcing a source build that
     # needs rustc >= 1.94, but upstream backfilled the 3.16 and 3.17 wheels on
-    # 2026-09-11. The ceiling remains the review guard rather than a wheel fix.
-    "grimp<3.18",
+    # 2026-09-11. Version 3.18 shipped the missing standard CPython 3.14 macOS
+    # wheels. The ceiling remains a review guard rather than a wheel fix.
+    "grimp<3.19",
 ]
 io = [
     "tifffile>=2023.1.0",
