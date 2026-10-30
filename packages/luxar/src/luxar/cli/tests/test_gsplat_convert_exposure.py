@@ -21,7 +21,7 @@ from luxar import LuxarZarrCompiler
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar._zarr_compat import read_node_attrs
 from luxar.cli import app
-from luxar.cli.tests._testing import normalized_cli_output
+from luxar.cli.tests._testing import assert_mappings_close, normalized_cli_output
 from luxar.core.dimension_inference import build_dimensions_from_data
 from luxar.core.scene_exposure import _exposure_line
 from luxar.gsplats.exposure import ExposurePlan, HiddenAxis, plan_projected_exposure
@@ -961,7 +961,7 @@ def test_python_recipe_is_source_consistent(tmp_path: Path) -> None:
     assert by_path["amplitude_offset"] == pytest.approx(100.0)
     for source in (node, GSplatData.load(src)):
         with_stats = auto_exposure_attrs(source, dim_order=order, stats=stats)
-        assert with_stats == pytest.approx(by_path)
+        assert_mappings_close(with_stats, by_path)
         bare = auto_exposure_attrs(source, dim_order=order)
         assert bare["display_gain"] == pytest.approx(by_path["display_gain"])
     assert auto_exposure_attrs(node, dim_order=order)["amplitude_unit"] == "a.u."
