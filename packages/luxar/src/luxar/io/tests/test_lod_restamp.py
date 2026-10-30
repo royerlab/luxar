@@ -1985,7 +1985,10 @@ def test_a_restamped_store_matches_what_the_writer_would_have_written(
 
     report = restamp_lod_store(store)
 
-    assert _all_ladders(store) == pytest.approx(written)
+    restored = _all_ladders(store)
+    assert restored.keys() == written.keys()
+    for path, ladder in written.items():
+        assert restored[path] == pytest.approx(ladder)
     assert {g.path for g in report.restamped} == set(written)
     assert report.clean and not report.residual
     for path in written:
