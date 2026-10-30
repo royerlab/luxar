@@ -182,7 +182,7 @@ dev = [
     # macOS arm64 wheel for standard CPython 3.14, forcing a source build that
     # needs rustc >= 1.94, but upstream backfilled the 3.16 and 3.17 wheels on
     # 2026-09-11. The ceiling remains the review guard rather than a wheel fix.
-    "grimp<3.18",
+    "grimp<3.19",
 ]
 io = [
     "tifffile>=2023.1.0",
