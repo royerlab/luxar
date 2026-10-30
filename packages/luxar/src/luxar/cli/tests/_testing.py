@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import re
-from typing import Protocol
+from numbers import Real
+from typing import Mapping, Protocol
+
+import pytest
 
 
 class CliResult(Protocol):
@@ -41,3 +44,23 @@ def normalized_cli_output(result: CliResult) -> str:
     text = _ANSI_CSI.sub("", "\n".join(streams))
     text = _RICH_BOX_DRAWING.sub(" ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def assert_mappings_close(
+    actual: Mapping[str, object],
+    expected: Mapping[str, object],
+    *,
+    rel: float = 1e-6,
+    abs: float = 1e-12,
+) -> None:
+    """Compare numeric fields approximately and metadata exactly."""
+    assert actual.keys() == expected.keys()
+    for key, value in expected.items():
+        if isinstance(value, Real) and not isinstance(value, bool):
+            assert actual[key] == pytest.approx(value, rel=rel, abs=abs), key
+        elif isinstance(value, list) and all(
+            isinstance(item, Real) and not isinstance(item, bool) for item in value
+        ):
+            assert actual[key] == pytest.approx(value, rel=rel, abs=abs), key
+        else:
+            assert actual[key] == value, key

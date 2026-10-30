@@ -401,6 +401,11 @@ dependencies = [
 
     # Ceiling lifted with the zarr 3 migration; see the tracksdata group note.
     "napari[all]>=0.8",
+    # PyQt6 6.12.0 has malformed QtGui.pyi signatures that stop mypy's CI gate.
+    # Lift the cap when a newer release parses under our mypy pin: in a clean
+    # venv, install it and run mypy on a file containing `from PyQt6 import QtGui`
+    # (repro in #3275).
+    "PyQt6<6.12",
     "pandas>=1.5.0",
     "pyarrow>=13.0.0",
     "networkx>=3.0",

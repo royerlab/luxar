@@ -16,7 +16,7 @@ import pytest
 from typer.testing import CliRunner
 
 from luxar.cli.main import app
-from luxar.cli.tests._testing import normalized_cli_output
+from luxar.cli.tests._testing import assert_mappings_close, normalized_cli_output
 from luxar.encoding import EncodingMode
 from luxar.gsplats.fit_basis import stored_intensity_scale
 from luxar.gsplats.gsplat_data import GSplatData
@@ -138,10 +138,13 @@ def test_an_unedited_store_is_scored_exactly_as_before(store_and_reference) -> N
     after, out_after = _compare(noop, ref)
     assert "intensity_scale" not in before and "intensity_scale" not in after
     assert "intensity_scale=" not in out_before + out_after
-    for key, value in before.items():
-        if key in {"gsplats", "reference", "compression_ratio"}:
-            continue
-        assert after[key] == pytest.approx(value, rel=1e-6, abs=1e-12), key
+    skipped = {"gsplats", "reference", "compression_ratio"}
+    assert_mappings_close(
+        {key: value for key, value in after.items() if key not in skipped},
+        {key: value for key, value in before.items() if key not in skipped},
+        rel=1e-6,
+        abs=1e-12,
+    )
 
 
 def test_render_is_in_source_units_after_a_rescale(store_and_reference) -> None:
