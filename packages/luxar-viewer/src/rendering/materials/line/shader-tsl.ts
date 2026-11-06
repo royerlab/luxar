@@ -56,6 +56,7 @@ import {
   smoothstep,
   exp,
   texture,
+  textureSize,
   modelViewMatrix,
   cameraProjectionMatrix,
   Discard,
@@ -380,8 +381,12 @@ export function lineWebGPUFactory(
           (nodes.uLineTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
         )
     ).toVar();
-    const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
-    const texelY: TSLNode = lineBase.div(lineTexW).toVar();
+    // All six texels occupy one row. Bound the shared base once so Tint
+    // can prove every following textureLoad is in range without emitting
+    // a separate robustness clamp for each access on Metal.
+    const texelX: TSLNode = clamp(lineBase.mod(lineTexW), 0, lineTexW.sub(6)).toVar();
+    const textureHeight: TSLNode = int((textureSize(uLineTex) as TSLNode).y).toVar();
+    const texelY: TSLNode = clamp(lineBase.div(lineTexW), 0, textureHeight.sub(1)).toVar();
     const lineT0: TSLNode = loadTexel(uLineTex, ivec2(texelX, texelY)).toVar();
     const lineT1: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(1)), texelY)).toVar();
     const lineT2: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(2)), texelY)).toVar();
