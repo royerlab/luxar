@@ -454,8 +454,9 @@ the manifest's `serverProfiles` (the suite's `defaults.serverProfile`, or
 - `hosted`: 100 ms latency before every response's headers, ONE shared token
   bucket at 25 Mbit/s, HTTP/2 over TLS (a self-signed certificate generated
   once into `delme/gate-certs/`; the browser gets
-  `--ignore-certificate-errors`), a strong `ETag` with `If-None-Match` → 304,
-  and `Cache-Control: max-age=300`.
+  `--ignore-certificate-errors`), gzip transfer of static JS/CSS when the browser
+  accepts it, a strong `ETag` with `If-None-Match` → 304, and
+  `Cache-Control: max-age=300`. Dataset byte ranges stay identity-encoded.
 
 The exact and perf suites keep the unconfigured server, whose responses are
 unchanged. Every server logs its requests (`GET /__gate/requests`, cleared by
