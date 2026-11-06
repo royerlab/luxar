@@ -462,7 +462,7 @@ jobs:
         if: needs.changes.outputs.docs_relevant == 'false'
         run: echo "No documentation-relevant changes; required check reports success."
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         id: setup-python-docs
         if: needs.changes.outputs.docs_relevant != 'false'
         with:
@@ -671,7 +671,7 @@ jobs:
           # Dispatched runs test the captured dev commit; empty on push/PR == default.
           ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         id: setup-python
         if: needs.changes.outputs.dom_py != 'false'
         with:
@@ -967,7 +967,7 @@ jobs:
         run: cargo test
 
       # Generate test fixtures (requires Python)
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         id: setup-python
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
@@ -1210,7 +1210,7 @@ jobs:
       # already a required context, so this gates every PR without a
       # branch-protection change.
       # ---------------------------------------------------------------------
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
           # 3.12 is the floor `requires-python` declares; a wheel that installs
@@ -1577,7 +1577,7 @@ jobs:
       # playwright.config.ts starts a second webServer — tools/range-http-server.py
       # — for every run, and global-setup probes both servers' identity markers.
       # The parity spec reads no dataset, but the server must still come up.
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
           python-version: '3.12'
@@ -1659,7 +1659,7 @@ jobs:
           # Dispatched runs test the captured dev commit; empty on push/PR == default.
           ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         id: setup-python
         with:
           python-version: '3.12'
