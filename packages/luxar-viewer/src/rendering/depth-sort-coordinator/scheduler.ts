@@ -425,7 +425,10 @@ function pumpChunkedOrderingApplies(c: CoordinatorState): void {
       // before render; the mesh's onAfterRender hook is the separate proof
       // that THREE consumed the update ranges and issued a draw with it.
       syncSortedIndexSlot(c, state.mesh);
-      c.requestRender?.();
+      // The per-frame callback reports this change to the host, which draws
+      // it in the current frame. A requestRender wake here is unnecessary:
+      // it marks this same frame dirty and resets the loop's idle timer.
+      c.drawnStateChanged = true;
     }
     if (more) {
       // A STALLED pump made no progress (the previous slice is still
@@ -477,9 +480,8 @@ function pumpChunkedOrderingApplies(c: CoordinatorState): void {
  *
  * @returns true when this pass changed what the next render draws (a
  *   renderOrder or an ordering-buffer slot) — the render-on-change loop's
- *   per-frame callback contract. A chunked slice write or slot flip ALSO
- *   calls `requestRender` (the pump must keep the loop alive), so both
- *   routes agree.
+ *   per-frame callback contract. A chunked slice requests a continuation
+ *   frame; a slot flip is drawn in this frame.
  */
 export function evaluateDepthSortPerFrame(c: CoordinatorState): boolean {
   c.syncSortElementsRemaining = Math.max(0, syncSortElementLimit());

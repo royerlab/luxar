@@ -3498,12 +3498,14 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     }
 
     // Frame 3: the final slice completes the back buffer and flips it in.
-    // The write and the flip ride THIS frame's flush.
+    // The callback reports the change for THIS frame; there is no need to
+    // request the same render through the event-wake path as well.
     requestRender.mockClear();
-    drawFrame(coord, mesh);
+    expect(coord.evaluatePerFrame()).toBe(true);
+    simulateMeshRender(mesh);
     expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
     expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(Array.from(ordering));
-    expect(requestRender).toHaveBeenCalledTimes(1); // the flip repaints
+    expect(requestRender).not.toHaveBeenCalled();
 
     // Steady state: further frames neither write nor request.
     requestRender.mockClear();
