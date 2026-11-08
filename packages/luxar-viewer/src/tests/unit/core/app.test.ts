@@ -292,6 +292,7 @@ describe('LuxarApp', () => {
       setControlRail: vi.fn(),
       setDatasetBrowser: vi.fn(),
       setOverlayManager: vi.fn(),
+      setSlideshowHold: vi.fn(),
       setColormapLegend: vi.fn(),
       clearDimensionUI: vi.fn(),
       initDimensionSliders: vi.fn(),
@@ -412,6 +413,7 @@ describe('LuxarApp', () => {
         expect.any(Function)
       );
       expect(mockInputHandler.init).toHaveBeenCalled();
+      expect(mockInputHandler.setSlideshowHold).toHaveBeenCalledWith(expect.any(Function));
     });
 
     it('should create RenderingControls with postProcessing and sceneManager', async () => {
