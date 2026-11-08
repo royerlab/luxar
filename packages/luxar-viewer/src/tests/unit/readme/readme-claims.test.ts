@@ -45,7 +45,6 @@ const NOT_IN_CODE: Readonly<Record<string, string>> = {
   COMPOSITING_ATTRS: 'Python: luxar/core/group/compositing.py',
   DELTA_PROBE_MIN_GAIN: 'Python: the delta-codec encode-time probe threshold',
   LUXAR_CACHE_BUDGET_MB: 'Go launcher environment variable',
-  MAX_ANIMATION_PERIOD_S: 'Python: luxar.core.viewer_config animation period bound',
   ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING: 'Node error code',
   materialCacheMaxSize: 'named as a REMOVED config knob',
   projectLinesTo3DWASM: 'named as the DELETED main-thread lines projection',
