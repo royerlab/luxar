@@ -32,9 +32,14 @@ import {
 import type { ControlsManager } from '../../../controls/controls-manager';
 import type { PostProcessingManager } from '../../../rendering';
 import { config } from '../../../config';
+import { MAX_ANIMATION_PERIOD_S } from '../../../types/zarr';
 
 const STORY = 3; // discrete 0..10, hidden
 const TIME = 4; // discrete 0..3, hidden
+
+it('uses the authored animation period bound as its slowest rate', () => {
+  expect(config.dimensionAnimation.presets.customMin).toBe(1 / MAX_ANIMATION_PERIOD_S);
+});
 
 describe('DimensionAnimationManager slideshow playback', () => {
   let dims: SceneDimsManager;

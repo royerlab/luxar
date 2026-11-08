@@ -206,6 +206,9 @@ export interface ZarrAudioConfig {
   duck_db?: number;
 }
 
+/** Longest `viewer_config.animation[].period_s` accepted by Python, in seconds. */
+export const MAX_ANIMATION_PERIOD_S = 3600;
+
 /**
  * Viewer configuration from Python API (stored in zarr root .zattrs).
  * All fields are optional — only set fields are present.

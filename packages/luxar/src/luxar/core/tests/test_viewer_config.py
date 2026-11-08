@@ -357,17 +357,18 @@ class TestAnimationConfig:
                 AnimationConfig(period_s=bad)
 
     def test_max_period_matches_the_viewer_floor(self) -> None:
-        """Python's longest period is the viewer's slowest rate, `1 / customMin`.
+        """Python's longest period matches the viewer's authored period bound.
 
-        If they drift, a period Python accepts would be silently clamped to a
-        faster rate on load (or Python would refuse one the viewer plays).
+        The viewer derives `customMin` from this bound. If they drift, a period
+        Python accepts would be clamped on load (or Python would refuse one
+        the viewer plays).
         """
-        source = viewer_source("src/config/sections/dimension-animation/data.ts")
+        source = viewer_source("src/types/zarr.ts")
         match = re.search(
-            r"customMin:\s*1\s*/\s*(\d+(?:\.\d+)?)\s*,",
+            r"export const MAX_ANIMATION_PERIOD_S\s*=\s*(\d+(?:\.\d+)?)\s*;",
             source.read_text(encoding="utf-8"),
         )
-        assert match is not None, "cannot find presets.customMin = 1 / N in data.ts"
+        assert match is not None, "cannot find MAX_ANIMATION_PERIOD_S in zarr.ts"
         assert float(match.group(1)) == MAX_ANIMATION_PERIOD_S
 
     def test_invalid_loop(self) -> None:

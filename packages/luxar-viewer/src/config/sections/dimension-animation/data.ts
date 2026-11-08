@@ -1,4 +1,5 @@
 import type { DimensionAnimationConfig } from './types';
+import { MAX_ANIMATION_PERIOD_S } from '../../../types/zarr';
 
 /**
  * Dimension animation configuration
@@ -19,7 +20,7 @@ export const dimensionAnimationConfig: DimensionAnimationConfig = {
     periodSeconds: [1, 2, 5, 10, 20, 30, 60, 120, 300, 600],
     // One step an hour: the floor has to sit below the longest period preset,
     // or an authored 20 s period (target_fps 0.05) would be clamped to 10 s.
-    customMin: 1 / 3600,
+    customMin: 1 / MAX_ANIMATION_PERIOD_S,
     customMax: 120,
     stepMultipliers: [0.1, 0.25, 0.5, 1, 2, 5],
     ladderDepths: [1, 2, 3, 4, 6, 8],
