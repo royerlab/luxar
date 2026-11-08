@@ -117,9 +117,10 @@ export function captureViewerState(
         hasAnyState = true;
         animEntries.push({
           playing: state.isPlaying,
-          // A rate chosen or authored in the period view is written back as
-          // one, so the scene reopens in the same view at the same rate.
-          ...(state.speedView === 'period'
+          // A rate the Speed menu SHOWS as a period (chosen, authored, or the
+          // sub-1 fps default) is written back as one, so the scene reopens
+          // in that view at the same rate.
+          ...(animationManager.getSpeedView(i) === 'period'
             ? { period_s: periodSeconds(state.targetFPS) }
             : { target_fps: state.targetFPS }),
           loop: state.loopMode,

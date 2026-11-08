@@ -83,6 +83,8 @@ VALID_DIRECTIONS = ("forward", "backward")
 #: Longest `AnimationConfig.period_s`: one step an hour, the viewer's slowest
 #: accepted rate (`dimensionAnimation.presets.customMin` = 1/3600 fps).
 MAX_ANIMATION_PERIOD_S = 3600.0
+#: Accepted `ViewerConfig.text_scale` range (inclusive).
+TEXT_SCALE_RANGE = (0.25, 4.0)
 # Where the scene environment that lights `material="physical"` meshes comes
 # from (MESH_PHYSICAL_MATERIALS_SPEC.md §3.3). "room" is three's procedural
 # RoomEnvironment (the default); "scene" is an exact cube capture of the scene
@@ -504,8 +506,8 @@ class AnimationConfig:
             SLIDESHOW: each step loads like a manual one (refining to full
             detail); when the step starts a waypoint flight with
             ``reveal="on_arrival"``, the period counts from the landing, so it
-            is how long the view rests; and moving the dimension by hand
-            restarts the period.
+            is how long the view rests; and moving the dimension to another
+            position by hand restarts the period.
         loop: Loop mode ('once', 'loop', 'bounce').
         direction: Playback direction ('forward', 'backward').
         step_size: How far one animation tick advances the dimension, in the
@@ -1764,7 +1766,7 @@ class ViewerConfig:
             raise ValueError("audio must be an AudioConfig")
 
     def _validate_text_and_launch(self) -> None:
-        _validate_range(self.text_scale, "text_scale", 0.25, 4.0)
+        _validate_range(self.text_scale, "text_scale", *TEXT_SCALE_RANGE)
         if self.launch is not None and not isinstance(self.launch, LaunchConfig):
             raise ValueError("launch must be a LaunchConfig")
 

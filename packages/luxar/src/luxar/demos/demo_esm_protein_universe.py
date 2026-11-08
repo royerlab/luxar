@@ -93,8 +93,9 @@ Usage:
 Screen shape and pace:
     ``--aspect W/H`` (``48/9``, ``7200x1360``, ``5.33``) lays the panels, the
     turntable and the logo out for that screen: sized against its height and
-    flanking the map, so a panel reads at about 12 words a line on any wall.
-    Without it the layout is the one tuned for 16:9. ``--text-scale`` sets the
+    flanking the map, so a panel reads at about 9 words a line (at most ~12)
+    on a wide wall; a screen too narrow for a readable panel is refused. Without
+    it the layout is the one tuned for 16:9. ``--text-scale`` sets the
     reading-text size for the room. A kiosk build moves on to the next story by
     itself, resting 20 s at each stop after the camera lands
     (``--auto-advance SECONDS``; ``0`` turns it off).
@@ -169,7 +170,7 @@ import sys
 import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import numpy as np
 from arbol import aprint, asection
@@ -180,6 +181,7 @@ from luxar.core.group.lod.group import partitioned_coverage_fractions
 from luxar.core.group.partition import bsp_leaf_parts, spatial_bsp_tree
 from luxar.core.viewer_config import (
     MAX_ANIMATION_PERIOD_S,
+    TEXT_SCALE_RANGE,
     AnimationConfig,
     AudioConfig,
     CameraConfig,
@@ -3424,6 +3426,11 @@ WALL_FLANK_GAP = 0.62
 #: at most ~12), and a box aspect of 1.61 on average (1.44-1.88), the golden
 #: ratio. 32 em gave 1.45, 38 em 1.81.
 WALL_PANEL_MEASURE_EM = 35.0
+#: The narrowest text column :func:`wall_layout` accepts, in ``em``: about what
+#: the default layout's panel reads at on the square exhibit wall (27 em at text
+#: scale 0.8), some six words a line. A screen too narrow (or text too large)
+#: for it gets an error rather than an unreadable panel.
+WALL_MIN_MEASURE_EM = 24.0
 #: The logo's width in screen HEIGHTS: the default layout's, so a 16:9 wall
 #: keeps its size and a wider one does not inflate it.
 WALL_LOGO_WIDTH = BIOHUB_LOGO_WIDTH * DEFAULT_ASPECT
@@ -3434,11 +3441,17 @@ def wall_layout(aspect: float, text_scale: float) -> WallLayout:
 
     Every box is sized against the screen's HEIGHT and capped at its default
     width, so near 16:9 the boxes keep their default sizes while a wide wall
-    gets a turntable that fits its height, a panel that reads at ~12 words a
-    line and a logo that does not grow with the width. The turntable and the
+    gets a turntable that fits its height, a panel that reads at about 9 words
+    a line (at most ~12) and a logo that does not grow with the width. The turntable and the
     panel flank the map at :data:`WALL_FLANK_GAP` from the centre, pulled in
     to stay on screen where that is too far out. ``text_scale`` is the
-    viewer's text scale, which the panel's width (in ``em``) follows.
+    viewer's text scale, which the panel's width (in ``em``) follows; a viewer
+    whose text scale is changed at run time keeps the panel's left edge, so a
+    much larger scale can push its right edge off screen.
+
+    Raises ``ValueError`` when the column would be narrower than
+    :data:`WALL_MIN_MEASURE_EM` (a square or portrait screen, or very large
+    text): use the default layout (no ``--aspect``) there.
     """
     turntable_width = min(TURNTABLE_WIDTH, WALL_TURNTABLE_HEIGHT / aspect)
     # The measure, unless the panel would then be wider than the default box
@@ -3447,6 +3460,12 @@ def wall_layout(aspect: float, text_scale: float) -> WallLayout:
         WALL_PANEL_MEASURE_EM,
         panel_measure_for_width(PANEL_WIDTH * aspect * 100, text_scale),
     )
+    if measure < WALL_MIN_MEASURE_EM:
+        raise ValueError(
+            f"a {aspect:.2f}:1 screen at text scale {text_scale:g} leaves the panel "
+            f"{measure:.1f} em wide (minimum {WALL_MIN_MEASURE_EM:g}); drop --aspect "
+            "for the default layout, or lower --text-scale"
+        )
     panel_width = panel_box_width_vh(measure, text_scale) / 100 / aspect
     gap = WALL_FLANK_GAP / aspect
     turntable_left = max(WALL_MARGIN, 0.5 - gap - turntable_width)
@@ -3517,6 +3536,19 @@ def reading_text_scale(kiosk: bool, override: float | None) -> float | None:
     if override is not None:
         return override
     return KIOSK_TEXT_SCALE if kiosk else None
+
+
+def layout_for(
+    aspect: float | None, kiosk: bool, text_scale: float | None
+) -> WallLayout:
+    """The build's overlay layout: :data:`DEFAULT_LAYOUT` without an ``aspect``.
+
+    With one, :func:`wall_layout` at the scene's reading-text scale (the
+    viewer's own, 1.0, when the scene sets none).
+    """
+    if aspect is None:
+        return DEFAULT_LAYOUT
+    return wall_layout(aspect, reading_text_scale(kiosk, text_scale) or 1.0)
 
 
 def story_auto_advance(dims: Dimensions, period_s: float) -> list[AnimationConfig]:
@@ -4040,11 +4072,7 @@ def build_universe_scene(
     ``auto_advance_s`` moves the tour on by itself every that many seconds
     (:func:`story_auto_advance`); ``None`` leaves it to the visitor.
     """
-    layout = (
-        DEFAULT_LAYOUT
-        if aspect is None
-        else wall_layout(aspect, reading_text_scale(kiosk, text_scale) or 1.0)
-    )
+    layout = layout_for(aspect, kiosk, text_scale)
     n = len(universe)
     assets: dict[str, TurntableAssets] = {}
     if turntables:
@@ -4240,18 +4268,29 @@ def build_universe_scene(
 # =============================================================================
 
 
-def parse_layout_args(kiosk: bool) -> dict[str, float | None]:
+class LayoutArgs(TypedDict):
+    """The screen-shape and pace keywords of :func:`build_universe_scene`."""
+
+    aspect: float | None
+    text_scale: float | None
+    auto_advance_s: float | None
+
+
+def parse_layout_args(kiosk: bool) -> LayoutArgs:
     """``--aspect``, ``--text-scale`` and ``--auto-advance`` as build kwargs.
 
     ``--auto-advance`` defaults to :data:`KIOSK_AUTO_ADVANCE_S` on a kiosk build
-    and off otherwise; ``0`` turns it off. Raises ``ValueError`` on a bad value.
+    and off otherwise; ``0`` turns it off. Raises ``ValueError`` on a bad value,
+    including a screen shape the layout cannot serve (:func:`wall_layout`), so a
+    bad command line fails before the build starts.
     """
     aspect_arg = parse_str_arg("aspect")
     scale_arg = parse_str_arg("text-scale")
     advance_arg = parse_str_arg("auto-advance")
     text_scale = float(scale_arg) if scale_arg is not None else None
-    if text_scale is not None and not 0.25 <= text_scale <= 4.0:
-        raise ValueError(f"--text-scale must be in [0.25, 4], got {scale_arg!r}")
+    lo, hi = TEXT_SCALE_RANGE
+    if text_scale is not None and not lo <= text_scale <= hi:  # NaN fails too
+        raise ValueError(f"--text-scale must be in [{lo:g}, {hi:g}], got {scale_arg!r}")
     if advance_arg is None:
         auto_advance_s = KIOSK_AUTO_ADVANCE_S if kiosk else None
     else:
@@ -4262,11 +4301,11 @@ def parse_layout_args(kiosk: bool) -> dict[str, float | None]:
                 f"seconds, got {advance_arg!r}"
             )
         auto_advance_s = period or None  # 0 = off
-    return {
-        "aspect": parse_aspect(aspect_arg) if aspect_arg is not None else None,
-        "text_scale": text_scale,
-        "auto_advance_s": auto_advance_s,
-    }
+    aspect = parse_aspect(aspect_arg) if aspect_arg is not None else None
+    layout_for(aspect, kiosk, text_scale)  # validate the shape now
+    return LayoutArgs(
+        aspect=aspect, text_scale=text_scale, auto_advance_s=auto_advance_s
+    )
 
 
 def main() -> None:

@@ -37,6 +37,8 @@ import { ENERGY_RELEASE_THRESHOLD } from '../lod-display-gate';
 import { log, Modules } from '../../utils/log';
 import { clamp } from '../../utils/clamp';
 import { advanceDimensionValue } from './advance-value';
+import { calculateStepSize } from '../dims/step-math';
+import type { SimpleDims } from '../../types/dims';
 import { perfCounters } from '../../profiling/perf-counters';
 import type {
   DimensionAnimationState,
@@ -356,14 +358,16 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
    * its rate" is the design, not a problem to report.
    */
   private noteCadence(dimIndex: number, state: DimensionAnimationState, currentTime: number): void {
-    if (!this.isFramePaced(state)) return;
+    if (!this.isFramePaced(state)) {
+      restartCadenceWindow(state, currentTime);
+      return;
+    }
     state.frameCount++;
     const measurementElapsed = currentTime - state.lastFPSMeasurementTime;
     if (measurementElapsed < 1000) return;
     // Calculate actual FPS over last second
     state.actualFPS = (state.frameCount / measurementElapsed) * 1000;
-    state.frameCount = 0;
-    state.lastFPSMeasurementTime = currentTime;
+    restartCadenceWindow(state, currentTime);
     this.reportCadence(dimIndex, state);
   }
 
@@ -460,7 +464,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
       const [min, max] = this.dimensionRanges[dimIndex];
       const metadata = dims.metadata?.[dimIndex];
-      const step = this.resolveAnimationStep(state, metadata);
+      const step = this.resolveAnimationStep(state, dimIndex, dims);
 
       // Next value + boundary handling (pure — see advance-value.ts). The
       // manager APPLIES the returned direction; peekNextValue() does not.
@@ -546,7 +550,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
     const [min, max] = this.dimensionRanges[dimIndex];
     const metadata = dims.metadata?.[dimIndex];
-    const step = this.resolveAnimationStep(state, metadata);
+    const step = this.resolveAnimationStep(state, dimIndex, dims);
 
     const result = advanceDimensionValue({
       current: dims.currentStep[dimIndex],
@@ -586,10 +590,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
    * directives (== getFrameBudgetMs() !== null). A slideshow alone is not.
    */
   isFramePacedPlaying(): boolean {
-    for (const state of this.animationStates.values()) {
-      if (this.isFramePaced(state)) return true;
-    }
-    return false;
+    return this.fastestFramePacedFPS() !== null;
   }
 
   /** The highest target rate among frame-paced dimensions, or null when none. */
@@ -657,6 +658,10 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
         this.animationStates.set(dimIndex, state);
       }
       applyPlayOptions(state, options);
+      // A rate goes through setTargetFPS, as from the Speed menu: clamped, and
+      // on a dimension already playing it takes effect from now (due time and
+      // cadence window), not after the old period has run out.
+      if (options?.targetFPS !== undefined) this.setTargetFPS(dimIndex, options.targetFPS);
 
       // If already playing, just update options
       if (state.isPlaying) {
@@ -668,8 +673,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
       state.isPlaying = true;
       state.nextDue = performance.now() + this.tickPeriodMs(state);
       this.recordPlayheadValue(dimIndex);
-      state.frameCount = 0;
-      state.lastFPSMeasurementTime = performance.now();
+      restartCadenceWindow(state, performance.now());
 
       // Ensure we're registered with animation controller
       this.ensureRegistered();
@@ -860,6 +864,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   stop(dimIndex: number): void {
     this.pause(dimIndex);
     this.animationStates.delete(dimIndex);
+    this.lastSteppedValues.delete(dimIndex);
     log.info(Modules.ANIMATION, `Stopped dimension ${dimIndex}`);
   }
 
@@ -898,18 +903,17 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
       this.animationStates.set(dimIndex, state);
     }
 
-    const wasFramePaced = this.isFramePaced(state);
     // Clamp to valid range
     const { customMin, customMax } = config.dimensionAnimation.presets;
     state.targetFPS = clamp(fps, customMin, customMax);
     // A faster rate takes effect on the next frame rather than after the old,
     // longer period has run out.
     if (state.isPlaying) {
-      state.nextDue = Math.min(state.nextDue, performance.now() + this.tickPeriodMs(state));
-      if (!wasFramePaced && this.isFramePaced(state)) {
-        state.frameCount = 0;
-        state.lastFPSMeasurementTime = performance.now();
-      }
+      const now = performance.now();
+      state.nextDue = Math.min(state.nextDue, now + this.tickPeriodMs(state));
+      // Measure the new rate from now: a window opened under the old one
+      // (up to a whole slideshow period ago) would read as a slipped cadence.
+      restartCadenceWindow(state, now);
     }
 
     this.dispatchEvent({ type: 'speedChange', dimIndex, fps: state.targetFPS });
@@ -987,19 +991,18 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   /**
    * The per-tick step handed to advanceDimensionValue: the user's explicit
    * override when set (quantized to the authored grid for discrete dims,
-   * one cell minimum — see #1520), else the authored step for discrete
-   * dims, else null (continuous fps-derived increment). MUST be used by
-   * BOTH updateDimension and peekNextValue — the playhead and the t+1
-   * prefetch have to agree.
+   * one cell minimum — see #1520), else {@link defaultAnimationStep}. MUST
+   * be used by BOTH updateDimension and peekNextValue — the playhead and the
+   * t+1 prefetch have to agree.
    */
   private resolveAnimationStep(
     state: DimensionAnimationState,
-    metadata: { discrete?: boolean; step?: number } | undefined
+    dimIndex: number,
+    dims: SimpleDims
   ): number | null {
+    const metadata = dims.metadata?.[dimIndex];
     const override = state.stepSize;
-    if (override == null) {
-      return metadata?.discrete ? (metadata.step ?? 1.0) : null;
-    }
+    if (override == null) return this.defaultAnimationStep(state, dimIndex, dims);
     if (metadata?.discrete) {
       // Quantize a discrete dim's override to the authored grid, one cell
       // minimum — the same rule as calculateStepSize's discrete branch.
@@ -1012,6 +1015,23 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
       return Math.max(gridStep, Math.round(override / gridStep) * gridStep);
     }
     return override;
+  }
+
+  /**
+   * The per-tick step without an override: the authored step for a discrete
+   * dim. A continuous dim gets null (the fps-derived increment: the range in
+   * `continuousTraverseSeconds`) at a frame-paced rate, but a SLIDESHOW tick
+   * takes the `[` / `]` key's step instead — a rate-derived increment at
+   * seconds per step would cross the whole range in one step.
+   */
+  private defaultAnimationStep(
+    state: DimensionAnimationState,
+    dimIndex: number,
+    dims: SimpleDims
+  ): number | null {
+    const metadata = dims.metadata?.[dimIndex];
+    if (metadata?.discrete) return metadata.step ?? 1.0;
+    return this.isFramePaced(state) ? null : calculateStepSize(dimIndex, dims);
   }
 
   /**
@@ -1128,16 +1148,24 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   }
 }
 
-/** Apply the caller's {@link PlayOptions} to a state; absent options leave it as is. */
+/**
+ * Apply the caller's {@link PlayOptions} to a state, all but `targetFPS`
+ * (`play` routes that through `setTargetFPS`); absent options leave it as is.
+ */
 function applyPlayOptions(state: DimensionAnimationState, options: PlayOptions | undefined): void {
   if (!options) return;
-  if (options.targetFPS !== undefined) state.targetFPS = options.targetFPS;
   if (options.loopMode !== undefined) state.loopMode = options.loopMode;
   if (options.direction !== undefined) state.direction = options.direction;
   if (options.ladderDepth !== undefined) {
     state.ladderDepth = normalizeLadderDepthSetting(options.ladderDepth);
   }
   if (options.speedView !== undefined) state.speedView = options.speedView;
+}
+
+/** Open a fresh cadence-measurement window at `now` (see `noteCadence`). */
+function restartCadenceWindow(state: DimensionAnimationState, now: number): void {
+  state.frameCount = 0;
+  state.lastFPSMeasurementTime = now;
 }
 
 /**

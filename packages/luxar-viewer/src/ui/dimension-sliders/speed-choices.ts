@@ -31,16 +31,22 @@ export const SPEED_VIEWS: ReadonlyArray<{ view: SpeedView; label: string; toolti
   { view: 'period', label: 'period', tooltip: 'Seconds per step' },
 ];
 
-/** `20s`, `1m`, `90s`: whole minutes in minutes, anything else in seconds. */
-export function formatPeriod(seconds: number): string {
-  return seconds >= 60 && Number.isInteger(seconds / 60) ? `${seconds / 60}m` : `${seconds}s`;
+/** A period in the unit it reads best in: whole minutes in minutes, else seconds. */
+function periodInUnits(seconds: number): { amount: number; inMinutes: boolean } {
+  const inMinutes = seconds >= 60 && Number.isInteger(seconds / 60);
+  return { amount: inMinutes ? seconds / 60 : seconds, inMinutes };
 }
 
-/** `every 20 s`, `every 2 min`: the long form of {@link formatPeriod}. */
+/** `20s`, `1m`, `90s`: the chip label for a period. */
+export function formatPeriod(seconds: number): string {
+  const { amount, inMinutes } = periodInUnits(seconds);
+  return `${amount}${inMinutes ? 'm' : 's'}`;
+}
+
+/** `1 step every 20 s`, `1 step every 2 min`: the long form of {@link formatPeriod}. */
 function describePeriod(seconds: number): string {
-  return seconds >= 60 && Number.isInteger(seconds / 60)
-    ? `1 step every ${seconds / 60} min`
-    : `1 step every ${seconds} s`;
+  const { amount, inMinutes } = periodInUnits(seconds);
+  return `1 step every ${amount} ${inMinutes ? 'min' : 's'}`;
 }
 
 /** Relative tolerance for matching a rate against a period (1/p is inexact). */

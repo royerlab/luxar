@@ -1282,11 +1282,13 @@ def test_without_an_aspect_the_layout_is_the_one_every_build_used() -> None:
 
 
 @pytest.mark.parametrize(
-    "aspect",
-    [LOBBY, 48 / 9, 32 / 9, 16 / 9, 1.0, 0.5, 0.2],
-    ids=["lobby", "48:9", "32:9", "16:9", "1:1", "1:2", "1:5"],
+    ("aspect", "text_scale"),
+    [
+        *((a, s) for a in (LOBBY, 48 / 9, 32 / 9, 16 / 9) for s in (0.8, 1.0, 1.5)),
+        (48 / 9, 4.0),  # the largest text scale still fits a wide wall
+        (1.0, 0.8),  # the square exhibit wall at its own text scale
+    ],
 )
-@pytest.mark.parametrize("text_scale", [0.8, 1.0, 1.5])
 def test_the_wall_layout_keeps_every_box_on_screen_and_off_the_map(
     aspect: float, text_scale: float
 ) -> None:
@@ -1301,7 +1303,7 @@ def test_the_wall_layout_keeps_every_box_on_screen_and_off_the_map(
     px, _ = layout.panel_position
     measure = layout.panel_measure_em
     assert measure is not None
-    assert measure <= demo.WALL_PANEL_MEASURE_EM
+    assert demo.WALL_MIN_MEASURE_EM <= measure <= demo.WALL_PANEL_MEASURE_EM
     width = demo.panel_box_width_vh(measure, text_scale) / 100 / aspect
     assert width <= demo.PANEL_WIDTH + 1e-9
     assert px >= demo.WALL_MARGIN - 1e-9
@@ -1433,6 +1435,25 @@ def test_auto_advance_flag_is_checked_before_the_build(
 ) -> None:
     monkeypatch.setattr("sys.argv", ["demo", "--auto-advance", value])
     with pytest.raises(ValueError, match="--auto-advance"):
+        demo.parse_layout_args(True)
+
+
+@pytest.mark.parametrize(
+    ("aspect", "text_scale"),
+    [(1.0, 1.0), (4 / 3, 1.5), (0.5, 0.8), (0.2, 0.8), (16 / 9, 4.0)],
+)
+def test_a_screen_too_narrow_for_a_readable_panel_is_refused(
+    aspect: float, text_scale: float
+) -> None:
+    with pytest.raises(ValueError, match="drop --aspect"):
+        demo.wall_layout(aspect, text_scale)
+
+
+def test_a_too_narrow_aspect_fails_before_the_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("sys.argv", ["demo", "--aspect", "1:2"])
+    with pytest.raises(ValueError, match="drop --aspect"):
         demo.parse_layout_args(True)
 
 

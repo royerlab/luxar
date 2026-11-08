@@ -217,6 +217,21 @@ describe('initAnimationManager', () => {
   });
 });
 
+describe('initAnimationManager slideshow hold', () => {
+  it('passes a late-bound slideshow hold that follows the ctx predicate', () => {
+    let held = false;
+    const ctx = makeCtx({ isSlideshowHeld: () => held });
+    initAnimationManager(ctx);
+
+    const constructor = DimensionAnimationManager as unknown as ReturnType<typeof vi.fn>;
+    const hold = constructor.mock.calls[0][3] as (() => boolean) | undefined;
+    expect(hold).toBeTypeOf('function');
+    expect(hold?.()).toBe(false);
+    held = true;
+    expect(hold?.()).toBe(true);
+  });
+});
+
 describe('initDimensionSliders', () => {
   it('returns early when sceneDimsManager.initFromScene returns false', () => {
     (sceneDimsManager.initFromScene as ReturnType<typeof vi.fn>).mockReturnValue(false);

@@ -359,6 +359,8 @@ describe('captureViewerState — animation block', () => {
   function createMockAnimationManager(states: Array<Record<string, unknown> | null>) {
     return {
       getState: (i: number) => states[i] ?? null,
+      // The Speed menu's effective view; a stub state names it as `view`.
+      getSpeedView: (i: number) => states[i]?.view ?? 'fps',
     } as any;
   }
 
@@ -422,16 +424,16 @@ describe('captureViewerState — animation block', () => {
     expect('step_size' in state.animation![1]).toBe(false);
   });
 
-  it('a rate in the period view is written back as period_s, not target_fps', () => {
+  it('a rate the Speed menu shows as a period is written back as period_s', () => {
     const state = buildState([
       {
         isPlaying: true,
         targetFPS: 1 / 20,
         loopMode: 'loop',
         direction: 'forward',
-        speedView: 'period',
+        view: 'period',
       },
-      { isPlaying: true, targetFPS: 0.5, loopMode: 'loop', direction: 'forward', speedView: null },
+      { isPlaying: true, targetFPS: 0.5, loopMode: 'loop', direction: 'forward', view: 'fps' },
     ]);
     expect(state.animation![0]).toEqual({
       playing: true,
@@ -447,11 +449,11 @@ describe('captureViewerState — animation block', () => {
           targetFPS: 1 / 49,
           loopMode: 'loop',
           direction: 'forward',
-          speedView: 'period',
+          view: 'period',
         },
       ]).animation![0]
     ).toMatchObject({ period_s: 49 });
-    // No explicit view: the shape is unchanged (target_fps), whatever the rate.
+    // Shown in fps: written as target_fps, whatever the rate.
     expect(state.animation![1]).toMatchObject({ target_fps: 0.5 });
     expect('period_s' in state.animation![1]).toBe(false);
   });

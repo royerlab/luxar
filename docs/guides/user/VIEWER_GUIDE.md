@@ -386,11 +386,13 @@ Right-click a dimension's play button for its playback settings. **Speed** reads
 the rate either in `fps` (steps per second) or as a `period` (seconds per step,
 `1s` to `10m`); the toggle in the Speed header switches between the two, and a
 rate below 1 fps opens in the period view. Playback at one step every 2 s or
-slower is a *slideshow*: each step loads at full detail like a manual one, and
-if the step starts a waypoint flight authored with `reveal="on_arrival"` the
-period counts from the landing. Moving a
-playing dimension yourself (slider, keys, a control-panel tile) restarts its
-period, so it never steps away from a view you just chose.
+slower is a *slideshow*: each step loads at full detail like a manual one (on a
+continuous dimension it is also the size of a `]` key press), and if the step
+starts a waypoint flight authored with `reveal="on_arrival"` the period counts
+from the landing. Moving a playing dimension to another position yourself
+(slider, keys, a control-panel tile) restarts its period, so it does not step
+away from a view you just picked. Picking the position it is already at changes
+nothing, so the period keeps running.
 
 ### Fly Mode Movement
 

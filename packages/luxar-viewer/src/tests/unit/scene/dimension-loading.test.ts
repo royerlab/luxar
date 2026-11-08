@@ -235,6 +235,29 @@ describe('scrub pinning (not playing)', () => {
     expect(setValue).toHaveBeenCalledWith(3, 5, { force: true });
   });
 
+  it('a playing SLIDESHOW takes the scrub path: pinned pass, no prefetch, then the settle pass', async () => {
+    // What a slideshow manager reports (dimension-animation-slideshow.test.ts
+    // pins this side): a dimension IS playing, but none is frame-paced.
+    const slideshow = Object.assign(makeIdleAnim(6) as object, {
+      isAnyPlaying: vi.fn(() => true),
+    }) as never;
+    const ctx = makeCtx({ getAnimationManager: () => slideshow });
+
+    await updateAllNDNodes(ctx);
+
+    expect(updateSceneForDimensions).toHaveBeenCalledWith(
+      expect.anything(),
+      dims,
+      expect.anything(),
+      undefined,
+      { frameBudgetMs: undefined, ladderDepth: 6 }
+    );
+    expect(prefetchSceneForDimensions).not.toHaveBeenCalled();
+    expect(releasePrefetchResources).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(SCRUB_SETTLE_MS + 1);
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledWith(3, 5, { force: true });
+  });
+
   it('a settle pass carries no directive (the listener runs while the settle flag is set)', async () => {
     let listener: (() => Promise<void>) | undefined;
     (sceneDimsManager.setDimensionValue as ReturnType<typeof vi.fn>).mockImplementation(() => {

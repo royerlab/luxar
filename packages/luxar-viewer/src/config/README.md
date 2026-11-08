@@ -297,7 +297,7 @@ dimensionAnimation: {
     customMax: 120                    // Maximum custom FPS
   },
   timing: {
-    minFrameTimeMs: 16,               // Minimum frame duration
+    minFrameTimeMs: 8,                // Minimum frame duration (~120 fps cap)
     continuousTraverseSeconds: 10,    // Duration for continuous traverse mode
     slideshowPeriodMs: 2000           // Slower playback is a slideshow (loads like a manual step)
   },

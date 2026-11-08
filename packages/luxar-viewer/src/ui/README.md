@@ -250,7 +250,12 @@ Each dimension slider includes animation controls for automated playback through
 micro-header row over one wrapping row of selectable chips.
 
 - **Speed Section**: Set target animation speed
-  - Presets: 1/2 (one frame every 2 s), 1, 2, 5, 10, 15, 30, 60, 120 FPS
+  - A two-segment `fps | period` toggle in the header picks how the rate reads
+    (`ui/dimension-sliders/speed-choices.ts`); a rate below 1 fps opens in the
+    period view unless a view was chosen or authored
+  - fps presets: 1/2 (one frame every 2 s), 1, 2, 5, 10, 15, 30, 60, 120 FPS
+  - period presets: 1s, 2s, 5s, 10s, 20s, 30s, 1m, 2m, 5m, 10m (seconds per step;
+    2 s or slower plays as a slideshow, see `scene/animation/README.md`)
   - Single-select chips (`role="radio"`) with the current speed marked
 
 - **Loop Mode Section**: Choose loop behavior

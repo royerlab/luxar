@@ -552,6 +552,22 @@ describe('LuxarApp', () => {
       expect(mockSceneManager.init).toHaveBeenCalledTimes(1);
     });
 
+    it('holds slideshow playback while a reveal-on-arrival waypoint flight is in the air', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
+
+      expect(mockInputHandler.setSlideshowHold).toHaveBeenCalledTimes(1);
+      const hold = mockInputHandler.setSlideshowHold.mock.calls[0][0] as () => boolean;
+      // Late-bound: it reads whichever driver the live dataset session holds.
+      const session: { waypointDriver?: unknown; dispose: () => void } = { dispose: vi.fn() };
+      Object.assign(app as unknown as Record<string, unknown>, { session });
+      expect(hold()).toBe(false);
+      session.waypointDriver = { inTransit: true };
+      expect(hold()).toBe(true);
+      session.waypointDriver = { inTransit: false };
+      expect(hold()).toBe(false);
+    });
+
     it('should setup beforeunload dispose handler', async () => {
       mockFetch.mockResolvedValue({ ok: true });
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });

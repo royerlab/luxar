@@ -17,6 +17,13 @@ import { fractionToThumbLeft, fractionToValue, valueToFraction } from './slider-
 import { SPEED_VIEWS, speedChoices } from './dimension-sliders/speed-choices';
 import type { SpeedView } from '../types/animation';
 
+/**
+ * The context menu's section factory (see `showContextMenu`): a header row
+ * (`title`, plus an optional right-aligned `aside` — a muted readout string or
+ * a control element) over one row of chips; returns the chips row.
+ */
+export type ContextSection = (title: string, aside?: string | HTMLElement) => HTMLDivElement;
+
 /** The context menu's chip factory (see `showContextMenu`). */
 export type ContextChip = (
   labelText: string,
@@ -1267,7 +1274,11 @@ export class DimensionSliders {
    * animation manager (`setSpeedView`), which also picks the initial view.
    * Either view sets the same `targetFPS`.
    */
-  private buildSpeedSection(dimIndex: number, chips: HTMLDivElement, makeChip: ContextChip): void {
+  private buildSpeedSection(
+    dimIndex: number,
+    makeSection: ContextSection,
+    makeChip: ContextChip
+  ): void {
     const manager = this.animationManager;
     const currentFPS =
       manager?.getState(dimIndex)?.targetFPS ?? config.dimensionAnimation.defaults.targetFPS;
@@ -1286,18 +1297,14 @@ export class DimensionSliders {
       segment.textContent = label;
       segment.title = tooltip;
       segment.dataset.view = view;
-      segment.addEventListener('click', () => {
-        manager?.setSpeedView(dimIndex, view);
-        render(view);
-      });
       toggle.appendChild(segment);
-      return segment;
+      return { view, segment };
     });
-    chips.previousElementSibling?.appendChild(toggle);
+    const chips = makeSection('Speed', toggle);
 
     const render = (view: SpeedView): void => {
-      for (const segment of segments) {
-        const active = segment.dataset.view === view;
+      for (const { view: segmentView, segment } of segments) {
+        const active = segmentView === view;
         segment.classList.toggle('luxar-dimension-slider__context-unit--active', active);
         segment.setAttribute('aria-pressed', String(active));
       }
@@ -1310,6 +1317,12 @@ export class DimensionSliders {
         )
       );
     };
+    for (const { view, segment } of segments) {
+      segment.addEventListener('click', () => {
+        manager?.setSpeedView(dimIndex, view);
+        render(view);
+      });
+    }
     render(manager?.getSpeedView(dimIndex) ?? 'fps');
   }
 
@@ -1335,7 +1348,7 @@ export class DimensionSliders {
     // "active chip/segment" idiom — instead of a tall radio list. Header
     // TEXT stays exactly 'Speed' / 'Loop Mode' / 'Detail' / 'Step' (E2E-pinned); the
     // uppercase rendering comes from CSS.
-    const makeSection = (title: string, aside?: string): HTMLDivElement => {
+    const makeSection: ContextSection = (title, aside) => {
       const section = document.createElement('div');
       section.className = 'luxar-dimension-slider__context-section';
       const headerRow = document.createElement('div');
@@ -1344,7 +1357,9 @@ export class DimensionSliders {
       header.className = 'luxar-dimension-slider__context-header';
       header.textContent = title;
       headerRow.appendChild(header);
-      if (aside) {
+      if (aside instanceof HTMLElement) {
+        headerRow.appendChild(aside);
+      } else if (aside) {
         const asideEl = document.createElement('span');
         asideEl.className = 'luxar-dimension-slider__context-aside';
         asideEl.textContent = aside;
@@ -1377,7 +1392,7 @@ export class DimensionSliders {
 
     // Speed: the rate as fps or as a period (seconds per step), toggled in the
     // section header — see buildSpeedSection.
-    this.buildSpeedSection(dimIndex, makeSection('Speed'), makeChip);
+    this.buildSpeedSection(dimIndex, makeSection, makeChip);
 
     // Loop Mode: three equal segments.
     const loopChips = makeSection('Loop Mode');

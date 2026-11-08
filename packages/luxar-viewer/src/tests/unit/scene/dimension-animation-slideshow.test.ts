@@ -36,6 +36,7 @@ import { MAX_ANIMATION_PERIOD_S } from '../../../types/zarr';
 
 const STORY = 3; // discrete 0..10, hidden
 const TIME = 4; // discrete 0..3, hidden
+const DEPTH = 5; // continuous 0..100, hidden, no authored step
 
 it('uses the authored animation period bound as its slowest rate', () => {
   expect(config.dimensionAnimation.presets.customMin).toBe(1 / MAX_ANIMATION_PERIOD_S);
@@ -63,6 +64,7 @@ describe('DimensionAnimationManager slideshow playback', () => {
         { name: 'z', range: [0, 50], step: 1, display: true },
         { name: 'story', range: [0, 10], step: 1, display: false, discrete: true },
         { name: 'time', range: [0, 3], step: 1, display: false, discrete: true },
+        { name: 'depth', range: [0, 100], display: false },
       ],
     };
     dims = new SceneDimsManager();
@@ -173,7 +175,38 @@ describe('DimensionAnimationManager slideshow playback', () => {
     expect(value(TIME)).toBe(1);
   });
 
-  it('a held or re-armed slideshow is behind its rate by design: no cadence warning', async () => {
+  it('switching a slideshow to a frame-paced rate measures the new rate from the switch', async () => {
+    const warnings: unknown[] = [];
+    manager.addEventListener('fpsWarning', (e) => warnings.push(e));
+    manager.play(STORY, { targetFPS: 1 / 20 });
+    tick(20_000);
+    await settle();
+    tick(19_000); // a step is 1 s away when the visitor picks 10 fps
+    manager.setTargetFPS(STORY, 10);
+    for (let i = 0; i < 12; i++) {
+      tick(100); // 10 fps achieved, as requested
+      await settle();
+    }
+    expect(value(STORY)).toBeGreaterThan(1);
+    expect(warnings).toEqual([]);
+  });
+
+  it('play() with a faster rate on a playing slideshow takes effect from now', async () => {
+    const warnings: unknown[] = [];
+    manager.addEventListener('fpsWarning', (e) => warnings.push(e));
+    manager.play(STORY, { targetFPS: 1 / 20 });
+    tick(5_000);
+    manager.play(STORY, { targetFPS: 10 }); // e.g. a viewer_config re-apply
+    tick(100);
+    expect(value(STORY)).toBe(1); // not 15 s later, when the old period ran out
+    for (let i = 0; i < 12; i++) {
+      await settle();
+      tick(100);
+    }
+    expect(warnings).toEqual([]);
+  });
+
+  it('a held slideshow is behind its rate by design: no cadence warning', async () => {
     const warnings: unknown[] = [];
     manager.addEventListener('fpsWarning', (e) => warnings.push(e));
     manager.play(STORY, { targetFPS: 1 / 20 });
@@ -197,23 +230,19 @@ describe('DimensionAnimationManager slideshow playback', () => {
     expect(warnings.length).toBeGreaterThan(0);
   });
 
-  it('starts a fresh cadence window when switching a slideshow to frame-paced playback', async () => {
-    const warnings: unknown[] = [];
-    manager.addEventListener('fpsWarning', (e) => warnings.push(e));
-    manager.play(STORY, { targetFPS: 1 / 20 });
-    for (let i = 0; i < 3; i++) {
-      tick(20_000);
-      await settle();
-    }
-    expect(value(STORY)).toBe(3);
-
-    manager.setTargetFPS(STORY, 10);
-    for (let i = 0; i < 5; i++) {
-      tick(100);
-      await settle();
-    }
-    expect(value(STORY)).toBe(8);
-    expect(warnings).toEqual([]);
+  it("a continuous dim's slideshow tick is a manual step, not a range-scaled jump", async () => {
+    // Frame-paced: the range in continuousTraverseSeconds (10 s), so 1 fps is 10 a tick.
+    const start = value(DEPTH);
+    manager.play(DEPTH, { targetFPS: 1 });
+    tick(1_000);
+    expect(value(DEPTH)).toBeCloseTo(start + 10, 9);
+    await settle();
+    // A slideshow tick takes the [ / ] key's step (1% of the range, no authored
+    // step), where the rate-derived increment would be 200 — twice the range.
+    manager.setTargetFPS(DEPTH, 1 / 20);
+    expect(manager.peekNextValue(DEPTH)).toBeCloseTo(start + 11, 9);
+    tick(20_000);
+    expect(value(DEPTH)).toBeCloseTo(start + 11, 9);
   });
 
   it('a slideshow is not under the playback-LOD directives; frame-paced playback is', () => {
