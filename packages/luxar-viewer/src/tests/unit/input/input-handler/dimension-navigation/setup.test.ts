@@ -53,8 +53,8 @@ vi.mock('../../../../../scene/animation/dimension-animation-manager', () => ({
     getFrameBudgetMs: vi.fn(() => null),
     getPlaybackLadderDepth: vi.fn(() => null),
     getScrubLadderDepth: vi.fn(() => null),
-    isAnyPlaying: vi.fn(() => false),
-    getPlayingDimIndices: vi.fn(() => []),
+    isFramePacedPlaying: vi.fn(() => false),
+    getFramePacedDimIndices: vi.fn(() => []),
     peekNextValue: vi.fn(() => null),
   })),
 }));

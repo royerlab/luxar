@@ -17,7 +17,7 @@
  */
 
 import type { ZarrViewerConfig } from '../../../types/zarr';
-import type { AnimationDirection, LoopMode } from '../../../types/animation';
+import type { AnimationDirection, LoopMode, SpeedView } from '../../../types/animation';
 import { config } from '../../../config';
 import { clamp } from '../../../utils/clamp';
 
@@ -50,6 +50,8 @@ export interface ViewerConfigPorts {
       targetFPS?: number;
       loopMode?: LoopMode;
       direction?: AnimationDirection;
+      /** `'period'` when the rate was authored as `period_s`. */
+      speedView?: SpeedView;
       /** Per-tick advance in the dimension's units; omitted means Auto. */
       stepSize?: number;
     }
@@ -150,14 +152,7 @@ export function applyViewerConfigState(
     for (let dim = 0; dim < viewerConfig.animation.length; dim++) {
       const entry = viewerConfig.animation[dim];
       if (!entry || entry.playing !== true) continue;
-      const targetFPS =
-        typeof entry.target_fps === 'number' && Number.isFinite(entry.target_fps)
-          ? clamp(
-              entry.target_fps,
-              config.dimensionAnimation.presets.customMin,
-              config.dimensionAnimation.presets.customMax
-            )
-          : undefined;
+      const { targetFPS, speedView } = authoredRate(entry);
       const loopMode: LoopMode | undefined =
         entry.loop === 'once' || entry.loop === 'loop' || entry.loop === 'bounce'
           ? entry.loop
@@ -168,12 +163,41 @@ export function applyViewerConfigState(
           : undefined;
       ports.startDimensionAnimation(dim, {
         targetFPS,
+        speedView,
         loopMode,
         direction,
         stepSize: entry.step_size,
       });
     }
   }
+}
+
+/**
+ * The playback rate an authored animation entry asks for, clamped to the
+ * viewer's accepted range: `period_s` (seconds per step, which also opens the
+ * Speed control in its period view) wins over `target_fps`. Neither, or a
+ * non-finite / non-positive value, leaves the viewer default (`undefined`) —
+ * the same values Python's `AnimationConfig` refuses to write.
+ */
+function authoredRate(entry: { target_fps?: number; period_s?: number }): {
+  targetFPS: number | undefined;
+  speedView: SpeedView | undefined;
+} {
+  const { customMin, customMax } = config.dimensionAnimation.presets;
+  if (isPositiveFinite(entry.period_s)) {
+    return { targetFPS: clamp(1 / entry.period_s, customMin, customMax), speedView: 'period' };
+  }
+  return {
+    targetFPS: isPositiveFinite(entry.target_fps)
+      ? clamp(entry.target_fps, customMin, customMax)
+      : undefined,
+    speedView: undefined,
+  };
+}
+
+/** A usable rate or period: a finite number above zero (0 is not a rate). */
+function isPositiveFinite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
 /**

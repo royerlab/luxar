@@ -9,6 +9,7 @@ import pytest
 
 from luxar.conftest import viewer_source
 from luxar.core.viewer_config import (
+    MAX_ANIMATION_PERIOD_S,
     MAX_CONTROL_STYLESHEET_CHARS,
     VALID_ENVIRONMENT_SOURCES,
     VALID_FOV_PRESETS,
@@ -331,6 +332,43 @@ class TestAnimationConfig:
         for bad in (0.0, -1.0, float("inf"), float("nan")):
             with pytest.raises(ValueError, match="target_fps must be finite and > 0"):
                 AnimationConfig(target_fps=bad)
+
+    def test_period_s_round_trips_as_its_own_key(self) -> None:
+        """A slow rate is authored as seconds per step and stays one.
+
+        The viewer reads `period_s` as `1 / period_s` fps and opens the Speed
+        control in its period view; capture writes it back the same way.
+        """
+        anim = AnimationConfig(playing=True, period_s=20.0, loop="loop")
+        d = anim.to_dict()
+        assert d == {"playing": True, "period_s": 20.0, "loop": "loop"}
+        assert AnimationConfig.from_dict(d).period_s == 20.0
+        assert "period_s" not in AnimationConfig(playing=True).to_dict()
+
+    def test_period_s_and_target_fps_are_exclusive(self) -> None:
+        with pytest.raises(ValueError, match="target_fps OR period_s"):
+            AnimationConfig(target_fps=1.0, period_s=1.0)
+
+    def test_invalid_period_s(self) -> None:
+        # Up to one step an hour: the viewer's slowest accepted rate.
+        AnimationConfig(period_s=MAX_ANIMATION_PERIOD_S)
+        for bad in (0.0, -1.0, MAX_ANIMATION_PERIOD_S + 1, float("inf"), float("nan")):
+            with pytest.raises(ValueError, match="period_s must be in"):
+                AnimationConfig(period_s=bad)
+
+    def test_max_period_matches_the_viewer_floor(self) -> None:
+        """Python's longest period is the viewer's slowest rate, `1 / customMin`.
+
+        If they drift, a period Python accepts would be silently clamped to a
+        faster rate on load (or Python would refuse one the viewer plays).
+        """
+        source = viewer_source("src/config/sections/dimension-animation/data.ts")
+        match = re.search(
+            r"customMin:\s*1\s*/\s*(\d+(?:\.\d+)?)\s*,",
+            source.read_text(encoding="utf-8"),
+        )
+        assert match is not None, "cannot find presets.customMin = 1 / N in data.ts"
+        assert float(match.group(1)) == MAX_ANIMATION_PERIOD_S
 
     def test_invalid_loop(self) -> None:
         with pytest.raises(ValueError, match="loop must be one of"):

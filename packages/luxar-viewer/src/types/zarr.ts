@@ -359,6 +359,11 @@ export interface ZarrViewerConfig {
   animation?: Array<{
     playing?: boolean;
     target_fps?: number;
+    /**
+     * The rate as seconds per step (the period view); takes precedence over
+     * `target_fps` and opens the Speed control in its period view.
+     */
+    period_s?: number;
     loop?: string;
     direction?: string;
     /** Per-dimension step override (absent = Auto). */

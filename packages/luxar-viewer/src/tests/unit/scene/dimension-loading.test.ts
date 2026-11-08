@@ -95,8 +95,8 @@ describe('updateAllNDNodes', () => {
         getFrameBudgetMs: vi.fn(() => 60),
         getPlaybackLadderDepth: vi.fn(() => null),
         getScrubLadderDepth: vi.fn(() => null),
-        isAnyPlaying: vi.fn(() => true),
-        getPlayingDimIndices: vi.fn(() => [3]),
+        isFramePacedPlaying: vi.fn(() => true),
+        getFramePacedDimIndices: vi.fn(() => [3]),
         peekNextValue: vi.fn(() => 6),
         ...overrides,
       } as never;
@@ -154,7 +154,7 @@ describe('updateAllNDNodes', () => {
 
     it('not playing: releases prefetch resources and does not prefetch', async () => {
       const animationManager = makePlayingAnim({
-        isAnyPlaying: vi.fn(() => false),
+        isFramePacedPlaying: vi.fn(() => false),
         getFrameBudgetMs: vi.fn(() => null),
       });
       const ctx = makeCtx({ getAnimationManager: () => animationManager });
@@ -194,8 +194,8 @@ describe('scrub pinning (not playing)', () => {
       getFrameBudgetMs: vi.fn(() => null),
       getPlaybackLadderDepth: vi.fn(() => null),
       getScrubLadderDepth: vi.fn(() => scrubDepth),
-      isAnyPlaying: vi.fn(() => false),
-      getPlayingDimIndices: vi.fn(() => []),
+      isFramePacedPlaying: vi.fn(() => false),
+      getFramePacedDimIndices: vi.fn(() => []),
       peekNextValue: vi.fn(() => null),
     } as never;
   }

@@ -351,6 +351,9 @@ export class LuxarApp {
       // cached pick buffer. `this.pickingSystem` is (re)assigned per dataset load,
       // so read it lazily rather than capturing.
       this.layersPanel?.setPickBufferInvalidator(() => this.pickingSystem?.markDirty());
+      // Slideshow playback (a slow period on a story dimension) rests for its
+      // period AFTER a waypoint flight lands, like the reveal-gated captions.
+      this.inputHandler.setSlideshowHold(() => this.isWaypointInTransit());
 
       // Dataset routing: subsystems are wired up, fields are assigned —
       // the orchestrator delegates can now safely read `this.*`.
@@ -814,6 +817,7 @@ export class LuxarApp {
           targetFPS: options.targetFPS,
           loopMode: options.loopMode,
           direction: options.direction,
+          speedView: options.speedView,
         });
         // Keep the playback options together, then apply the independent step
         // override. `setStepSize` validates the value itself and rejects a
@@ -892,7 +896,16 @@ export class LuxarApp {
     // Story captions wait for the camera when a waypoint asks for it: the gate
     // reads the LIVE driver, so it holds whichever scene's waypoints are
     // installed, before or after the overlays themselves were created.
-    this.overlayManager.setTransitGate(() => this.session.waypointDriver?.inTransit === true);
+    this.overlayManager.setTransitGate(() => this.isWaypointInTransit());
+  }
+
+  /**
+   * Whether a waypoint flight that asks for an arrival reveal is in the air.
+   * Reads the LIVE driver, so it follows whichever scene's waypoints are
+   * installed. Gates the story captions and holds slideshow playback.
+   */
+  private isWaypointInTransit(): boolean {
+    return this.session.waypointDriver?.inTransit === true;
   }
 
   /**

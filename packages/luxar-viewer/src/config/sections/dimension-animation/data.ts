@@ -13,7 +13,13 @@ export const dimensionAnimationConfig: DimensionAnimationConfig = {
   },
   presets: {
     fps: [0.5, 1, 2, 5, 10, 15, 30, 60, 120],
-    customMin: 0.1,
+    // The same rate read as SECONDS PER STEP (the Speed section's period view):
+    // slow cadences — a kiosk tour advancing every 20 s, a time-lapse stepping
+    // once a minute — are named by their period, not by a tiny fps.
+    periodSeconds: [1, 2, 5, 10, 20, 30, 60, 120, 300, 600],
+    // One step an hour: the floor has to sit below the longest period preset,
+    // or an authored 20 s period (target_fps 0.05) would be clamped to 10 s.
+    customMin: 1 / 3600,
     customMax: 120,
     stepMultipliers: [0.1, 0.25, 0.5, 1, 2, 5],
     ladderDepths: [1, 2, 3, 4, 6, 8],
@@ -21,6 +27,9 @@ export const dimensionAnimationConfig: DimensionAnimationConfig = {
   timing: {
     minFrameTimeMs: 8, // ~120fps absolute max (needs a ≥120 Hz display to be reached)
     continuousTraverseSeconds: 10, // Full range in 10s for continuous dims
+    // Playback slower than this is a SLIDESHOW: each tick loads like a manual
+    // step (full refinement) instead of under frame-paced playback directives.
+    slideshowPeriodMs: 2000,
   },
   ui: {
     showFPSFeedback: true, // Log playback cadence/committed-quality feedback

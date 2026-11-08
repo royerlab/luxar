@@ -14,6 +14,16 @@ import { EventGroup } from '../utils/cross-layer/event-group';
 import { attachLongPress } from '../utils/long-press';
 import { clampWithCyclicWrap, clampInteger } from './dimension-sliders/slider-math';
 import { fractionToThumbLeft, fractionToValue, valueToFraction } from './slider-kit';
+import { SPEED_VIEWS, speedChoices } from './dimension-sliders/speed-choices';
+import type { SpeedView } from '../types/animation';
+
+/** The context menu's chip factory (see `showContextMenu`). */
+export type ContextChip = (
+  labelText: string,
+  selected: boolean,
+  onPick: () => void,
+  opts?: { tooltip?: string; mono?: boolean; grow?: boolean }
+) => HTMLButtonElement;
 
 function placeContextMenuVertically(
   menuHeight: number,
@@ -1249,6 +1259,61 @@ export class DimensionSliders {
   }
 
   /**
+   * The context menu's Speed section: one row of rate chips, read either as
+   * steps per second (`fps`: the fps presets; sub-1 rates as fractions, `1/2`)
+   * or as seconds per step (`period`: `1s` … `10m`, for slideshows and slow
+   * time-lapses). A two-segment toggle in the header switches the view in
+   * place without closing the menu; the choice is kept per dimension by the
+   * animation manager (`setSpeedView`), which also picks the initial view.
+   * Either view sets the same `targetFPS`.
+   */
+  private buildSpeedSection(dimIndex: number, chips: HTMLDivElement, makeChip: ContextChip): void {
+    const manager = this.animationManager;
+    const currentFPS =
+      manager?.getState(dimIndex)?.targetFPS ?? config.dimensionAnimation.defaults.targetFPS;
+    const pick = (fps: number): void => {
+      manager?.setTargetFPS(dimIndex, fps);
+      this.closeContextMenu();
+    };
+    const toggle = document.createElement('div');
+    toggle.className = 'luxar-dimension-slider__context-unit-toggle';
+    toggle.setAttribute('role', 'group');
+    toggle.setAttribute('aria-label', 'Speed unit');
+    const segments = SPEED_VIEWS.map(({ view, label, tooltip }) => {
+      const segment = document.createElement('button');
+      segment.type = 'button';
+      segment.className = 'luxar-dimension-slider__context-unit';
+      segment.textContent = label;
+      segment.title = tooltip;
+      segment.dataset.view = view;
+      segment.addEventListener('click', () => {
+        manager?.setSpeedView(dimIndex, view);
+        render(view);
+      });
+      toggle.appendChild(segment);
+      return segment;
+    });
+    chips.previousElementSibling?.appendChild(toggle);
+
+    const render = (view: SpeedView): void => {
+      for (const segment of segments) {
+        const active = segment.dataset.view === view;
+        segment.classList.toggle('luxar-dimension-slider__context-unit--active', active);
+        segment.setAttribute('aria-pressed', String(active));
+      }
+      chips.replaceChildren(
+        ...speedChoices(view).map((choice) =>
+          makeChip(choice.label, choice.matches(currentFPS), () => pick(choice.fps), {
+            tooltip: choice.tooltip,
+            mono: true,
+          })
+        )
+      );
+    };
+    render(manager?.getSpeedView(dimIndex) ?? 'fps');
+  }
+
+  /**
    * Show context menu for animation settings (Napari-style)
    * @private
    */
@@ -1258,7 +1323,6 @@ export class DimensionSliders {
 
     // Get current animation state
     const state = this.animationManager?.getState(dimIndex);
-    const currentFPS = state?.targetFPS ?? config.dimensionAnimation.defaults.targetFPS;
     const currentLoopMode = state?.loopMode ?? config.dimensionAnimation.defaults.loop;
 
     // Create context menu
@@ -1296,12 +1360,7 @@ export class DimensionSliders {
       return chips;
     };
 
-    const makeChip = (
-      labelText: string,
-      selected: boolean,
-      onPick: () => void,
-      opts?: { tooltip?: string; mono?: boolean; grow?: boolean }
-    ): HTMLButtonElement => {
+    const makeChip: ContextChip = (labelText, selected, onPick, opts) => {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'luxar-dimension-slider__context-item';
@@ -1316,27 +1375,9 @@ export class DimensionSliders {
       return chip;
     };
 
-    // Speed: FPS presets as mono numeral chips; the unit rides the header
-    // as a muted aside so the chips don't each repeat 'FPS'. Sub-1 rates
-    // read as fractions ('1/2', one frame every 2 s), not decimals.
-    const speedChips = makeSection('Speed', 'fps');
-    config.dimensionAnimation.presets.fps.forEach((fps) => {
-      const label = fps >= 1 ? String(fps) : `1/${Math.round(1 / fps)}`;
-      const tooltip = fps >= 1 ? `${fps} FPS` : `1 frame every ${Math.round(1 / fps)} s`;
-      speedChips.appendChild(
-        makeChip(
-          label,
-          fps === currentFPS,
-          () => {
-            if (this.animationManager) {
-              this.animationManager.setTargetFPS(dimIndex, fps);
-              this.closeContextMenu();
-            }
-          },
-          { tooltip, mono: true }
-        )
-      );
-    });
+    // Speed: the rate as fps or as a period (seconds per step), toggled in the
+    // section header — see buildSpeedSection.
+    this.buildSpeedSection(dimIndex, makeSection('Speed'), makeChip);
 
     // Loop Mode: three equal segments.
     const loopChips = makeSection('Loop Mode');

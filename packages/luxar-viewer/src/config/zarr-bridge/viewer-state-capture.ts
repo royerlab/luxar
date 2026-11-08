@@ -117,7 +117,11 @@ export function captureViewerState(
         hasAnyState = true;
         animEntries.push({
           playing: state.isPlaying,
-          target_fps: state.targetFPS,
+          // A rate chosen or authored in the period view is written back as
+          // one, so the scene reopens in the same view at the same rate.
+          ...(state.speedView === 'period'
+            ? { period_s: periodSeconds(state.targetFPS) }
+            : { target_fps: state.targetFPS }),
           loop: state.loopMode,
           direction: state.direction,
           // Conditional: Auto (null) stays absent, keeping the exported
@@ -135,4 +139,13 @@ export function captureViewerState(
   }
 
   return result;
+}
+
+/**
+ * A rate as seconds per step, rounded to 12 significant digits so an authored
+ * period survives the fps round trip as written (`1 / (1 / 49)` is
+ * 48.99999999999999 in floating point).
+ */
+function periodSeconds(fps: number): number {
+  return Number((1 / fps).toPrecision(12));
 }

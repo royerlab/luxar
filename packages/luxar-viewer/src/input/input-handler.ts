@@ -126,6 +126,7 @@ export class InputHandler {
 
   /** Optional reference to recording panel */
   private recordingPanel?: RecordingPanelHandle;
+  private slideshowHold?: () => boolean;
 
   /** Optional reference to layers panel */
   private layersPanel?: LayersPanelHandle;
@@ -281,6 +282,15 @@ export class InputHandler {
   setRecordingPanel(panel: RecordingPanelHandle): void {
     this.recordingPanel = panel;
     this.panelCoordinator.setRecordingPanel(panel);
+  }
+
+  /**
+   * Hold slideshow playback while `hold()` is true (see the animation
+   * manager's `holdSlideshow`). Late-bound: read on every frame by whichever
+   * animation manager the current scene built, before or after this call.
+   */
+  setSlideshowHold(hold: () => boolean): void {
+    this.slideshowHold = hold;
   }
 
   /**
@@ -452,6 +462,7 @@ export class InputHandler {
       dimensionSlidersFactory: this.dimensionSlidersFactory,
       panelCoordinator: this.panelCoordinator,
       recordingPanel: this.recordingPanel,
+      isSlideshowHeld: () => this.slideshowHold?.() === true,
       getSelectedDimension: () => this.selectedDimension,
       setSelectedDimension: (value) => {
         this.selectedDimension = value;

@@ -382,6 +382,16 @@ field types an `o` instead of closing it.
 | Shift + Up | Increase animation speed |
 | Shift + Down | Decrease animation speed |
 
+Right-click a dimension's play button for its playback settings. **Speed** reads
+the rate either in `fps` (steps per second) or as a `period` (seconds per step,
+`1s` to `10m`); the toggle in the Speed header switches between the two, and a
+rate below 1 fps opens in the period view. Playback at one step every 2 s or
+slower is a *slideshow*: each step loads at full detail like a manual one, and
+if the step starts a waypoint flight authored with `reveal="on_arrival"` the
+period counts from the landing. Moving a
+playing dimension yourself (slider, keys, a control-panel tile) restarts its
+period, so it never steps away from a view you just chose.
+
 ### Fly Mode Movement
 
 | Key | Action |
@@ -762,7 +772,7 @@ the preset; waypoint cameras ignore it. `?viewAxis=` overrides it per session.
 | Fly controls | `fly_movement_speed`, `fly_rotation_speed`, `fly_inertial_mode`, `fly_damping` |
 | UI visibility | `ui.show_help`, `ui.show_rendering_controls`, `ui.show_dimensions`, `ui.show_performance_monitor`, `ui.show_scale_bar`, `ui.show_layers` |
 | Dimensions | `dimensions.current_step`, `dimensions.selected_dimension` |
-| Animation | `animation` (per-dimension: `playing`, `target_fps`, `loop`, `direction`, `step_size`) — a scene with `playing: true` on a dimension starts that dimension animating on load, from wherever `dimensions.current_step` put it |
+| Animation | `animation` (per-dimension: `playing`, `target_fps` or `period_s` (seconds per step, for slow playback such as a kiosk tour's auto-advance), `loop`, `direction`, `step_size`) — a scene with `playing: true` on a dimension starts that dimension animating on load, from wherever `dimensions.current_step` put it |
 | Story waypoints | `waypoints` (list of `Waypoint`: `when`, `camera`, `duration_ms`, `easing`, `reveal`, `rendering`) — camera poses bound to hidden-dimension positions; see below |
 
 Set `allow_high_dpr=True` if your scene is **line-dominated** — a river network,

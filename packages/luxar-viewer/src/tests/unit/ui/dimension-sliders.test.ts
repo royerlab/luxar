@@ -660,6 +660,8 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
       setLadderDepth: vi.fn(),
       setStepSize: vi.fn(),
       setTargetFPS: vi.fn(),
+      getSpeedView: vi.fn((): 'fps' | 'period' => 'fps'),
+      setSpeedView: vi.fn(),
       setLoopMode: vi.fn(),
       play: vi.fn(),
       pause: vi.fn(),
@@ -910,6 +912,63 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     // Picking the fraction chip routes the REAL 0.5 to the manager.
     half.click();
     expect(stub.setTargetFPS).toHaveBeenCalledWith(3, 0.5);
+    sliders.dispose();
+  });
+
+  it('speed unit toggle: period view offers seconds/minutes and sets 1/period', () => {
+    const sliders = buildSliders();
+    const stub = makeAnimationManagerStub();
+    sliders.setAnimationManager(stub as never);
+    document
+      .querySelector('.luxar-dimension-slider__play-btn')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    const chipLabels = (): string[] =>
+      Array.from(
+        document.querySelectorAll('[role="radiogroup"][aria-label="Speed"] button'),
+        (c) => c.textContent ?? ''
+      );
+    const segment = (view: string): HTMLButtonElement =>
+      document.querySelector(`.luxar-dimension-slider__context-unit[data-view="${view}"]`)!;
+
+    // Opens in the manager's view (fps), header text still exactly 'Speed'.
+    expect(chipLabels()).toContain('10');
+    expect(segment('fps').getAttribute('aria-pressed')).toBe('true');
+    expect(segment('period').getAttribute('aria-pressed')).toBe('false');
+
+    // Toggling re-renders in place (menu stays open) and records the choice.
+    segment('period').click();
+    expect(stub.setSpeedView).toHaveBeenCalledWith(3, 'period');
+    expect(document.querySelector('.luxar-dimension-slider__context-menu')).not.toBeNull();
+    expect(segment('period').getAttribute('aria-pressed')).toBe('true');
+    expect(chipLabels()).toEqual(['1s', '2s', '5s', '10s', '20s', '30s', '1m', '2m', '5m', '10m']);
+
+    const twenty = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('[role="radiogroup"][aria-label="Speed"] button')
+    ).find((c) => c.textContent === '20s')!;
+    expect(twenty.title).toBe('1 step every 20 s');
+    twenty.click();
+    expect(stub.setTargetFPS).toHaveBeenCalledWith(3, 1 / 20);
+    sliders.dispose();
+  });
+
+  it('speed unit toggle: opens in period view and checks the playing period', () => {
+    const sliders = buildSliders();
+    const stub = makeAnimationManagerStub();
+    stub.getSpeedView = vi.fn(() => 'period' as const);
+    stub.getState = vi.fn(() => ({ targetFPS: 1 / 20 }) as never);
+    sliders.setAnimationManager(stub as never);
+    document
+      .querySelector('.luxar-dimension-slider__play-btn')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    const checked = Array.from(
+      document.querySelectorAll(
+        '[role="radiogroup"][aria-label="Speed"] button[aria-checked="true"]'
+      ),
+      (c) => c.textContent
+    );
+    expect(checked).toEqual(['20s']);
     sliders.dispose();
   });
 

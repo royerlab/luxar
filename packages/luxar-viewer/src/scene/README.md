@@ -423,8 +423,8 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    whichever units step 4's `selector` names) is satisfied by that
    metric, with 10% asymmetric, spacing-aware hysteresis on the
    downgrade direction to suppress threshold-edge flicker
-   (`pickChildWithHysteresis`). **During playback**
-   (`getPlaybackPeriodMs` non-null) that pick is capped at the finest
+   (`pickChildWithHysteresis`). **During frame-paced playback**
+   (`getPlaybackPeriodMs` non-null; a slideshow does not count) that pick is capped at the finest
    level whose measured load+commit time (`LODGroupChild.loadEwmaMs`, an
    EWMA of fire → the load settling (`onLoadSettled`), so idle frames in a hidden
    tab are not counted) is at most 0.8 × the period to be admitted, and at
@@ -1345,9 +1345,10 @@ _For implementation details, see the source files in this directory._
   and lazy-Proxy singleton `sceneDimsManager`).
 - `dimension-loading.ts` — Applies the current scene-dimension selection,
   propagates the animation frame budget and the pinned playback ladder depth
-  (`getPlaybackLadderDepth` while playing, `getScrubLadderDepth` for a slice
-  change while paused, the "Detail" setting), warms the projected next slice
-  during playback with the same directives, schedules the unpinned settle pass
+  (`getPlaybackLadderDepth` during frame-paced playback, `getScrubLadderDepth`
+  for any other slice change — paused, or a slideshow step — the "Detail"
+  setting), warms the projected next slice during frame-paced playback with the
+  same directives, schedules the unpinned settle pass
   after a pinned scrub, and releases shadow-loader resources after playback stops.
 - `lod-group-registry.ts` — `LODGroupRegistry`: per-frame `lod_group`
   child selector (pick on the group's screen-area or legacy diagonal

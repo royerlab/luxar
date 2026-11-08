@@ -382,6 +382,50 @@ describe('applyViewerConfigState', () => {
       });
     });
 
+    it('a period_s rate starts playback at 1/period in the period view', () => {
+      applyViewerConfigState(
+        { animation: [{ playing: true, period_s: 20, loop: 'loop' }] },
+        asPorts(ports)
+      );
+      expect(ports.startDimensionAnimation).toHaveBeenCalledWith(
+        0,
+        expect.objectContaining({ targetFPS: 1 / 20, speedView: 'period', loopMode: 'loop' })
+      );
+    });
+
+    it('period_s wins over target_fps; a period past the floor is clamped to it', () => {
+      applyViewerConfigState(
+        {
+          animation: [
+            { playing: true, period_s: 5, target_fps: 30 },
+            { playing: true, period_s: 1e9 },
+          ],
+        },
+        asPorts(ports)
+      );
+      expect(ports.startDimensionAnimation).toHaveBeenNthCalledWith(
+        1,
+        0,
+        expect.objectContaining({ targetFPS: 1 / 5, speedView: 'period' })
+      );
+      expect(ports.startDimensionAnimation).toHaveBeenNthCalledWith(
+        2,
+        1,
+        expect.objectContaining({ targetFPS: 1 / 3600 })
+      );
+    });
+
+    it('an unusable period_s falls back to target_fps', () => {
+      applyViewerConfigState(
+        { animation: [{ playing: true, period_s: 0, target_fps: 12 }] },
+        asPorts(ports)
+      );
+      expect(ports.startDimensionAnimation).toHaveBeenCalledWith(
+        0,
+        expect.objectContaining({ targetFPS: 12, speedView: undefined })
+      );
+    });
+
     it('forwards a per-dimension step override', () => {
       applyViewerConfigState(
         { animation: [{}, { playing: true, step_size: 2.5 }] },
@@ -404,8 +448,9 @@ describe('applyViewerConfigState', () => {
 
       applyViewerConfigState(config, asPorts(ports));
 
+      // 0 is not a rate: the viewer default applies (Python refuses to write it).
       expect(ports.startDimensionAnimation).toHaveBeenNthCalledWith(1, 0, {
-        targetFPS: 0.1,
+        targetFPS: undefined,
         loopMode: undefined,
         direction: undefined,
         stepSize: undefined,

@@ -80,6 +80,9 @@ VALID_FOV_PRESETS = (
 VALID_THEMES = ("dark", "light", "frosted-glass", "liquid-glass")
 VALID_LOOP_MODES = ("once", "loop", "bounce")
 VALID_DIRECTIONS = ("forward", "backward")
+#: Longest `AnimationConfig.period_s`: one step an hour, the viewer's slowest
+#: accepted rate (`dimensionAnimation.presets.customMin` = 1/3600 fps).
+MAX_ANIMATION_PERIOD_S = 3600.0
 # Where the scene environment that lights `material="physical"` meshes comes
 # from (MESH_PHYSICAL_MATERIALS_SPEC.md §3.3). "room" is three's procedural
 # RoomEnvironment (the default); "scene" is an exact cube capture of the scene
@@ -492,6 +495,17 @@ class AnimationConfig:
     Attributes:
         playing: Whether animation is playing.
         target_fps: Target frames per second.
+        period_s: The same rate given as SECONDS PER STEP, the natural unit for
+            a slow playback: a kiosk tour that moves to the next story every
+            20 s, a time-lapse that steps once a minute. Mutually exclusive
+            with ``target_fps``; it also opens the dimension's Speed control in
+            its period view. A period of 2 s or longer (the viewer's
+            ``dimensionAnimation.timing.slideshowPeriodMs``) plays as a
+            SLIDESHOW: each step loads like a manual one (refining to full
+            detail); when the step starts a waypoint flight with
+            ``reveal="on_arrival"``, the period counts from the landing, so it
+            is how long the view rests; and moving the dimension by hand
+            restarts the period.
         loop: Loop mode ('once', 'loop', 'bounce').
         direction: Playback direction ('forward', 'backward').
         step_size: How far one animation tick advances the dimension, in the
@@ -502,6 +516,7 @@ class AnimationConfig:
 
     playing: Optional[bool] = None
     target_fps: Optional[float] = None
+    period_s: Optional[float] = None
     loop: Optional[str] = None
     direction: Optional[str] = None
     # Present because the VIEWER already writes it. Ctrl+Shift+S captures a
@@ -527,6 +542,19 @@ class AnimationConfig:
             raise ValueError(
                 f"target_fps must be finite and > 0, got {self.target_fps}"
             )
+        if self.period_s is not None:
+            if self.target_fps is not None:
+                raise ValueError(
+                    "give the playback rate as target_fps OR period_s, not both"
+                )
+            # The viewer's slowest accepted rate is one step an hour.
+            if not math.isfinite(self.period_s) or not (
+                0 < self.period_s <= MAX_ANIMATION_PERIOD_S
+            ):
+                raise ValueError(
+                    f"period_s must be in (0, {MAX_ANIMATION_PERIOD_S:g}] seconds, "
+                    f"got {self.period_s}"
+                )
         # Matches the viewer's own guard in `setStepSize`.
         if self.step_size is not None and (
             not math.isfinite(self.step_size) or self.step_size <= 0
@@ -536,7 +564,14 @@ class AnimationConfig:
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary, omitting None fields."""
         result: Dict[str, Any] = {}
-        for field_name in ("playing", "target_fps", "loop", "direction", "step_size"):
+        for field_name in (
+            "playing",
+            "target_fps",
+            "period_s",
+            "loop",
+            "direction",
+            "step_size",
+        ):
             value = getattr(self, field_name)
             if value is not None:
                 result[field_name] = value
@@ -548,6 +583,7 @@ class AnimationConfig:
         return cls(
             playing=data.get("playing"),
             target_fps=data.get("target_fps"),
+            period_s=data.get("period_s"),
             loop=data.get("loop"),
             direction=data.get("direction"),
             step_size=data.get("step_size"),
