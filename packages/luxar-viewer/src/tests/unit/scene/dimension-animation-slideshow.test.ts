@@ -102,6 +102,15 @@ describe('DimensionAnimationManager slideshow playback', () => {
     expect(value(STORY)).toBe(2);
   });
 
+  it('pausing a slideshow does not force a reload of its refined step', () => {
+    manager.play(STORY, { targetFPS: 1 / 20 });
+    tick(20_000);
+    const setValue = vi.spyOn(dims, 'setDimensionValue');
+    expect(manager.pause(STORY)).toBe(true);
+    expect(value(STORY)).toBe(1);
+    expect(setValue).not.toHaveBeenCalled();
+  });
+
   it('an outside move re-arms the clock: the next step is a full period after it', () => {
     manager.play(STORY, { targetFPS: 1 / 20 });
     tick(19_000);
@@ -181,6 +190,25 @@ describe('DimensionAnimationManager slideshow playback', () => {
       await settle();
     }
     expect(warnings.length).toBeGreaterThan(0);
+  });
+
+  it('starts a fresh cadence window when switching a slideshow to frame-paced playback', async () => {
+    const warnings: unknown[] = [];
+    manager.addEventListener('fpsWarning', (e) => warnings.push(e));
+    manager.play(STORY, { targetFPS: 1 / 20 });
+    for (let i = 0; i < 3; i++) {
+      tick(20_000);
+      await settle();
+    }
+    expect(value(STORY)).toBe(3);
+
+    manager.setTargetFPS(STORY, 10);
+    for (let i = 0; i < 5; i++) {
+      tick(100);
+      await settle();
+    }
+    expect(value(STORY)).toBe(8);
+    expect(warnings).toEqual([]);
   });
 
   it('a slideshow is not under the playback-LOD directives; frame-paced playback is', () => {

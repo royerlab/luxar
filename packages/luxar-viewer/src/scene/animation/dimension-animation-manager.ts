@@ -703,6 +703,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
       return false;
     }
 
+    const wasFramePaced = this.isFramePaced(state);
     state.isPlaying = false;
     // The callback is `continuous`: left registered it would hold the render
     // loop awake forever after the first play (#2944 A1). play() re-arms it.
@@ -719,7 +720,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     // lets the loaders resume from their prefix and refinement completes the
     // ladder. Suppressed during dispose (torn-down scene). Force the refresh
     // because the current slice position has not changed.
-    if (!this._disposing && this.getFrameBudgetMs() === null) {
+    if (wasFramePaced && !this._disposing && this.getFrameBudgetMs() === null) {
       const dims = this.sceneDimsManager.getDims();
       if (dims && dimIndex < dims.ndim) {
         this.sceneDimsManager.setDimensionValue(dimIndex, dims.currentStep[dimIndex], {
@@ -897,6 +898,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
       this.animationStates.set(dimIndex, state);
     }
 
+    const wasFramePaced = this.isFramePaced(state);
     // Clamp to valid range
     const { customMin, customMax } = config.dimensionAnimation.presets;
     state.targetFPS = clamp(fps, customMin, customMax);
@@ -904,6 +906,10 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     // longer period has run out.
     if (state.isPlaying) {
       state.nextDue = Math.min(state.nextDue, performance.now() + this.tickPeriodMs(state));
+      if (!wasFramePaced && this.isFramePaced(state)) {
+        state.frameCount = 0;
+        state.lastFPSMeasurementTime = performance.now();
+      }
     }
 
     this.dispatchEvent({ type: 'speedChange', dimIndex, fps: state.targetFPS });
