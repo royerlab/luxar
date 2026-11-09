@@ -872,7 +872,11 @@ def _pdf_document(
             f"/Encoding /WinAnsiEncoding >>".encode("ascii")
             for name in _FONT_KEYS
         ),
-        b"<< /Title " + _pdf_string(title) + b" /Producer (Luxar serve.py) >>",
+        # A text string in the Info dictionary is PDFDocEncoding or UTF-16BE,
+        # not the page fonts' WinAnsi: UTF-16BE with a BOM keeps any title readable.
+        b"<< /Title <"
+        + ("\ufeff" + title).encode("utf-16-be").hex().upper().encode("ascii")
+        + b"> /Producer (Luxar) >>",
     ]
     out = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
     offsets = []

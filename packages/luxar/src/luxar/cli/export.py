@@ -17,6 +17,7 @@ Usage::
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import stat
@@ -434,10 +435,11 @@ def _saved_control_token(output: Path) -> bytes | None:
 
 
 def _restore_control_token(output: Path, token: bytes) -> None:
-    """Put a kept control token back, readable by its owner only."""
+    """Put a kept control token back, created readable by its owner only."""
     path = output / CONTROL_TOKEN_FILE
-    path.write_bytes(token)
-    path.chmod(0o600)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(token)
     aprint(f"Kept the control token from the previous export ({CONTROL_TOKEN_FILE})")
 
 
@@ -474,8 +476,9 @@ both carrying a control token it generated and saved in control-token.txt.
 
     a. On the big screen: `python3 serve.py --chrome` opens the display in
        Chrome, full screen, and prints a "Display check" once it has loaded --
-       OK for WebGPU on the GPU, a WARNING for WebGL, a software GPU or a
-       window short of the screen. (Or open the Display URL yourself.)
+       OK for WebGPU on the GPU, a WARNING for WebGL or a software GPU, a
+       NOTE for a window short of the screen, an ERROR if the display failed
+       to start. (Or open the Display URL yourself.)
     b. Scan the QR with the tablet, or type the Control panel URL.
        The tablet and this machine must be on the SAME network.
     c. The tablet should show {stops} tiles, each naming a stop.
@@ -804,8 +807,8 @@ Options
     python3 serve.py --text-scale 0.8   Smaller on-screen text, same layout
     python3 serve.py --chrome           Open the display in Chrome, full screen,
                                         with WebGPU, and check what it got
-    python3 serve.py --auto-advance 30  Tour rests 30 s per stop (0 = no tour),
-                                        whatever the scene was built with
+    python3 serve.py --auto-advance 30  Tour rests 30 s per stop (0 = no auto-
+                                        advance), whatever the scene was built with
 
 If the port is busy the script picks the next free one and prints what it
 chose -- except with the control relay on, where the panel URL and its QR name

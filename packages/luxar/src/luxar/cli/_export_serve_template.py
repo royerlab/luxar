@@ -672,6 +672,43 @@ def parse_byte_range(spec: str, size: int) -> tuple[int, int] | None:
     return (start, min(end, size - 1))
 
 
+class DisplayReportSlot:
+    """The one display report ``--chrome`` expects, keyed by a nonce.
+
+    The page ``serve.py`` opened carries the nonce in its URL and echoes it in
+    the report, so a report from anyone else on the network -- or from a web
+    page firing a cross-site POST -- is refused, and the first good one claims
+    the slot under a lock, so two at once cannot both be printed.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._nonce: str | None = None
+
+    def expect(self) -> str:
+        """Open the slot; returns the nonce the page must echo."""
+        with self._lock:
+            self._nonce = secrets.token_urlsafe(16)
+            return self._nonce
+
+    def pending(self) -> bool:
+        """Whether a report is still awaited."""
+        with self._lock:
+            return self._nonce is not None
+
+    def claim(self, nonce: object) -> bool:
+        """Close the slot if ``nonce`` is the awaited one; True exactly once."""
+        with self._lock:
+            if self._nonce is None or not isinstance(nonce, str):
+                return False
+            if not hmac.compare_digest(
+                nonce.encode("utf-8"), self._nonce.encode("utf-8")
+            ):
+                return False
+            self._nonce = None
+            return True
+
+
 class ControlServer(http.server.ThreadingHTTPServer):
     """A threaded server, optionally hosting the control relay.
 
@@ -707,9 +744,8 @@ class ControlServer(http.server.ThreadingHTTPServer):
         self.text_scale: float | None = None
         #: ``--auto-advance``, carried into the ``/`` redirect too.
         self.playback_period: float | None = None
-        #: Set while ``--chrome`` waits for the display's report (see
-        #: ``LuxarHandler.do_POST``); cleared when it arrives.
-        self.awaiting_display_report = threading.Event()
+        #: The report ``--chrome`` waits for (see ``LuxarHandler.do_POST``).
+        self.display_report = DisplayReportSlot()
         #: ``--advertise-host``: the ``/`` redirect's fallback host when the
         #: request's own ``Host`` header is unusable.
         self.advertise: str | None = None
@@ -875,33 +911,43 @@ class LuxarHandler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self) -> None:  # noqa: N802  (http.server's spelling)
-        """Take the display's report (``?displayReport``), only while awaited.
+        """Take the display's report (``?displayReport=<nonce>``), once.
 
         The page ``serve.py --chrome`` opened POSTs what it renders with; it is
-        checked and printed for the operator (:func:`assess_display`), once.
-        Any other POST, or one nobody is waiting for, is a 404.
+        checked and printed for the operator (:func:`assess_display`). Only
+        that page's report is taken: it must echo the nonce, and the first one
+        closes the slot. Anything else is a 404 (or 400 / 413 for a report
+        that cannot be read), and never reaches the terminal.
         """
         server = self.server
-        waiting = isinstance(server, ControlServer) and server.awaiting_display_report
-        length = int(self.headers.get("Content-Length") or 0)
+        slot = server.display_report if isinstance(server, ControlServer) else None
         if (
             _request_path(self.path) != DISPLAY_REPORT_PATH
-            or not waiting
-            or not waiting.is_set()
-            or not 0 < length <= _MAX_REPORT_BYTES
+            or slot is None
+            or not slot.pending()
         ):
             self.send_error(404)
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or "")
+        except ValueError:
+            self.send_error(400, "a display report needs a Content-Length")
+            return
+        if not 0 < length <= _MAX_REPORT_BYTES:
+            self.send_error(413 if length > 0 else 400)
             return
         try:
             report = json.loads(self.rfile.read(length).decode("utf-8"))
         except (ValueError, UnicodeError):
             self.send_error(400, "not a JSON display report")
             return
-        waiting.clear()
+        if not isinstance(report, dict) or not slot.claim(report.get("nonce")):
+            self.send_error(404)
+            return
         self.send_response(204)
         self.send_header("Content-Length", "0")
         self.end_headers()
-        print_display_check(report if isinstance(report, dict) else {})
+        print_display_check(report)
 
     def do_HEAD(self) -> None:  # noqa: N802  (http.server's spelling)
         """As ``do_GET``: the folder root redirects to the viewer."""
@@ -1501,14 +1547,19 @@ def print_control_qr(
             f"  (not written to {QR_FILE} / {SHEET_FILE}: this QR is for this run only)"
         )
         return
-    written = [
-        name
-        for name, data in (
-            (QR_FILE, qr_png_bytes(matrix, scale=8, border=4)),
-            (SHEET_FILE, panel_sheet(matrix, url, has_token=has_token)),
-        )
-        if write_private(SCRIPT_DIR / name, data)
-    ]
+    renders = (
+        (QR_FILE, lambda: qr_png_bytes(matrix, scale=8, border=4)),
+        (SHEET_FILE, lambda: panel_sheet(matrix, url, has_token=has_token)),
+    )
+    written = []
+    for name, render in renders:
+        try:
+            data = render()
+        except Exception as error:  # noqa: BLE001 - a printable copy is never the gate
+            print(f"  (could not draw {name}: {_printable(error)})")
+            continue
+        if write_private(SCRIPT_DIR / name, data):
+            written.append(name)
     if written:
         print(f"  (also written to {' and '.join(written)}, for printing)")
 
@@ -1540,7 +1591,11 @@ def write_private(path: Path, data: bytes) -> bool:
     """
     staging = path.with_name(f".{path.name}.tmp")
     try:
-        descriptor = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # A fresh file every time, never one left (or planted) at that name:
+        # an old one would keep its mode, and a symlink would be followed.
+        staging.unlink(missing_ok=True)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(staging, flags, 0o600)
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(data)
         os.replace(staging, path)
@@ -1678,6 +1733,11 @@ def open_server(args: argparse.Namespace, relay: Relay | None) -> ControlServer:
     """
     handler = partial(LuxarHandler, directory=str(SCRIPT_DIR))
     port = int(args.port)
+    if args.control and port == 0:
+        raise StartupError(
+            "--port 0 picks a random port, which the panel URL and its printed QR\n"
+            "cannot name; with the control relay, give a fixed --port."
+        )
     if args.control:
         if someone_listening(args.host, port, _probe_targets(args)):
             raise StartupError(_port_in_use(port))
@@ -1806,18 +1866,34 @@ def chrome_command(
     return [chrome, *flags, url]
 
 
+def _printable(value: object, limit: int = 200) -> str:
+    """``value`` as one line for the terminal: no control characters (an escape
+    sequence in a report must not reach the operator's terminal), capped."""
+    text = "".join(c if c.isprintable() else "?" for c in str(value))
+    return text if len(text) <= limit else text[: limit - 1] + "\u2026"
+
+
+def _number(value: object) -> float:
+    """A JSON number, or 0 for anything else (a report is untrusted input)."""
+    return (
+        float(value)
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else 0.0
+    )
+
+
 def assess_display(report: dict[str, Any]) -> list[tuple[str, str]]:
     """``(level, message)`` lines about a display report: OK, WARNING, NOTE or ERROR."""
     if report.get("error"):
         nogpu = "" if report.get("webgpuAvailable") else " (this browser has no WebGPU)"
-        return [("ERROR", f"the display failed to start{nogpu}: {report['error']}. "
+        return [("ERROR", f"the display failed to start{nogpu}: {_printable(report['error'])}. "
                  "Look at the screen, its browser console and chrome://gpu")]  # fmt: skip
     lines: list[tuple[str, str]] = []
     backend = report.get("backend")
     adapter = report.get("adapter") if isinstance(report.get("adapter"), dict) else None
-    gpu = " ".join(
+    gpu = _printable(" ".join(
         str(adapter.get(k, "")) for k in ("vendor", "architecture", "description")
-    ).strip() if adapter else ""  # fmt: skip
+    ).strip()) if adapter else ""  # fmt: skip
     if backend == "webgpu-native":
         lines.append(("OK", f"WebGPU on the GPU{f' ({gpu})' if gpu else ''}"))
     elif backend == "webgpu-gl":
@@ -1834,10 +1910,10 @@ def assess_display(report: dict[str, Any]) -> list[tuple[str, str]]:
                       "slow; check the GPU driver and chrome://gpu"))  # fmt: skip
     screen, window = report.get("screen") or {}, report.get("window") or {}
     if isinstance(screen, dict) and isinstance(window, dict):
-        sw, sh = screen.get("width") or 0, screen.get("height") or 0
-        ww, wh = window.get("width") or 0, window.get("height") or 0
+        sw, sh = _number(screen.get("width")), _number(screen.get("height"))
+        ww, wh = _number(window.get("width")), _number(window.get("height"))
         if sw and sh and (ww < 0.98 * sw or wh < 0.98 * sh):
-            lines.append(("NOTE", f"the window is {ww}x{wh} on a {sw}x{sh} screen: "
+            lines.append(("NOTE", f"the window is {ww:.0f}x{wh:.0f} on a {sw:.0f}x{sh:.0f} screen: "
                           "not full screen"))  # fmt: skip
     if "Chrome/" not in str(report.get("userAgent", "")):
         lines.append(("NOTE", "the display is not Chrome; WebGPU is tested there"))
@@ -1846,53 +1922,100 @@ def assess_display(report: dict[str, Any]) -> list[tuple[str, str]]:
 
 def print_display_check(report: dict[str, Any]) -> None:
     """Print :func:`assess_display` under a heading the operator can find."""
+    try:
+        lines = assess_display(report)
+    except Exception as error:  # noqa: BLE001 - a check must never take the server down
+        lines = [
+            ("WARNING", f"could not read the display's report ({_printable(error)})")
+        ]
     print()
     print("  Display check (the browser serve.py --chrome opened):")
-    for level, message in assess_display(report):
+    for level, message in lines:
         print(f"    {level:<8} {message}")
     sys.stdout.flush()
+
+
+def resolve_chrome(choice: str) -> str | None:
+    """The Chrome executable for ``--chrome [PATH]``, or None.
+
+    A macOS ``.app`` bundle is accepted for the executable inside it; any other
+    path must be an executable file, so a directory or a typo is caught here
+    rather than as a crash of the launch.
+    """
+    path = find_chrome() if choice == "auto" else choice
+    if path and path.endswith(".app") and Path(path).is_dir():
+        inner = Path(path) / "Contents" / "MacOS"
+        found = sorted(inner.iterdir()) if inner.is_dir() else []
+        path = str(found[0]) if found else None
+    if path and os.path.isfile(path) and os.access(path, os.X_OK):
+        return path
+    return None
+
+
+def _no_chrome(choice: str, fallback: bool) -> None:
+    where = "" if choice == "auto" else f" at {_printable(choice)}"
+    then = (
+        "opening the default browser instead" if fallback else "not opening a browser"
+    )
+    print(f"\n  WARNING  Chrome not found{where}: {then}.")
+    print("           Install Google Chrome, or pass --chrome /path/to/chrome.")
 
 
 def open_display_in_chrome(
     args: argparse.Namespace, server: ControlServer, url: str
 ) -> bool:
-    """Launch Chrome on ``url`` and wait for the page's report; False if no Chrome."""
-    chrome = find_chrome() if args.chrome == "auto" else args.chrome
-    if not chrome or not Path(chrome).exists():
-        where = "" if args.chrome == "auto" else f" at {args.chrome}"
-        print(
-            f"\n  WARNING  Chrome not found{where}: opening the default browser instead,"
-        )
-        print(
-            "           whose WebGPU support is untested. Install Google Chrome, or pass"
-        )
-        print("           --chrome /path/to/chrome.")
+    """Launch Chrome on ``url`` and await the page's report; False if it did not launch."""
+    chrome = resolve_chrome(args.chrome)
+    if chrome is None:
+        _no_chrome(args.chrome, fallback=not args.no_open)
         return False
-    profile = SCRIPT_DIR / CHROME_PROFILE_DIR
-    target = url + ("&" if "?" in url else "?") + "displayReport"
-    server.awaiting_display_report.set()
-    subprocess.Popen(  # noqa: S603 # nosec B603 - our own flags and URL
-        chrome_command(chrome, target, profile),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    nonce = server.display_report.expect()
+    target = url + ("&" if "?" in url else "?") + f"displayReport={nonce}"
+    try:
+        process = subprocess.Popen(  # noqa: S603 # nosec B603 - our own flags and URL
+            chrome_command(chrome, target, SCRIPT_DIR / CHROME_PROFILE_DIR),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as error:
+        server.display_report.claim(nonce)  # nothing will report
+        print(f"\n  WARNING  could not start Chrome ({_printable(error)}).")
+        return False
     print(f"\n  Opening the display in Chrome ({chrome}), full screen; quit it with")
     print("  Cmd+Q / Alt+F4. A display check follows once it has loaded.")
+    _watch_display(server, process)
+    return True
+
+
+def _watch_display(server: ControlServer, process: Any) -> None:
+    """Warn when Chrome quits at once, or when no report comes in time."""
+
+    def early_exit() -> None:
+        code = process.poll()
+        if code is not None and server.display_report.pending():
+            print(
+                f"\n  WARNING  Chrome exited at once (status {code}): no display. Is there"
+            )
+            print(
+                "           a screen session? Run it with --chrome from that session."
+            )
+            sys.stdout.flush()
 
     def no_report() -> None:
-        if server.awaiting_display_report.is_set():
+        if server.display_report.pending() and process.poll() is None:
             print(
                 f"\n  WARNING  the display sent no report within {_DISPLAY_REPORT_WAIT_S:.0f} s:"
             )
             print(
-                "           it may not have loaded. Look at the screen, and at chrome://gpu."
+                "           it may not have loaded. Look at the screen and at chrome://gpu;"
             )
+            print("           the check still prints if the report comes later.")
             sys.stdout.flush()
 
-    timer = threading.Timer(_DISPLAY_REPORT_WAIT_S, no_report)
-    timer.daemon = True
-    timer.start()
-    return True
+    for delay, check in ((3.0, early_exit), (_DISPLAY_REPORT_WAIT_S, no_report)):
+        timer = threading.Timer(delay, check)
+        timer.daemon = True
+        timer.start()
 
 
 def main(argv: list[str] | None = None) -> int:
