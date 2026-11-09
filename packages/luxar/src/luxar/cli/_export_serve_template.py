@@ -1780,7 +1780,11 @@ def chrome_command(
 
 
 def assess_display(report: dict[str, Any]) -> list[tuple[str, str]]:
-    """``(level, message)`` lines about a display report: OK, WARNING or NOTE."""
+    """``(level, message)`` lines about a display report: OK, WARNING, NOTE or ERROR."""
+    if report.get("error"):
+        nogpu = "" if report.get("webgpuAvailable") else " (this browser has no WebGPU)"
+        return [("ERROR", f"the display failed to start{nogpu}: {report['error']}. "
+                 "Look at the screen, its browser console and chrome://gpu")]  # fmt: skip
     lines: list[tuple[str, str]] = []
     backend = report.get("backend")
     adapter = report.get("adapter") if isinstance(report.get("adapter"), dict) else None

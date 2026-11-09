@@ -644,6 +644,24 @@ def test_each_sub_optimal_display_is_called_out(
     assert any(lvl == level and words in msg for lvl, msg in lines), lines
 
 
+def test_a_display_that_failed_to_start_is_an_error() -> None:
+    lines = template.assess_display(
+        {
+            "api": None,
+            "backend": None,
+            "error": "WebGL unavailable",
+            "webgpuAvailable": False,
+        }
+    )
+    assert lines == [
+        (
+            "ERROR",
+            "the display failed to start (this browser has no WebGPU): WebGL unavailable. "
+            "Look at the screen, its browser console and chrome://gpu",
+        )
+    ]
+
+
 def test_a_report_with_missing_fields_still_assesses() -> None:
     assert template.assess_display({})[0][0] == "WARNING"
 
