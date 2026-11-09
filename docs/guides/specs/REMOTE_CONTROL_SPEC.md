@@ -644,6 +644,22 @@ All three refuse the same three things, for the reasons in §3.5: an unknown
 would attach with authority), a wrong token (compared in constant time), and a
 cross-origin browser handshake.
 
+Where they deliberately differ is the defaults around the *panel URL*, because
+only the exported folder turns it into something meant to be printed: a QR in
+the terminal, `control-qr.png` and an A4 sheet `control-panel.pdf` beside
+`serve.py`. A printed QR is only worth
+having if it keeps working, so `serve.py` keeps all three parts of the URL
+stable from one start to the next. Off loopback its relay requires a token by
+default, generated on the first start and saved in `control-token.txt`
+(`--control-token` overrides it for one run, `--no-control-token` opts out;
+deleting the file rotates it and retires printed QRs). With the relay on, a
+busy port is an error rather than a move to the next port. And
+`--advertise-host` puts a fixed name or reserved address in the URLs while the
+server listens on every interface. `luxar serve --control` and the native
+launcher still default to no token, and print the address they bind (the
+launcher's port is random), which is fine for a URL read off a terminal but
+not for one printed on a poster.
+
 The exported script is also **threaded**, which is not a detail: a WebSocket
 occupies its thread for as long as the kiosk runs, so on the single-threaded
 server it replaced the first attached panel would have blocked every later

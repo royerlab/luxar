@@ -3,7 +3,8 @@
 
 Usage:
     python3 serve.py [--port PORT] [--host HOST] [--no-open]
-    python3 serve.py --control [--control-token SECRET]
+    python3 serve.py --control [--advertise-host NAME]
+    python3 serve.py --control [--control-token SECRET | --no-control-token]
 
 Requirements:
     Python 3.9+ (stdlib only -- no pip install needed)
@@ -13,6 +14,12 @@ folder can run a kiosk: the big display opens the viewer, a tablet opens
 ``viewer/control.html``, and a tap on the tablet moves the display. Off by
 default, because a folder you double-click should not start listening for
 anything that wants to drive it.
+
+The panel URL is meant to be printed as a QR, so it stays the same from one
+start to the next: off loopback the relay requires a token, generated once
+and saved in ``control-token.txt``; with the relay on, a busy port is an error
+rather than a move to another port; and ``--advertise-host`` puts a fixed name
+in the URL while the server listens on every interface.
 """
 
 # Maintainer note (this file is shipped verbatim, so the note travels):
@@ -29,12 +36,15 @@ from __future__ import annotations
 
 import argparse
 import base64
+import errno
 import hashlib
 import hmac
 import http.server
+import ipaddress
 import json
 import os
 import re
+import secrets
 import socket
 import struct
 import sys
@@ -45,7 +55,7 @@ from functools import partial
 from io import BufferedIOBase
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 # `luxar_qr` only exists in an EXPORTED folder, where the exporter copies
 # `luxar/cli/_qr.py` beside this script. mypy cannot see it from the source
@@ -55,6 +65,7 @@ try:
     from luxar_qr import (  # type: ignore[import-not-found]
         qr_ascii,
         qr_matrix,
+        qr_pdf_bytes,
         qr_png_bytes,
     )
 except ImportError:  # pragma: no cover - exercised by deleting the file
@@ -81,6 +92,26 @@ TITLE_QUERY = ""
 LAUNCH_QUERY = ""
 #: Range the viewer accepts for `?textScale=`; mirrored for a clear error.
 TEXT_SCALE_RANGE = (0.25, 4.0)
+#: Where the relay's default control token is kept, beside this script. A
+#: panel's URL -- and the QR printed from it -- carries the token, so the token
+#: must outlive a restart for a printed QR to keep working: it is generated on
+#: the first start that needs one and reused after that. Deleting the file
+#: issues a new token on the next start, which retires every printed QR.
+CONTROL_TOKEN_FILE = "control-token.txt"  # nosec B105 - a file name, not a secret
+#: The panel URL's QR, written beside this script for printing.
+QR_FILE = "control-qr.png"
+#: The same QR on an A4 sheet with what it is and how to use it, to print and
+#: put up beside the display.
+SHEET_FILE = "control-panel.pdf"
+#: The tokens this script writes and accepts from that file: URL-safe as they
+#: stand, so a QR carries the token verbatim.
+_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{8,128}")
+#: Bytes of randomness in a generated token (16 URL-safe characters).
+_TOKEN_BYTES = 12
+#: Socket defaults differ on Windows (see `ControlServer.allow_reuse_address`).
+_IS_WINDOWS = os.name == "nt"
+#: One DNS label; `--advertise-host` is dot-joined labels or an IP literal.
+_HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
 
 # ── wire contract ───────────────────────────────────────────────────────────
 # These mirror `control-contract/contract.yaml`, the single source the Python
@@ -642,6 +673,15 @@ class ControlServer(http.server.ThreadingHTTPServer):
     """
 
     daemon_threads = True
+    #: `HTTPServer` sets SO_REUSEADDR, so a restart right after Ctrl+C can
+    #: rebind a port whose old connections are still draining (TIME_WAIT). On
+    #: Windows that option instead lets a SECOND process take a port in use,
+    #: so there the bind keeps its default: Windows refuses a second default
+    #: bind of the same port with WSAEADDRINUSE, refuses an SO_REUSEADDR
+    #: takeover of a wildcard bind with WSAEACCES, and does not hold a port
+    #: back for TIME_WAIT. (SO_EXCLUSIVEADDRUSE would, until the display's and
+    #: the tablets' old connections close -- the wrong trade for a restart.)
+    allow_reuse_address = not _IS_WINDOWS
 
     def __init__(self, address: tuple[str, int], handler: Any, relay: Relay | None):
         # The family follows the bind host, because `ThreadingHTTPServer`
@@ -655,6 +695,9 @@ class ControlServer(http.server.ThreadingHTTPServer):
         self.relay = relay
         #: ``--text-scale``, carried into the ``/`` redirect to the viewer.
         self.text_scale: float | None = None
+        #: ``--advertise-host``: the ``/`` redirect's fallback host when the
+        #: request's own ``Host`` header is unusable.
+        self.advertise: str | None = None
 
     #: Client disconnects, not faults. A browser that has changed its mind
     #: closes the socket mid-response and the write raises one of these.
@@ -831,7 +874,9 @@ class LuxarHandler(http.server.SimpleHTTPRequestHandler):
         host = self.headers.get("Host", "")
         if not _HOST_HEADER.fullmatch(host):
             address: Any = server.server_address
-            host = f"{_url_host(advertised_host(str(address[0])))}:{address[1]}"
+            fixed = server.advertise if isinstance(server, ControlServer) else None
+            reachable = fixed or advertised_host(str(address[0]))
+            host = f"{_url_host(reachable)}:{address[1]}"
         scale = server.text_scale if isinstance(server, ControlServer) else None
         target = viewer_target(f"http://{host}/{DATA_DIR_NAME}", scale)
         self.send_response(302)
@@ -908,7 +953,8 @@ class LuxarHandler(http.server.SimpleHTTPRequestHandler):
 
 
 #: A ``Host`` header safe to echo into a redirect: a hostname, IPv4 or bracketed
-#: IPv6 address, and an optional port. Anything else falls back to the bind.
+#: IPv6 address, and an optional port. Anything else falls back to
+#: ``--advertise-host``, else the bind.
 _HOST_HEADER = re.compile(r"(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(?::[0-9]{1,5})?")
 
 
@@ -975,6 +1021,117 @@ def is_loopback_host(host: str) -> bool:
     return host.strip().lower() in ("127.0.0.1", "::1", "localhost", "[::1]")
 
 
+def local_address(bind_host: str) -> str | None:
+    """An address on THIS machine that reaches a server bound to ``bind_host``.
+
+    Loopback for a wildcard or loopback bind; ``None`` for a bind to one
+    specific interface, which loopback does not reach.
+    """
+    if bind_host in _ALL_INTERFACES:
+        return "::1" if bind_host == "::" else "127.0.0.1"
+    return bind_host if is_loopback_host(bind_host) else None
+
+
+def _advertise_host(value: str) -> str:
+    """Parse ``--advertise-host``: a hostname or an IP literal, nothing else.
+
+    It is written into every printed URL and the QR, so a scheme, a port, a
+    path or whitespace riding along would make all of them wrong. An IPv6
+    literal may come bracketed or bare; it is stored bare and bracketed where a
+    URL is built (``_url_host``).
+    """
+    text = value.strip()
+    bare = text[1:-1] if text.startswith("[") and text.endswith("]") else text
+    try:
+        address = ipaddress.ip_address(bare)
+    except ValueError:
+        address = None
+    if address is not None:
+        # 0.0.0.0 / :: name no machine, a multicast address no server, and a
+        # zoned IPv6 literal (fe80::1%en0) is not valid inside a URL at all.
+        if address.is_unspecified or address.is_multicast or "%" in bare:
+            raise argparse.ArgumentTypeError(
+                f"{value!r} is not an address another device can open"
+            )
+        return str(address)
+    name = text.rstrip(".")
+    labels = name.split(".")
+    if (
+        name
+        and len(name) <= 253
+        and all(_HOST_LABEL.fullmatch(label) for label in labels)
+        and not labels[-1].isdigit()  # 1.2.3 or 999.1.1.1: a mistyped address
+    ):
+        return name
+    raise argparse.ArgumentTypeError(
+        f"not a hostname or IP address: {value!r} (no scheme, port or path)"
+    )
+
+
+def unresolved_name_warning(name: str) -> str | None:
+    """A warning when ``name`` does not resolve on this machine, else ``None``.
+
+    Best effort and never fatal: the tablets resolve the name on THEIR network,
+    which may know it when this machine does not (or the reverse), but a name
+    nothing here can find is usually a typo worth flagging before it is printed.
+    """
+    try:
+        ipaddress.ip_address(name)
+        return None
+    except ValueError:
+        pass
+    found: list[bool] = []
+
+    def look_up() -> None:
+        try:
+            socket.getaddrinfo(name, None)
+            found.append(True)
+        except OSError:
+            found.append(False)
+
+    # In a thread with a time limit: a failing mDNS (`.local`) or DNS lookup
+    # can take seconds, and this must not hold up the banner. Undecided in
+    # time counts as resolving -- the warning is for a name nothing can find.
+    lookup = threading.Thread(target=look_up, daemon=True)
+    lookup.start()
+    lookup.join(_NAME_LOOKUP_SECONDS)
+    if found == [False]:
+        return (
+            f"  Note: {name} does not resolve on this machine. The QR names it, so "
+            "make sure\n  it resolves to this machine on the tablets' network."
+        )
+    return None
+
+
+#: How long the startup name check waits before giving up on it.
+_NAME_LOOKUP_SECONDS = 1.5
+
+
+def someone_listening(bind_host: str, port: int, also: tuple[str, ...] = ()) -> bool:
+    """Whether another server already accepts connections on ``port``.
+
+    A connect, not a bind: a bind probe without SO_REUSEADDR also fails on a
+    port whose old connections are still draining after a restart (TIME_WAIT),
+    which nothing is listening on and the real server binds fine. And on macOS
+    SO_REUSEADDR lets a wildcard bind succeed beside another server's bind to
+    one address, so the real bind alone would not notice it. For a wildcard
+    bind both loopbacks are tried (``::`` may or may not take IPv4 too) plus
+    ``also`` -- the addresses the printed URL will name, where a server bound
+    to that one address would answer the tablets instead of this one.
+    """
+    if bind_host in _ALL_INTERFACES:
+        targets = ["127.0.0.1", "::1", *also]
+    else:
+        targets = [bind_host]
+    for target in dict.fromkeys(targets):  # de-duplicated, in order
+        try:
+            with socket.create_connection((target, port), timeout=0.5):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def find_port(host: str, start: int = 8000, attempts: int = 100) -> int | None:
     """Find an available port on ``host``, starting from ``start``."""
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
@@ -994,12 +1151,20 @@ def find_port(host: str, start: int = 8000, attempts: int = 100) -> int | None:
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Serve exported Luxar scene")
-    parser.add_argument("--port", type=int, default=8000, help="Port (default: 8000)")
+    parser.add_argument(
+        "--port",
+        type=_port,
+        default=8000,
+        help=(
+            "Port (default: 8000; 0 = any free port). With the control relay on, "
+            "exactly this port: the panel URL and its QR name it, so a busy port "
+            "is an error. Without it, the next free port is used"
+        ),
+    )
     # Binding every interface is the POINT of a panel scene: the tablet is a
     # different device, so loopback cannot serve it. A scene without a panel
     # still defaults to loopback, and `--host 127.0.0.1` overrides either way.
-    # The exposure is documented in the generated README and TESTING notes,
-    # with `--control-token` for an untrusted network.
+    # Off loopback the relay requires a token by default (`resolve_control_token`).
     default_host = (
         "0.0.0.0"  # noqa: S104 # nosec B104 - a tablet cannot reach loopback
         if HAS_CONTROL_PANEL
@@ -1023,9 +1188,30 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--control-token",
+        "--advertise-host",
+        type=_advertise_host,
         default=None,
-        help="Secret every control socket must present (advise with --host)",
+        metavar="NAME",
+        help=(
+            "Hostname or IP address to put in the printed URLs and the QR "
+            "(default: this machine's network address). Use a name or a reserved "
+            "address that stays the same, so a printed QR survives a restart"
+        ),
+    )
+    tokens = parser.add_mutually_exclusive_group()
+    tokens.add_argument(
+        "--control-token",
+        type=_control_token,
+        default=None,
+        help=(
+            "Secret every control socket must present, for this run only. "
+            f"Default off loopback: the token saved in {CONTROL_TOKEN_FILE}"
+        ),
+    )
+    tokens.add_argument(
+        "--no-control-token",
+        action="store_true",
+        help="Run the relay without a token: anyone who can reach it can drive the display",
     )
     parser.add_argument(
         "--text-scale",
@@ -1038,6 +1224,32 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     return parser.parse_args(argv)
+
+
+def _port(value: str) -> int:
+    """Parse ``--port``: a TCP port number."""
+    try:
+        port = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a port number: {value!r}") from None
+    if not 0 <= port <= 65535:
+        raise argparse.ArgumentTypeError(f"must be between 0 and 65535, got {port}")
+    return port
+
+
+def _control_token(value: str) -> str:
+    """Parse ``--control-token``: a non-empty secret with no surrounding space.
+
+    An empty one is refused rather than read as "no token" (that is
+    ``--no-control-token``), and padding is refused because the viewer trims
+    the URL's token, so a padded secret would never match.
+    """
+    if not value or value != value.strip():
+        raise argparse.ArgumentTypeError(
+            "must be non-empty, without leading or trailing spaces "
+            "(use --no-control-token for none)"
+        )
+    return value
 
 
 def _text_scale(value: str) -> float:
@@ -1066,9 +1278,16 @@ def urls(
     control: bool,
     token: str | None,
     text_scale: float | None = None,
+    *,
+    advertise: str | None = None,
 ) -> list[str]:
-    """The URLs to print, and the first of them is the one to open."""
-    reachable = _url_host(advertised_host(host))
+    """The display URL, then (with the relay) the panel URL.
+
+    ``advertise`` replaces the address derived from the bind everywhere --
+    the page, its ``?src=`` data URL and the panel URL -- so the page and its
+    data stay same-origin (this server sends no cross-origin headers).
+    """
+    reachable = _url_host(advertise or advertised_host(host))
     data_url = f"http://{reachable}:{port}/{DATA_DIR_NAME}"
     viewer_url = f"http://{reachable}:{port}" + viewer_target(data_url, text_scale)
     if not control:
@@ -1080,14 +1299,59 @@ def urls(
     ]
 
 
-def print_control_qr(url: str) -> None:
+def panel_sheet(matrix: Any, url: str, *, has_token: bool) -> bytes:
+    """The A4 sheet for the panel URL: the QR half the page wide, the URL, what
+    it is and how to use it. Worded here, laid out by ``luxar_qr``."""
+    title = unquote(TITLE_QUERY.partition("title=")[2]) or "this Luxar scene"
+    host = urlsplit(url).netloc
+    notes = ["Everyone who scans the code can drive the display; the last tap wins."]
+    if has_token:
+        notes.append(
+            "The code carries an access key. Keep this sheet in the room, and do "
+            "not post a photo of it online: anyone with the code can drive the display."
+        )
+    notes.append(
+        "If the code stops working, the display's address, port or key has "
+        f"changed: print a new sheet ({SHEET_FILE}, written beside serve.py "
+        "each time it starts)."
+    )
+    sheet: bytes = qr_pdf_bytes(
+        matrix,
+        url=url,
+        heading="Drive the display from your phone",
+        subheading=title,
+        intro=(
+            "This code opens a touch panel for the big screen in this room. Pick "
+            "what it shows from your phone or tablet: no app to install."
+        ),
+        steps=(
+            "Join the same Wi-Fi network as the display.",
+            "Point your phone's camera at the code and open the link it offers "
+            "(or type the address under the code).",
+            "Tap a tile on the panel: the big screen goes there.",
+        ),
+        notes=tuple(notes),
+        footer=f"Luxar  |  {host}",
+    )
+    return sheet
+
+
+def print_control_qr(
+    url: str, *, printable: bool = True, has_token: bool = False
+) -> None:
     """Print a scannable QR for ``url`` and leave a PNG copy beside the script.
 
     The point of kiosk mode is a tablet, and the URL carries a host, a port, a
-    path and possibly a token -- too much to read off a screen and type in
-    correctly at an exhibit. Half-block glyphs are used so the symbol comes out
-    roughly square in a terminal; one module per character is twice as tall as
-    wide and many phone cameras will not lock onto it.
+    path and a token -- too much to read off a screen and type in correctly at
+    an exhibit. Half-block glyphs are used so the symbol comes out roughly
+    square in a terminal; one module per character is twice as tall as wide
+    and many phone cameras will not lock onto it.
+
+    ``control-qr.png`` and ``control-panel.pdf`` (an A4 sheet, see
+    :func:`panel_sheet`) are the copies meant for PRINTING, so they are only
+    written when ``url`` will still be valid on the next start (``printable``):
+    a one-off ``--control-token``, or a token that could not be saved, gets the
+    terminal QR only, never a file someone might print.
 
     Missing encoder (someone deleted luxar_qr.py) or an unwritable folder are
     both non-fatal: the URL above it is still the real instruction.
@@ -1103,31 +1367,275 @@ def print_control_qr(url: str) -> None:
         print(qr_ascii(matrix, border=2))
     except (OSError, UnicodeError):
         pass
+    if not printable:
+        print(
+            f"  (not written to {QR_FILE} / {SHEET_FILE}: this QR is for this run only)"
+        )
+        return
+    written = [
+        name
+        for name, data in (
+            (QR_FILE, qr_png_bytes(matrix, scale=8, border=4)),
+            (SHEET_FILE, panel_sheet(matrix, url, has_token=has_token)),
+        )
+        if write_private(SCRIPT_DIR / name, data)
+    ]
+    if written:
+        print(f"  (also written to {' and '.join(written)}, for printing)")
+
+
+class StartupError(Exception):
+    """A refusal to start, printed as ``Error: <message>`` with exit status 1."""
+
+
+class ControlToken:
+    """The relay's token for one run: its value, a note, whether to print it."""
+
+    def __init__(
+        self, value: str | None, note: str | None = None, printable: bool = True
+    ) -> None:
+        self.value = value
+        #: Printed under the QR: where the token came from, how to rotate it.
+        self.note = note
+        #: Whether a QR of this run's URL is still valid on the next start.
+        self.printable = printable
+
+
+def write_private(path: Path, data: bytes) -> bool:
+    """Replace ``path`` with ``data`` atomically, created readable by its owner.
+
+    Both files written this way carry the control token -- the token itself,
+    and the QR encoding it -- so neither is left readable by every account on
+    the machine, not even for the moment between creating and chmod-ing it.
+    False when the folder is not writable.
+    """
+    staging = path.with_name(f".{path.name}.tmp")
     try:
-        target = SCRIPT_DIR / "control-qr.png"
-        target.write_bytes(qr_png_bytes(matrix, scale=8, border=4))
-        print(f"  (also written to {target.name}, for printing or a second screen)")
+        descriptor = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+        os.replace(staging, path)
     except OSError:
-        pass
+        try:
+            staging.unlink()
+        except OSError:
+            pass
+        return False
+    return True
+
+
+def create_token_file(path: Path, token: str) -> str | None:
+    """Create ``path`` holding ``token``; return the token it ends up holding.
+
+    Exclusive create, owner-readable from the start: when two first starts race,
+    exactly one creates the file and the other reads what it wrote, so both
+    serve the token every later start will read. ``None`` when the folder is
+    not writable.
+    """
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return read_saved_token(path)
+    except OSError:
+        return None
+    with os.fdopen(descriptor, "w", encoding="ascii") as handle:
+        handle.write(token + "\n")
+    return token
+
+
+def read_saved_token(path: Path) -> str | None:
+    """The token saved at ``path``, or ``None`` when there is no file yet.
+
+    A file that is there but unusable is an error rather than something to
+    overwrite: a printed QR may carry the token it was meant to hold, and
+    deleting the file is how a new token is asked for. Read as ``utf-8-sig`` so
+    a file re-saved by an editor that adds a byte-order mark still reads.
+    """
+    try:
+        text = path.read_text(encoding="utf-8-sig").strip()
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeError) as error:
+        raise StartupError(f"cannot read {path.name}: {error}") from None
+    if not _TOKEN_PATTERN.fullmatch(text):
+        raise StartupError(
+            f"{path.name} does not hold a usable token (8-128 of A-Z a-z 0-9 _ -). "
+            "Fix it, or delete it to issue a new token (retiring printed QRs)."
+        )
+    return text
+
+
+def resolve_control_token(args: argparse.Namespace, folder: Path) -> ControlToken:
+    """The relay's token for this run.
+
+    In order: ``--control-token`` (this run only, the saved one untouched);
+    ``--no-control-token`` (none); a loopback bind (none: nothing off this
+    machine can connect); else the token saved in :data:`CONTROL_TOKEN_FILE`,
+    generated and saved on the first start, so the panel URL and its QR are the
+    same every start.
+    """
+    if not args.control:
+        return ControlToken(None)
+    if args.control_token is not None:
+        return ControlToken(
+            args.control_token,
+            "  Control token from --control-token: for this run only.",
+            printable=False,
+        )
+    if args.no_control_token or is_loopback_host(args.host):
+        return ControlToken(None)
+    path = folder / CONTROL_TOKEN_FILE
+    saved = read_saved_token(path)
+    if saved is not None:
+        return ControlToken(
+            saved,
+            f"  Control token from {path.name}: the same every start, so a printed\n"
+            "  QR keeps working. Delete the file to issue a new one (retires printed QRs).",
+        )
+    token = create_token_file(path, secrets.token_urlsafe(_TOKEN_BYTES))
+    if token is not None:
+        return ControlToken(
+            token,
+            f"  New control token saved in {path.name}; every start reuses it, so a\n"
+            "  printed QR keeps working. Delete the file to issue a new one.",
+        )
+    return ControlToken(
+        secrets.token_urlsafe(_TOKEN_BYTES),
+        f"  Note: could not save the control token in {path.name} (read-only folder?).\n"
+        "  It is new on every start, so do not print this QR.",
+        printable=False,
+    )
+
+
+#: Bind errors meaning "another socket holds this port". WSAEACCES is Windows'
+#: answer when the holder bound exclusively or as another user account.
+_ADDRESS_IN_USE = frozenset(
+    code
+    for code in (
+        errno.EADDRINUSE,
+        getattr(errno, "WSAEADDRINUSE", None),
+        getattr(errno, "WSAEACCES", None),
+    )
+    if code is not None
+)
+
+
+def _port_in_use(port: int) -> str:
+    return (
+        f"port {port} is already in use on this machine (another serve.py?).\n"
+        "The control panel's URL and its printed QR name this port, so serve.py will\n"
+        "not move to another one. Stop the other server, or pass --port N and\n"
+        "reprint control-qr.png."
+    )
+
+
+def _probe_targets(args: argparse.Namespace) -> tuple[str, ...]:
+    """Addresses the printed URL names, for the busy-port probe of a wildcard bind."""
+    named = args.advertise_host or advertised_host(args.host)
+    try:
+        ipaddress.ip_address(named)
+    except ValueError:
+        return ()  # a name: resolving it is the tablets' business, not a probe's
+    return (named,)
+
+
+def open_server(args: argparse.Namespace, relay: Relay | None) -> ControlServer:
+    """Bind the server, on exactly ``--port`` when the relay is on.
+
+    With the relay the panel URL and its printed QR name the port, so another
+    server holding it is an error rather than a reason to move. Without it
+    (nothing printed to keep valid) the next free port is used, as a folder
+    double-clicked twice expects.
+    """
+    handler = partial(LuxarHandler, directory=str(SCRIPT_DIR))
+    port = int(args.port)
+    if args.control:
+        if someone_listening(args.host, port, _probe_targets(args)):
+            raise StartupError(_port_in_use(port))
+    else:
+        free = find_port(args.host, port)
+        if free is None:
+            raise StartupError(f"No available port found near {port}")
+        port = free
+    try:
+        return ControlServer((args.host, port), handler, relay)
+    except OSError as error:
+        if error.errno not in _ADDRESS_IN_USE:
+            raise StartupError(
+                f"cannot listen on {args.host}:{port}: {error}"
+            ) from None
+        if args.control:
+            raise StartupError(_port_in_use(port)) from None
+        raise StartupError(f"port {port} was taken while starting; try again") from None
+
+
+def _local_display_url(
+    args: argparse.Namespace, port: int, token: str | None
+) -> str | None:
+    """The display URL on loopback, for the browser this script opens itself.
+
+    The printed address is for OTHER devices: a name or LAN address chosen for
+    the tablets need not resolve on this machine. Same token, same query. (Its
+    origin differs from the printed one, so this browser keeps its own cache
+    and saved settings.)
+    """
+    local = local_address(args.host)
+    if local is None:
+        return None
+    return urls(local, port, args.control, token, args.text_scale)[0]
+
+
+def _control_notes(args: argparse.Namespace, token: ControlToken) -> list[str]:
+    """What to say under the QR, in order."""
+    notes = [token.note] if token.note else []
+    if args.advertise_host:
+        if is_loopback_host(args.host):
+            notes.append(
+                f"  Note: --host {args.host} listens on this machine only, so no other\n"
+                f"  device can open the {args.advertise_host} URLs above."
+            )
+        else:
+            unresolved = unresolved_name_warning(args.advertise_host)
+            if unresolved:
+                notes.append(unresolved)
+    notes.append(
+        "  Note: the bare address (http://host:port/) opens a VIEW-ONLY viewer\n"
+        "  that the panel cannot drive. Open the Display URL above instead."
+    )
+    if token.value is None and not is_loopback_host(args.host):
+        notes.append(
+            "  Note: no control token (--no-control-token), so anyone who can reach\n"
+            "  this machine on the network can drive the display. Foreign web pages\n"
+            "  cannot (the relay checks the request origin), but a person on this\n"
+            "  network who opens the panel URL can."
+        )
+    return notes
 
 
 def main(argv: list[str] | None = None) -> int:
     """Serve this folder until interrupted."""
     args = _parse_args(argv)
-    if args.control_token and not args.control:
-        print("Warning: --control-token requires --control. Ignoring it.")
-
-    port = find_port(args.host, args.port)
-    if port is None:
-        print(f"Error: No available port found near {args.port}")
+    if (args.control_token is not None or args.no_control_token) and not args.control:
+        print("Warning: --control-token / --no-control-token need --control. Ignoring.")
+    try:
+        token = resolve_control_token(args, SCRIPT_DIR)
+        relay = Relay(token.value) if args.control else None
+        server = open_server(args, relay)
+    except StartupError as error:
+        print(f"Error: {error}")
         return 1
-
-    relay = Relay(args.control_token) if args.control else None
-    handler = partial(LuxarHandler, directory=str(SCRIPT_DIR))
-    server = ControlServer((args.host, port), handler, relay)
     server.text_scale = args.text_scale
+    server.advertise = args.advertise_host
+    port = int(server.server_address[1])
 
-    addresses = urls(args.host, port, args.control, args.control_token, args.text_scale)
+    addresses = urls(
+        args.host,
+        port,
+        args.control,
+        token.value,
+        args.text_scale,
+        advertise=args.advertise_host,
+    )
     print()
     print("  Display (open this on the big screen)")
     print(f"    {addresses[0]}")
@@ -1135,23 +1643,12 @@ def main(argv: list[str] | None = None) -> int:
         print()
         print("  Control panel (open this on the tablet)")
         print(f"    {addresses[1]}")
-        print_control_qr(addresses[1])
-        print()
-        print(
-            "  Note: the bare address (http://host:port/) opens a VIEW-ONLY viewer\n"
-            "  that the panel cannot drive. Open the Display URL above instead."
+        print_control_qr(
+            addresses[1], printable=token.printable, has_token=token.value is not None
         )
-        if not is_loopback_host(args.host) and not args.control_token:
+        for note in _control_notes(args, token):
             print()
-            print(
-                "  Note: anyone who can reach this machine on the network can "
-                "drive the display.\n"
-                "  Foreign web pages cannot (the relay checks the request "
-                "origin), but a person on\n"
-                "  this network who opens the panel URL can. Pass "
-                "--control-token SECRET on an\n"
-                "  untrusted network, or --host 127.0.0.1 to keep it local."
-            )
+            print(note)
     print()
     print("Press Ctrl+C to stop")
     # Flushed explicitly: stdout is block-buffered when it is a pipe rather
@@ -1161,7 +1658,8 @@ def main(argv: list[str] | None = None) -> int:
     sys.stdout.flush()
 
     if not args.no_open:
-        threading.Timer(0.5, webbrowser.open, args=[addresses[0]]).start()
+        target = _local_display_url(args, port, token.value) or addresses[0]
+        threading.Timer(0.5, webbrowser.open, args=[target]).start()
 
     try:
         server.serve_forever()

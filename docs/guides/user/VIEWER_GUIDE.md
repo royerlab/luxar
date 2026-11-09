@@ -203,7 +203,7 @@ Append parameters to the viewer URL to control startup behavior.
 | `view` | JSON fragment (`#view=`) | Shareable view bookmark state. The Bookmarks rail panel creates and copies these links; opening one restores the camera, slices, rendering and layer appearance after loading `src`. |
 | `title` | string | Browser tab title (`document.title`). Serve-family commands derive it from the dataset file name; a scene's authored `viewer_config.title` overrides it. Dropped when you switch datasets in the viewer -- the tab is then named after the dataset you switched to. |
 | `control` | flag \| WebSocket URL | Attach this viewer to the serving app's control hub. A URL selects an explicit hub and must be same-origin unless `controlAllowCrossOrigin` is present. |
-| `controlToken` | string | Shared control-hub token, matching `luxar serve --control-token`. Query-string tokens are visible in browser history and are only a LAN convenience. |
+| `controlToken` | string | Shared control-hub token, matching `luxar serve --control-token` (or, in an exported folder, the token `serve.py` saves in `control-token.txt`). Query-string tokens are visible in browser history and are only a LAN convenience. |
 | `controlAllowCrossOrigin` | flag | Permit an explicit `control` URL to cross the page origin. Without this flag, explicit control sockets are same-origin only; use it only with an authenticated or explicitly origin-allow-listed hub. |
 | `panel` | module URL | On the `control.html` panel page, load an alternative same-origin control-panel module. Cross-origin modules are rejected. |
 | `kiosk` | flag | Force kiosk mode on as a hard operator override. It can lock a scene but cannot unlock authored kiosk mode. |

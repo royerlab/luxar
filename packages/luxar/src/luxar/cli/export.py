@@ -12,7 +12,7 @@ Usage::
 
     luxar export my_scene.luxar.zarr -o my_export/
     cd my_export && python3 serve.py
-    cd my_export && python3 serve.py --control --host 0.0.0.0   # kiosk
+    cd my_export && python3 serve.py --control --host 0.0.0.0   # kiosk (token saved)
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from arbol import aprint, asection
 from .._zarr_compat import read_node_attrs
 from ..core.viewer_config import LaunchConfig
 from ..utils.atomic_copy import atomic_copytree
+from ._export_serve_template import CONTROL_TOKEN_FILE
 from .utils import (
     check_viewer_built,
     dataset_title,
@@ -78,10 +79,13 @@ def export_scene(
     _require_third_party_notices(get_viewer_dist_path())
     facts = read_scene_facts(source)
 
+    kept_token = _saved_control_token(output)
     if output.exists():
         shutil.rmtree(output)
 
     output.mkdir(parents=True, exist_ok=True)
+    if kept_token is not None:
+        _restore_control_token(output, kept_token)
 
     with asection("Exporting standalone scene"):
         # Step 1: Copy viewer
@@ -100,7 +104,8 @@ def export_scene(
             _generate_testing_notes(output, facts)
             aprint(
                 "This scene declares a control panel, so serve.py defaults to "
-                "--control --host 0.0.0.0 and prints a QR for the tablet."
+                "--control --host 0.0.0.0 and prints a QR for the tablet, with a "
+                "control token it saves on first start (see README.txt)."
             )
 
     return output
@@ -411,6 +416,28 @@ def _substitute(script: str, name: str, value: object) -> str:
     return script
 
 
+def _saved_control_token(output: Path) -> bytes | None:
+    """The control token a previous export's serve.py saved, if any.
+
+    ``--overwrite`` replaces the folder, and serve.py would then mint a new
+    token on its next start -- silently retiring every QR printed from the old
+    one. A re-export is a content update, not a request to rotate the token
+    (deleting the file is), so the token is carried across.
+    """
+    try:
+        return (output / CONTROL_TOKEN_FILE).read_bytes()
+    except OSError:
+        return None
+
+
+def _restore_control_token(output: Path, token: bytes) -> None:
+    """Put a kept control token back, readable by its owner only."""
+    path = output / CONTROL_TOKEN_FILE
+    path.write_bytes(token)
+    path.chmod(0o600)
+    aprint(f"Kept the control token from the previous export ({CONTROL_TOKEN_FILE})")
+
+
 def _generate_testing_notes(output: Path, facts: "SceneFacts") -> None:
     """Write TESTING.txt: what to try, and what has NOT been checked.
 
@@ -439,7 +466,8 @@ with `]` and `[`, or press 1 then `]`. Nothing here needs the network.
 ----------------------------
     python3 serve.py
 
-This is the kiosk default for this scene. The script prints two URLs and a QR.
+This is the kiosk default for this scene. The script prints two URLs and a QR,
+both carrying a control token it generated and saved in control-token.txt.
 
     a. Open the Display URL on the big screen. Wait for it to finish loading.
     b. Scan the QR with the tablet, or type the Control panel URL.
@@ -451,7 +479,7 @@ If the tablet shows tiles but tapping does nothing, the page loaded over HTTP
 and the WebSocket did not connect -- almost always a firewall or a guest
 network that blocks client-to-client traffic, not the software. If the tablet
 cannot load the page at all, check that serve.py printed a 192.168.x or 10.x
-address rather than 127.0.0.1.
+address (or the --advertise-host name) rather than 127.0.0.1.
 
 IF THE TABLET SHOWS NO TILES AT ALL, and especially if you are testing both
 pages on ONE machine in two tabs of the same browser: that is the likely
@@ -465,18 +493,31 @@ not arise.
 ---------------
 - Close and reopen the tablet page while the display keeps running.
 - Two tablets at once: both should work, last tap wins.
-- Restart serve.py: the tablet page needs reloading, the URL is the same
-  unless the port changed.
-- `--control-token WORD`, then scan the new QR. An old QR should stop working.
+- Restart serve.py: the tablet page needs reloading; the URL and the QR are
+  the same (same port, same saved token, and the same address -- the LAN IP
+  only while the network keeps assigning it, a --advertise-host name always).
+  control-qr.png and control-panel.pdf are then byte-identical.
+- Print control-panel.pdf (A4) and scan the printed QR with a phone.
+- Start a second serve.py while the first runs: it should refuse with
+  "port ... is already in use" rather than move to another port.
+- Delete control-token.txt and restart: the QR changes, and the old one should
+  stop working (the tablet shows it is disconnected).
+- `--advertise-host NAME`: the URLs and the QR carry NAME instead of the IP.
+- Open the panel URL with the controlToken part removed: it should not connect.
 
 Known limits, so you do not report these as bugs
 ------------------------------------------------
-- NO TOKEN BY DEFAULT. Anyone who can reach this machine on the network can
-  drive the display. A foreign web page cannot -- the relay checks the origin
-  on the WebSocket handshake -- but a person on the same network who opens the
-  panel URL can. Use --control-token on a network you do not control.
 - The token travels in the URL, so it is visible in the tablet's address bar
-  and history. It is an exhibit lock, not a password.
+  and history, and in anything the QR is printed on. Anyone who can photograph
+  a printed QR can drive the display. It is an exhibit lock, not a password:
+  delete control-token.txt after the event to retire it.
+- A printed QR also names this machine's address. It keeps working only while
+  that address does: reserve it on the network (a DHCP reservation), or pass
+  --advertise-host with a name the tablets resolve.
+- With --no-control-token, anyone who can reach this machine on the network
+  can drive the display. A foreign web page cannot -- the relay checks the
+  origin on the WebSocket handshake -- but a person on the same network who
+  opens the panel URL can.
 - Supported on macOS and Linux, Python 3.9 and newer, serving a tablet-style
   client over the network. On Windows the command is `python serve.py`; the
   scripts are stdlib-only, but Windows is not part of the tested set.
@@ -651,6 +692,14 @@ def _generate_readme(
     ]
     if facts.has_control_panel:
         entries.append(("TESTING.txt", "What to check, and what is unverified"))
+    # Written by serve.py when its relay runs, not by the export: listed so
+    # nobody mistakes them for clutter and deletes the token behind a printed QR.
+    relay = "" if facts.has_control_panel else ", with --control"
+    entries.append(
+        ("control-token.txt", f"The panel's saved token (first start{relay})")
+    )
+    entries.append(("control-qr.png", f"The panel's QR, to print (each start{relay})"))
+    entries.append(("control-panel.pdf", f"A4 sheet with that QR (each start{relay})"))
     width = max(len(name) for name, _ in entries)
     structure = "\n".join(f"    {name:<{width}}  {what}" for name, what in entries)
 
@@ -664,25 +713,44 @@ a tablet can reach it. On start the script prints two URLs and a QR code:
     Display         open on the big screen
     Control panel   scan the QR with the tablet, or type the URL
 
-The QR is also written to control-qr.png, which you can print or show on a
-second screen.
+Both URLs carry a control token: the relay refuses any socket without it, so
+driving the display takes the URL AND the token, which the QR carries. The
+token is generated on the first start, saved in control-token.txt and reused
+on every start after that, so the URLs and the QR stay the same. The QR is
+also written to control-qr.png, and onto an A4 sheet, control-panel.pdf, that
+says what it is and how to use it: print that and put it up by the display.
 
-    python3 serve.py --no-control          Display only, no relay
-    python3 serve.py --host 127.0.0.1      Local only, no tablet
-    python3 serve.py --control-token WORD  Require a secret
+    python3 serve.py --no-control              Display only, no relay
+    python3 serve.py --host 127.0.0.1          Local only, no tablet, no token
+    python3 serve.py --advertise-host NAME     Put NAME in the URLs and the QR
+    python3 serve.py --control-token WORD      Use WORD for this run only (its QR
+                                               is not written to the files to print)
+    python3 serve.py --no-control-token        No token (anyone on the network
+                                               can then drive the display)
 
-Anyone who can reach this machine on the network can drive the display. A
-foreign web page cannot -- the relay checks the request origin on the
-WebSocket handshake -- but a person on the same network who opens the panel
-URL can. On a network you do not control, pass --control-token. The token
-travels in the URL, so it is visible in the tablet's address bar and its
-history: an exhibit lock, not a password.
+Printing the QR. It names three things, and stays valid while all three hold:
+the token (delete control-token.txt to retire it and get a new one), the port
+(serve.py never moves off it: a busy port is an error, so free it or choose
+--port N and reprint), and this machine's network address. That address is
+whatever the network assigned, so reserve it (a DHCP reservation), or pass
+--advertise-host with a name the tablets resolve (e.g. this-machine.local).
+Scan the printed copy once after a reboot.
+
+The token travels in the URL, so it is visible in the address bar of the
+tablet AND of the big screen (unless its browser runs full-screen or in kiosk
+mode), in their histories, and in anything the QR is printed on: an exhibit
+lock, not a password. Zipping this folder after its first start ships the
+token too, and so does `luxar export --overwrite`, which keeps it so printed
+QRs survive a content update. Foreign web pages cannot drive the display
+either way -- the relay checks the request origin on the WebSocket handshake.
+The browser serve.py opens itself uses http://127.0.0.1:..., which works only
+on this machine; give other devices the printed URLs.
 
 """
     else:
         kiosk = """Kiosk mode: driving the display from a tablet
 ---------------------------------------------
-    python3 serve.py --control --host 0.0.0.0 --control-token SECRET
+    python3 serve.py --control --host 0.0.0.0
 
 This scene declares no control panel, so the relay is off by default and
 there are no authored stops for a panel to show. With --control the script
@@ -691,11 +759,11 @@ still moves the display.
 
 It is off by default because a folder you double-click should not start
 listening for anything that wants to drive it. --host 0.0.0.0 is what makes
-the tablet able to reach it at all, and on any network you do not control,
-pass --control-token: without one, anything that can reach this machine can
-drive the display. The token travels in the URL, so it is visible in the
-tablet's address bar and its history -- fine for a LAN exhibit, not a
-password.
+the tablet able to reach it at all, and then the relay requires a control
+token: generated on the first start, saved in control-token.txt and carried in
+both URLs and the QR (--control-token SECRET sets one for a single run). The
+token travels in the URL, so it is visible in the tablet's address bar and its
+history -- fine for a LAN exhibit, not a password.
 
 """
 
@@ -726,7 +794,8 @@ Options
     python3 serve.py --text-scale 0.8   Smaller on-screen text, same layout
 
 If the port is busy the script picks the next free one and prints what it
-chose. Press Ctrl+C to stop it.
+chose -- except with the control relay on, where the panel URL and its QR name
+the port, so a busy port is an error instead. Press Ctrl+C to stop it.
 
 {kiosk}{display}Folder Structure
 ----------------
