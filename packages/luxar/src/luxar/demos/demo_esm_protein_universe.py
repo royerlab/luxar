@@ -97,8 +97,8 @@ Screen shape and pace:
     on a wide wall; a screen too narrow for a readable panel is refused. Without
     it the layout is the one tuned for 16:9. ``--text-scale`` sets the
     reading-text size for the room. A kiosk build moves on to the next story by
-    itself, resting 30 s at each stop after the camera lands (with narration
-    playing, use 60: the longest clip runs 43 s)
+    itself, resting 60 s at each stop after the camera lands, long enough for
+    the narration (clips run 20-43 s); a silent wall can use 30
     (``--auto-advance SECONDS``; ``0`` turns it off).
 
 Touch panel (off by default):
@@ -3365,13 +3365,14 @@ KIOSK_LAUNCH = LaunchConfig(renderer="webgpu", workers=16, prefetch=12)
 #: Seconds each kiosk stop RESTS before the tour moves on by itself, so the
 #: wall is never still with no one at the controls: the story dimension plays
 #: at this period, and the period counts from the camera's landing (a flight is
-#: 5-16 s). A visitor's pick restarts it. 30 s is time to read a panel on a
-#: wall with no sound, as the lobby kiosk is. With sound it is too short for the
-#: narration, which also starts at the landing (`on_arrive`, +0.6 s): the
-#: longest openai/alloy clip, CRISPR-Cas, runs 43.3 s, so a kiosk with speakers
-#: wants `--auto-advance 60` (or `serve.py --auto-advance 60` on site).
+#: 5-16 s). A visitor's pick restarts it. It must outlast the narration, which
+#: also starts at the landing (`on_arrive`, +0.6 s) and which the lobby kiosk
+#: does play: the openai/alloy clips run 20.3-43.3 s (mean 35.9 s; the longest,
+#: CRISPR-Cas, 43.3 s), and at 30 s the tour cut 19 of the 21 off. 60 s is the
+#: longest plus 10 s, rounded up. A silent wall can go shorter
+#: (`--auto-advance 30`, or `serve.py --auto-advance 30` on site).
 #: Re-measure when the scripts change (`ffprobe` the store's narration_*/audio.mp3).
-KIOSK_AUTO_ADVANCE_S = 30.0
+KIOSK_AUTO_ADVANCE_S = 60.0
 #: Shape the default layout is drawn for (and its caption laid out on).
 DEFAULT_ASPECT = 16 / 9
 
