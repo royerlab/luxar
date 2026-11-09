@@ -24,8 +24,8 @@ in the URL while the server listens on every interface.
 
 # Maintainer note (this file is shipped verbatim, so the note travels):
 # the template lives at `luxar/cli/_export_serve_template.py` and is copied by
-# `luxar export`, with DATA_DIR_NAME, TITLE_QUERY, LAUNCH_QUERY and
-# HAS_CONTROL_PANEL substituted. It is a real
+# `luxar export`, with DATA_DIR_NAME, TITLE_QUERY, LAUNCH_QUERY,
+# HAS_CONTROL_PANEL and LEGEND_JSON substituted. It is a real
 # module rather than a string inside the exporter so that ruff, mypy and the
 # test suite see it -- a 400-line WebSocket relay hidden in an f-string is
 # unreviewable. It must stay STDLIB-ONLY: this folder gets zipped and emailed
@@ -1529,11 +1529,24 @@ def _legend_key() -> tuple[str, tuple[tuple[str, ...], ...], str]:
         rows = tuple(
             (str(e["color"]), str(e["color_name"]), str(e["label"]))
             for e in legend["entries"]
+            if _HEX_COLOR.fullmatch(str(e["color"]))  # a swatch needs a real colour
         )
-        note = str(legend.get("note", "")).split(". ")[0].rstrip(".")
-        return str(legend["title"]), rows, (note + ".") if note else ""
-    except (ValueError, KeyError, TypeError):
+        note = _first_sentence(str(legend.get("note", "")))
+        return (str(legend["title"]), rows, note) if rows else ("", (), "")
+    except (ValueError, KeyError, TypeError, AttributeError):
         return "", (), ""  # a key is a convenience, never the gate
+
+
+_HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
+# A sentence ends at . ! or ? followed by a space and a capital letter, so
+# "Fig. 2", "e.g. the" and "3.5 dB" do not cut it short.
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
+
+
+def _first_sentence(text: str) -> str:
+    """The first sentence of ``text``, ending in its own punctuation."""
+    first = _SENTENCE_END.split(text.strip(), maxsplit=1)[0].strip()
+    return first if not first or first[-1] in ".!?" else first + "."
 
 
 def print_control_qr(

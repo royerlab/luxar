@@ -25,10 +25,32 @@ from typing import Any, Optional
 _HEX = re.compile(r"#[0-9A-Fa-f]{6}")
 
 
+#: Length caps. A legend is printed -- README.txt, COLOURS.pdf, the panel
+#: sheet's key -- so it is kept to what a reader can take in at a glance, and
+#: no single field can push a printed layout off its page.
+MAX_ENTRIES = 64
+_MAX_CHARS = {
+    "legend title": 120,
+    "legend label": 80,
+    "legend color_name": 40,
+    "legend description": 400,
+    "legend note": 1000,
+}
+
+
 def _single_line(where: str, text: Any, *, required: bool = True) -> str:
     """A stripped single line of printable text (see ``citation``'s reasoning)."""
-    if not isinstance(text, str) or (required and not text.strip()):
+    if not isinstance(text, str):
+        kind = "a non-empty string" if required else "a string"
+        raise ValueError(f"{where} must be {kind}, got {type(text).__name__}")
+    if required and not text.strip():
         raise ValueError(f"{where} must be a non-empty string")
+    limit = _MAX_CHARS[where]
+    if len(text.strip()) > limit:
+        raise ValueError(
+            f"{where} is {len(text.strip())} characters; at most {limit} fit "
+            "the printed legend"
+        )
     bad = {ch for ch in text if unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp")}
     if bad:
         raise ValueError(
@@ -95,6 +117,10 @@ class Legend:
         entries = tuple(self.entries)
         if not entries:
             raise ValueError("a legend needs at least one entry")
+        if len(entries) > MAX_ENTRIES:
+            raise ValueError(
+                f"a legend has at most {MAX_ENTRIES} entries, got {len(entries)}"
+            )
         if not all(isinstance(entry, LegendEntry) for entry in entries):
             raise ValueError("legend entries must be LegendEntry objects")
         labels = [entry.label for entry in entries]

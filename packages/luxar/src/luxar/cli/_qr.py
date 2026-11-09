@@ -809,7 +809,7 @@ def _bullets(
     """``items`` as a hanging-indent list, numbered when ``mark`` is ``"1."``."""
     indent = size * 1.85
     leading = size * 1.38
-    for number, item in enumerate(items, 1):
+    for number, item in enumerate((item for item in items if item.strip()), 1):
         label = f"{number}." if mark == "1." else mark
         font = "Helvetica-Bold" if mark == "1." else "Helvetica"
         page.text([label], font, size, leading=leading)
@@ -819,12 +819,25 @@ def _bullets(
         page.y -= size * 0.35
 
 
+#: The most rows the sheet's compact key draws (see :func:`_compact_key`).
+_KEY_ROWS = 16
+
+
 def _compact_key(
     page: _Page, title: str, rows: tuple[tuple[str, ...], ...], note: str, size: float
 ) -> None:
-    """A two-column colour key: swatch, label, colour name and hex per row."""
+    """A two-column colour key: swatch, label, colour name and hex per row.
+
+    At most :data:`_KEY_ROWS` rows: the sheet is for the code, so a longer
+    legend shows its first rows and says how many more COLOURS.pdf holds.
+    """
     column = _A4[0] - 2 * _MARGIN
-    page.text([title], "Helvetica-Bold", size * 1.25, leading=size * 1.8)
+    page.text(_wrap(title, "Helvetica-Bold", size * 1.25, column)[:1],
+              "Helvetica-Bold", size * 1.25, leading=size * 1.8)  # fmt: skip
+    hidden = 0
+    if len(rows) > _KEY_ROWS:
+        hidden = len(rows) - (_KEY_ROWS - 1)
+        rows = rows[: _KEY_ROWS - 1]
     half = (len(rows) + 1) // 2
     width = column / 2
     top = page.y
@@ -842,6 +855,9 @@ def _compact_key(
             + b" Tj ET"
         )
     page.y = top - half * leading
+    if hidden:
+        page.text([f"... and {hidden} more: see COLOURS.pdf"], "Helvetica",
+                  size, leading=leading, grey=0.3)  # fmt: skip
     if note:
         page.y -= size * 0.4
         page.text(_wrap(note, "Helvetica", size * 0.92, column), "Helvetica",
@@ -942,64 +958,95 @@ def legend_pdf_bytes(
     note: str = "",
     footer: str = "",
 ) -> bytes:
-    """An A4 portrait page explaining a scene's colours: per row a large
-    swatch, the label, the colour name and hex code, and its description."""
-    page = _Page()
+    """A4 portrait pages explaining a scene's colours: per row a large swatch,
+    the label, the colour name and hex code, and its description. Rows that do
+    not fit above the footer continue on a new page (a row is never split)."""
     column = _A4[0] - 2 * _MARGIN
+    swatch = 30.0
+    text_x = _MARGIN + swatch + 14
+    text_width = column - swatch - 14
+    bottom = _MARGIN + 10  # the footer's band
+    pages: list[_Page] = [_Page()]
+    page = pages[0]
     page.text(_wrap(title, "Helvetica-Bold", 22, column), "Helvetica-Bold", 22,
               leading=28)  # fmt: skip
     if subtitle:
         page.text(_wrap(subtitle, "Helvetica", 12.5, column), "Helvetica", 12.5,
                   leading=17, grey=0.3)  # fmt: skip
     page.y -= 14
-    swatch = 30.0
-    text_x = _MARGIN + swatch + 14
     for row in rows:
         hex_code, color_name, label = row[0], row[1], row[2]
         description = row[3] if len(row) > 3 else ""
+        labels = _wrap(label, "Helvetica-Bold", 13, text_width)
+        details = (
+            _wrap(description, "Helvetica", 10.5, text_width) if description else []
+        )
+        height = max(15 * len(labels) + 13 + 13.5 * len(details), swatch + 2) + 12
+        if page.y - height < bottom and page.y < _A4[1] - _MARGIN:
+            page = _Page()
+            pages.append(page)
         top = page.y
-        page.text([label], "Helvetica-Bold", 13, leading=15, x=text_x)
+        page.text(labels, "Helvetica-Bold", 13, leading=15, x=text_x)
         page.text([f"{color_name}  {hex_code}"], "Courier", 10, leading=13,
                   x=text_x, grey=0.35)  # fmt: skip
-        if description:
-            page.text(_wrap(description, "Helvetica", 10.5, column - swatch - 14),
-                      "Helvetica", 10.5, leading=13.5, x=text_x)  # fmt: skip
+        page.text(details, "Helvetica", 10.5, leading=13.5, x=text_x)
         page.swatch(_MARGIN, top - swatch - 2, swatch, swatch, _rgb(hex_code))
         page.y = min(page.y, top - swatch - 2) - 12
     if note:
+        lines = _wrap(note, "Helvetica", 10.5, column)
+        if page.y - 4 - 14.5 * len(lines) < bottom:
+            page = _Page()
+            pages.append(page)
         page.y -= 4
-        page.text(_wrap(note, "Helvetica", 10.5, column), "Helvetica", 10.5,
-                  leading=14.5, grey=0.25)  # fmt: skip
-    if footer:
-        page.y = _MARGIN - 6
-        page.text(_wrap(footer, "Helvetica", 8.5, column), "Helvetica", 8.5,
-                  leading=0, centre=True, grey=0.45)  # fmt: skip
-    return _pdf_document(b"\n".join(page.ops), None, "", title)
+        page.text(lines, "Helvetica", 10.5, leading=14.5, grey=0.25)
+    for number, each in enumerate(pages, 1):
+        mark = (
+            footer if len(pages) == 1 else f"{footer}  |  page {number} of {len(pages)}"
+        )
+        if mark.strip(" |"):
+            each.y = _MARGIN - 6
+            each.text(_wrap(mark.strip(" |"), "Helvetica", 8.5, column), "Helvetica",
+                      8.5, leading=0, centre=True, grey=0.45)  # fmt: skip
+    return _pdf_document([b"\n".join(each.ops) for each in pages], None, "", title)
 
 
 def _pdf_document(
-    content: bytes, link: tuple[float, ...] | None, url: str, title: str
+    contents: bytes | list[bytes],
+    link: tuple[float, ...] | None,
+    url: str,
+    title: str,
 ) -> bytes:
-    """One A4 page around ``content``, with a URI link over ``link`` if given."""
-    stream = zlib.compress(content, 9)
-    # Objects: 1 catalog, 2 pages, 3 page, 4 content, [5 link], fonts, info.
-    first_font = 6 if link is not None else 5
+    """A4 pages around ``contents`` (one stream per page), with a URI link over
+    ``link`` on the first page if given."""
+    streams = [contents] if isinstance(contents, bytes) else list(contents)
+    # Objects: 1 catalog, 2 pages, then a (page, content) pair per page,
+    # [the link], the fonts, and the info dictionary.
+    link_number = 3 + 2 * len(streams)
+    first_font = link_number + (1 if link is not None else 0)
     fonts = " ".join(
         f"/{key} {first_font + index} 0 R"
         for index, key in enumerate(_FONT_KEYS.values())
     )
-    annots = " /Annots [5 0 R]" if link is not None else ""
+    kids = " ".join(f"{3 + 2 * index} 0 R" for index in range(len(streams)))
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        (
-            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {_A4[0]} {_A4[1]}] "
-            f"/Resources << /Font << {fonts} >> >> /Contents 4 0 R{annots} >>"
-        ).encode("ascii"),
-        b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(stream)
-        + stream
-        + b"\nendstream",
+        f"<< /Type /Pages /Kids [{kids}] /Count {len(streams)} >>".encode("ascii"),
     ]
+    for index, content in enumerate(streams):
+        stream = zlib.compress(content, 9)
+        annots = (
+            f" /Annots [{link_number} 0 R]" if link is not None and index == 0 else ""
+        )
+        objects += [
+            (
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {_A4[0]} {_A4[1]}] "
+                f"/Resources << /Font << {fonts} >> >> /Contents {4 + 2 * index} 0 R"
+                f"{annots} >>"
+            ).encode("ascii"),
+            b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(stream)
+            + stream
+            + b"\nendstream",
+        ]
     if link is not None:
         rect = " ".join(f"{value:.2f}" for value in link)
         objects.append(

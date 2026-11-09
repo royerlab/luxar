@@ -110,3 +110,23 @@ def test_no_legend_writes_no_key(tmp_path) -> None:
         scene.add_points("pts", np.zeros((4, 3), dtype=np.float32))
         assert scene.legend is None
     assert "legend" not in zarr.open_group(store, mode="r").attrs
+
+
+def test_a_non_string_description_names_its_type() -> None:
+    with pytest.raises(ValueError, match="must be a string, got NoneType"):
+        LegendEntry("x", "#000000", "black", None)  # type: ignore[arg-type]
+
+
+def test_the_printed_fields_are_capped() -> None:
+    with pytest.raises(ValueError, match="at most 80 fit"):
+        LegendEntry("x" * 81, "#000000", "black")
+    with pytest.raises(ValueError, match="at most 400 fit"):
+        LegendEntry("x", "#000000", "black", "d" * 401)
+    with pytest.raises(ValueError, match="at most 64 entries"):
+        Legend(
+            title="t",
+            entries=tuple(LegendEntry(f"g{i}", "#000000", "black") for i in range(65)),
+        )
+    assert len(Legend(title="t", entries=tuple(
+        LegendEntry(f"g{i}", "#000000", "black") for i in range(64)
+    )).entries) == 64  # fmt: skip

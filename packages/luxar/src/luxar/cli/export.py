@@ -295,6 +295,26 @@ def _write_colour_files(output: Path, legend: Legend, title: str | None) -> None
         )
     )
     aprint(f"Generated COLOURS.txt and COLOURS.pdf ({heading})")
+    unprintable = _not_in_pdf_fonts(legend)
+    if unprintable:
+        aprint(
+            "⚠️  The PDF fonts cannot draw "
+            + " ".join(sorted(unprintable))
+            + " from the legend: COLOURS.pdf and the panel sheet show '?' there "
+            "(COLOURS.txt and README.txt keep them)."
+        )
+
+
+def _not_in_pdf_fonts(legend: Legend) -> set[str]:
+    """Characters of the legend the PDFs' WinAnsi (cp1252) fonts cannot draw."""
+    text = json.dumps(legend.to_dict(), ensure_ascii=False)
+    out = set()
+    for ch in text:
+        try:
+            ch.encode("cp1252")
+        except UnicodeEncodeError:
+            out.add(ch)
+    return out
 
 
 def _launch_query(raw: object) -> str:
