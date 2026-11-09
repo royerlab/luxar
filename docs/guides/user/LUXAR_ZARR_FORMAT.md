@@ -259,8 +259,8 @@ mutating the live mapping after finalization only updates its in-memory cache
 and emits a warning.
 
 The structured root attrs Luxar owns — `scene_dimensions`, `viewer_config`,
-`citation` — each have a dedicated validating API (`Scene.dimensions`,
-`Scene.viewer_config`, `create_scene(citation=...)`). Author them there, not
+`citation`, `legend` — each have a dedicated validating API (`Scene.dimensions`,
+`Scene.viewer_config`, `create_scene(citation=...)`, `create_scene(legend=...)`). Author them there, not
 through `scene.attrs`: the mapping accepts free-form keys at the root, so
 writing one of those by hand skips its validation and leaves the `Scene`
 object's own copy stale.
@@ -333,6 +333,41 @@ applicable" and never as a claim that the data has no author.
 Written by passing `citation=` to `LuxarZarrCompiler.create_scene(...)`. The
 payload is validated at write time (`luxar.core.citation.validate_citation`), so
 a malformed citation raises instead of being baked into every copy of the data.
+
+### `legend` (optional root attr)
+
+`legend` says what the scene's colours mean, so the explanation travels with
+the data like the credit does. `luxar export` prints it in the exported folder's
+`README.txt`, writes it as `COLOURS.txt` and `COLOURS.pdf` (an A4 page with
+swatches), and hands it to `serve.py`, which draws a compact key on the
+printed control-panel sheet.
+
+```javascript
+{
+  "legend": {
+    "title": "What the colours mean",              // REQUIRED, single line
+    "entries": [                                   // REQUIRED, at least one, unique labels
+      {
+        "label": "Proteobacteria",                 // REQUIRED: what the colour stands for
+        "color": "#66E680",                        // REQUIRED: #RRGGBB, stored upper-case
+        "color_name": "lime green",                // REQUIRED: a name a reader can say
+        "description": "Dominant phylum Pseudomonadota."  // optional
+      }
+    ],
+    "note": "Clusters with no characterised member are drawn at 45% brightness."  // optional
+  }
+}
+```
+
+`color` is the AUTHORED value as sRGB hex. On screen a colour can also be
+scaled by a layer's intensity, the exposure and tone mapping, and summed where
+points overlap, so the legend names the hue; `note` is where to say what else
+changes the look. Every text field is a single line of printable text (the
+citation's rule, for the same reasons). The key is absent when a scene has no
+legend. Written by passing `legend=` (a `luxar.core.legend.Legend`) to
+`LuxarZarrCompiler.create_scene(...)`; validated at write time, and a
+malformed stored legend is reported and left out by `luxar export` rather
+than failing it.
 
 ### `input_digests` (optional root attr)
 

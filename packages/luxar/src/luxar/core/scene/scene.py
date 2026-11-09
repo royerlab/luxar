@@ -18,6 +18,7 @@ from ...utils.atomic_copy import atomic_copytree
 from ..citation import validate_citation
 from ..dimensions import Dimensions
 from ..group import Group
+from ..legend import Legend, validate_legend
 from ..overlay import Overlay
 
 if TYPE_CHECKING:
@@ -69,6 +70,7 @@ class Scene(Group):
         dimensions: Dimensions,
         viewer_config: Optional[ViewerConfig] = None,
         citation: Optional[Mapping[str, str]] = None,
+        legend: Optional[Legend] = None,
     ) -> None:
         """Initialize a new Luxar scene.
 
@@ -83,10 +85,13 @@ class Scene(Group):
                 Written to the store's root attributes so the attribution travels
                 with the data rather than only with the page that happens to show
                 it. ``None`` means no external dataset to credit.
+            legend: Optional :class:`~luxar.core.legend.Legend` saying what the
+                scene's colours mean, written to the root attributes (and printed
+                in an exported folder's README). ``None`` means no legend.
 
         Raises:
-            ValueError: If writer is None, dimensions is None, the citation is
-                malformed, or initialization fails
+            ValueError: If writer is None, dimensions is None, the citation or
+                legend is malformed, or initialization fails
         """
         try:
             if writer is None:
@@ -123,6 +128,9 @@ class Scene(Group):
             self._citation: Optional[dict[str, str]] = validate_citation(citation)
             if self._citation is not None:
                 writer.write_group("/", citation=self._citation)
+            self._legend: Optional[dict[str, Any]] = validate_legend(legend)
+            if self._legend is not None:
+                writer.write_group("/", legend=self._legend)
 
             # Overlay state
             self._overlay_counter: int = 0
@@ -143,6 +151,11 @@ class Scene(Group):
     def citation(self) -> Optional[dict[str, str]]:
         """Dataset credit stamped into the store root, or None if none is owed."""
         return dict(self._citation) if self._citation is not None else None
+
+    @property
+    def legend(self) -> Optional[Legend]:
+        """What the scene's colours mean, as stamped into the store root, or None."""
+        return Legend.from_dict(self._legend) if self._legend is not None else None
 
     # ---------------------------------------------------------- hierarchy
 

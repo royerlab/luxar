@@ -44,6 +44,7 @@ __all__ = [
     "qr_ascii",
     "qr_png_bytes",
     "qr_pdf_bytes",
+    "legend_pdf_bytes",
 ]
 
 
@@ -759,6 +760,17 @@ class _Page:
                 + b" Tj ET"
             )
 
+    def swatch(
+        self, x: float, y: float, width: float, height: float, rgb: tuple[float, ...]
+    ) -> None:
+        """A filled colour square (bottom-left at ``x``, ``y``), thinly outlined
+        so a pale colour still shows on white paper."""
+        r, g, b = rgb
+        self.ops.append(
+            f"q {r:.4f} {g:.4f} {b:.4f} rg 0.6 G 0.5 w "
+            f"{x:.2f} {y:.2f} {width:.2f} {height:.2f} re B Q".encode("ascii")
+        )
+
     def qr(self, matrix: list[list[bool]], width: float) -> tuple[float, ...]:
         """Draw the symbol ``width`` wide, centred; return its rectangle."""
         size = len(matrix)
@@ -786,6 +798,56 @@ class _Page:
         return (left, self.y, left + width, top)
 
 
+def _rgb(hex_code: str) -> tuple[float, float, float]:
+    value = hex_code.lstrip("#")
+    return tuple(int(value[i : i + 2], 16) / 255 for i in (0, 2, 4))  # type: ignore[return-value]
+
+
+def _bullets(
+    page: _Page, items: tuple[str, ...], column: float, size: float, mark: str
+) -> None:
+    """``items`` as a hanging-indent list, numbered when ``mark`` is ``"1."``."""
+    indent = size * 1.85
+    leading = size * 1.38
+    for number, item in enumerate(items, 1):
+        label = f"{number}." if mark == "1." else mark
+        font = "Helvetica-Bold" if mark == "1." else "Helvetica"
+        page.text([label], font, size, leading=leading)
+        page.y += leading
+        page.text(_wrap(item, "Helvetica", size, column - indent), "Helvetica", size,
+                  leading=leading, x=_MARGIN + indent)  # fmt: skip
+        page.y -= size * 0.35
+
+
+def _compact_key(
+    page: _Page, title: str, rows: tuple[tuple[str, ...], ...], note: str, size: float
+) -> None:
+    """A two-column colour key: swatch, label, colour name and hex per row."""
+    column = _A4[0] - 2 * _MARGIN
+    page.text([title], "Helvetica-Bold", size * 1.25, leading=size * 1.8)
+    half = (len(rows) + 1) // 2
+    width = column / 2
+    top = page.y
+    leading = size * 1.55
+    for index, row in enumerate(rows):
+        hex_code, color_name, label = row[0], row[1], row[2]
+        x = _MARGIN + (index // half) * width
+        y = top - (index % half + 1) * leading
+        page.swatch(x, y - size * 0.15, size * 1.1, size * 1.1, _rgb(hex_code))
+        text = f"{label}  ({color_name}, {hex_code})"
+        fitted = _wrap(text, "Helvetica", size, width - size * 1.8)[0]
+        page.ops.append(
+            f"BT 0.00 g /F1 {size:g} Tf {x + size * 1.6:.2f} {y:.2f} Td ".encode()
+            + _pdf_string(fitted)
+            + b" Tj ET"
+        )
+    page.y = top - half * leading
+    if note:
+        page.y -= size * 0.4
+        page.text(_wrap(note, "Helvetica", size * 0.92, column), "Helvetica",
+                  size * 0.92, leading=size * 1.3, grey=0.3)  # fmt: skip
+
+
 def qr_pdf_bytes(
     matrix: list[list[bool]],
     *,
@@ -796,14 +858,50 @@ def qr_pdf_bytes(
     steps: tuple[str, ...] = (),
     notes: tuple[str, ...] = (),
     footer: str = "",
+    legend_title: str = "",
+    legend: tuple[tuple[str, ...], ...] = (),
+    legend_note: str = "",
 ) -> bytes:
     """An A4 portrait page: heading, the symbol half the page wide, its URL,
-    an ``intro`` paragraph, numbered ``steps`` and bulleted ``notes``, and a
-    small ``footer``.
+    an ``intro`` paragraph, numbered ``steps`` and bulleted ``notes``, an
+    optional two-column colour key (``legend`` rows: ``(hex, colour name,
+    label, description)`` plain tuples, so this module stays importable alone),
+    and a small ``footer``.
 
-    The symbol and the URL are a link too, for the PDF opened on a screen. The
-    caller words the page; this only lays it out.
+    The symbol never shrinks; when everything does not fit above the footer
+    the TEXT steps down in size until it does. The symbol and the URL are a
+    link too, for the PDF opened on a screen. The caller words the page; this
+    only lays it out.
     """
+    for scale in (1.0, 0.94, 0.88, 0.82, 0.76, 0.7):
+        page, link = _sheet(
+            matrix, url, heading, subheading, intro, steps, notes,
+            legend_title, legend, legend_note, scale,
+        )  # fmt: skip
+        if page.y >= _MARGIN + 6:
+            break
+    if footer:
+        column = _A4[0] - 2 * _MARGIN
+        page.y = _MARGIN - 6
+        page.text(_wrap(footer, "Helvetica", 8.5, column), "Helvetica", 8.5,
+                  leading=0, centre=True, grey=0.45)  # fmt: skip
+    return _pdf_document(b"\n".join(page.ops), link, url, heading)
+
+
+def _sheet(
+    matrix: list[list[bool]],
+    url: str,
+    heading: str,
+    subheading: str,
+    intro: str,
+    steps: tuple[str, ...],
+    notes: tuple[str, ...],
+    legend_title: str,
+    legend: tuple[tuple[str, ...], ...],
+    legend_note: str,
+    scale: float,
+) -> tuple[_Page, tuple[float, ...]]:
+    """Lay the QR sheet out with its text at ``scale``; see :func:`qr_pdf_bytes`."""
     page = _Page()
     column = _A4[0] - 2 * _MARGIN
     page.text(_wrap(heading, "Helvetica-Bold", 24, column), "Helvetica-Bold", 24,
@@ -812,68 +910,110 @@ def qr_pdf_bytes(
         page.text(_wrap(subheading, "Helvetica", 14, column), "Helvetica", 14,
                   leading=20, centre=True, grey=0.3)  # fmt: skip
     page.y -= 22
-    left, bottom, right, top = page.qr(matrix, _A4[0] / 2)
+    left, _bottom, right, top = page.qr(matrix, _A4[0] / 2)
     page.y -= 8
     url_lines = _wrap(url, "Courier", 8.5, column)
     page.text(url_lines, "Courier", 8.5, leading=11, centre=True, grey=0.25)
     link = (left, page.y - 2, right, top)
     if intro:
-        page.y -= 16
-        page.text(_wrap(intro, "Helvetica", 13, column), "Helvetica", 13, leading=18)
+        page.y -= 16 * scale
+        size = 13 * scale
+        page.text(_wrap(intro, "Helvetica", size, column), "Helvetica", size,
+                  leading=size * 1.38)  # fmt: skip
     if steps:
-        page.y -= 16
-        page.text(["How to use it"], "Helvetica-Bold", 15, leading=21)
-        for number, step in enumerate(steps, 1):
-            lines = _wrap(step, "Helvetica", 13, column - 24)
-            page.text([f"{number}."], "Helvetica-Bold", 13, leading=18)
-            page.y += 18
-            page.text(lines, "Helvetica", 13, leading=18, x=_MARGIN + 24)
-            page.y -= 5
+        page.y -= 16 * scale
+        page.text(["How to use it"], "Helvetica-Bold", 15 * scale, leading=21 * scale)
+        _bullets(page, steps, column, 13 * scale, "1.")
     if notes:
-        page.y -= 12
-        page.text(["Good to know"], "Helvetica-Bold", 15, leading=21)
-        for note in notes:
-            lines = _wrap(note, "Helvetica", 11.5, column - 18)
-            page.text(["\u2022"], "Helvetica", 11.5, leading=16)
-            page.y += 16
-            page.text(lines, "Helvetica", 11.5, leading=16, x=_MARGIN + 18)
-            page.y -= 4
+        page.y -= 12 * scale
+        page.text(["Good to know"], "Helvetica-Bold", 15 * scale, leading=21 * scale)
+        _bullets(page, notes, column, 11.5 * scale, "•")
+    if legend:
+        page.y -= 12 * scale
+        _compact_key(page, legend_title or "Colours", legend, legend_note, 10 * scale)
+    return page, link
+
+
+def legend_pdf_bytes(
+    *,
+    title: str,
+    subtitle: str = "",
+    rows: tuple[tuple[str, ...], ...],
+    note: str = "",
+    footer: str = "",
+) -> bytes:
+    """An A4 portrait page explaining a scene's colours: per row a large
+    swatch, the label, the colour name and hex code, and its description."""
+    page = _Page()
+    column = _A4[0] - 2 * _MARGIN
+    page.text(_wrap(title, "Helvetica-Bold", 22, column), "Helvetica-Bold", 22,
+              leading=28)  # fmt: skip
+    if subtitle:
+        page.text(_wrap(subtitle, "Helvetica", 12.5, column), "Helvetica", 12.5,
+                  leading=17, grey=0.3)  # fmt: skip
+    page.y -= 14
+    swatch = 30.0
+    text_x = _MARGIN + swatch + 14
+    for row in rows:
+        hex_code, color_name, label = row[0], row[1], row[2]
+        description = row[3] if len(row) > 3 else ""
+        top = page.y
+        page.text([label], "Helvetica-Bold", 13, leading=15, x=text_x)
+        page.text([f"{color_name}  {hex_code}"], "Courier", 10, leading=13,
+                  x=text_x, grey=0.35)  # fmt: skip
+        if description:
+            page.text(_wrap(description, "Helvetica", 10.5, column - swatch - 14),
+                      "Helvetica", 10.5, leading=13.5, x=text_x)  # fmt: skip
+        page.swatch(_MARGIN, top - swatch - 2, swatch, swatch, _rgb(hex_code))
+        page.y = min(page.y, top - swatch - 2) - 12
+    if note:
+        page.y -= 4
+        page.text(_wrap(note, "Helvetica", 10.5, column), "Helvetica", 10.5,
+                  leading=14.5, grey=0.25)  # fmt: skip
     if footer:
         page.y = _MARGIN - 6
         page.text(_wrap(footer, "Helvetica", 8.5, column), "Helvetica", 8.5,
                   leading=0, centre=True, grey=0.45)  # fmt: skip
-    return _pdf_document(b"\n".join(page.ops), link, url, heading)
+    return _pdf_document(b"\n".join(page.ops), None, "", title)
 
 
 def _pdf_document(
-    content: bytes, link: tuple[float, ...], url: str, title: str
+    content: bytes, link: tuple[float, ...] | None, url: str, title: str
 ) -> bytes:
+    """One A4 page around ``content``, with a URI link over ``link`` if given."""
     stream = zlib.compress(content, 9)
+    # Objects: 1 catalog, 2 pages, 3 page, 4 content, [5 link], fonts, info.
+    first_font = 6 if link is not None else 5
     fonts = " ".join(
-        f"/{key} {index} 0 R" for index, key in enumerate(_FONT_KEYS.values(), 6)
+        f"/{key} {first_font + index} 0 R"
+        for index, key in enumerate(_FONT_KEYS.values())
     )
-    rect = " ".join(f"{value:.2f}" for value in link)
+    annots = " /Annots [5 0 R]" if link is not None else ""
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         (
             f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {_A4[0]} {_A4[1]}] "
-            f"/Resources << /Font << {fonts} >> >> /Contents 4 0 R /Annots [5 0 R] >>"
+            f"/Resources << /Font << {fonts} >> >> /Contents 4 0 R{annots} >>"
         ).encode("ascii"),
         b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(stream)
         + stream
         + b"\nendstream",
-        f"<< /Type /Annot /Subtype /Link /Rect [{rect}] /Border [0 0 0] "
-        f"/A << /S /URI /URI ".encode("ascii")
-        + _pdf_string(url)
-        + b" >> >>",
-        *(
-            f"<< /Type /Font /Subtype /Type1 /BaseFont /{name} "
-            f"/Encoding /WinAnsiEncoding >>".encode("ascii")
-            for name in _FONT_KEYS
-        ),
-        b"<< /Title " + _pdf_string(title) + b" /Producer (Luxar serve.py) >>",
     ]
+    if link is not None:
+        rect = " ".join(f"{value:.2f}" for value in link)
+        objects.append(
+            f"<< /Type /Annot /Subtype /Link /Rect [{rect}] /Border [0 0 0] "
+            f"/A << /S /URI /URI ".encode("ascii")
+            + _pdf_string(url)
+            + b" >> >>"
+        )
+    objects += [
+        f"<< /Type /Font /Subtype /Type1 /BaseFont /{name} "
+        f"/Encoding /WinAnsiEncoding >>".encode("ascii")
+        for name in _FONT_KEYS
+    ]
+    objects.append(b"<< /Title " + _pdf_string(title) + b" /Producer (Luxar) >>")
     out = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
     offsets = []
     for number, body in enumerate(objects, 1):

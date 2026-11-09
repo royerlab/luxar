@@ -90,6 +90,9 @@ TITLE_QUERY = ""
 #: prefetch) as a ready-to-append query fragment. The viewer resolves them
 #: before it reads the scene, so they travel on the URL instead.
 LAUNCH_QUERY = ""
+#: The scene's colour legend (its `legend` root attribute) as JSON, or "" for
+#: none: drawn as a compact key on the printed control-panel sheet.
+LEGEND_JSON = ""
 #: Range the viewer accepts for `?textScale=`; mirrored for a clear error.
 TEXT_SCALE_RANGE = (0.25, 4.0)
 #: Where the relay's default control token is kept, beside this script. A
@@ -1363,6 +1366,7 @@ def panel_sheet(matrix: Any, url: str, *, has_token: bool) -> bytes:
         f"changed: print a new sheet ({SHEET_FILE}, written beside serve.py "
         "each time it starts)."
     )
+    key = _legend_key()
     sheet: bytes = qr_pdf_bytes(
         matrix,
         url=url,
@@ -1380,8 +1384,29 @@ def panel_sheet(matrix: Any, url: str, *, has_token: bool) -> bytes:
         ),
         notes=tuple(notes),
         footer=f"Luxar  |  {host}",
+        legend_title=key[0],
+        legend=key[1],
+        legend_note=key[2],
     )
     return sheet
+
+
+def _legend_key() -> tuple[str, tuple[tuple[str, ...], ...], str]:
+    """The scene's legend for the sheet: title, ``(hex, colour name, label)``
+    rows, and its note's FIRST sentence (the sheet is for the QR; the full note
+    is in COLOURS.pdf and README.txt)."""
+    if not LEGEND_JSON:
+        return "", (), ""
+    try:
+        legend = json.loads(LEGEND_JSON)
+        rows = tuple(
+            (str(e["color"]), str(e["color_name"]), str(e["label"]))
+            for e in legend["entries"]
+        )
+        note = str(legend.get("note", "")).split(". ")[0].rstrip(".")
+        return str(legend["title"]), rows, (note + ".") if note else ""
+    except (ValueError, KeyError, TypeError):
+        return "", (), ""  # a key is a convenience, never the gate
 
 
 def print_control_qr(

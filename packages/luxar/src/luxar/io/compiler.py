@@ -35,6 +35,7 @@ import numpy as np
 from ..encoding.compression import CompressorLike, resolve_compressor
 
 if TYPE_CHECKING:
+    from ..core.legend import Legend
     from ..core.scene import Scene
     from ..core.viewer_config import ViewerConfig
 import zarr
@@ -769,6 +770,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         dimensions: Dimensions,
         viewer_config: Optional["ViewerConfig"] = None,
         citation: Optional[Mapping[str, str]] = None,
+        legend: Optional["Legend"] = None,
     ) -> "Scene":
         """Create a scene with this compiler as writer.
 
@@ -783,6 +785,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 dataset -- ``{"short", "ref"?, "doi"?, "license"?, "url"?}``.
                 Stored in the root attributes so it travels with the data.
                 ``None`` means there is no external dataset to credit.
+            legend: Optional :class:`~luxar.core.legend.Legend` -- what the
+                scene's colours mean (hex, colour name, label). Stored in the
+                root attributes; ``luxar export`` prints it in the README.
 
         Returns:
             Scene object configured with this compiler as writer
@@ -812,6 +817,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             dimensions=dimensions,
             viewer_config=viewer_config,
             citation=citation,
+            legend=legend,
         )
         self._scene = scene  # Store reference for finalize-time hover overlay injection
         aprint("✅ Scene created with progressive writer")

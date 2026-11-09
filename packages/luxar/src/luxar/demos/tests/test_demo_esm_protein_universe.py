@@ -1251,3 +1251,25 @@ def test_the_kiosk_caption_hangs_from_the_clip_in_its_own_units() -> None:
     assert "var(--luxar-text-scale, 1)" in html_
     x, y = demo.kiosk_caption_anchor()
     assert (x, y) == (pytest.approx(0.06 + 0.26 / 2), demo.TURNTABLE_POSITION[1])
+
+
+def test_the_colour_legend_is_the_maps_own_palette() -> None:
+    """The legend is built from the palette and the phylum tables the map is
+    coloured with, so it can name every colour the map can draw, and no other."""
+    from luxar.core.legend import hex_color
+    from luxar.demos.demo_esm3_protein_landscape import TAXON_COLORS
+
+    legend = demo.universe_legend()
+    rows = {group: entry for (group, _, _), entry in zip(
+        demo._LEGEND_ROWS, legend.entries, strict=True
+    )}  # fmt: skip
+    for group, entry in rows.items():
+        assert entry.color == hex_color(TAXON_COLORS[group])
+    phyla = [*demo._PHYLUM_GROUPS, *demo._ARCHAEA, *demo._OTHER_BACTERIA]
+    drawn = {demo.phylum_group(p) for p in [*phyla, "Uroviricota", "", "Nope"]}
+    assert drawn == set(rows)  # every group the map draws, and only those
+    assert len({entry.color for entry in legend.entries}) == len(rows)
+    for group, examples in demo._LEGEND_EXAMPLES.items():
+        members = {"Archaea": demo._ARCHAEA, "Other Bacteria": demo._OTHER_BACTERIA}
+        assert set(examples) <= members[group], group
+    assert f"{demo.DARK_DIM:.0%}" in legend.note

@@ -17,9 +17,11 @@ Usage::
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import stat
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -28,9 +30,11 @@ from urllib.parse import quote
 from arbol import aprint, asection
 
 from .._zarr_compat import read_node_attrs
+from ..core.legend import Legend
 from ..core.viewer_config import LaunchConfig
 from ..utils.atomic_copy import atomic_copytree
 from ._export_serve_template import CONTROL_TOKEN_FILE
+from ._qr import legend_pdf_bytes
 from .utils import (
     check_viewer_built,
     dataset_title,
@@ -100,6 +104,8 @@ def export_scene(
 
         # Step 4: Generate README.txt, plus a test note for a kiosk package
         _generate_readme(output, data_dir_name, facts)
+        if facts.legend is not None:
+            _write_colour_files(output, facts.legend, facts.title)
         if facts.has_control_panel:
             _generate_testing_notes(output, facts)
             aprint(
@@ -146,6 +152,9 @@ class SceneFacts:
     dimensions: tuple[str, ...] = ()
     displayed: tuple[str, ...] = ()
     citation: str | None = None
+    #: What the scene's colours mean (the ``legend`` root attribute), printed
+    #: in the README, COLOURS.txt / COLOURS.pdf and on the panel's sheet.
+    legend: Legend | None = None
 
     @property
     def stops(self) -> int:
@@ -217,6 +226,7 @@ def read_scene_facts(source: Path) -> SceneFacts:
             panel_tiles = _coordinate_count(dim)
     citation = attrs.get("citation") or {}
     return SceneFacts(
+        legend=_read_legend(attrs.get("legend")),
         title=viewer.get("title") or None,
         launch_query=_launch_query(viewer.get("launch")),
         has_control_panel=bool(panel),
@@ -229,6 +239,61 @@ def read_scene_facts(source: Path) -> SceneFacts:
         if isinstance(citation, dict)
         else None,
     )
+
+
+def _read_legend(raw: object) -> Legend | None:
+    """The scene's ``legend``, or None. A malformed one is reported and left out:
+    unlike the launch block it changes no behaviour, only what is explained."""
+    if raw is None:
+        return None
+    try:
+        return Legend.from_dict(raw)  # type: ignore[arg-type]
+    except ValueError as error:
+        aprint(f"⚠️  Ignoring the scene's legend: {error}")
+        return None
+
+
+def legend_text(legend: Legend, width: int = 79) -> str:
+    """The legend as plain text: one block per colour, hex code first."""
+    lines = [legend.title, "-" * len(legend.title)]
+    label_width = max(len(entry.label) for entry in legend.entries)
+    for entry in legend.entries:
+        lines.append(
+            f"    {entry.color}  {entry.label:<{label_width}}  {entry.color_name}"
+        )
+        if entry.description:
+            lines += textwrap.wrap(
+                entry.description, width, initial_indent=" " * 13,
+                subsequent_indent=" " * 13,
+            )  # fmt: skip
+    if legend.note:
+        lines.append("")
+        lines += textwrap.wrap(legend.note, width)
+    return "\n".join(lines) + "\n"
+
+
+def _legend_rows(legend: Legend) -> tuple[tuple[str, str, str, str], ...]:
+    """The legend as the plain tuples ``luxar_qr`` draws from."""
+    return tuple(
+        (entry.color, entry.color_name, entry.label, entry.description)
+        for entry in legend.entries
+    )
+
+
+def _write_colour_files(output: Path, legend: Legend, title: str | None) -> None:
+    """COLOURS.txt and COLOURS.pdf: the legend on its own, to read or print."""
+    heading = f"{title}: {legend.title}" if title else legend.title
+    (output / "COLOURS.txt").write_text(legend_text(legend), encoding="utf-8")
+    (output / "COLOURS.pdf").write_bytes(
+        legend_pdf_bytes(
+            title=legend.title,
+            subtitle=title or "",
+            rows=_legend_rows(legend),
+            note=legend.note,
+            footer="Luxar",
+        )
+    )
+    aprint(f"Generated COLOURS.txt and COLOURS.pdf ({heading})")
 
 
 def _launch_query(raw: object) -> str:
@@ -395,6 +460,7 @@ _SUBSTITUTED = (
     "TITLE_QUERY",
     "LAUNCH_QUERY",
     "HAS_CONTROL_PANEL",
+    "LEGEND_JSON",
 )
 
 
@@ -580,6 +646,10 @@ def _get_serve_script_content(
         "TITLE_QUERY": f"&title={quote(title)}" if title else "",
         "LAUNCH_QUERY": facts.launch_query if facts else "",
         "HAS_CONTROL_PANEL": bool(facts and facts.has_control_panel),
+        # The colour key on the panel's printed sheet (serve.py draws it).
+        "LEGEND_JSON": json.dumps(facts.legend.to_dict())
+        if facts and facts.legend
+        else "",
     }
     for name in _SUBSTITUTED:
         script = _substitute(script, name, values[name])
@@ -680,6 +750,8 @@ def _generate_readme(
         if scene_lines
         else ""
     )
+    if facts.legend is not None:
+        about += legend_text(facts.legend) + "\n"
 
     # Column-aligned whatever the data directory is called; the old listing
     # hard-coded the padding for "data" and went crooked for anything else.
@@ -692,6 +764,9 @@ def _generate_readme(
     ]
     if facts.has_control_panel:
         entries.append(("TESTING.txt", "What to check, and what is unverified"))
+    if facts.legend is not None:
+        entries.append(("COLOURS.txt", "What the colours mean (also in this README)"))
+        entries.append(("COLOURS.pdf", "The same, on an A4 page with swatches"))
     # Written by serve.py when its relay runs, not by the export: listed so
     # nobody mistakes them for clutter and deletes the token behind a printed QR.
     relay = "" if facts.has_control_panel else ", with --control"
