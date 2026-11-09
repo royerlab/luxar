@@ -795,8 +795,18 @@ class LuxarHandler(http.server.SimpleHTTPRequestHandler):
     # whole file, which RFC 9110 allows.
 
     def send_head(self) -> Any:
-        """Serve a requested byte range as a 206; everything else as before."""
+        """Serve a requested byte range as a 206; everything else as before.
+
+        Only the viewer and the scene's data are files this server hands out
+        (:func:`servable_path`): the folder also holds the control token, the
+        QR and the sheet that carry it, Chrome's display profile (whose history
+        holds the token too) and this script, none of which a visitor on the
+        network should be able to download.
+        """
         self._range_remaining: int | None = None
+        if not servable_path(_request_path(self.path)):
+            self.send_error(404)
+            return None
         file_path = self.translate_path(self.path)
         self._serving_file = os.path.isfile(file_path)
         spec = self.headers.get("Range")
@@ -1004,6 +1014,23 @@ class LuxarHandler(http.server.SimpleHTTPRequestHandler):
 #: IPv6 address, and an optional port. Anything else falls back to
 #: ``--advertise-host``, else the bind.
 _HOST_HEADER = re.compile(r"(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(?::[0-9]{1,5})?")
+
+
+def servable_path(path: str) -> bool:
+    """Whether a request path names a file this server may hand out.
+
+    An allowlist, not a denylist: the viewer bundle and the scene's data
+    directory, and nothing else -- not the control token, the printable QR and
+    sheet, the browser profile (``.chrome-display``), serve.py or anything a
+    later version adds beside them. Percent-escapes are decoded first, and a
+    ``.`` or ``..`` segment is refused anywhere. Dotfiles INSIDE the data stay
+    servable: a zarr format 2 store's metadata is ``.zattrs`` / ``.zgroup`` /
+    ``.zarray`` / ``.zmetadata``.
+    """
+    segments = [part for part in unquote(path).replace("\\", "/").split("/") if part]
+    if not segments or any(part in (".", "..") for part in segments):
+        return False
+    return segments[0] in ("viewer", DATA_DIR_NAME)
 
 
 def _first(query: dict[str, list[str]], name: str) -> str | None:

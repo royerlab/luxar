@@ -762,3 +762,73 @@ def test_no_chrome_falls_back_with_a_warning(
     assert not template.open_display_in_chrome(parse("--chrome"), server, "http://x/")
     assert "Chrome not found" in capsys.readouterr().out
     assert not server.awaiting_display_report.is_set()
+
+
+# ── what the server hands out ───────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("path", "served"),
+    [
+        ("/viewer/index.html", True),
+        ("/data/zarr.json", True),
+        ("/viewer/assets/a.js", True),
+        ("/control-token.txt", False),
+        ("/control-qr.png", False),
+        ("/control-panel.pdf", False),
+        ("/serve.py", False),
+        ("/luxar_qr.py", False),
+        ("/README.txt", False),
+        ("/.chrome-display/Default/Cookies", False),
+        ("/viewer/../control-token.txt", False),
+        ("/viewer/%2e%2e/control-token.txt", False),
+        ("/data/.zattrs", True),  # zarr format 2 metadata
+        ("/data/group/.zarray", True),
+        ("/data/../control-token.txt", False),
+        ("/data/./x", False),
+        ("/viewer%2F..%2Fcontrol-token.txt", False),
+        ("//control-token.txt", False),
+    ],
+)
+def test_only_the_viewer_and_the_data_are_served(path: str, served: bool) -> None:
+    assert template.servable_path(path) is served
+
+
+def test_the_token_and_its_carriers_are_not_downloadable(tmp_path: Path) -> None:
+    """Over real HTTP: the files that carry the control token are 404s."""
+    (tmp_path / "viewer").mkdir()
+    (tmp_path / "viewer" / "index.html").write_text("<html></html>")
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "zarr.json").write_text("{}")
+    (tmp_path / ".chrome-display").mkdir()
+    for name in (
+        "control-token.txt",
+        "control-qr.png",
+        "control-panel.pdf",
+        "serve.py",
+    ):
+        (tmp_path / name).write_text("secret")
+    handler = partial(template.LuxarHandler, directory=str(tmp_path))
+    server = template.ControlServer(("127.0.0.1", 0), handler, None)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def status(path: str, method: str = "GET") -> int:
+        with socket.create_connection(
+            ("127.0.0.1", server.server_address[1]), timeout=5
+        ) as c:
+            c.sendall(
+                f"{method} {path} HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n".encode()
+            )
+            return int(c.recv(64).split(b" ")[1])
+
+    try:
+        assert status("/viewer/index.html") == 200
+        assert status("/data/zarr.json") == 200
+        for path in ("/control-token.txt", "/control-qr.png", "/control-panel.pdf",
+                     "/serve.py", "/.chrome-display/", "/viewer/../control-token.txt"):  # fmt: skip
+            assert status(path) == 404, path
+            assert status(path, "HEAD") == 404, path
+    finally:
+        server.shutdown()
+        server.server_close()

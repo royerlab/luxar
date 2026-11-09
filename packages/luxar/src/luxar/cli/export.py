@@ -407,7 +407,10 @@ def _substitute(script: str, name: str, value: object) -> str:
     broken export.
     """
     pattern = re.compile(rf"^{name} = .*$", re.MULTILINE)
-    script, count = pattern.subn(f"{name} = {value!r}", script, count=1)
+    # A function, not a template string: `re` would read the backslashes that
+    # `repr` writes (any `"` or `\\` in a title or a legend) as escapes.
+    line = f"{name} = {value!r}"
+    script, count = pattern.subn(lambda _match: line, script, count=1)
     if count != 1:
         raise RuntimeError(
             f"{SERVE_TEMPLATE.name} has no `{name} = ...` line to substitute; "

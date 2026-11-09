@@ -38,8 +38,9 @@ def serving(root: Path) -> Iterator[int]:
 
 @pytest.fixture
 def port(tmp_path: Path) -> Iterator[int]:
-    (tmp_path / "clip.webm").write_bytes(PAYLOAD)
-    (tmp_path / "sub").mkdir()
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "clip.webm").write_bytes(PAYLOAD)
+    (tmp_path / "data" / "sub").mkdir()
     with serving(tmp_path) as p:
         yield p
 
@@ -70,7 +71,7 @@ def get(
 def test_a_range_is_served_as_206_with_exactly_those_bytes(
     port: int, spec: str, start: int, end: int
 ) -> None:
-    status, headers, body = get(port, "/clip.webm", {"Range": spec})
+    status, headers, body = get(port, "/data/clip.webm", {"Range": spec})
     assert status == 206
     assert body == PAYLOAD[start : end + 1]
     assert headers["content-range"] == f"bytes {start}-{end}/{len(PAYLOAD)}"
@@ -80,25 +81,27 @@ def test_a_range_is_served_as_206_with_exactly_those_bytes(
 
 
 def test_a_plain_request_advertises_ranges_and_gets_the_whole_file(port: int) -> None:
-    status, headers, body = get(port, "/clip.webm")
+    status, headers, body = get(port, "/data/clip.webm")
     assert status == 200
     assert body == PAYLOAD
     assert headers["accept-ranges"] == "bytes"
 
 
 def test_a_range_past_the_end_is_416_with_the_size(port: int) -> None:
-    status, headers, body = get(port, "/clip.webm", {"Range": f"bytes={len(PAYLOAD)}-"})
+    status, headers, body = get(
+        port, "/data/clip.webm", {"Range": f"bytes={len(PAYLOAD)}-"}
+    )
     assert status == 416
     assert headers["content-range"] == f"bytes */{len(PAYLOAD)}"
     assert body == b""
-    assert get(port, "/clip.webm", {"Range": "bytes=-0"})[0] == 416
+    assert get(port, "/data/clip.webm", {"Range": "bytes=-0"})[0] == 416
 
 
 @pytest.mark.parametrize(
     "spec", ["bytes=0-1,5-9", "items=0-9", "bytes=9-3", "bytes=abc", "bytes=5"]
 )
 def test_what_a_server_may_ignore_gets_the_whole_file(port: int, spec: str) -> None:
-    status, _, body = get(port, "/clip.webm", {"Range": spec})
+    status, _, body = get(port, "/data/clip.webm", {"Range": spec})
     assert status == 200
     assert body == PAYLOAD
 
@@ -106,20 +109,22 @@ def test_what_a_server_may_ignore_gets_the_whole_file(port: int, spec: str) -> N
 def test_if_range_serves_the_range_only_for_an_unchanged_file(
     port: int, tmp_path: Path
 ) -> None:
-    _, headers, _ = get(port, "/clip.webm", method="HEAD")
+    _, headers, _ = get(port, "/data/clip.webm", method="HEAD")
     current = headers["last-modified"]
     status, _, body = get(
-        port, "/clip.webm", {"Range": "bytes=0-9", "If-Range": current}
+        port, "/data/clip.webm", {"Range": "bytes=0-9", "If-Range": current}
     )
     assert (status, body) == (206, PAYLOAD[:10])
     stale = "Mon, 01 Jan 2001 00:00:00 GMT"
-    status, _, body = get(port, "/clip.webm", {"Range": "bytes=0-9", "If-Range": stale})
+    status, _, body = get(
+        port, "/data/clip.webm", {"Range": "bytes=0-9", "If-Range": stale}
+    )
     assert (status, body) == (200, PAYLOAD)
 
 
 def test_head_with_a_range_sends_the_headers_and_no_body(port: int) -> None:
     status, headers, body = get(
-        port, "/clip.webm", {"Range": "bytes=0-9"}, method="HEAD"
+        port, "/data/clip.webm", {"Range": "bytes=0-9"}, method="HEAD"
     )
     assert status == 206
     assert headers["content-length"] == "10"
@@ -130,9 +135,9 @@ def test_a_keepalive_connection_survives_a_ranged_response(port: int) -> None:
     """HTTP/1.1 reuse: the next request on the socket must start at a boundary."""
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     try:
-        conn.request("GET", "/clip.webm", headers={"Range": "bytes=0-9"})
+        conn.request("GET", "/data/clip.webm", headers={"Range": "bytes=0-9"})
         first = conn.getresponse().read()
-        conn.request("GET", "/clip.webm", headers={"Range": "bytes=10-19"})
+        conn.request("GET", "/data/clip.webm", headers={"Range": "bytes=10-19"})
         second = conn.getresponse().read()
     finally:
         conn.close()
@@ -140,8 +145,8 @@ def test_a_keepalive_connection_survives_a_ranged_response(port: int) -> None:
 
 
 def test_directories_and_missing_files_behave_as_before(port: int) -> None:
-    assert get(port, "/missing.webm", {"Range": "bytes=0-9"})[0] == 404
-    status, headers, _ = get(port, "/sub/")
+    assert get(port, "/data/missing.webm", {"Range": "bytes=0-9"})[0] == 404
+    status, headers, _ = get(port, "/data/sub/")
     assert status == 200
     assert "accept-ranges" not in headers
 
@@ -150,7 +155,7 @@ def test_directories_and_missing_files_behave_as_before(port: int) -> None:
 def test_file_path_with_trailing_slash_is_not_a_file(
     port: int, headers: dict[str, str]
 ) -> None:
-    status, response_headers, _ = get(port, "/clip.webm/", headers)
+    status, response_headers, _ = get(port, "/data/clip.webm/", headers)
     assert status == 404
     assert "accept-ranges" not in response_headers
 

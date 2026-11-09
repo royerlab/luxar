@@ -1339,3 +1339,15 @@ def test_a_launch_scene_gets_dedicated_display_notes() -> None:
     assert (
         export_module._dedicated_display_section(export_module.SceneFacts(), "x") == ""
     )
+
+
+def test_substituted_text_with_quotes_and_backslashes_survives() -> None:
+    """`re` must not read `repr`'s backslashes as escapes (a `"` or `\\` in a title)."""
+    import ast
+
+    title = 'Rock "n" roll \\ back\\slash é'
+    script = _get_serve_script_content("data", title)
+    line = next(x for x in script.splitlines() if x.startswith("TITLE_QUERY = "))
+    from urllib.parse import quote
+
+    assert ast.literal_eval(line.split(" = ", 1)[1]) == f"&title={quote(title)}"
