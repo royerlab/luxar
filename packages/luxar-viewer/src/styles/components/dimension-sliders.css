@@ -625,7 +625,8 @@
   padding: var(--luxar-spacing-1) var(--luxar-spacing-1) 0;
 }
 
-.luxar-dimension-slider__context-step-input {
+.luxar-dimension-slider__context-step-input,
+.luxar-dimension-slider__context-period-input {
   flex: 1 1 64px;
   min-width: 64px;
   width: 64px;
@@ -639,9 +640,44 @@
   padding: 2px var(--luxar-spacing-2);
 }
 
-.luxar-dimension-slider__context-step-input:focus {
+.luxar-dimension-slider__context-step-input:focus,
+.luxar-dimension-slider__context-period-input:focus,
+.luxar-dimension-slider__context-period-unit:focus {
   outline: none;
   border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
+}
+
+/* The period view's Custom row: a number and a unit, under the preset chips,
+   aligned to the chip padding like the Step section's custom field. */
+.luxar-dimension-slider__context-period-custom {
+  display: flex;
+  gap: var(--luxar-spacing-1);
+  padding: var(--luxar-spacing-1) var(--luxar-spacing-1) 0;
+}
+
+.luxar-dimension-slider__context-period-custom[hidden] {
+  display: none;
+}
+
+.luxar-dimension-slider__context-period-unit {
+  flex: 0 0 auto;
+  background: var(--luxar-bg-primary);
+  color: var(--luxar-text-primary);
+  border: 1px solid var(--luxar-border-subtle);
+  border-radius: var(--luxar-radius-sm);
+  font-family: var(--luxar-font-mono);
+  font-size: var(--luxar-text-sm);
+  padding: 2px var(--luxar-spacing-1);
+}
+
+/* The current rate is a custom period: mark the row as the selected choice. */
+.luxar-dimension-slider__context-period-custom--active
+  .luxar-dimension-slider__context-period-input {
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
+}
+
+.luxar-dimension-slider__context-period-input[aria-invalid='true'] {
+  border-color: var(--luxar-error);
 }
 
 /* Theme Overrides for Context Menu */

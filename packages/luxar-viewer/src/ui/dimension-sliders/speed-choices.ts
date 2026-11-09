@@ -5,8 +5,10 @@
  * - `fps`: steps per second, from `presets.fps`. A sub-1 rate reads as a
  *   fraction (`1/2`, one step every 2 s), never a decimal.
  * - `period`: seconds per step, from `presets.periodSeconds`, labelled
- *   `20s`, `1m`, `10m` — the natural unit for a slideshow or a slow
- *   time-lapse, where an fps (`0.05`) says nothing at a glance.
+ *   `20s`, `1m`, `2m` — the natural unit for a slideshow or a slow
+ *   time-lapse, where an fps (`0.05`) says nothing at a glance. Anything
+ *   slower is TYPED (`customPeriodSeconds`): a number and a unit from
+ *   seconds to days, up to the viewer's slowest rate.
  *
  * Either way a choice carries the `fps` it sets; the rate itself is always
  * `targetFPS`.
@@ -31,26 +33,73 @@ export const SPEED_VIEWS: ReadonlyArray<{ view: SpeedView; label: string; toolti
   { view: 'period', label: 'period', tooltip: 'Seconds per step' },
 ];
 
-/** A period in the unit it reads best in: whole minutes in minutes, else seconds. */
-function periodInUnits(seconds: number): { amount: number; inMinutes: boolean } {
-  const inMinutes = seconds >= 60 && Number.isInteger(seconds / 60);
-  return { amount: inMinutes ? seconds / 60 : seconds, inMinutes };
-}
+/** The units a period is read and typed in, smallest first. */
+export const PERIOD_UNITS = [
+  { unit: 's', short: 's', long: 's', seconds: 1 },
+  { unit: 'min', short: 'm', long: 'min', seconds: 60 },
+  { unit: 'h', short: 'h', long: 'h', seconds: 3600 },
+  { unit: 'd', short: 'd', long: 'd', seconds: 86400 },
+] as const;
 
-/** `20s`, `1m`, `90s`: the chip label for a period. */
-export function formatPeriod(seconds: number): string {
-  const { amount, inMinutes } = periodInUnits(seconds);
-  return `${amount}${inMinutes ? 'm' : 's'}`;
-}
-
-/** `1 step every 20 s`, `1 step every 2 min`: the long form of {@link formatPeriod}. */
-function describePeriod(seconds: number): string {
-  const { amount, inMinutes } = periodInUnits(seconds);
-  return `1 step every ${amount} ${inMinutes ? 'min' : 's'}`;
-}
+/** One of {@link PERIOD_UNITS}' `unit` keys. */
+export type PeriodUnit = (typeof PERIOD_UNITS)[number]['unit'];
 
 /** Relative tolerance for matching a rate against a period (1/p is inexact). */
 const RATE_MATCH_TOLERANCE = 1e-6;
+
+/**
+ * A period in the unit it reads best in: the largest unit it is a whole
+ * number of (`90 s` stays seconds, `7200 s` is `2 h`, `5000 s` stays an exact
+ * `5000 s`), else the largest unit it is at least one of, rounded to 3
+ * significant digits (`5400.5 s` is `1.5 h`). Under a second stays in seconds.
+ */
+export function periodInBestUnit(seconds: number): { amount: number; unit: PeriodUnit } {
+  const larger = [...PERIOD_UNITS].reverse();
+  for (const { unit, seconds: size } of larger) {
+    const amount = seconds / size;
+    if (amount >= 1 && Math.abs(amount - Math.round(amount)) <= amount * RATE_MATCH_TOLERANCE) {
+      return { amount: Math.round(amount), unit };
+    }
+  }
+  const fit = larger.find(({ seconds: size }) => seconds >= size) ?? PERIOD_UNITS[0];
+  return { amount: Number((seconds / fit.seconds).toPrecision(3)), unit: fit.unit };
+}
+
+function unitInfo(unit: PeriodUnit): (typeof PERIOD_UNITS)[number] {
+  return PERIOD_UNITS.find((u) => u.unit === unit) ?? PERIOD_UNITS[0];
+}
+
+/** `20s`, `1m`, `90s`, `2h`: the chip label for a period. */
+export function formatPeriod(seconds: number): string {
+  const { amount, unit } = periodInBestUnit(seconds);
+  return `${amount}${unitInfo(unit).short}`;
+}
+
+/** `1 step every 20 s`, `1 step every 2 min`: the long form of {@link formatPeriod}. */
+export function describePeriod(seconds: number): string {
+  const { amount, unit } = periodInBestUnit(seconds);
+  return `1 step every ${amount} ${unitInfo(unit).long}`;
+}
+
+/**
+ * Seconds per step for a typed ``amount`` of ``unit``, or null when that is
+ * not a period the viewer plays: not a finite positive number, faster than
+ * `presets.customMax` steps a second, or slower than one step every
+ * `1 / presets.customMin` seconds (30 days).
+ */
+export function customPeriodSeconds(amount: number, unit: PeriodUnit): number | null {
+  const seconds = amount * unitInfo(unit).seconds;
+  const { customMin, customMax } = config.dimensionAnimation.presets;
+  const tolerance = 1 + RATE_MATCH_TOLERANCE;
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  if (seconds * customMax < 1 / tolerance || seconds * customMin > tolerance) return null;
+  return seconds;
+}
+
+/** Whether a dimension playing at ``fps`` is on one of the period presets. */
+export function isPresetPeriod(fps: number): boolean {
+  return speedChoices('period').some((choice) => choice.matches(fps));
+}
 
 function fpsChoice(fps: number): SpeedChoice {
   const sub = fps < 1;

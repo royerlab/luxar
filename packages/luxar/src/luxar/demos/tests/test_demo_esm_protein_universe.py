@@ -1404,7 +1404,7 @@ def test_auto_advance_is_the_story_dimension_playing_slowly() -> None:
 @pytest.mark.parametrize(
     ("argv", "kiosk", "expected"),
     [
-        ([], True, {"aspect": None, "text_scale": None, "auto_advance_s": 20.0}),
+        ([], True, {"aspect": None, "text_scale": None, "auto_advance_s": 30.0}),
         ([], False, {"aspect": None, "text_scale": None, "auto_advance_s": None}),
         (
             ["--auto-advance", "0"],
@@ -1429,7 +1429,7 @@ def test_layout_flags(
     assert demo.parse_layout_args(kiosk) == expected
 
 
-@pytest.mark.parametrize("value", ["-5", "nan", "inf", "5000"])
+@pytest.mark.parametrize("value", ["-5", "nan", "inf", "3000000"])  # > 30 days
 def test_auto_advance_flag_is_checked_before_the_build(
     monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:

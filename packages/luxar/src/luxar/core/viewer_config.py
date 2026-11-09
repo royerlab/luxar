@@ -80,9 +80,10 @@ VALID_FOV_PRESETS = (
 VALID_THEMES = ("dark", "light", "frosted-glass", "liquid-glass")
 VALID_LOOP_MODES = ("once", "loop", "bounce")
 VALID_DIRECTIONS = ("forward", "backward")
-#: Longest `AnimationConfig.period_s`: one step an hour, the viewer's slowest
-#: accepted rate (`dimensionAnimation.presets.customMin` = 1/3600 fps).
-MAX_ANIMATION_PERIOD_S = 3600.0
+#: Longest `AnimationConfig.period_s`: one step every 30 days, the viewer's
+#: slowest accepted rate (`MAX_ANIMATION_PERIOD_S` in its `types/zarr.ts`, from
+#: which `dimensionAnimation.presets.customMin` is derived).
+MAX_ANIMATION_PERIOD_S = 30 * 24 * 3600.0
 #: Accepted `ViewerConfig.text_scale` range (inclusive).
 TEXT_SCALE_RANGE = (0.25, 4.0)
 # Where the scene environment that lights `material="physical"` meshes comes
@@ -549,7 +550,7 @@ class AnimationConfig:
                 raise ValueError(
                     "give the playback rate as target_fps OR period_s, not both"
                 )
-            # The viewer's slowest accepted rate is one step an hour.
+            # The viewer's slowest accepted rate is one step every 30 days.
             if not math.isfinite(self.period_s) or not (
                 0 < self.period_s <= MAX_ANIMATION_PERIOD_S
             ):

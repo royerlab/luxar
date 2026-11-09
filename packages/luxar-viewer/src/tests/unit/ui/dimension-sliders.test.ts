@@ -941,7 +941,7 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     expect(stub.setSpeedView).toHaveBeenCalledWith(3, 'period');
     expect(document.querySelector('.luxar-dimension-slider__context-menu')).not.toBeNull();
     expect(segment('period').getAttribute('aria-pressed')).toBe('true');
-    expect(chipLabels()).toEqual(['1s', '2s', '5s', '10s', '20s', '30s', '1m', '2m', '5m', '10m']);
+    expect(chipLabels()).toEqual(['1s', '2s', '5s', '10s', '20s', '30s', '1m', '2m']);
 
     const twenty = Array.from(
       document.querySelectorAll<HTMLButtonElement>('[role="radiogroup"][aria-label="Speed"] button')
@@ -969,6 +969,71 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
       (c) => c.textContent
     );
     expect(checked).toEqual(['20s']);
+    sliders.dispose();
+  });
+
+  it('custom period: only in the period view; a typed number and unit set the rate', () => {
+    const sliders = buildSliders();
+    const stub = makeAnimationManagerStub();
+    sliders.setAnimationManager(stub as never);
+    document
+      .querySelector('.luxar-dimension-slider__play-btn')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const row = (): HTMLDivElement =>
+      document.querySelector('.luxar-dimension-slider__context-period-custom')!;
+    const amount = (): HTMLInputElement =>
+      document.querySelector('.luxar-dimension-slider__context-period-input')!;
+    const unit = (): HTMLSelectElement =>
+      document.querySelector('.luxar-dimension-slider__context-period-unit')!;
+    expect(row().hidden).toBe(true); // fps view
+    document
+      .querySelector<HTMLButtonElement>(
+        '.luxar-dimension-slider__context-unit[data-view="period"]'
+      )!
+      .click();
+    expect(row().hidden).toBe(false);
+    expect(Array.from(unit().options, (o) => o.value)).toEqual(['s', 'min', 'h', 'd']);
+    // Not inside the chips' radiogroup (a number input is no radio).
+    expect(row().closest('[role="radiogroup"]')).toBeNull();
+
+    // Out of range (past 30 days): flagged, not set.
+    amount().value = '40';
+    unit().value = 'd';
+    amount().dispatchEvent(new Event('input'));
+    amount().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(amount().getAttribute('aria-invalid')).toBe('true');
+    expect(stub.setTargetFPS).not.toHaveBeenCalled();
+
+    amount().value = '3';
+    unit().value = 'h';
+    unit().dispatchEvent(new Event('change'));
+    expect(stub.setTargetFPS).toHaveBeenLastCalledWith(3, 1 / (3 * 3600));
+    expect(amount().getAttribute('aria-invalid')).toBe('false');
+    amount().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(document.querySelector('.luxar-dimension-slider__context-menu')).toBeNull();
+    sliders.dispose();
+  });
+
+  it('custom period: a rate that is no preset opens filled in and marked current', () => {
+    const sliders = buildSliders();
+    const stub = makeAnimationManagerStub();
+    stub.getSpeedView = vi.fn(() => 'period' as const);
+    stub.getState = vi.fn(() => ({ targetFPS: 1 / (2 * 86400) }) as never);
+    sliders.setAnimationManager(stub as never);
+    document
+      .querySelector('.luxar-dimension-slider__play-btn')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const row = document.querySelector('.luxar-dimension-slider__context-period-custom')!;
+    expect(row.classList).toContain('luxar-dimension-slider__context-period-custom--active');
+    const input = row.querySelector<HTMLInputElement>('input')!;
+    expect(input.value).toBe('2');
+    expect(row.querySelector<HTMLSelectElement>('select')!.value).toBe('d');
+    expect(
+      document.querySelectorAll('[role="radiogroup"][aria-label="Speed"] [aria-checked="true"]')
+    ).toHaveLength(0);
+    // Blur without an edit commits nothing.
+    input.dispatchEvent(new Event('blur'));
+    expect(stub.setTargetFPS).not.toHaveBeenCalled();
     sliders.dispose();
   });
 

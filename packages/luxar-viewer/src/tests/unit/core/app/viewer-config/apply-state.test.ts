@@ -7,6 +7,7 @@
  * methods are called for each field combination.
  */
 
+import { MAX_ANIMATION_PERIOD_S } from '../../../../../types/zarr';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   applyViewerConfigState,
@@ -393,6 +394,28 @@ describe('applyViewerConfigState', () => {
       );
     });
 
+    it('?playbackPeriod retimes every authored playing entry; 0 starts none', () => {
+      const animation = [
+        { playing: true, target_fps: 10, loop: 'loop' as const },
+        { playing: false, target_fps: 10 },
+        { playing: true, period_s: 20, direction: 'backward' as const },
+      ];
+      applyViewerConfigState({ animation }, { ...asPorts(ports), playbackPeriodOverride: 45 });
+      expect(ports.startDimensionAnimation).toHaveBeenCalledTimes(2);
+      expect(ports.startDimensionAnimation).toHaveBeenCalledWith(
+        0,
+        expect.objectContaining({ targetFPS: 1 / 45, speedView: 'period', loopMode: 'loop' })
+      );
+      expect(ports.startDimensionAnimation).toHaveBeenCalledWith(
+        2,
+        expect.objectContaining({ targetFPS: 1 / 45, direction: 'backward' })
+      );
+
+      ports.startDimensionAnimation?.mockClear();
+      applyViewerConfigState({ animation }, { ...asPorts(ports), playbackPeriodOverride: 0 });
+      expect(ports.startDimensionAnimation).not.toHaveBeenCalled();
+    });
+
     it('period_s wins over target_fps; a period past the floor is clamped to it', () => {
       applyViewerConfigState(
         {
@@ -411,7 +434,7 @@ describe('applyViewerConfigState', () => {
       expect(ports.startDimensionAnimation).toHaveBeenNthCalledWith(
         2,
         1,
-        expect.objectContaining({ targetFPS: 1 / 3600 })
+        expect.objectContaining({ targetFPS: 1 / MAX_ANIMATION_PERIOD_S })
       );
     });
 

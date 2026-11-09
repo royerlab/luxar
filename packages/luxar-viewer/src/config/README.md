@@ -292,8 +292,8 @@ dimensionAnimation: {
   },
   presets: {
     fps: [0.5, 1, 2, 5, 10, 15, 30, 60, 120],            // Quick FPS presets
-    periodSeconds: [1, 2, 5, 10, 20, 30, 60, 120, 300, 600], // Same, as s/step
-    customMin: 1 / 3600,              // Slowest rate: one step an hour
+    periodSeconds: [1, 2, 5, 10, 20, 30, 60, 120], // Same, as s/step (one row)
+    customMin: 1 / MAX_ANIMATION_PERIOD_S, // Slowest rate: one step every 30 days
     customMax: 120                    // Maximum custom FPS
   },
   timing: {

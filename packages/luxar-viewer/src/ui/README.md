@@ -254,8 +254,10 @@ micro-header row over one wrapping row of selectable chips.
     (`ui/dimension-sliders/speed-choices.ts`); a rate below 1 fps opens in the
     period view unless a view was chosen or authored
   - fps presets: 1/2 (one frame every 2 s), 1, 2, 5, 10, 15, 30, 60, 120 FPS
-  - period presets: 1s, 2s, 5s, 10s, 20s, 30s, 1m, 2m, 5m, 10m (seconds per step;
-    2 s or slower plays as a slideshow, see `scene/animation/README.md`)
+  - period presets: 1s, 2s, 5s, 10s, 20s, 30s, 1m, 2m (seconds per step, one
+    row; 2 s or slower plays as a slideshow, see `scene/animation/README.md`),
+    plus a Custom row under them: a number and a unit (s, min, h, d) for any
+    period up to 30 days, marked as current when the rate is no preset
   - Single-select chips (`role="radio"`) with the current speed marked
 
 - **Loop Mode Section**: Choose loop behavior

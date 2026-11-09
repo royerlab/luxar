@@ -91,6 +91,7 @@ export const URL_PARAM_KEYS = {
   workers: 'workers',
   prefetch: 'prefetch',
   textScale: 'textScale',
+  playbackPeriod: 'playbackPeriod',
   dpr: 'dpr',
   input: 'input',
   lineJoin: 'lineJoin',
@@ -642,6 +643,14 @@ export interface UrlParams {
    */
   textScale: number | null;
   /**
+   * Seconds per step for the scene's AUTHORED playback (`?playbackPeriod=30`),
+   * winning over every playing `viewer_config.animation` entry's rate -- a
+   * kiosk retimes its tour on site (`serve.py --auto-advance 30`) without a
+   * rebuild. `0` keeps authored playback from starting at all. Clamped to the
+   * viewer's rate range when applied. Null when absent or invalid (< 0).
+   */
+  playbackPeriod: number | null;
+  /**
    * Pin a fixed device pixel ratio and disable adaptive DPR for the
    * session (`?dpr=1`). The value is clamped to [0.25, native DPR] at
    * apply time and the adaptive-resolution toggle is locked off so
@@ -796,6 +805,7 @@ export function readUrlParams(
     workers: parseNonNegativeInt(get(K.workers)),
     prefetch: parsePositiveInt(get(K.prefetch)),
     textScale: parsePositiveFloat(get(K.textScale)),
+    playbackPeriod: parseNonNegativeFloat(get(K.playbackPeriod)),
     dpr: parsePositiveFloat(get(K.dpr)),
     input: normalizeInputParam(get(K.input)),
     lineJoin: parseLineJoinStyle(get(K.lineJoin)),
@@ -841,6 +851,13 @@ function parsePositiveFloat(raw: string | null): number | null {
   if (raw === null) return null;
   const n = Number.parseFloat(raw);
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** A finite float >= 0, or null on missing/invalid/negative. */
+function parseNonNegativeFloat(raw: string | null): number | null {
+  if (raw === null) return null;
+  const n = Number.parseFloat(raw);
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 /**

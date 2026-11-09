@@ -4,7 +4,14 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { formatPeriod, speedChoices } from '../../../../ui/dimension-sliders/speed-choices';
+import {
+  customPeriodSeconds,
+  describePeriod,
+  formatPeriod,
+  isPresetPeriod,
+  periodInBestUnit,
+  speedChoices,
+} from '../../../../ui/dimension-sliders/speed-choices';
 import { config } from '../../../../config';
 
 describe('formatPeriod', () => {
@@ -13,6 +20,35 @@ describe('formatPeriod', () => {
     expect(formatPeriod(60)).toBe('1m');
     expect(formatPeriod(90)).toBe('90s');
     expect(formatPeriod(600)).toBe('10m');
+  });
+});
+
+describe('typed periods', () => {
+  it('read in the largest whole unit, else rounded in the largest that fits', () => {
+    expect(periodInBestUnit(90)).toEqual({ amount: 90, unit: 's' });
+    expect(periodInBestUnit(7200)).toEqual({ amount: 2, unit: 'h' });
+    expect(periodInBestUnit(5400)).toEqual({ amount: 90, unit: 'min' });
+    expect(periodInBestUnit(2 * 86400)).toEqual({ amount: 2, unit: 'd' });
+    expect(periodInBestUnit(5000)).toEqual({ amount: 5000, unit: 's' }); // exact, not 1.39 h
+    expect(periodInBestUnit(5400.5)).toEqual({ amount: 1.5, unit: 'h' });
+    expect(periodInBestUnit(0.5)).toEqual({ amount: 0.5, unit: 's' });
+    expect(formatPeriod(7200)).toBe('2h');
+    expect(describePeriod(3 * 86400)).toBe('1 step every 3 d');
+  });
+
+  it('accept any period the viewer plays, up to 30 days, and nothing else', () => {
+    expect(customPeriodSeconds(3, 'h')).toBe(10800);
+    expect(customPeriodSeconds(30, 'd')).toBe(30 * 86400);
+    expect(customPeriodSeconds(31, 'd')).toBeNull();
+    expect(customPeriodSeconds(0, 's')).toBeNull();
+    expect(customPeriodSeconds(-1, 'min')).toBeNull();
+    expect(customPeriodSeconds(Number.NaN, 's')).toBeNull();
+    expect(customPeriodSeconds(0.001, 's')).toBeNull(); // faster than 120 steps a second
+  });
+
+  it('a preset rate is recognised, a typed one is not', () => {
+    expect(isPresetPeriod(1 / 20)).toBe(true);
+    expect(isPresetPeriod(1 / 3600)).toBe(false);
   });
 });
 

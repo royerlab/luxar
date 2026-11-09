@@ -275,7 +275,8 @@ describe('DimensionAnimationManager slideshow playback', () => {
     expect(ladder).toEqual([...ladder].sort((a, b) => a - b));
     expect(new Set(ladder).size).toBe(ladder.length);
     expect(ladder).toContain(1 / 20);
-    expect(ladder[0]).toBeCloseTo(1 / 600, 12);
+    const slowest = Math.max(...config.dimensionAnimation.presets.periodSeconds);
+    expect(ladder[0]).toBeCloseTo(1 / slowest, 12);
 
     manager.play(STORY, { targetFPS: 1 / 10 });
     manager.decreaseSpeed(STORY);

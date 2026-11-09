@@ -182,6 +182,7 @@ const EMPTY_PARAMS: UrlParams = {
   workers: null,
   prefetch: null,
   textScale: null,
+  playbackPeriod: null,
   dpr: null,
   input: null,
   lineJoin: null,

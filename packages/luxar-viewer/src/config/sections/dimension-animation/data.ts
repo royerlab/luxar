@@ -17,9 +17,11 @@ export const dimensionAnimationConfig: DimensionAnimationConfig = {
     // The same rate read as SECONDS PER STEP (the Speed section's period view):
     // slow cadences — a kiosk tour advancing every 20 s, a time-lapse stepping
     // once a minute — are named by their period, not by a tiny fps.
-    periodSeconds: [1, 2, 5, 10, 20, 30, 60, 120, 300, 600],
-    // One step an hour: the floor has to sit below the longest period preset,
-    // or an authored 20 s period (target_fps 0.05) would be clamped to 10 s.
+    // One row of chips; anything slower is typed in the Custom field below them
+    // (seconds, minutes, hours or days).
+    periodSeconds: [1, 2, 5, 10, 20, 30, 60, 120],
+    // One step every 30 days: the floor is the slowest period that can be
+    // typed, so an authored or typed period is never clamped faster.
     customMin: 1 / MAX_ANIMATION_PERIOD_S,
     customMax: 120,
     stepMultipliers: [0.1, 0.25, 0.5, 1, 2, 5],

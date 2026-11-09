@@ -357,6 +357,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     densityCap: urlParams.densityCap ?? undefined,
     // `?textScale=` — overlay type size for this display (a launcher flag).
     textScale: urlParams.textScale ?? undefined,
+    // `?playbackPeriod=` — retime the scene's authored playback (a launcher flag).
+    playbackPeriod: urlParams.playbackPeriod ?? undefined,
     // `?viewAxis=xy|xz|yz` — axis-aligned opening view for this session.
     viewAxis: urlParams.viewAxis ?? undefined,
     // Opt-in capture-quality override (`?lodFinest` — the gallery harness).

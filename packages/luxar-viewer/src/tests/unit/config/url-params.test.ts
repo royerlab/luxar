@@ -207,6 +207,7 @@ describe('readUrlParams', () => {
       workers: null,
       prefetch: null,
       textScale: null,
+      playbackPeriod: null,
       dpr: null,
       input: null,
       lineJoin: null,
@@ -817,6 +818,14 @@ describe('per-session machine and text parameters', () => {
     expect(p.workers).toBe(16);
     expect(p.prefetch).toBe(12);
     expect(p.textScale).toBe(0.8);
+  });
+
+  it('parses ?playbackPeriod, where 0 is a value (authored playback off)', () => {
+    expect(readUrlParams('?playbackPeriod=30').playbackPeriod).toBe(30);
+    expect(readUrlParams('?playbackPeriod=0').playbackPeriod).toBe(0);
+    expect(readUrlParams('?playbackPeriod=-5').playbackPeriod).toBeNull();
+    expect(readUrlParams('?playbackPeriod=soon').playbackPeriod).toBeNull();
+    expect(readUrlParams('').playbackPeriod).toBeNull();
   });
 
   it('treats missing or invalid values as no override', () => {

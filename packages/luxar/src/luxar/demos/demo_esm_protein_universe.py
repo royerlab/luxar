@@ -97,7 +97,8 @@ Screen shape and pace:
     on a wide wall; a screen too narrow for a readable panel is refused. Without
     it the layout is the one tuned for 16:9. ``--text-scale`` sets the
     reading-text size for the room. A kiosk build moves on to the next story by
-    itself, resting 20 s at each stop after the camera lands
+    itself, resting 30 s at each stop after the camera lands (with narration
+    playing, use 60: the longest clip runs 43 s)
     (``--auto-advance SECONDS``; ``0`` turns it off).
 
 Touch panel (off by default):
@@ -3364,8 +3365,13 @@ KIOSK_LAUNCH = LaunchConfig(renderer="webgpu", workers=16, prefetch=12)
 #: Seconds each kiosk stop RESTS before the tour moves on by itself, so the
 #: wall is never still with no one at the controls: the story dimension plays
 #: at this period, and the period counts from the camera's landing (a flight is
-#: 5-16 s), so a stop lasts about 30 s. A visitor's pick restarts it.
-KIOSK_AUTO_ADVANCE_S = 20.0
+#: 5-16 s). A visitor's pick restarts it. 30 s is time to read a panel on a
+#: wall with no sound, as the lobby kiosk is. With sound it is too short for the
+#: narration, which also starts at the landing (`on_arrive`, +0.6 s): the
+#: longest openai/alloy clip, CRISPR-Cas, runs 43.3 s, so a kiosk with speakers
+#: wants `--auto-advance 60` (or `serve.py --auto-advance 60` on site).
+#: Re-measure when the scripts change (`ffprobe` the store's narration_*/audio.mp3).
+KIOSK_AUTO_ADVANCE_S = 30.0
 #: Shape the default layout is drawn for (and its caption laid out on).
 DEFAULT_ASPECT = 16 / 9
 

@@ -350,7 +350,7 @@ class TestAnimationConfig:
             AnimationConfig(target_fps=1.0, period_s=1.0)
 
     def test_invalid_period_s(self) -> None:
-        # Up to one step an hour: the viewer's slowest accepted rate.
+        # Up to one step every 30 days: the viewer's slowest accepted rate.
         AnimationConfig(period_s=MAX_ANIMATION_PERIOD_S)
         for bad in (0.0, -1.0, MAX_ANIMATION_PERIOD_S + 1, float("inf"), float("nan")):
             with pytest.raises(ValueError, match="period_s must be in"):

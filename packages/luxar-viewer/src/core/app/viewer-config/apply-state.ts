@@ -43,6 +43,11 @@ export interface ViewerConfigPorts {
   setDimensionValue: (dim: number, value: number) => void;
   /** Set the browser tab title (document.title) from the scene's title. */
   setDocumentTitle: (title: string) => void;
+  /**
+   * Seconds per step overriding every authored playing entry's rate
+   * (`?playbackPeriod=`); `0` keeps authored playback from starting.
+   */
+  playbackPeriodOverride?: number;
   /** Start playback on one dimension. Optional for lightweight test ports. */
   startDimensionAnimation?: (
     dim: number,
@@ -149,27 +154,46 @@ export function applyViewerConfigState(
   // and re-asserting it would mean a captured-then-paused scene could never
   // simply inherit whatever the viewer does next.
   if (viewerConfig.animation && ports.startDimensionAnimation) {
-    for (let dim = 0; dim < viewerConfig.animation.length; dim++) {
-      const entry = viewerConfig.animation[dim];
-      if (!entry || entry.playing !== true) continue;
-      const { targetFPS, speedView } = authoredRate(entry);
-      const loopMode: LoopMode | undefined =
-        entry.loop === 'once' || entry.loop === 'loop' || entry.loop === 'bounce'
-          ? entry.loop
-          : undefined;
-      const direction: AnimationDirection | undefined =
-        entry.direction === 'forward' || entry.direction === 'backward'
-          ? entry.direction
-          : undefined;
-      ports.startDimensionAnimation(dim, {
-        targetFPS,
-        speedView,
-        loopMode,
-        direction,
-        stepSize: entry.step_size,
-      });
-    }
+    startAuthoredPlayback(
+      viewerConfig.animation,
+      ports.startDimensionAnimation,
+      ports.playbackPeriodOverride
+    );
   }
+}
+
+/**
+ * Start every `playing: true` animation entry, at its authored rate or, with
+ * ``override`` (``?playbackPeriod=``), at that many seconds per step; an
+ * override of ``0`` starts none of them.
+ */
+function startAuthoredPlayback(
+  animation: NonNullable<ZarrViewerConfig['animation']>,
+  start: NonNullable<ViewerConfigPorts['startDimensionAnimation']>,
+  override: number | undefined
+): void {
+  if (override === 0) return;
+  for (let dim = 0; dim < animation.length; dim++) {
+    const entry = animation[dim];
+    if (!entry || entry.playing !== true) continue;
+    const { targetFPS, speedView } = authoredRate(
+      override !== undefined ? { period_s: override } : entry
+    );
+    const { loopMode, direction } = authoredMotion(entry);
+    start(dim, { targetFPS, speedView, loopMode, direction, stepSize: entry.step_size });
+  }
+}
+
+/** An entry's loop mode and direction, when they are ones the viewer knows. */
+function authoredMotion(entry: { loop?: string; direction?: string }): {
+  loopMode: LoopMode | undefined;
+  direction: AnimationDirection | undefined;
+} {
+  const loop = entry.loop;
+  const loopMode = loop === 'once' || loop === 'loop' || loop === 'bounce' ? loop : undefined;
+  const way = entry.direction;
+  const direction = way === 'forward' || way === 'backward' ? way : undefined;
+  return { loopMode, direction };
 }
 
 /**

@@ -808,6 +808,7 @@ export class LuxarApp {
       setTheme: (id) => ThemeManager.getInstance().setTheme(id),
       setDimensionValue: (i, v) => sceneDimsManager.setDimensionValue(i, v),
       setDocumentTitle,
+      playbackPeriodOverride: this.options?.playbackPeriod,
       startDimensionAnimation: (dim, options) => {
         // Resolved lazily: the animation manager is built when a scene with an
         // animatable dimension loads, which for the first dataset happens in
