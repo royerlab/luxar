@@ -1889,6 +1889,9 @@ def assess_display(report: dict[str, Any]) -> list[tuple[str, str]]:
         return [("ERROR", f"the display failed to start{nogpu}: {_printable(report['error'])}. "
                  "Look at the screen, its browser console and chrome://gpu")]  # fmt: skip
     lines: list[tuple[str, str]] = []
+    if report.get("datasetError"):
+        lines.append(("ERROR", f"the scene failed to load: {_printable(report['datasetError'])}. "
+                      f"Check the {DATA_DIR_NAME}/ folder beside serve.py"))  # fmt: skip
     backend = report.get("backend")
     adapter = report.get("adapter") if isinstance(report.get("adapter"), dict) else None
     gpu = _printable(" ".join(

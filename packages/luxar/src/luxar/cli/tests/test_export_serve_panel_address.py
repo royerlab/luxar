@@ -662,6 +662,12 @@ def test_a_display_that_failed_to_start_is_an_error() -> None:
     ]
 
 
+def test_a_scene_that_failed_to_load_is_an_error_even_on_a_good_gpu() -> None:
+    lines = template.assess_display({**GOOD, "datasetError": "404 data/zarr.json"})
+    assert lines[0][0] == "ERROR" and "the scene failed to load: 404" in lines[0][1]
+    assert ("OK", "WebGPU on the GPU (nvidia blackwell)") in lines
+
+
 def test_a_report_with_missing_fields_still_assesses() -> None:
     assert template.assess_display({})[0][0] == "WARNING"
 
