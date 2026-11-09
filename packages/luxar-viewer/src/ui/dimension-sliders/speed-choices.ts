@@ -107,7 +107,7 @@ export function rateInBestUnit(view: SpeedView, fps: number): { amount: number; 
 
 /**
  * Significant digits a seeded Custom value keeps: enough that the seed reads
- * back within {@link BOUND_TOLERANCE} of the rate, so a value at a bound (120
+ * back within the bounds' slack (`BOUND_TOLERANCE`) of the rate, so a value at a bound (120
  * steps a second, one every 30 days) still passes its own range check.
  */
 export const SEED_DIGITS = 6;
