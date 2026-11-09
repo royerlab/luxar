@@ -1000,6 +1000,29 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
       amount().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
     };
 
+    it('closes once when closing blurs the focused field (Enter, click outside)', () => {
+      // A browser fires the focused input's blur DURING menu.remove(); that
+      // blur commits and closes again. Emulate it: the second close must be
+      // a no-op, not a second remove of a detached node (a NotFoundError in Chrome).
+      const sliders = buildSliders();
+      const stub = makeAnimationManagerStub();
+      sliders.setAnimationManager(stub as never);
+      open();
+      type('24');
+      const menu = document.querySelector<HTMLElement>('.luxar-dimension-slider__context-menu')!;
+      const detach = menu.remove.bind(menu);
+      let removals = 0;
+      menu.remove = () => {
+        removals += 1;
+        if (removals === 1) amount().dispatchEvent(new Event('blur'));
+        detach();
+      };
+      enter();
+      expect(removals).toBe(1);
+      expect(stub.setTargetFPS).toHaveBeenCalledTimes(1);
+      expect(menuOpen()).toBe(false);
+    });
+
     it('is in both views, read per unit time (fps) or per step (period)', () => {
       const sliders = buildSliders();
       const stub = makeAnimationManagerStub();

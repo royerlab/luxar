@@ -1392,11 +1392,14 @@ export class DimensionSliders {
     // Every commit that sets a rate closes the menu, as a chip does, so the
     // menu never shows a rate it no longer has.
     let edited = false;
+    let committed = false;
     let shownUnit = unit.value as PeriodUnit;
     const commit = (): void => {
+      if (committed) return; // closing blurs the input, which would commit again
       const fps = customRate(view, parseFloat(amount.value), unit.value as PeriodUnit);
       amount.setAttribute('aria-invalid', String(fps === null && amount.value !== ''));
       if (fps === null) return;
+      committed = true;
       this.animationManager?.setTargetFPS(dimIndex, fps);
       this.closeContextMenu();
     };
@@ -1740,10 +1743,12 @@ export class DimensionSliders {
    * Close active context menu and clean up event listeners
    */
   public closeContextMenu(): void {
-    if (this.activeContextMenu) {
-      this.activeContextMenu.remove();
-      this.activeContextMenu = null;
-    }
+    // Clear the field BEFORE removing: removing a menu whose input has focus
+    // fires that input's blur synchronously, and a blur that commits closes
+    // the menu again -- re-entering here with the node already detached.
+    const menu = this.activeContextMenu;
+    this.activeContextMenu = null;
+    menu?.remove();
 
     // Cancel a pending click-outside attach if the menu was closed before
     // the deferred attach fired. Otherwise the listener would be added
