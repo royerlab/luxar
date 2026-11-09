@@ -626,7 +626,7 @@
 }
 
 .luxar-dimension-slider__context-step-input,
-.luxar-dimension-slider__context-period-input {
+.luxar-dimension-slider__context-rate-input {
   flex: 1 1 64px;
   min-width: 64px;
   width: 64px;
@@ -641,25 +641,21 @@
 }
 
 .luxar-dimension-slider__context-step-input:focus,
-.luxar-dimension-slider__context-period-input:focus,
-.luxar-dimension-slider__context-period-unit:focus {
+.luxar-dimension-slider__context-rate-input:focus,
+.luxar-dimension-slider__context-rate-unit:focus {
   outline: none;
   border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
 }
 
-/* The period view's Custom row: a number and a unit, under the preset chips,
+/* The Speed section's Custom row (either view): a number and a unit, under the chips,
    aligned to the chip padding like the Step section's custom field. */
-.luxar-dimension-slider__context-period-custom {
+.luxar-dimension-slider__context-rate-custom {
   display: flex;
   gap: var(--luxar-spacing-1);
   padding: var(--luxar-spacing-1) var(--luxar-spacing-1) 0;
 }
 
-.luxar-dimension-slider__context-period-custom[hidden] {
-  display: none;
-}
-
-.luxar-dimension-slider__context-period-unit {
+.luxar-dimension-slider__context-rate-unit {
   flex: 0 0 auto;
   background: var(--luxar-bg-primary);
   color: var(--luxar-text-primary);
@@ -670,13 +666,12 @@
   padding: 2px var(--luxar-spacing-1);
 }
 
-/* The current rate is a custom period: mark the row as the selected choice. */
-.luxar-dimension-slider__context-period-custom--active
-  .luxar-dimension-slider__context-period-input {
+/* The current rate is a custom one: mark the row as the selected choice. */
+.luxar-dimension-slider__context-rate-custom--active .luxar-dimension-slider__context-rate-input {
   border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
 }
 
-.luxar-dimension-slider__context-period-input[aria-invalid='true'] {
+.luxar-dimension-slider__context-rate-input[aria-invalid='true'] {
   border-color: var(--luxar-error);
 }
 

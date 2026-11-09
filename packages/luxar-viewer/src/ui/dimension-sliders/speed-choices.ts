@@ -6,9 +6,11 @@
  *   fraction (`1/2`, one step every 2 s), never a decimal.
  * - `period`: seconds per step, from `presets.periodSeconds`, labelled
  *   `20s`, `1m`, `2m` — the natural unit for a slideshow or a slow
- *   time-lapse, where an fps (`0.05`) says nothing at a glance. Anything
- *   slower is TYPED (`customPeriodSeconds`): a number and a unit from
- *   seconds to days, up to the viewer's slowest rate.
+ *   time-lapse, where an fps (`0.05`) says nothing at a glance.
+ *
+ * Either view also takes a TYPED rate (`customRate`): a number and a unit,
+ * seconds to days per step, or steps per second to per day, anywhere in the
+ * range the viewer plays.
  *
  * Either way a choice carries the `fps` it sets; the rate itself is always
  * `targetFPS`.
@@ -82,23 +84,49 @@ export function describePeriod(seconds: number): string {
 }
 
 /**
- * Seconds per step for a typed ``amount`` of ``unit``, or null when that is
- * not a period the viewer plays: not a finite positive number, faster than
- * `presets.customMax` steps a second, or slower than one step every
- * `1 / presets.customMin` seconds (30 days).
+ * A rate in the unit it reads best in, as the view types it: seconds-to-days
+ * PER STEP in the period view (:func:`periodInBestUnit`), steps PER second,
+ * minute, hour or day in the fps view -- the smallest unit that gives a whole
+ * number of steps (`0.05` fps is `3 /min`, `10` fps stays `10 /s`), else the
+ * smallest that gives at least one, rounded to 3 significant digits.
  */
-export function customPeriodSeconds(amount: number, unit: PeriodUnit): number | null {
-  const seconds = amount * unitInfo(unit).seconds;
-  const { customMin, customMax } = config.dimensionAnimation.presets;
-  const tolerance = 1 + RATE_MATCH_TOLERANCE;
-  if (!Number.isFinite(seconds) || seconds <= 0) return null;
-  if (seconds * customMax < 1 / tolerance || seconds * customMin > tolerance) return null;
-  return seconds;
+export function rateInBestUnit(view: SpeedView, fps: number): { amount: number; unit: PeriodUnit } {
+  if (view === 'period') return periodInBestUnit(1 / fps);
+  for (const { unit, seconds: size } of PERIOD_UNITS) {
+    const amount = fps * size;
+    if (amount >= 1 && Math.abs(amount - Math.round(amount)) <= amount * RATE_MATCH_TOLERANCE) {
+      return { amount: Math.round(amount), unit };
+    }
+  }
+  const fit = PERIOD_UNITS.find(({ seconds: size }) => fps * size >= 1) ?? PERIOD_UNITS[3];
+  return { amount: Number((fps * fit.seconds).toPrecision(3)), unit: fit.unit };
 }
 
-/** Whether a dimension playing at ``fps`` is on one of the period presets. */
-export function isPresetPeriod(fps: number): boolean {
-  return speedChoices('period').some((choice) => choice.matches(fps));
+/** The unit picker's label for ``unit`` in ``view``: `min` (per step) or `/min`. */
+export function rateUnitLabel(view: SpeedView, unit: PeriodUnit): string {
+  return view === 'period' ? unitInfo(unit).long : `/${unitInfo(unit).long}`;
+}
+
+/**
+ * The rate (steps per second) for a typed ``amount`` of ``unit`` in ``view`` --
+ * that many seconds, minutes, hours or days per step, or that many steps per
+ * one of them -- or null when it is not a rate the viewer plays: not a finite
+ * positive number, or outside `[presets.customMin, presets.customMax]` (one
+ * step every 30 days to 120 steps a second).
+ */
+export function customRate(view: SpeedView, amount: number, unit: PeriodUnit): number | null {
+  const size = unitInfo(unit).seconds;
+  const fps = view === 'period' ? 1 / (amount * size) : amount / size;
+  const { customMin, customMax } = config.dimensionAnimation.presets;
+  const tolerance = 1 + RATE_MATCH_TOLERANCE;
+  if (!Number.isFinite(fps) || fps <= 0 || !Number.isFinite(amount) || amount <= 0) return null;
+  if (fps > customMax * tolerance || fps * tolerance < customMin) return null;
+  return fps;
+}
+
+/** Whether a dimension playing at ``fps`` is on one of ``view``'s chips. */
+export function isPresetRate(view: SpeedView, fps: number): boolean {
+  return speedChoices(view).some((choice) => choice.matches(fps));
 }
 
 function fpsChoice(fps: number): SpeedChoice {

@@ -17,9 +17,10 @@ import { fractionToThumbLeft, fractionToValue, valueToFraction } from './slider-
 import {
   PERIOD_UNITS,
   SPEED_VIEWS,
-  customPeriodSeconds,
-  isPresetPeriod,
-  periodInBestUnit,
+  customRate,
+  isPresetRate,
+  rateInBestUnit,
+  rateUnitLabel,
   speedChoices,
   type PeriodUnit,
 } from './dimension-sliders/speed-choices';
@@ -1277,8 +1278,8 @@ export class DimensionSliders {
    * The context menu's Speed section: one row of rate chips, read either as
    * steps per second (`fps`: the fps presets; sub-1 rates as fractions, `1/2`)
    * or as seconds per step (`period`: `1s` … `2m`, for slideshows and slow
-   * time-lapses, plus a typed Custom period from seconds to days -- see
-   * `buildCustomPeriodRow`). A two-segment toggle in the header switches the
+   * time-lapses). Under the chips, either view has a Custom field for any
+   * rate the viewer plays (`buildCustomRateRow`). A two-segment toggle in the header switches the
    * view in place without closing the menu; the choice is kept per dimension
    * by the animation manager (`setSpeedView`), which also picks the initial
    * view. Either view sets the same `targetFPS`.
@@ -1310,13 +1311,15 @@ export class DimensionSliders {
       return { view, segment };
     });
     const chips = makeSection('Speed', toggle);
-    const custom = this.buildCustomPeriodRow(dimIndex, currentFPS);
-    // makeSection() appended the chips row to its section: this lands the
-    // field inside the Speed section, outside the chips' radiogroup.
-    chips.parentElement?.appendChild(custom);
+    let custom: HTMLDivElement | null = null;
 
     const render = (view: SpeedView): void => {
-      custom.hidden = view !== 'period';
+      // makeSection() appended the chips row to its section: the field lands
+      // inside the Speed section, outside the chips' radiogroup.
+      const row = this.buildCustomRateRow(dimIndex, currentFPS, view);
+      if (custom) custom.replaceWith(row);
+      else chips.parentElement?.appendChild(row);
+      custom = row;
       for (const { view: segmentView, segment } of segments) {
         const active = segmentView === view;
         segment.classList.toggle('luxar-dimension-slider__context-unit--active', active);
@@ -1341,45 +1344,52 @@ export class DimensionSliders {
   }
 
   /**
-   * The period view's Custom row: a number and a unit (seconds to days), for
-   * any period the presets do not name, up to the viewer's slowest rate. Its
-   * own row under the chips, like the Step section's custom field and for the
-   * same reasons: a number input cannot be one of a radiogroup's radios, and a
-   * focused input or select suppresses the global shortcuts while typing.
-   * Shown filled in, and marked as the current choice, when the rate is not a
-   * preset. Commits once, on Enter, on blur after an edit, or on a unit change
-   * with a number in the field; a value outside the range is flagged, not set.
+   * The Speed section's Custom row, in either view: a number and a unit, for
+   * any rate the presets do not name -- seconds to days PER STEP in the period
+   * view, steps PER second to per day in the fps view -- inside the range the
+   * viewer plays. Its own row under the chips, like the Step section's custom
+   * field and for the same reasons: a number input cannot be one of a
+   * radiogroup's radios, and a focused input or select suppresses the global
+   * shortcuts while typing. Shown filled in, and marked as the current
+   * choice, when the rate is not one of the view's presets. Commits once, on
+   * Enter, on blur after an edit, or on a unit change with a number in the
+   * field; a value outside the range is flagged, not set.
    */
-  private buildCustomPeriodRow(dimIndex: number, currentFPS: number): HTMLDivElement {
+  private buildCustomRateRow(
+    dimIndex: number,
+    currentFPS: number,
+    view: SpeedView
+  ): HTMLDivElement {
     const row = document.createElement('div');
-    row.className = 'luxar-dimension-slider__context-period-custom';
+    row.className = 'luxar-dimension-slider__context-rate-custom';
+    row.dataset.view = view;
     const amount = document.createElement('input');
     amount.type = 'number';
-    amount.className = 'luxar-dimension-slider__context-period-input';
+    amount.className = 'luxar-dimension-slider__context-rate-input';
     amount.min = '0';
     amount.step = 'any';
     amount.placeholder = 'custom';
-    amount.setAttribute('aria-label', 'Custom period');
+    amount.setAttribute('aria-label', view === 'period' ? 'Custom period' : 'Custom rate');
     const unit = document.createElement('select');
-    unit.className = 'luxar-dimension-slider__context-period-unit';
-    unit.setAttribute('aria-label', 'Custom period unit');
-    for (const { unit: key, long } of PERIOD_UNITS) {
-      unit.appendChild(new Option(long, key));
+    unit.className = 'luxar-dimension-slider__context-rate-unit';
+    unit.setAttribute('aria-label', 'Custom unit');
+    for (const { unit: key } of PERIOD_UNITS) {
+      unit.appendChild(new Option(rateUnitLabel(view, key), key));
     }
-    const onPreset = isPresetPeriod(currentFPS);
-    const current = periodInBestUnit(1 / currentFPS);
-    unit.value = onPreset ? 'min' : current.unit;
-    if (!onPreset) {
+    const current = rateInBestUnit(view, currentFPS);
+    unit.value = view === 'period' ? 'min' : 's';
+    if (!isPresetRate(view, currentFPS)) {
       amount.value = String(current.amount);
-      row.classList.add('luxar-dimension-slider__context-period-custom--active');
+      unit.value = current.unit;
+      row.classList.add('luxar-dimension-slider__context-rate-custom--active');
     }
     let edited = false;
     const commit = (): boolean => {
-      const seconds = customPeriodSeconds(parseFloat(amount.value), unit.value as PeriodUnit);
-      amount.setAttribute('aria-invalid', String(seconds === null && amount.value !== ''));
-      if (seconds === null) return false;
+      const fps = customRate(view, parseFloat(amount.value), unit.value as PeriodUnit);
+      amount.setAttribute('aria-invalid', String(fps === null && amount.value !== ''));
+      if (fps === null) return false;
       edited = false;
-      this.animationManager?.setTargetFPS(dimIndex, 1 / seconds);
+      this.animationManager?.setTargetFPS(dimIndex, fps);
       return true;
     };
     amount.addEventListener('input', () => {

@@ -5,11 +5,13 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  customPeriodSeconds,
+  customRate,
   describePeriod,
   formatPeriod,
-  isPresetPeriod,
+  isPresetRate,
   periodInBestUnit,
+  rateInBestUnit,
+  rateUnitLabel,
   speedChoices,
 } from '../../../../ui/dimension-sliders/speed-choices';
 import { config } from '../../../../config';
@@ -36,19 +38,40 @@ describe('typed periods', () => {
     expect(describePeriod(3 * 86400)).toBe('1 step every 3 d');
   });
 
-  it('accept any period the viewer plays, up to 30 days, and nothing else', () => {
-    expect(customPeriodSeconds(3, 'h')).toBe(10800);
-    expect(customPeriodSeconds(30, 'd')).toBe(30 * 86400);
-    expect(customPeriodSeconds(31, 'd')).toBeNull();
-    expect(customPeriodSeconds(0, 's')).toBeNull();
-    expect(customPeriodSeconds(-1, 'min')).toBeNull();
-    expect(customPeriodSeconds(Number.NaN, 's')).toBeNull();
-    expect(customPeriodSeconds(0.001, 's')).toBeNull(); // faster than 120 steps a second
+  it('a typed rate is read per step (period) or per unit time (fps)', () => {
+    expect(customRate('period', 3, 'h')).toBeCloseTo(1 / 10800, 15);
+    expect(customRate('period', 30, 'd')).toBeCloseTo(1 / (30 * 86400), 15);
+    expect(customRate('fps', 24, 's')).toBe(24);
+    expect(customRate('fps', 3, 'min')).toBeCloseTo(1 / 20, 15);
+    expect(customRate('fps', 1, 'd')).toBeCloseTo(1 / 86400, 15);
   });
 
-  it('a preset rate is recognised, a typed one is not', () => {
-    expect(isPresetPeriod(1 / 20)).toBe(true);
-    expect(isPresetPeriod(1 / 3600)).toBe(false);
+  it('accepts only rates the viewer plays: one step every 30 days to 120 a second', () => {
+    expect(customRate('period', 31, 'd')).toBeNull();
+    expect(customRate('period', 0.001, 's')).toBeNull();
+    expect(customRate('fps', 121, 's')).toBeNull();
+    expect(customRate('fps', 0.5, 'd')).toBeCloseTo(1 / (2 * 86400), 15); // every 2 days
+    expect(customRate('fps', 0.01, 'd')).toBeNull(); // every 100 days
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(customRate('period', bad, 's')).toBeNull();
+      expect(customRate('fps', bad, 's')).toBeNull();
+    }
+  });
+
+  it('a rate seeds the field in the unit it reads best in, in either view', () => {
+    expect(rateInBestUnit('period', 1 / 7200)).toEqual({ amount: 2, unit: 'h' });
+    expect(rateInBestUnit('fps', 24)).toEqual({ amount: 24, unit: 's' });
+    expect(rateInBestUnit('fps', 1 / 20)).toEqual({ amount: 3, unit: 'min' });
+    expect(rateInBestUnit('fps', 1 / 86400)).toEqual({ amount: 1, unit: 'd' });
+    expect(rateUnitLabel('period', 'min')).toBe('min');
+    expect(rateUnitLabel('fps', 'min')).toBe('/min');
+  });
+
+  it('a preset rate is recognised per view, a typed one is not', () => {
+    expect(isPresetRate('period', 1 / 20)).toBe(true);
+    expect(isPresetRate('period', 1 / 3600)).toBe(false);
+    expect(isPresetRate('fps', 10)).toBe(true);
+    expect(isPresetRate('fps', 24)).toBe(false);
   });
 });
 

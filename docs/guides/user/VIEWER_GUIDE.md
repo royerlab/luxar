@@ -385,9 +385,10 @@ field types an `o` instead of closing it.
 
 Right-click a dimension's play button for its playback settings. **Speed** reads
 the rate either in `fps` (steps per second) or as a `period` (seconds per step,
-`1s` to `2m`, or any period typed in the Custom field below them, in seconds,
-minutes, hours or days, up to one step every 30 days); the toggle in the Speed
-header switches between the two, and a
+`1s` to `2m`). Under the presets, a Custom field takes any rate as a number and
+a unit: seconds, minutes, hours or days per step in the period view, steps per
+second, minute, hour or day in the fps view, from 120 a second to one every 30
+days. The toggle in the Speed header switches between the two views, and a
 rate below 1 fps opens in the period view. Playback at one step every 2 s or
 slower is a *slideshow*: each step loads at full detail like a manual one (on a
 continuous dimension it is also the size of a `]` key press), and if the step

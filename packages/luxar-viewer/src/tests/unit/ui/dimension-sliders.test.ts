@@ -972,7 +972,7 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     sliders.dispose();
   });
 
-  it('custom period: only in the period view; a typed number and unit set the rate', () => {
+  it('custom rate: in both views; a typed number and unit set the rate', () => {
     const sliders = buildSliders();
     const stub = makeAnimationManagerStub();
     sliders.setAnimationManager(stub as never);
@@ -980,19 +980,27 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
       .querySelector('.luxar-dimension-slider__play-btn')!
       .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     const row = (): HTMLDivElement =>
-      document.querySelector('.luxar-dimension-slider__context-period-custom')!;
+      document.querySelector('.luxar-dimension-slider__context-rate-custom')!;
     const amount = (): HTMLInputElement =>
-      document.querySelector('.luxar-dimension-slider__context-period-input')!;
+      document.querySelector('.luxar-dimension-slider__context-rate-input')!;
     const unit = (): HTMLSelectElement =>
-      document.querySelector('.luxar-dimension-slider__context-period-unit')!;
-    expect(row().hidden).toBe(true); // fps view
+      document.querySelector('.luxar-dimension-slider__context-rate-unit')!;
+    // fps view: the same field, read as steps per unit time.
+    expect(row().dataset.view).toBe('fps');
+    expect(Array.from(unit().options, (o) => o.textContent)).toEqual(['/s', '/min', '/h', '/d']);
+    amount().value = '24';
+    amount().dispatchEvent(new Event('input'));
+    amount().dispatchEvent(new Event('blur'));
+    expect(stub.setTargetFPS).toHaveBeenLastCalledWith(3, 24);
+    stub.setTargetFPS.mockClear();
     document
       .querySelector<HTMLButtonElement>(
         '.luxar-dimension-slider__context-unit[data-view="period"]'
       )!
       .click();
-    expect(row().hidden).toBe(false);
+    expect(row().dataset.view).toBe('period');
     expect(Array.from(unit().options, (o) => o.value)).toEqual(['s', 'min', 'h', 'd']);
+    expect(Array.from(unit().options, (o) => o.textContent)).toEqual(['s', 'min', 'h', 'd']);
     // Not inside the chips' radiogroup (a number input is no radio).
     expect(row().closest('[role="radiogroup"]')).toBeNull();
 
@@ -1023,8 +1031,8 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     document
       .querySelector('.luxar-dimension-slider__play-btn')!
       .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    const row = document.querySelector('.luxar-dimension-slider__context-period-custom')!;
-    expect(row.classList).toContain('luxar-dimension-slider__context-period-custom--active');
+    const row = document.querySelector('.luxar-dimension-slider__context-rate-custom')!;
+    expect(row.classList).toContain('luxar-dimension-slider__context-rate-custom--active');
     const input = row.querySelector<HTMLInputElement>('input')!;
     expect(input.value).toBe('2');
     expect(row.querySelector<HTMLSelectElement>('select')!.value).toBe('d');

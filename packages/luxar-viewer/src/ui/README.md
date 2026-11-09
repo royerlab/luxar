@@ -256,8 +256,10 @@ micro-header row over one wrapping row of selectable chips.
   - fps presets: 1/2 (one frame every 2 s), 1, 2, 5, 10, 15, 30, 60, 120 FPS
   - period presets: 1s, 2s, 5s, 10s, 20s, 30s, 1m, 2m (seconds per step, one
     row; 2 s or slower plays as a slideshow, see `scene/animation/README.md`),
-    plus a Custom row under them: a number and a unit (s, min, h, d) for any
-    period up to 30 days, marked as current when the rate is no preset
+  - a Custom row under the chips, in both views: a number and a unit (s, min,
+    h, d), read per step (period) or per unit time (fps, `/min`), for any rate
+    from 120 a second to one every 30 days; filled in and marked as current
+    when the rate is no preset
   - Single-select chips (`role="radio"`) with the current speed marked
 
 - **Loop Mode Section**: Choose loop behavior

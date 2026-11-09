@@ -49,13 +49,15 @@ two-segment toggle in the section header. The animation manager keeps the
 choice per dimension (`setSpeedView` / `getSpeedView`; unset = `period`
 below 1 fps). Either view sets the same `targetFPS`.
 
-| Export                         | Purpose                                                                                              |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `speedChoices(view)`           | The chips for a view: `presets.fps` (`10`, sub-1 as `1/2`) or `presets.periodSeconds` (`20s`, `1m`). |
-| `SPEED_VIEWS`                  | The two views in toggle order, with their segment labels and tooltips.                               |
-| `formatPeriod(s)`              | `20s`, `1m`, `90s`, `2h` — the largest unit the period is a whole number of.                         |
-| `describePeriod(s)`            | The long form for tooltips: `1 step every 2 min`.                                                    |
-| `PERIOD_UNITS`                 | The units a period is read and typed in: s, min, h, d.                                               |
-| `periodInBestUnit(s)`          | A period as `{ amount, unit }` in the unit it reads best in (seeds the Custom field).                |
-| `customPeriodSeconds(n, unit)` | Seconds for a typed period, or null outside what the viewer plays (up to 30 days).                   |
-| `isPresetPeriod(fps)`          | Whether a rate is one of the period chips (else the Custom row is the current choice).               |
+| Export                      | Purpose                                                                                              |
+| --------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `speedChoices(view)`        | The chips for a view: `presets.fps` (`10`, sub-1 as `1/2`) or `presets.periodSeconds` (`20s`, `1m`). |
+| `SPEED_VIEWS`               | The two views in toggle order, with their segment labels and tooltips.                               |
+| `formatPeriod(s)`           | `20s`, `1m`, `90s`, `2h` — the largest unit the period is a whole number of.                         |
+| `describePeriod(s)`         | The long form for tooltips: `1 step every 2 min`.                                                    |
+| `PERIOD_UNITS`              | The units a rate is typed in: s, min, h, d (per step in the period view, per unit time in fps).      |
+| `periodInBestUnit(s)`       | A period as `{ amount, unit }` in the unit it reads best in.                                         |
+| `rateInBestUnit(view, fps)` | A rate as the view types it (`0.05` fps is `20 s` per step, or `3 /min`): seeds the Custom field.    |
+| `rateUnitLabel(view, unit)` | The unit picker's label: `min` (period) or `/min` (fps).                                             |
+| `customRate(view, n, unit)` | The fps for a typed rate, or null outside what the viewer plays (30 days to 120 a second).           |
+| `isPresetRate(view, fps)`   | Whether a rate is one of the view's chips (else the Custom row is the current choice).               |
