@@ -662,6 +662,12 @@ def test_a_display_that_failed_to_start_is_an_error() -> None:
     ]
 
 
+def test_a_scene_that_failed_to_load_is_an_error_even_on_a_good_gpu() -> None:
+    lines = template.assess_display({**GOOD, "datasetError": "404 data/zarr.json"})
+    assert lines[0][0] == "ERROR" and "the scene failed to load: 404" in lines[0][1]
+    assert ("OK", "WebGPU on the GPU (nvidia blackwell)") in lines
+
+
 def test_a_report_with_missing_fields_still_assesses() -> None:
     assert template.assess_display({})[0][0] == "WARNING"
 
@@ -696,69 +702,271 @@ def test_find_chrome_per_platform(
     assert template.find_chrome("win32") == str(exe)
 
 
-def _post(port: int, body: bytes, path: str = "/display-report") -> int:
+def _post(
+    port: int, body: bytes, path: str = "/display-report", length: str | None = None
+) -> int:
+    size = str(len(body)) if length is None else length
     with socket.create_connection(("127.0.0.1", port), timeout=5) as client:
         client.sendall(
             f"POST {path} HTTP/1.1\r\nHost: h\r\nContent-Type: application/json\r\n"
-            f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+            f"Content-Length: {size}\r\nConnection: close\r\n\r\n".encode()
             + body
         )
         return int(client.recv(64).split(b" ")[1])
 
 
-def test_the_report_is_taken_once_and_only_while_awaited(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+@contextmanager
+def _report_server(tmp_path: Path) -> Iterator[Any]:
     handler = partial(template.LuxarHandler, directory=str(tmp_path))
     server = template.ControlServer(("127.0.0.1", 0), handler, None)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        port = server.server_address[1]
-        body = json.dumps(GOOD).encode()
-        assert _post(port, body) == 404  # nobody asked
-        server.awaiting_display_report.set()
-        assert _post(port, b"{not json") == 400
-        assert _post(port, body, "/elsewhere") == 404
-        assert _post(port, body) == 204
-        assert _post(port, body) == 404  # once
+        yield server
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_the_report_is_taken_once_and_only_from_the_page_that_was_opened(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with _report_server(tmp_path) as server:
+        port = server.server_address[1]
+        good = {**GOOD}
+        assert _post(port, json.dumps(good).encode()) == 404  # nobody asked
+        nonce = server.display_report.expect()
+        assert _post(port, json.dumps({**good, "nonce": "guess"}).encode()) == 404
+        assert _post(port, json.dumps(good).encode()) == 404  # no nonce: a spoof
+        assert _post(port, b"{not json") == 400
+        assert _post(port, b"[]") == 404
+        assert _post(port, b"{}", length="abc") == 400  # no crash on a bad length
+        assert _post(port, b"{}", length=str(10**9)) == 413
+        assert (
+            _post(port, json.dumps({**good, "nonce": nonce}).encode(), "/elsewhere")
+            == 404
+        )
+        assert _post(port, json.dumps({**good, "nonce": nonce}).encode()) == 204
+        assert _post(port, json.dumps({**good, "nonce": nonce}).encode()) == 404  # once
     out = capsys.readouterr().out
     assert out.count("Display check") == 1
     assert "OK       WebGPU on the GPU (nvidia blackwell)" in out
+    assert "Traceback" not in out
 
 
-def test_chrome_opens_on_the_local_url_asking_for_a_report(
+def test_a_hostile_or_malformed_report_cannot_reach_the_terminal_raw(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    template.print_display_check(
+        {"error": "\x1b]0;pwned\x07\x1b[2J fake OK", "webgpuAvailable": True}
+    )
+    template.print_display_check({**GOOD, "screen": {"width": "1920", "height": None}})
+    out = capsys.readouterr().out
+    assert "\x1b" not in out and "\x07" not in out
+    assert "?]0;pwned??[2J fake OK" in out
+    assert out.count("Display check") == 2  # the second one did not crash
+
+
+def test_two_reports_at_once_print_one_check() -> None:
+    slot = template.DisplayReportSlot()
+    nonce = slot.expect()
+    results: list[bool] = []
+    threads = [
+        threading.Thread(target=lambda: results.append(slot.claim(nonce)))
+        for _ in range(8)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert results.count(True) == 1 and not slot.pending()
+
+
+def test_chrome_opens_on_the_local_url_with_a_report_nonce(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     launched: list[list[str]] = []
+
+    class Process:
+        def poll(self) -> None:
+            return None
+
+    def popen(cmd: list[str], **_: object) -> Process:
+        launched.append(cmd)
+        return Process()
+
     monkeypatch.setattr(template, "SCRIPT_DIR", tmp_path)
-    monkeypatch.setattr(
-        template.subprocess, "Popen", lambda cmd, **_: launched.append(cmd)
-    )
+    monkeypatch.setattr(template.subprocess, "Popen", popen)
     monkeypatch.setattr(template, "_DISPLAY_REPORT_WAIT_S", 3600.0)
     fake = tmp_path / "chrome"
     fake.write_text("")
+    fake.chmod(0o755)
     server = object.__new__(template.ControlServer)
-    server.awaiting_display_report = threading.Event()
+    server.display_report = template.DisplayReportSlot()
     args = parse("--chrome", str(fake))
     assert template.open_display_in_chrome(
         args, server, "http://127.0.0.1:8000/viewer/?src=x"
     )
     assert launched[0][0] == str(fake)
-    assert launched[0][-1] == "http://127.0.0.1:8000/viewer/?src=x&displayReport"
+    url = launched[0][-1]
+    assert url.startswith("http://127.0.0.1:8000/viewer/?src=x&displayReport=")
+    nonce = url.rsplit("=", 1)[1]
+    assert len(nonce) >= 16 and server.display_report.pending()
+    assert server.display_report.claim(nonce)
     assert f"--user-data-dir={tmp_path / template.CHROME_PROFILE_DIR}" in launched[0]
-    assert server.awaiting_display_report.is_set()
 
 
-def test_no_chrome_falls_back_with_a_warning(
+def test_a_chrome_that_cannot_start_falls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def refuse(*_: object, **__: object) -> None:
+        raise PermissionError("Permission denied")
+
+    monkeypatch.setattr(template.subprocess, "Popen", refuse)
+    fake = tmp_path / "chrome"
+    fake.write_text("")
+    fake.chmod(0o755)
+    server = object.__new__(template.ControlServer)
+    server.display_report = template.DisplayReportSlot()
+    assert not template.open_display_in_chrome(
+        parse("--chrome", str(fake)), server, "http://x/"
+    )
+    assert "could not start Chrome" in capsys.readouterr().out
+    assert not server.display_report.pending()
+
+
+def test_chrome_paths_are_checked_and_a_mac_app_bundle_is_opened(
+    tmp_path: Path,
+) -> None:
+    assert template.resolve_chrome(str(tmp_path)) is None  # a directory
+    assert template.resolve_chrome(str(tmp_path / "nope")) is None
+    app = tmp_path / "Google Chrome.app"
+    exe = app / "Contents" / "MacOS" / "Google Chrome"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    exe.chmod(0o755)
+    assert template.resolve_chrome(str(app)) == str(exe)
+
+
+def test_no_chrome_says_what_happens_instead(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(template, "find_chrome", lambda: None)
     server = object.__new__(template.ControlServer)
-    server.awaiting_display_report = threading.Event()
+    server.display_report = template.DisplayReportSlot()
     assert not template.open_display_in_chrome(parse("--chrome"), server, "http://x/")
-    assert "Chrome not found" in capsys.readouterr().out
-    assert not server.awaiting_display_report.is_set()
+    assert "opening the default browser instead" in capsys.readouterr().out
+    assert not template.open_display_in_chrome(
+        parse("--chrome", "--no-open"), server, "http://x/"
+    )
+    assert "not opening a browser" in capsys.readouterr().out
+    assert not server.display_report.pending()
+
+
+def test_a_random_port_is_refused_when_the_qr_must_name_it() -> None:
+    with pytest.raises(template.StartupError, match="random port"):
+        template.open_server(parse("--control", "--port", "0"), None)
+
+
+def test_a_printable_copy_that_cannot_be_drawn_does_not_stop_the_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    shutil.copy(
+        Path(export_module.__file__).parent / "_qr.py", tmp_path / "luxar_qr.py"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    import luxar_qr  # type: ignore[import-not-found]
+
+    monkeypatch.setattr(template, "qr_matrix", luxar_qr.qr_matrix, raising=False)
+    monkeypatch.setattr(template, "qr_ascii", luxar_qr.qr_ascii, raising=False)
+    monkeypatch.setattr(template, "qr_png_bytes", luxar_qr.qr_png_bytes, raising=False)
+
+    def broken(*_: object, **__: object) -> bytes:
+        raise ValueError("bad colour")
+
+    monkeypatch.setattr(template, "qr_pdf_bytes", broken, raising=False)
+    monkeypatch.setattr(template, "SCRIPT_DIR", tmp_path)
+    template.print_control_qr("http://h:1/viewer/control.html?control")
+    out = capsys.readouterr().out
+    assert "could not draw control-panel.pdf" in out
+    assert (tmp_path / template.QR_FILE).exists()
+
+
+def test_the_sheet_title_is_utf16_in_the_pdf_info() -> None:
+    from luxar.cli import _qr
+
+    pdf = _qr.qr_pdf_bytes(
+        _qr.qr_matrix("http://x/"), url="http://x/", heading="Caf\u00e9 \u2014 \u03b1"
+    )
+    expected = ("\ufeff" + "Caf\u00e9 \u2014 \u03b1").encode("utf-16-be").hex().upper()
+    assert f"/Title <{expected}>".encode() in pdf
+
+
+# ── what the server hands out ───────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("path", "served"),
+    [
+        ("/viewer/index.html", True),
+        ("/data/zarr.json", True),
+        ("/viewer/assets/a.js", True),
+        ("/control-token.txt", False),
+        ("/control-qr.png", False),
+        ("/control-panel.pdf", False),
+        ("/serve.py", False),
+        ("/luxar_qr.py", False),
+        ("/README.txt", False),
+        ("/.chrome-display/Default/Cookies", False),
+        ("/viewer/../control-token.txt", False),
+        ("/viewer/%2e%2e/control-token.txt", False),
+        ("/data/.zattrs", True),  # zarr format 2 metadata
+        ("/data/group/.zarray", True),
+        ("/data/../control-token.txt", False),
+        ("/data/./x", False),
+        ("/viewer%2F..%2Fcontrol-token.txt", False),
+        ("//control-token.txt", False),
+    ],
+)
+def test_only_the_viewer_and_the_data_are_served(path: str, served: bool) -> None:
+    assert template.servable_path(path) is served
+
+
+def test_the_token_and_its_carriers_are_not_downloadable(tmp_path: Path) -> None:
+    """Over real HTTP: the files that carry the control token are 404s."""
+    (tmp_path / "viewer").mkdir()
+    (tmp_path / "viewer" / "index.html").write_text("<html></html>")
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "zarr.json").write_text("{}")
+    (tmp_path / ".chrome-display").mkdir()
+    for name in (
+        "control-token.txt",
+        "control-qr.png",
+        "control-panel.pdf",
+        "serve.py",
+    ):
+        (tmp_path / name).write_text("secret")
+    handler = partial(template.LuxarHandler, directory=str(tmp_path))
+    server = template.ControlServer(("127.0.0.1", 0), handler, None)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def status(path: str, method: str = "GET") -> int:
+        with socket.create_connection(
+            ("127.0.0.1", server.server_address[1]), timeout=5
+        ) as c:
+            c.sendall(
+                f"{method} {path} HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n".encode()
+            )
+            return int(c.recv(64).split(b" ")[1])
+
+    try:
+        assert status("/viewer/index.html") == 200
+        assert status("/data/zarr.json") == 200
+        for path in ("/control-token.txt", "/control-qr.png", "/control-panel.pdf",
+                     "/serve.py", "/.chrome-display/", "/viewer/../control-token.txt"):  # fmt: skip
+            assert status(path) == 404, path
+            assert status(path, "HEAD") == 404, path
+    finally:
+        server.shutdown()
+        server.server_close()
