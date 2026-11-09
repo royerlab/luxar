@@ -21,7 +21,7 @@ import os
 import re
 import shutil
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
@@ -47,6 +47,7 @@ def export_scene(
     output: Path,
     data_dir_name: str = "data",
     overwrite: bool = False,
+    auto_advance: float | None = None,
 ) -> Path:
     """Export a zarr scene with viewer into a standalone folder.
 
@@ -55,6 +56,8 @@ def export_scene(
         output: Path to the output folder.
         data_dir_name: Name for the data directory inside output.
         overwrite: Whether to overwrite existing output.
+        auto_advance: Seconds per stop for the exported serve.py's
+            ``--auto-advance`` default (0 = off); None keeps the scene's own.
 
     Returns:
         Path to the created output folder.
@@ -78,7 +81,9 @@ def export_scene(
     if not check_viewer_built():
         raise FileNotFoundError(viewer_not_built_message())
     _require_third_party_notices(get_viewer_dist_path())
-    facts = read_scene_facts(source)
+    facts = replace(
+        read_scene_facts(source), auto_advance=auto_advance_seconds(auto_advance)
+    )
 
     kept_token = _saved_control_token(output)
     if output.exists():
@@ -147,6 +152,11 @@ class SceneFacts:
     dimensions: tuple[str, ...] = ()
     displayed: tuple[str, ...] = ()
     citation: str | None = None
+    #: Seconds per stop baked into serve.py's ``--auto-advance`` default. NOT
+    #: read from the scene: ``luxar export --auto-advance`` sets it, so a
+    #: package can retime its tour without rebuilding the scene (whose content
+    #: hash, and anything bound to it, would change).
+    auto_advance: float | None = None
 
     @property
     def stops(self) -> int:
@@ -396,7 +406,31 @@ _SUBSTITUTED = (
     "TITLE_QUERY",
     "LAUNCH_QUERY",
     "HAS_CONTROL_PANEL",
+    "AUTO_ADVANCE",
 )
+
+
+#: The longest step period the viewer plays (its ``MAX_ANIMATION_PERIOD_S``,
+#: 30 days); a longer ``--auto-advance`` would be clamped there silently.
+_MAX_AUTO_ADVANCE_S = 30 * 24 * 3600.0
+
+
+def auto_advance_seconds(value: float | None) -> float | None:
+    """Validate ``luxar export --auto-advance``: None, 0 (off) or a period.
+
+    Checked at export rather than left to serve.py, so a typo is an error on
+    the machine that built the package, not a tour that never advances on the
+    one that runs it.
+    """
+    if value is None:
+        return None
+    seconds = float(value)
+    if not (0 <= seconds <= _MAX_AUTO_ADVANCE_S):  # NaN fails too
+        raise ValueError(
+            "--auto-advance must be 0 (off) or a period in seconds up to "
+            f"{_MAX_AUTO_ADVANCE_S:g} (30 days), got {value!r}"
+        )
+    return seconds
 
 
 def _substitute(script: str, name: str, value: object) -> str:
@@ -589,6 +623,7 @@ def _get_serve_script_content(
         "TITLE_QUERY": f"&title={quote(title)}" if title else "",
         "LAUNCH_QUERY": facts.launch_query if facts else "",
         "HAS_CONTROL_PANEL": bool(facts and facts.has_control_panel),
+        "AUTO_ADVANCE": facts.auto_advance if facts else None,
     }
     for name in _SUBSTITUTED:
         script = _substitute(script, name, values[name])
@@ -781,6 +816,16 @@ history -- fine for a LAN exhibit, not a password.
 """
 
     display = _dedicated_display_section(facts, output.name)
+    retimed = (
+        f"""
+This package's tour rests {facts.auto_advance:g} s at each stop (set when it was
+exported), so `python3 serve.py` alone already uses it.
+"""
+        if facts.auto_advance
+        else "\nThis package's tour does not advance by itself (set when it was exported).\n"
+        if facts.auto_advance == 0
+        else ""
+    )
     readme = f"""Luxar Exported Scene
 ====================
 
@@ -809,7 +854,7 @@ Options
                                         with WebGPU, and check what it got
     python3 serve.py --auto-advance 30  Tour rests 30 s per stop (0 = no auto-
                                         advance), whatever the scene was built with
-
+{retimed}
 If the port is busy the script picks the next free one and prints what it
 chose -- except with the control relay on, where the panel URL and its QR name
 the port, so a busy port is an error instead. Press Ctrl+C to stop it.

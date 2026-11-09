@@ -596,6 +596,64 @@ def test_auto_advance_absent_leaves_the_scenes_own_setting() -> None:
     assert "playbackPeriod" not in display
 
 
+def test_an_exported_auto_advance_is_the_default_and_a_flag_still_wins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`luxar export --auto-advance 60` makes a bare `serve.py` play 60 s stops."""
+    monkeypatch.setattr(template, "AUTO_ADVANCE", 60.0)
+    assert parse().auto_advance == 60.0
+    assert parse("--auto-advance", "20").auto_advance == 20.0
+    assert parse("--auto-advance", "0").auto_advance == 0.0  # still turns it off
+
+
+def test_export_bakes_the_auto_advance_into_serve_py() -> None:
+    baked = _get_serve_script_content("data", None, SceneFacts(auto_advance=60.0))
+    assert "\nAUTO_ADVANCE = 60.0\n" in baked
+    plain = _get_serve_script_content("data", None, SceneFacts())
+    assert "\nAUTO_ADVANCE = None\n" in plain
+
+
+@pytest.mark.parametrize("value", [-1.0, float("nan"), float("inf"), 2592001.0])
+def test_export_refuses_an_auto_advance_the_viewer_would_not_play(value: float) -> None:
+    with pytest.raises(ValueError, match="--auto-advance"):
+        export_module.auto_advance_seconds(value)
+
+
+def test_export_accepts_off_a_period_and_none() -> None:
+    assert export_module.auto_advance_seconds(None) is None
+    assert export_module.auto_advance_seconds(0) == 0.0
+    assert export_module.auto_advance_seconds(60) == 60.0
+    assert export_module.auto_advance_seconds(2592000) == 2592000.0
+
+
+def test_the_readme_states_the_baked_tour_period(tmp_path: Path) -> None:
+    export_module._generate_readme(tmp_path, "data", SceneFacts(auto_advance=60.0))
+    assert "tour rests 60 s at each stop" in (tmp_path / "README.txt").read_text()
+    export_module._generate_readme(tmp_path, "data", SceneFacts(auto_advance=0.0))
+    assert "does not advance by itself" in (tmp_path / "README.txt").read_text()
+    export_module._generate_readme(tmp_path, "data", SceneFacts())
+    assert "This package's tour" not in (tmp_path / "README.txt").read_text()
+
+
+def test_a_bare_start_of_a_retimed_package_plays_its_baked_period(
+    tmp_path: Path,
+) -> None:
+    """End to end: the generated script, started with no --auto-advance."""
+    (tmp_path / "viewer").mkdir()
+    (tmp_path / "viewer" / "index.html").write_text("<html></html>")
+    script = tmp_path / "serve.py"
+    script.write_text(
+        _get_serve_script_content(
+            "data", None, SceneFacts(has_control_panel=True, auto_advance=60.0)
+        )
+    )
+    process, banner = _start(script, free_port())
+    _stop(process)
+    display = re.search(r"http://\S+/viewer/\?\S*", banner)
+    assert display is not None, banner
+    assert "&playbackPeriod=60" in display.group(0)
+
+
 # ── --chrome: the display in Chrome, and the check of what it got ───────────
 
 

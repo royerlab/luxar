@@ -308,6 +308,20 @@ class TestExportScene:
             result = export_scene(sample_scene, output)
         assert result == output
 
+    def test_auto_advance_reaches_serve_py_and_the_readme(
+        self, sample_scene: Path, mock_viewer_dist: Path, tmp_path: Path
+    ) -> None:
+        """``export_scene(auto_advance=60)`` retimes the package, not the scene."""
+        output = tmp_path / "export_output"
+        p1, p2 = _patch_viewer(mock_viewer_dist)
+        with p1, p2:
+            export_scene(sample_scene, output, auto_advance=60)
+        assert "\nAUTO_ADVANCE = 60.0\n" in (output / "serve.py").read_text()
+        assert "tour rests 60 s" in (output / "README.txt").read_text()
+        with p1, p2, pytest.raises(ValueError, match="--auto-advance"):
+            export_scene(sample_scene, tmp_path / "bad", auto_advance=-5)
+        assert not (tmp_path / "bad").exists()  # refused before writing anything
+
 
 # ─── TestServeScript ─────────────────────────────────────────────────────────
 
@@ -709,6 +723,19 @@ class TestCLIExportCommand:
             ],
         )
         assert result.exit_code != 0
+
+    def test_auto_advance_is_refused_with_native(
+        self, runner: CliRunner, sample_scene: Path, tmp_path: Path
+    ) -> None:
+        """A --native bundle has no serve.py to carry the baked default."""
+        result = runner.invoke(
+            app,
+            ["export", str(sample_scene), "-o", str(tmp_path / "out"),
+             "--native", "macos", "--auto-advance", "60"],
+        )  # fmt: skip
+        assert result.exit_code == 1
+        assert "no serve.py" in result.output
+        assert not (tmp_path / "out").exists()
 
     def test_missing_output_flag(self, runner: CliRunner, sample_scene: Path) -> None:
         """Exit code != 0 when --output is not provided."""

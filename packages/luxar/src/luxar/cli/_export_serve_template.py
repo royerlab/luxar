@@ -24,8 +24,8 @@ in the URL while the server listens on every interface.
 
 # Maintainer note (this file is shipped verbatim, so the note travels):
 # the template lives at `luxar/cli/_export_serve_template.py` and is copied by
-# `luxar export`, with DATA_DIR_NAME, TITLE_QUERY, LAUNCH_QUERY and
-# HAS_CONTROL_PANEL substituted. It is a real
+# `luxar export`, with DATA_DIR_NAME, TITLE_QUERY, LAUNCH_QUERY,
+# HAS_CONTROL_PANEL and AUTO_ADVANCE substituted. It is a real
 # module rather than a string inside the exporter so that ruff, mypy and the
 # test suite see it -- a 400-line WebSocket relay hidden in an f-string is
 # unreviewable. It must stay STDLIB-ONLY: this folder gets zipped and emailed
@@ -92,6 +92,10 @@ TITLE_QUERY = ""
 #: prefetch) as a ready-to-append query fragment. The viewer resolves them
 #: before it reads the scene, so they travel on the URL instead.
 LAUNCH_QUERY = ""
+#: Seconds per stop for `--auto-advance` when it is not given, set by
+#: `luxar export --auto-advance`; None keeps the scene's own setting. An
+#: explicit `--auto-advance` still wins (0 turns it off).
+AUTO_ADVANCE = None
 #: Range the viewer accepts for `?textScale=`; mirrored for a clear error.
 TEXT_SCALE_RANGE = (0.25, 4.0)
 #: Where the relay's default control token is kept, beside this script. A
@@ -1349,12 +1353,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--auto-advance",
         type=_auto_advance,
-        default=None,
+        default=AUTO_ADVANCE,
         metavar="SECONDS",
         help=(
             "Seconds the display rests at each stop before its tour moves on by "
             "itself, overriding the scene's own setting (0 = no auto-advance). "
-            "Default: the scene's own setting"
+            + (
+                f"Default: {AUTO_ADVANCE:g} s, set when this folder was exported"
+                if AUTO_ADVANCE is not None
+                else "Default: the scene's own setting"
+            )
         ),
     )
     parser.add_argument(
