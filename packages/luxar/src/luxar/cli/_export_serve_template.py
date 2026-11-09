@@ -25,7 +25,7 @@ in the URL while the server listens on every interface.
 # Maintainer note (this file is shipped verbatim, so the note travels):
 # the template lives at `luxar/cli/_export_serve_template.py` and is copied by
 # `luxar export`, with DATA_DIR_NAME, TITLE_QUERY, LAUNCH_QUERY,
-# HAS_CONTROL_PANEL and LEGEND_JSON substituted. It is a real
+# HAS_CONTROL_PANEL, LEGEND_JSON and AUTO_ADVANCE substituted. It is a real
 # module rather than a string inside the exporter so that ruff, mypy and the
 # test suite see it -- a 400-line WebSocket relay hidden in an f-string is
 # unreviewable. It must stay STDLIB-ONLY: this folder gets zipped and emailed
@@ -95,6 +95,10 @@ LAUNCH_QUERY = ""
 #: The scene's colour legend (its `legend` root attribute) as JSON, or "" for
 #: none: drawn as a compact key on the printed control-panel sheet.
 LEGEND_JSON = ""
+#: Seconds per stop for `--auto-advance` when it is not given, set by
+#: `luxar export --auto-advance`; None keeps the scene's own setting. An
+#: explicit `--auto-advance` still wins (0 turns it off).
+AUTO_ADVANCE = None
 #: Range the viewer accepts for `?textScale=`; mirrored for a clear error.
 TEXT_SCALE_RANGE = (0.25, 4.0)
 #: Where the relay's default control token is kept, beside this script. A
@@ -1352,12 +1356,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--auto-advance",
         type=_auto_advance,
-        default=None,
+        default=AUTO_ADVANCE,
         metavar="SECONDS",
         help=(
             "Seconds the display rests at each stop before its tour moves on by "
             "itself, overriding the scene's own setting (0 = no auto-advance). "
-            "Default: the scene's own setting"
+            + (
+                f"Default: {AUTO_ADVANCE:g} s, set when this folder was exported"
+                if AUTO_ADVANCE is not None
+                else "Default: the scene's own setting"
+            )
         ),
     )
     parser.add_argument(

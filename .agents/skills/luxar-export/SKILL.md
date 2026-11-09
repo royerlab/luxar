@@ -45,6 +45,8 @@ python3 serve.py --port 9000        # default 8000; busy -> next free port (an E
 python3 serve.py --no-open          # don't launch a browser (headless / ssh box)
 python3 serve.py --chrome           # display in Chrome full screen, WebGPU flags, prints a Display check
 python3 serve.py --auto-advance 30  # retime the scene's authored tour (?playbackPeriod=; 0 = off)
+# Bake that retiming into the package, no scene rebuild: `python3 serve.py` alone then uses it.
+# luxar export scene.luxar.zarr -o out/ --auto-advance 60
 python3 serve.py --host 0.0.0.0     # reachable from other machines (default 127.0.0.1)
 ```
 
