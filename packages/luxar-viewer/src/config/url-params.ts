@@ -653,11 +653,12 @@ export interface UrlParams {
   playbackPeriod: number | null;
   /**
    * Report what this display renders with to the server that opened it
-   * (`?displayReport`): one POST to `/display-report` once the viewer is up.
-   * `serve.py --chrome` sets it, to print OK / WARNING lines about WebGPU,
-   * the GPU and the window size. See `core/app/display-report.ts`.
+   * (`?displayReport=<nonce>`): one POST to `/display-report` once the first
+   * dataset load has finished (or failed), echoing the nonce. `serve.py
+   * --chrome` sets it, to print OK / WARNING lines about WebGPU, the GPU and
+   * the window size. Null when absent. See `core/app/display-report.ts`.
    */
-  displayReport: boolean;
+  displayReport: string | null;
   /**
    * Pin a fixed device pixel ratio and disable adaptive DPR for the
    * session (`?dpr=1`). The value is clamped to [0.25, native DPR] at
@@ -814,7 +815,7 @@ export function readUrlParams(
     prefetch: parsePositiveInt(get(K.prefetch)),
     textScale: parsePositiveFloat(get(K.textScale)),
     playbackPeriod: parseNonNegativeFloat(get(K.playbackPeriod)),
-    displayReport: has(K.displayReport),
+    displayReport: has(K.displayReport) ? (get(K.displayReport) ?? '') : null,
     dpr: parsePositiveFloat(get(K.dpr)),
     input: normalizeInputParam(get(K.input)),
     lineJoin: parseLineJoinStyle(get(K.lineJoin)),

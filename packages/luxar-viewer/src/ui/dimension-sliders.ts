@@ -20,6 +20,7 @@ import {
   customRate,
   isPresetRate,
   rateInBestUnit,
+  rateInUnit,
   rateUnitLabel,
   speedChoices,
   type PeriodUnit,
@@ -1290,7 +1291,8 @@ export class DimensionSliders {
     makeChip: ContextChip
   ): void {
     const manager = this.animationManager;
-    const currentFPS =
+    // Read live, not once: the rows are rebuilt when the view toggles.
+    const currentRate = (): number =>
       manager?.getState(dimIndex)?.targetFPS ?? config.dimensionAnimation.defaults.targetFPS;
     const pick = (fps: number): void => {
       manager?.setTargetFPS(dimIndex, fps);
@@ -1316,6 +1318,7 @@ export class DimensionSliders {
     const render = (view: SpeedView): void => {
       // makeSection() appended the chips row to its section: the field lands
       // inside the Speed section, outside the chips' radiogroup.
+      const currentFPS = currentRate();
       const row = this.buildCustomRateRow(dimIndex, currentFPS, view);
       if (custom) custom.replaceWith(row);
       else chips.parentElement?.appendChild(row);
@@ -1351,9 +1354,10 @@ export class DimensionSliders {
    * field and for the same reasons: a number input cannot be one of a
    * radiogroup's radios, and a focused input or select suppresses the global
    * shortcuts while typing. Shown filled in, and marked as the current
-   * choice, when the rate is not one of the view's presets. Commits once, on
-   * Enter, on blur after an edit, or on a unit change with a number in the
-   * field; a value outside the range is flagged, not set.
+   * choice, when the rate is not one of the view's presets. An edited value
+   * commits on Enter, on blur (not to the unit picker) or on a unit change,
+   * and closes the menu; an untouched seed never commits, and a unit change
+   * converts it in place. A value outside the range is flagged, not set.
    */
   private buildCustomRateRow(
     dimIndex: number,
@@ -1383,26 +1387,41 @@ export class DimensionSliders {
       unit.value = current.unit;
       row.classList.add('luxar-dimension-slider__context-rate-custom--active');
     }
+    // Only an EDITED value commits: the seed is a display form, and
+    // committing it untouched would round the rate (as the Step field guards).
+    // Every commit that sets a rate closes the menu, as a chip does, so the
+    // menu never shows a rate it no longer has.
     let edited = false;
-    const commit = (): boolean => {
+    let shownUnit = unit.value as PeriodUnit;
+    const commit = (): void => {
       const fps = customRate(view, parseFloat(amount.value), unit.value as PeriodUnit);
       amount.setAttribute('aria-invalid', String(fps === null && amount.value !== ''));
-      if (fps === null) return false;
-      edited = false;
+      if (fps === null) return;
       this.animationManager?.setTargetFPS(dimIndex, fps);
-      return true;
+      this.closeContextMenu();
     };
     amount.addEventListener('input', () => {
       edited = true;
     });
     amount.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && commit()) this.closeContextMenu();
-    });
-    amount.addEventListener('blur', () => {
+      if (e.key !== 'Enter') return;
       if (edited) commit();
+      else this.closeContextMenu();
+    });
+    amount.addEventListener('blur', (e) => {
+      // Moving to the unit picker is part of typing the value, not a commit.
+      if (edited && e.relatedTarget !== unit) commit();
     });
     unit.addEventListener('change', () => {
-      if (amount.value !== '') commit();
+      const next = unit.value as PeriodUnit;
+      if (edited) {
+        if (amount.value !== '') commit();
+      } else if (amount.value !== '') {
+        // An untouched seed keeps its RATE: rewrite the number in the new unit.
+        const fps = customRate(view, parseFloat(amount.value), shownUnit);
+        if (fps !== null) amount.value = String(rateInUnit(view, fps, next));
+      }
+      shownUnit = next;
     });
     row.append(amount, unit);
     return row;

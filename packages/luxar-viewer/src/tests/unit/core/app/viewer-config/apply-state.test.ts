@@ -414,6 +414,16 @@ describe('applyViewerConfigState', () => {
       ports.startDimensionAnimation?.mockClear();
       applyViewerConfigState({ animation }, { ...asPorts(ports), playbackPeriodOverride: 0 });
       expect(ports.startDimensionAnimation).not.toHaveBeenCalled();
+
+      // An embedder's unusable override is no override: the authored rate.
+      for (const bad of [Number.NaN, -5, Number.POSITIVE_INFINITY]) {
+        ports.startDimensionAnimation?.mockClear();
+        applyViewerConfigState({ animation }, { ...asPorts(ports), playbackPeriodOverride: bad });
+        expect(ports.startDimensionAnimation).toHaveBeenCalledWith(
+          0,
+          expect.objectContaining({ targetFPS: 10 })
+        );
+      }
     });
 
     it('period_s wins over target_fps; a period past the floor is clamped to it', () => {

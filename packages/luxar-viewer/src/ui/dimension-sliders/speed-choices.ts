@@ -48,12 +48,15 @@ export type PeriodUnit = (typeof PERIOD_UNITS)[number]['unit'];
 
 /** Relative tolerance for matching a rate against a period (1/p is inexact). */
 const RATE_MATCH_TOLERANCE = 1e-6;
+/** Relative slack at the range's bounds, for a value rounded to {@link SEED_DIGITS}. */
+const BOUND_TOLERANCE = 1e-5;
 
 /**
  * A period in the unit it reads best in: the largest unit it is a whole
  * number of (`90 s` stays seconds, `7200 s` is `2 h`, `5000 s` stays an exact
  * `5000 s`), else the largest unit it is at least one of, rounded to 3
- * significant digits (`5400.5 s` is `1.5 h`). Under a second stays in seconds.
+ * significant digits for a label (`5400.5 s` is `1.5 h`; the Custom field is
+ * seeded with {@link SEED_DIGITS}). Under a second stays in seconds.
  */
 export function periodInBestUnit(seconds: number): { amount: number; unit: PeriodUnit } {
   const larger = [...PERIOD_UNITS].reverse();
@@ -64,7 +67,7 @@ export function periodInBestUnit(seconds: number): { amount: number; unit: Perio
     }
   }
   const fit = larger.find(({ seconds: size }) => seconds >= size) ?? PERIOD_UNITS[0];
-  return { amount: Number((seconds / fit.seconds).toPrecision(3)), unit: fit.unit };
+  return { amount: seedAmount(seconds / fit.seconds), unit: fit.unit };
 }
 
 function unitInfo(unit: PeriodUnit): (typeof PERIOD_UNITS)[number] {
@@ -85,10 +88,10 @@ export function describePeriod(seconds: number): string {
 
 /**
  * A rate in the unit it reads best in, as the view types it: seconds-to-days
- * PER STEP in the period view (:func:`periodInBestUnit`), steps PER second,
+ * PER STEP in the period view ({@link periodInBestUnit}), steps PER second,
  * minute, hour or day in the fps view -- the smallest unit that gives a whole
  * number of steps (`0.05` fps is `3 /min`, `10` fps stays `10 /s`), else the
- * smallest that gives at least one, rounded to 3 significant digits.
+ * smallest that gives at least one, rounded to {@link SEED_DIGITS} digits.
  */
 export function rateInBestUnit(view: SpeedView, fps: number): { amount: number; unit: PeriodUnit } {
   if (view === 'period') return periodInBestUnit(1 / fps);
@@ -99,7 +102,24 @@ export function rateInBestUnit(view: SpeedView, fps: number): { amount: number; 
     }
   }
   const fit = PERIOD_UNITS.find(({ seconds: size }) => fps * size >= 1) ?? PERIOD_UNITS[3];
-  return { amount: Number((fps * fit.seconds).toPrecision(3)), unit: fit.unit };
+  return { amount: seedAmount(fps * fit.seconds), unit: fit.unit };
+}
+
+/**
+ * Significant digits a seeded Custom value keeps: enough that the seed reads
+ * back within {@link BOUND_TOLERANCE} of the rate, so a value at a bound (120
+ * steps a second, one every 30 days) still passes its own range check.
+ */
+export const SEED_DIGITS = 6;
+
+function seedAmount(amount: number): number {
+  return Number(amount.toPrecision(SEED_DIGITS));
+}
+
+/** ``fps`` written in ``unit`` for ``view``: the number a unit change converts the seed to. */
+export function rateInUnit(view: SpeedView, fps: number, unit: PeriodUnit): number {
+  const size = unitInfo(unit).seconds;
+  return seedAmount(view === 'period' ? 1 / (fps * size) : fps * size);
 }
 
 /** The unit picker's label for ``unit`` in ``view``: `min` (per step) or `/min`. */
@@ -118,10 +138,11 @@ export function customRate(view: SpeedView, amount: number, unit: PeriodUnit): n
   const size = unitInfo(unit).seconds;
   const fps = view === 'period' ? 1 / (amount * size) : amount / size;
   const { customMin, customMax } = config.dimensionAnimation.presets;
-  const tolerance = 1 + RATE_MATCH_TOLERANCE;
+  const tolerance = 1 + BOUND_TOLERANCE;
   if (!Number.isFinite(fps) || fps <= 0 || !Number.isFinite(amount) || amount <= 0) return null;
   if (fps > customMax * tolerance || fps * tolerance < customMin) return null;
-  return fps;
+  // A rounded seed at a bound lands a hair past it: hold it to the bound.
+  return Math.min(customMax, Math.max(customMin, fps));
 }
 
 /** Whether a dimension playing at ``fps`` is on one of ``view``'s chips. */

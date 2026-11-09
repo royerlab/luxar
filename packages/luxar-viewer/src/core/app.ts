@@ -168,6 +168,8 @@ export class LuxarApp {
    * `init()`, which assigns the field as its first action.
    */
   private options!: LuxarAppOptions;
+  /** Why the first dataset failed to load, for the display report; else undefined. */
+  private initialLoadError: string | undefined;
 
   /**
    * Per-app emitter for the public embedder events ({@link on}). Deliberately
@@ -483,6 +485,7 @@ export class LuxarApp {
     try {
       await this.loadDataset(src);
     } catch (error) {
+      this.initialLoadError = getErrorMessage(error);
       log.error(Modules.APP, `Initial dataset load failed: ${getErrorMessage(error)}`, error);
       notifier.error(datasetLoadErrorMessage(error), { persistent: true });
     }
@@ -1447,9 +1450,14 @@ export class LuxarApp {
    * see `core/app/display-report.ts`).
    */
   private reportDisplay(options: LuxarAppOptions, error?: string): void {
-    if (!options.displayReport) return;
+    if (options.displayReport === undefined) return;
     const sceneManager = this.sceneManager as SceneManager | undefined;
-    void sendDisplayReport(sceneManager?.capabilities, options.renderer ?? null, error);
+    void sendDisplayReport(sceneManager?.capabilities, {
+      requested: options.renderer ?? null,
+      nonce: options.displayReport,
+      error,
+      datasetError: this.initialLoadError,
+    });
   }
 
   /**

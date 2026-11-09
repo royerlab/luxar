@@ -555,7 +555,8 @@ class AnimationConfig:
                 0 < self.period_s <= MAX_ANIMATION_PERIOD_S
             ):
                 raise ValueError(
-                    f"period_s must be in (0, {MAX_ANIMATION_PERIOD_S:g}] seconds, "
+                    f"period_s must be in (0, {MAX_ANIMATION_PERIOD_S:.0f}] seconds "
+                    "(30 days), "
                     f"got {self.period_s}"
                 )
         # Matches the viewer's own guard in `setStepSize`.

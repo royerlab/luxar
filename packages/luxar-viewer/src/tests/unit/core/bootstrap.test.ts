@@ -183,7 +183,7 @@ const EMPTY_PARAMS: UrlParams = {
   prefetch: null,
   textScale: null,
   playbackPeriod: null,
-  displayReport: false,
+  displayReport: null,
   dpr: null,
   input: null,
   lineJoin: null,
@@ -880,6 +880,28 @@ describe('bootstrapStandalone', () => {
       });
       expect(app).toBeDefined();
       expect(mocks.init).toHaveBeenCalledTimes(1);
+    });
+
+    it('forwards ?playbackPeriod and ?displayReport into LuxarApp.init()', async () => {
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: {
+          ...EMPTY_PARAMS,
+          src: 'https://example.com/data.zarr',
+          playbackPeriod: 0,
+          displayReport: 'n0nce',
+        },
+      });
+      const arg = mocks.init.mock.calls.at(-1)?.[0];
+      expect(arg.playbackPeriod).toBe(0); // 0 is a value: authored playback off
+      expect(arg.displayReport).toBe('n0nce');
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, src: 'https://example.com/data.zarr' },
+      });
+      const plain = mocks.init.mock.calls.at(-1)?.[0];
+      expect(plain.playbackPeriod).toBeUndefined();
+      expect(plain.displayReport).toBeUndefined();
     });
 
     it('forwards loader and renderer diagnostic flags from urlParams into LuxarApp.init()', async () => {

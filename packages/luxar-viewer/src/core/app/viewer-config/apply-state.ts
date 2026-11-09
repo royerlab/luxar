@@ -170,8 +170,12 @@ export function applyViewerConfigState(
 function startAuthoredPlayback(
   animation: NonNullable<ZarrViewerConfig['animation']>,
   start: NonNullable<ViewerConfigPorts['startDimensionAnimation']>,
-  override: number | undefined
+  requested: number | undefined
 ): void {
+  // The URL parser filters `?playbackPeriod=`; an embedder's option is
+  // checked here: anything but a finite number >= 0 is no override.
+  const override =
+    requested !== undefined && Number.isFinite(requested) && requested >= 0 ? requested : undefined;
   if (override === 0) return;
   for (let dim = 0; dim < animation.length; dim++) {
     const entry = animation[dim];

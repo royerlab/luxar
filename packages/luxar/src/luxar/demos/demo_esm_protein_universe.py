@@ -4303,7 +4303,7 @@ def parse_layout_args(kiosk: bool) -> LayoutArgs:
         period = float(advance_arg)
         if not (period == 0 or 0 < period <= MAX_ANIMATION_PERIOD_S):  # NaN fails too
             raise ValueError(
-                f"--auto-advance must be 0 (off) or in (0, {MAX_ANIMATION_PERIOD_S:g}] "
+                f"--auto-advance must be 0 (off) or in (0, {MAX_ANIMATION_PERIOD_S:.0f}] "
                 f"seconds, got {advance_arg!r}"
             )
         auto_advance_s = period or None  # 0 = off

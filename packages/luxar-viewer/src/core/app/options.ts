@@ -270,10 +270,11 @@ export interface LuxarAppOptions {
   playbackPeriod?: number;
 
   /**
-   * Send a one-off report of the renderer and window to the serving folder's
-   * `/display-report` once initialised. Mirrors `UrlParams.displayReport`.
+   * Send a one-off report of the renderer, window and first load to the
+   * serving folder's `/display-report`, echoing this nonce (the value of
+   * `?displayReport=`). Undefined: no report. Mirrors `UrlParams.displayReport`.
    */
-  displayReport?: boolean;
+  displayReport?: string;
 
   /**
    * Axis-aligned opening view for the session (`'xy'` | `'xz'` | `'yz'`),

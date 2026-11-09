@@ -32,7 +32,7 @@ describe('typed periods', () => {
     expect(periodInBestUnit(5400)).toEqual({ amount: 90, unit: 'min' });
     expect(periodInBestUnit(2 * 86400)).toEqual({ amount: 2, unit: 'd' });
     expect(periodInBestUnit(5000)).toEqual({ amount: 5000, unit: 's' }); // exact, not 1.39 h
-    expect(periodInBestUnit(5400.5)).toEqual({ amount: 1.5, unit: 'h' });
+    expect(periodInBestUnit(5400.5)).toEqual({ amount: 1.50014, unit: 'h' }); // 6 digits: exact enough to re-commit
     expect(periodInBestUnit(0.5)).toEqual({ amount: 0.5, unit: 's' });
     expect(formatPeriod(7200)).toBe('2h');
     expect(describePeriod(3 * 86400)).toBe('1 step every 3 d');
