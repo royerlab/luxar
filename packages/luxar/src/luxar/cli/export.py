@@ -469,7 +469,10 @@ with `]` and `[`, or press 1 then `]`. Nothing here needs the network.
 This is the kiosk default for this scene. The script prints two URLs and a QR,
 both carrying a control token it generated and saved in control-token.txt.
 
-    a. Open the Display URL on the big screen. Wait for it to finish loading.
+    a. On the big screen: `python3 serve.py --chrome` opens the display in
+       Chrome, full screen, and prints a "Display check" once it has loaded --
+       OK for WebGPU on the GPU, a WARNING for WebGL, a software GPU or a
+       window short of the screen. (Or open the Display URL yourself.)
     b. Scan the QR with the tablet, or type the Control panel URL.
        The tablet and this machine must be on the SAME network.
     c. The tablet should show {stops} tiles, each naming a stop.
@@ -700,6 +703,7 @@ def _generate_readme(
     )
     entries.append(("control-qr.png", f"The panel's QR, to print (each start{relay})"))
     entries.append(("control-panel.pdf", f"A4 sheet with that QR (each start{relay})"))
+    entries.append((".chrome-display/", "Chrome's profile for --chrome (its settings)"))
     width = max(len(name) for name, _ in entries)
     structure = "\n".join(f"    {name:<{width}}  {what}" for name, what in entries)
 
@@ -720,6 +724,9 @@ on every start after that, so the URLs and the QR stay the same. The QR is
 also written to control-qr.png, and onto an A4 sheet, control-panel.pdf, that
 says what it is and how to use it: print that and put it up by the display.
 
+    python3 serve.py --chrome                  Open the display in Chrome full screen
+                                               with WebGPU on, then print a check:
+                                               WebGPU or not, the GPU, full screen
     python3 serve.py --no-control              Display only, no relay
     python3 serve.py --host 127.0.0.1          Local only, no tablet, no token
     python3 serve.py --advertise-host NAME     Put NAME in the URLs and the QR
@@ -792,6 +799,8 @@ Options
     python3 serve.py --port 9000    Use a custom port
     python3 serve.py --no-open      Don't open a browser automatically
     python3 serve.py --text-scale 0.8   Smaller on-screen text, same layout
+    python3 serve.py --chrome           Open the display in Chrome, full screen,
+                                        with WebGPU, and check what it got
     python3 serve.py --auto-advance 30  Tour rests 30 s per stop (0 = no tour),
                                         whatever the scene was built with
 

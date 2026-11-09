@@ -594,3 +594,153 @@ def test_auto_advance_absent_leaves_the_scenes_own_setting() -> None:
     assert parse().auto_advance is None
     display = template.urls("127.0.0.1", 8123, False, None, None)[0]
     assert "playbackPeriod" not in display
+
+
+# ── --chrome: the display in Chrome, and the check of what it got ───────────
+
+
+GOOD = {
+    "api": "webgpu",
+    "backend": "webgpu-native",
+    "webgpuAvailable": True,
+    "adapter": {"vendor": "nvidia", "architecture": "blackwell", "description": "",
+                "isFallbackAdapter": False},
+    "screen": {"width": 7200, "height": 1360},
+    "window": {"width": 7200, "height": 1360},
+    "userAgent": "Mozilla/5.0 ... Chrome/142.0.0.0 Safari/537.36",
+}  # fmt: skip
+
+
+def test_a_good_display_is_one_ok_line() -> None:
+    assert template.assess_display(GOOD) == [
+        ("OK", "WebGPU on the GPU (nvidia blackwell)")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("change", "level", "words"),
+    [
+        ({"backend": "webgpu-gl"}, "WARNING", "WebGL2 backend"),
+        ({"backend": "webgl", "webgpuAvailable": False}, "WARNING", "has no WebGPU"),
+        ({"backend": "webgl"}, "WARNING", "WebGPU did not come up"),
+        (
+            {"adapter": {"vendor": "google", "description": "SwiftShader"}},
+            "WARNING",
+            "SOFTWARE",
+        ),
+        (
+            {"adapter": {"vendor": "x", "isFallbackAdapter": True}},
+            "WARNING",
+            "SOFTWARE",
+        ),
+        ({"window": {"width": 3600, "height": 1360}}, "NOTE", "not full screen"),
+        ({"userAgent": "Firefox/140"}, "NOTE", "not Chrome"),
+    ],
+)
+def test_each_sub_optimal_display_is_called_out(
+    change: dict, level: str, words: str
+) -> None:
+    lines = template.assess_display({**GOOD, **change})
+    assert any(lvl == level and words in msg for lvl, msg in lines), lines
+
+
+def test_a_report_with_missing_fields_still_assesses() -> None:
+    assert template.assess_display({})[0][0] == "WARNING"
+
+
+def test_chrome_gets_its_own_profile_and_webgpu_on_linux(tmp_path: Path) -> None:
+    linux = template.chrome_command("chrome", "http://x/", tmp_path, platform="linux")
+    mac = template.chrome_command("chrome", "http://x/", tmp_path, platform="darwin")
+    assert linux[0] == "chrome" and linux[-1] == "http://x/"
+    assert f"--user-data-dir={tmp_path}" in linux and "--kiosk" in linux
+    assert "--enable-unsafe-webgpu" in linux and "--enable-features=Vulkan" in linux
+    assert "--enable-unsafe-webgpu" not in mac  # on by default there
+    assert "--autoplay-policy=no-user-gesture-required" in mac
+
+
+def test_find_chrome_per_platform(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        template.shutil,
+        "which",
+        lambda name: f"/usr/bin/{name}" if name == "chromium" else None,
+    )
+    assert template.find_chrome("linux") == "/usr/bin/chromium"
+    monkeypatch.setattr(template.shutil, "which", lambda name: None)
+    assert template.find_chrome("linux") is None
+    exe = tmp_path / "Google/Chrome/Application/chrome.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.delenv("PROGRAMFILES", raising=False)
+    monkeypatch.delenv("PROGRAMFILES(X86)", raising=False)
+    assert template.find_chrome("win32") == str(exe)
+
+
+def _post(port: int, body: bytes, path: str = "/display-report") -> int:
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as client:
+        client.sendall(
+            f"POST {path} HTTP/1.1\r\nHost: h\r\nContent-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+            + body
+        )
+        return int(client.recv(64).split(b" ")[1])
+
+
+def test_the_report_is_taken_once_and_only_while_awaited(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    handler = partial(template.LuxarHandler, directory=str(tmp_path))
+    server = template.ControlServer(("127.0.0.1", 0), handler, None)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        body = json.dumps(GOOD).encode()
+        assert _post(port, body) == 404  # nobody asked
+        server.awaiting_display_report.set()
+        assert _post(port, b"{not json") == 400
+        assert _post(port, body, "/elsewhere") == 404
+        assert _post(port, body) == 204
+        assert _post(port, body) == 404  # once
+    finally:
+        server.shutdown()
+        server.server_close()
+    out = capsys.readouterr().out
+    assert out.count("Display check") == 1
+    assert "OK       WebGPU on the GPU (nvidia blackwell)" in out
+
+
+def test_chrome_opens_on_the_local_url_asking_for_a_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launched: list[list[str]] = []
+    monkeypatch.setattr(template, "SCRIPT_DIR", tmp_path)
+    monkeypatch.setattr(
+        template.subprocess, "Popen", lambda cmd, **_: launched.append(cmd)
+    )
+    monkeypatch.setattr(template, "_DISPLAY_REPORT_WAIT_S", 3600.0)
+    fake = tmp_path / "chrome"
+    fake.write_text("")
+    server = object.__new__(template.ControlServer)
+    server.awaiting_display_report = threading.Event()
+    args = parse("--chrome", str(fake))
+    assert template.open_display_in_chrome(
+        args, server, "http://127.0.0.1:8000/viewer/?src=x"
+    )
+    assert launched[0][0] == str(fake)
+    assert launched[0][-1] == "http://127.0.0.1:8000/viewer/?src=x&displayReport"
+    assert f"--user-data-dir={tmp_path / template.CHROME_PROFILE_DIR}" in launched[0]
+    assert server.awaiting_display_report.is_set()
+
+
+def test_no_chrome_falls_back_with_a_warning(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(template, "find_chrome", lambda: None)
+    server = object.__new__(template.ControlServer)
+    server.awaiting_display_report = threading.Event()
+    assert not template.open_display_in_chrome(parse("--chrome"), server, "http://x/")
+    assert "Chrome not found" in capsys.readouterr().out
+    assert not server.awaiting_display_report.is_set()
