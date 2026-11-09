@@ -45,8 +45,10 @@ import json
 import os
 import re
 import secrets
+import shutil
 import socket
 import struct
+import subprocess
 import sys
 import threading
 import webbrowser
@@ -101,6 +103,14 @@ TEXT_SCALE_RANGE = (0.25, 4.0)
 #: the first start that needs one and reused after that. Deleting the file
 #: issues a new token on the next start, which retires every printed QR.
 CONTROL_TOKEN_FILE = "control-token.txt"  # nosec B105 - a file name, not a secret
+#: Where the display opened by `--chrome` reports what it renders with.
+DISPLAY_REPORT_PATH = "/display-report"
+_MAX_REPORT_BYTES = 65536
+#: Seconds `--chrome` waits for that report before warning that none came.
+_DISPLAY_REPORT_WAIT_S = 90.0
+#: The browser profile `--chrome` uses, beside this script: its own, so the
+#: flags below apply even when Chrome is already running with another one.
+CHROME_PROFILE_DIR = ".chrome-display"
 #: The panel URL's QR, written beside this script for printing.
 QR_FILE = "control-qr.png"
 #: The same QR on an A4 sheet with what it is and how to use it, to print and
@@ -700,6 +710,9 @@ class ControlServer(http.server.ThreadingHTTPServer):
         self.text_scale: float | None = None
         #: ``--auto-advance``, carried into the ``/`` redirect too.
         self.playback_period: float | None = None
+        #: Set while ``--chrome`` waits for the display's report (see
+        #: ``LuxarHandler.do_POST``); cleared when it arrives.
+        self.awaiting_display_report = threading.Event()
         #: ``--advertise-host``: the ``/`` redirect's fallback host when the
         #: request's own ``Host`` header is unusable.
         self.advertise: str | None = None
@@ -853,6 +866,35 @@ class LuxarHandler(http.server.SimpleHTTPRequestHandler):
             self._redirect_to_viewer()
             return
         super().do_GET()
+
+    def do_POST(self) -> None:  # noqa: N802  (http.server's spelling)
+        """Take the display's report (``?displayReport``), only while awaited.
+
+        The page ``serve.py --chrome`` opened POSTs what it renders with; it is
+        checked and printed for the operator (:func:`assess_display`), once.
+        Any other POST, or one nobody is waiting for, is a 404.
+        """
+        server = self.server
+        waiting = isinstance(server, ControlServer) and server.awaiting_display_report
+        length = int(self.headers.get("Content-Length") or 0)
+        if (
+            _request_path(self.path) != DISPLAY_REPORT_PATH
+            or not waiting
+            or not waiting.is_set()
+            or not 0 < length <= _MAX_REPORT_BYTES
+        ):
+            self.send_error(404)
+            return
+        try:
+            report = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (ValueError, UnicodeError):
+            self.send_error(400, "not a JSON display report")
+            return
+        waiting.clear()
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        print_display_check(report if isinstance(report, dict) else {})
 
     def do_HEAD(self) -> None:  # noqa: N802  (http.server's spelling)
         """As ``do_GET``: the folder root redirects to the viewer."""
@@ -1186,6 +1228,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--no-open", action="store_true", help="Don't open browser automatically"
+    )
+    parser.add_argument(
+        "--chrome",
+        nargs="?",
+        const="auto",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Open the display in Google Chrome, full screen, with the flags WebGPU "
+            "needs, and print a check of what it renders with (WebGPU, the GPU, "
+            "full screen). PATH picks a Chrome; quit it with Cmd+Q / Alt+F4"
+        ),
     )
     parser.add_argument(
         "--control",
@@ -1692,6 +1746,149 @@ def _control_notes(args: argparse.Namespace, token: ControlToken) -> list[str]:
     return notes
 
 
+# ── --chrome: the display, opened in Chrome with the right flags ────────────
+
+#: Every platform: full screen, no first-run or crash bubbles, sound without a
+#: click (narration), and no throttling of a window nobody is looking at.
+_CHROME_FLAGS = (
+    "--kiosk",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-session-crashed-bubble",
+    "--noerrdialogs",
+    "--disable-infobars",
+    "--autoplay-policy=no-user-gesture-required",
+    "--disable-background-timer-throttling",
+    "--disable-renderer-backgrounding",
+    "--disable-backgrounding-occluded-windows",
+    "--ignore-gpu-blocklist",
+)
+#: Linux needs WebGPU switched on, through Vulkan; macOS and Windows have it.
+_CHROME_LINUX_FLAGS = ("--enable-unsafe-webgpu", "--enable-features=Vulkan")
+
+
+def find_chrome(platform: str = sys.platform) -> str | None:
+    """Google Chrome (or Chromium) on this machine, or None."""
+    if platform == "darwin":
+        apps = [Path("/Applications"), Path.home() / "Applications"]
+        names = ("Google Chrome.app/Contents/MacOS/Google Chrome",
+                 "Chromium.app/Contents/MacOS/Chromium")  # fmt: skip
+        found = [app / name for app in apps for name in names]
+        return next((str(path) for path in found if path.exists()), None)
+    if platform.startswith("win"):
+        roots = [
+            os.environ.get(k, "")
+            for k in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA")
+        ]
+        found = [Path(r) / "Google/Chrome/Application/chrome.exe" for r in roots if r]
+        return next((str(path) for path in found if path.exists()), None)
+    for name in (
+        "google-chrome-stable",
+        "google-chrome",
+        "chromium",
+        "chromium-browser",
+    ):
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
+
+
+def chrome_command(
+    chrome: str, url: str, profile: Path, platform: str = sys.platform
+) -> list[str]:
+    """The command line that opens ``url`` full screen, WebGPU on."""
+    flags = [*_CHROME_FLAGS, f"--user-data-dir={profile}"]
+    if platform.startswith("linux"):
+        flags += _CHROME_LINUX_FLAGS
+    return [chrome, *flags, url]
+
+
+def assess_display(report: dict[str, Any]) -> list[tuple[str, str]]:
+    """``(level, message)`` lines about a display report: OK, WARNING or NOTE."""
+    lines: list[tuple[str, str]] = []
+    backend = report.get("backend")
+    adapter = report.get("adapter") if isinstance(report.get("adapter"), dict) else None
+    gpu = " ".join(
+        str(adapter.get(k, "")) for k in ("vendor", "architecture", "description")
+    ).strip() if adapter else ""  # fmt: skip
+    if backend == "webgpu-native":
+        lines.append(("OK", f"WebGPU on the GPU{f' ({gpu})' if gpu else ''}"))
+    elif backend == "webgpu-gl":
+        lines.append(("WARNING", "the WebGPU renderer fell back to its WebGL2 backend: "
+                      "no WebGPU adapter. Check chrome://gpu (WebGPU: Hardware accelerated)"))  # fmt: skip
+    else:
+        why = ("this browser has no WebGPU" if not report.get("webgpuAvailable")
+               else "WebGPU did not come up")  # fmt: skip
+        lines.append(("WARNING", f"rendering with WebGL, not WebGPU: {why}. "
+                      "Check chrome://gpu, or the browser's version"))  # fmt: skip
+    software = re.compile(r"swiftshader|llvmpipe|software|basic render", re.IGNORECASE)
+    if adapter and (adapter.get("isFallbackAdapter") or software.search(gpu)):
+        lines.append(("WARNING", f"a SOFTWARE GPU adapter ({gpu or 'fallback'}): "
+                      "slow; check the GPU driver and chrome://gpu"))  # fmt: skip
+    screen, window = report.get("screen") or {}, report.get("window") or {}
+    if isinstance(screen, dict) and isinstance(window, dict):
+        sw, sh = screen.get("width") or 0, screen.get("height") or 0
+        ww, wh = window.get("width") or 0, window.get("height") or 0
+        if sw and sh and (ww < 0.98 * sw or wh < 0.98 * sh):
+            lines.append(("NOTE", f"the window is {ww}x{wh} on a {sw}x{sh} screen: "
+                          "not full screen"))  # fmt: skip
+    if "Chrome/" not in str(report.get("userAgent", "")):
+        lines.append(("NOTE", "the display is not Chrome; WebGPU is tested there"))
+    return lines
+
+
+def print_display_check(report: dict[str, Any]) -> None:
+    """Print :func:`assess_display` under a heading the operator can find."""
+    print()
+    print("  Display check (the browser serve.py --chrome opened):")
+    for level, message in assess_display(report):
+        print(f"    {level:<8} {message}")
+    sys.stdout.flush()
+
+
+def open_display_in_chrome(
+    args: argparse.Namespace, server: ControlServer, url: str
+) -> bool:
+    """Launch Chrome on ``url`` and wait for the page's report; False if no Chrome."""
+    chrome = find_chrome() if args.chrome == "auto" else args.chrome
+    if not chrome or not Path(chrome).exists():
+        where = "" if args.chrome == "auto" else f" at {args.chrome}"
+        print(
+            f"\n  WARNING  Chrome not found{where}: opening the default browser instead,"
+        )
+        print(
+            "           whose WebGPU support is untested. Install Google Chrome, or pass"
+        )
+        print("           --chrome /path/to/chrome.")
+        return False
+    profile = SCRIPT_DIR / CHROME_PROFILE_DIR
+    target = url + ("&" if "?" in url else "?") + "displayReport"
+    server.awaiting_display_report.set()
+    subprocess.Popen(  # noqa: S603 # nosec B603 - our own flags and URL
+        chrome_command(chrome, target, profile),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    print(f"\n  Opening the display in Chrome ({chrome}), full screen; quit it with")
+    print("  Cmd+Q / Alt+F4. A display check follows once it has loaded.")
+
+    def no_report() -> None:
+        if server.awaiting_display_report.is_set():
+            print(
+                f"\n  WARNING  the display sent no report within {_DISPLAY_REPORT_WAIT_S:.0f} s:"
+            )
+            print(
+                "           it may not have loaded. Look at the screen, and at chrome://gpu."
+            )
+            sys.stdout.flush()
+
+    timer = threading.Timer(_DISPLAY_REPORT_WAIT_S, no_report)
+    timer.daemon = True
+    timer.start()
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     """Serve this folder until interrupted."""
     args = _parse_args(argv)
@@ -1739,9 +1936,11 @@ def main(argv: list[str] | None = None) -> int:
     # process exited.
     sys.stdout.flush()
 
-    if not args.no_open:
-        target = _local_display_url(args, port, token.value) or addresses[0]
-        threading.Timer(0.5, webbrowser.open, args=[target]).start()
+    local = _local_display_url(args, port, token.value) or addresses[0]
+    if args.chrome and open_display_in_chrome(args, server, local):
+        pass
+    elif not args.no_open:
+        threading.Timer(0.5, webbrowser.open, args=[local]).start()
 
     try:
         server.serve_forever()
