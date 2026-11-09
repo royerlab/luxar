@@ -695,6 +695,8 @@ class ControlServer(http.server.ThreadingHTTPServer):
         self.relay = relay
         #: ``--text-scale``, carried into the ``/`` redirect to the viewer.
         self.text_scale: float | None = None
+        #: ``--auto-advance``, carried into the ``/`` redirect too.
+        self.playback_period: float | None = None
         #: ``--advertise-host``: the ``/`` redirect's fallback host when the
         #: request's own ``Host`` header is unusable.
         self.advertise: str | None = None
@@ -877,8 +879,12 @@ class LuxarHandler(http.server.SimpleHTTPRequestHandler):
             fixed = server.advertise if isinstance(server, ControlServer) else None
             reachable = fixed or advertised_host(str(address[0]))
             host = f"{_url_host(reachable)}:{address[1]}"
-        scale = server.text_scale if isinstance(server, ControlServer) else None
-        target = viewer_target(f"http://{host}/{DATA_DIR_NAME}", scale)
+        ours = server if isinstance(server, ControlServer) else None
+        target = viewer_target(
+            f"http://{host}/{DATA_DIR_NAME}",
+            ours.text_scale if ours else None,
+            playback_period=ours.playback_period if ours else None,
+        )
         self.send_response(302)
         self.send_header("Location", target)
         self.send_header("Content-Length", "0")
@@ -1214,6 +1220,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Run the relay without a token: anyone who can reach it can drive the display",
     )
     parser.add_argument(
+        "--auto-advance",
+        type=_auto_advance,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "Seconds the display rests at each stop before its tour moves on by "
+            "itself, overriding the scene's own setting (0 = no auto-advance). "
+            "Default: the scene's own setting"
+        ),
+    )
+    parser.add_argument(
         "--text-scale",
         type=_text_scale,
         default=None,
@@ -1252,6 +1269,25 @@ def _control_token(value: str) -> str:
     return value
 
 
+def _auto_advance(value: str) -> float:
+    """Parse ``--auto-advance``: seconds per step, or 0 for no auto-advance.
+
+    Only the sign is checked here; the viewer clamps the period to the range
+    it plays (it is the party that knows it), so this script need not mirror it.
+    """
+    try:
+        seconds = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"not a number of seconds: {value!r}"
+        ) from None
+    if not (seconds >= 0 and seconds != float("inf")):  # NaN fails too
+        raise argparse.ArgumentTypeError(
+            f"must be 0 (off) or a period in seconds, got {value!r}"
+        )
+    return seconds
+
+
 def _text_scale(value: str) -> float:
     """Parse ``--text-scale``: a number inside the range the viewer accepts."""
     try:
@@ -1264,11 +1300,18 @@ def _text_scale(value: str) -> float:
     return scale
 
 
-def viewer_target(data_url: str, text_scale: float | None = None) -> str:
+def viewer_target(
+    data_url: str,
+    text_scale: float | None = None,
+    *,
+    playback_period: float | None = None,
+) -> str:
     """The viewer's path and query for the scene served at ``data_url``."""
     target = f"/viewer/?src={data_url}{TITLE_QUERY}{LAUNCH_QUERY}"
     if text_scale is not None:
         target += f"&textScale={text_scale:g}"
+    if playback_period is not None:
+        target += f"&playbackPeriod={playback_period:g}"
     return target
 
 
@@ -1280,16 +1323,21 @@ def urls(
     text_scale: float | None = None,
     *,
     advertise: str | None = None,
+    playback_period: float | None = None,
 ) -> list[str]:
     """The display URL, then (with the relay) the panel URL.
 
     ``advertise`` replaces the address derived from the bind everywhere --
     the page, its ``?src=`` data URL and the panel URL -- so the page and its
     data stay same-origin (this server sends no cross-origin headers).
+    ``playback_period`` (``--auto-advance``) retimes the scene's authored
+    playback on the display; the panel URL does not carry it.
     """
     reachable = _url_host(advertise or advertised_host(host))
     data_url = f"http://{reachable}:{port}/{DATA_DIR_NAME}"
-    viewer_url = f"http://{reachable}:{port}" + viewer_target(data_url, text_scale)
+    viewer_url = f"http://{reachable}:{port}" + viewer_target(
+        data_url, text_scale, playback_period=playback_period
+    )
     if not control:
         return [viewer_url]
     suffix = f"&controlToken={quote(token, safe='')}" if token else ""
@@ -1582,7 +1630,14 @@ def _local_display_url(
     local = local_address(args.host)
     if local is None:
         return None
-    return urls(local, port, args.control, token, args.text_scale)[0]
+    return urls(
+        local,
+        port,
+        args.control,
+        token,
+        args.text_scale,
+        playback_period=args.auto_advance,
+    )[0]
 
 
 def _control_notes(args: argparse.Namespace, token: ControlToken) -> list[str]:
@@ -1625,6 +1680,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {error}")
         return 1
     server.text_scale = args.text_scale
+    server.playback_period = args.auto_advance
     server.advertise = args.advertise_host
     port = int(server.server_address[1])
 
@@ -1635,6 +1691,7 @@ def main(argv: list[str] | None = None) -> int:
         token.value,
         args.text_scale,
         advertise=args.advertise_host,
+        playback_period=args.auto_advance,
     )
     print()
     print("  Display (open this on the big screen)")

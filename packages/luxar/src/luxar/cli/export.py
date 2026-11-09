@@ -792,6 +792,8 @@ Options
     python3 serve.py --port 9000    Use a custom port
     python3 serve.py --no-open      Don't open a browser automatically
     python3 serve.py --text-scale 0.8   Smaller on-screen text, same layout
+    python3 serve.py --auto-advance 30  Tour rests 30 s per stop (0 = no tour),
+                                        whatever the scene was built with
 
 If the port is busy the script picks the next free one and prints what it
 chose -- except with the control relay on, where the panel URL and its QR name

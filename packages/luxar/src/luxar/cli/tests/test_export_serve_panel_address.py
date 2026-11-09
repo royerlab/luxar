@@ -557,3 +557,40 @@ def test_two_starts_print_the_same_panel_url_and_qr(tmp_path: Path) -> None:
     assert sheets[0] == sheets[1]  # the printed sheet stays valid too
     saved = (tmp_path / template.CONTROL_TOKEN_FILE).read_text(encoding="utf-8").strip()
     assert banners[0].endswith(f"controlToken={saved}")
+
+
+# ── --auto-advance: retime the scene's tour on site ─────────────────────────
+
+
+def test_auto_advance_reaches_the_display_url_and_the_redirect(tmp_path: Path) -> None:
+    display, panel = template.urls(
+        "0.0.0.0", 8123, True, "tok12345", None, playback_period=30.0
+    )
+    assert "&playbackPeriod=30&" in display + "&"
+    assert "playbackPeriod" not in panel  # the panel is not the one that plays
+    handler = partial(template.LuxarHandler, directory=str(tmp_path))
+    server = template.ControlServer(("127.0.0.1", 0), handler, None)
+    server.playback_period = 0.0
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as client:
+            client.sendall(b"GET / HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")
+            reply = client.recv(4096).decode("latin-1")
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert "&playbackPeriod=0" in reply
+
+
+@pytest.mark.parametrize("value", ["-1", "inf", "nan", "soon"])
+def test_auto_advance_must_be_a_period_or_zero(value: str) -> None:
+    with pytest.raises(SystemExit):
+        parse("--auto-advance", value)
+
+
+def test_auto_advance_absent_leaves_the_scenes_own_setting() -> None:
+    assert parse().auto_advance is None
+    display = template.urls("127.0.0.1", 8123, False, None, None)[0]
+    assert "playbackPeriod" not in display

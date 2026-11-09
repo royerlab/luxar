@@ -43,6 +43,7 @@ Recipient just needs Python 3: `cd my_export && python3 serve.py`. Say `python3`
 ```bash
 python3 serve.py --port 9000        # default 8000; busy -> next free port (an ERROR with the relay on)
 python3 serve.py --no-open          # don't launch a browser (headless / ssh box)
+python3 serve.py --auto-advance 30  # retime the scene's authored tour (?playbackPeriod=; 0 = off)
 python3 serve.py --host 0.0.0.0     # reachable from other machines (default 127.0.0.1)
 ```
 
