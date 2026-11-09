@@ -986,6 +986,7 @@ the native WKWebView launcher fall back to L1-only caching; see the
 - `?prefetch=<N>` — Concurrent chunk fetches for this session (the Settings "Prefetch Limit"), same precedence and clamping (1-12)
 - `?textScale=<X>` — Scale every overlay's type for this session (e.g. `0.8`), beating the scene's `viewer_config.text_scale`; positions, widths and anchors stay as authored. Clamped to [0.25, 4]
 - `?playbackPeriod=<S>` — Seconds per step for the scene's AUTHORED playback (every `viewer_config.animation` entry with `playing: true`), beating its authored rate, so a kiosk retimes its tour on site (`serve.py --auto-advance S`). `0` keeps authored playback from starting. Clamped to the viewer's rate range
+- `?displayReport` — Once the viewer is up, POST what it renders with (API, backend, GPU adapter, window and screen size) to the serving folder's `/display-report`. `serve.py --chrome` sets it and prints OK / WARNING lines from the report (`core/app/display-report.ts`)
 - `?viewAxis=<xy|xz|yz>` — Axis-aligned opening view for this session (face the plane of the dimensions with those names, horizontal axis right), beating the scene's `viewer_config.camera.view_axis`; the scene's `up` still picks whether the vertical axis points up or down. Not `?view=`, which is the bookmark parameter
 
 ### Programmatic Usage

@@ -359,6 +359,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     textScale: urlParams.textScale ?? undefined,
     // `?playbackPeriod=` — retime the scene's authored playback (a launcher flag).
     playbackPeriod: urlParams.playbackPeriod ?? undefined,
+    // `?displayReport` — tell `serve.py --chrome` what this display renders with.
+    displayReport: urlParams.displayReport || undefined,
     // `?viewAxis=xy|xz|yz` — axis-aligned opening view for this session.
     viewAxis: urlParams.viewAxis ?? undefined,
     // Opt-in capture-quality override (`?lodFinest` — the gallery harness).

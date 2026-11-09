@@ -92,6 +92,7 @@ export const URL_PARAM_KEYS = {
   prefetch: 'prefetch',
   textScale: 'textScale',
   playbackPeriod: 'playbackPeriod',
+  displayReport: 'displayReport',
   dpr: 'dpr',
   input: 'input',
   lineJoin: 'lineJoin',
@@ -651,6 +652,13 @@ export interface UrlParams {
    */
   playbackPeriod: number | null;
   /**
+   * Report what this display renders with to the server that opened it
+   * (`?displayReport`): one POST to `/display-report` once the viewer is up.
+   * `serve.py --chrome` sets it, to print OK / WARNING lines about WebGPU,
+   * the GPU and the window size. See `core/app/display-report.ts`.
+   */
+  displayReport: boolean;
+  /**
    * Pin a fixed device pixel ratio and disable adaptive DPR for the
    * session (`?dpr=1`). The value is clamped to [0.25, native DPR] at
    * apply time and the adaptive-resolution toggle is locked off so
@@ -806,6 +814,7 @@ export function readUrlParams(
     prefetch: parsePositiveInt(get(K.prefetch)),
     textScale: parsePositiveFloat(get(K.textScale)),
     playbackPeriod: parseNonNegativeFloat(get(K.playbackPeriod)),
+    displayReport: has(K.displayReport),
     dpr: parsePositiveFloat(get(K.dpr)),
     input: normalizeInputParam(get(K.input)),
     lineJoin: parseLineJoinStyle(get(K.lineJoin)),

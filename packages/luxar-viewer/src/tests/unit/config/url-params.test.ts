@@ -208,6 +208,7 @@ describe('readUrlParams', () => {
       prefetch: null,
       textScale: null,
       playbackPeriod: null,
+      displayReport: false,
       dpr: null,
       input: null,
       lineJoin: null,
@@ -818,6 +819,11 @@ describe('per-session machine and text parameters', () => {
     expect(p.workers).toBe(16);
     expect(p.prefetch).toBe(12);
     expect(p.textScale).toBe(0.8);
+  });
+
+  it('parses the ?displayReport flag', () => {
+    expect(readUrlParams('?displayReport').displayReport).toBe(true);
+    expect(readUrlParams('').displayReport).toBe(false);
   });
 
   it('parses ?playbackPeriod, where 0 is a value (authored playback off)', () => {

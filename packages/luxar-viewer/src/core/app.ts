@@ -1,5 +1,6 @@
 // Main application class for the Luxar scene player
 
+import { sendDisplayReport } from './app/display-report';
 import { applyTextScale, resolveTextScale } from '../ui/overlay-text-scale';
 import type { SceneManager } from '../scene/scene-manager';
 import {
@@ -384,6 +385,7 @@ export class LuxarApp {
       }
 
       this.isInitialized = true;
+      this.reportDisplay(options);
     } catch (error) {
       log.error(Modules.APP, `Failed to initialize Luxar app: ${getErrorMessage(error)}`, error);
       // Tear down whatever partial state was constructed before the throw.
@@ -1436,6 +1438,15 @@ export class LuxarApp {
       throw new Error('LuxarApp.setLayer called before init()');
     }
     this.layersPanel.setLayer(path, patch);
+  }
+
+  /**
+   * With `?displayReport`, tell the serving folder what this page renders with
+   * (fire-and-forget; see `core/app/display-report.ts`).
+   */
+  private reportDisplay(options: LuxarAppOptions): void {
+    if (!options.displayReport) return;
+    void sendDisplayReport(this.sceneManager.capabilities, options.renderer ?? null);
   }
 
   /**

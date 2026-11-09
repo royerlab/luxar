@@ -270,6 +270,12 @@ export interface LuxarAppOptions {
   playbackPeriod?: number;
 
   /**
+   * Send a one-off report of the renderer and window to the serving folder's
+   * `/display-report` once initialised. Mirrors `UrlParams.displayReport`.
+   */
+  displayReport?: boolean;
+
+  /**
    * Axis-aligned opening view for the session (`'xy'` | `'xz'` | `'yz'`),
    * beating the scene's authored `viewer_config.camera.view_axis`. Undefined ⇒
    * the authored preset. Mirrors `UrlParams.viewAxis` (`?viewAxis=xz`). See
