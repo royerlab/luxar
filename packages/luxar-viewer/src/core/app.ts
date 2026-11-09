@@ -396,6 +396,7 @@ export class LuxarApp {
       // top-level error UI; any in-progress error UI from sub-loaders
       // is wiped along with everything else.
       assignFromPartial();
+      this.reportDisplay(options, getErrorMessage(error));
       this.disposePartialInit();
       throw error;
     } finally {
@@ -1442,11 +1443,13 @@ export class LuxarApp {
 
   /**
    * With `?displayReport`, tell the serving folder what this page renders with
-   * (fire-and-forget; see `core/app/display-report.ts`).
+   * -- or, given ``error``, that it failed to start and why (fire-and-forget;
+   * see `core/app/display-report.ts`).
    */
-  private reportDisplay(options: LuxarAppOptions): void {
+  private reportDisplay(options: LuxarAppOptions, error?: string): void {
     if (!options.displayReport) return;
-    void sendDisplayReport(this.sceneManager.capabilities, options.renderer ?? null);
+    const sceneManager = this.sceneManager as SceneManager | undefined;
+    void sendDisplayReport(sceneManager?.capabilities, options.renderer ?? null, error);
   }
 
   /**

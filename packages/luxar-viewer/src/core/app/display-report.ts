@@ -22,10 +22,15 @@ export const DISPLAY_REPORT_PATH = '/display-report';
 
 /** What the page renders with, as `serve.py` reads it. */
 export interface DisplayReport {
-  /** The API the renderer exposes: `'webgpu'` or `'webgl2'`. */
-  api: RendererCapabilities['apiSurface'];
-  /** What actually runs: `'webgpu-native'`, `'webgpu-gl'` (WebGL2 backend) or `'webgl'`. */
-  backend: RendererCapabilities['backendKind'];
+  /** The API the renderer exposes: `'webgpu'` or `'webgl2'`; null if none came up. */
+  api: RendererCapabilities['apiSurface'] | null;
+  /**
+   * What actually runs: `'webgpu-native'`, `'webgpu-gl'` (WebGL2 backend) or
+   * `'webgl'`; null if no renderer came up.
+   */
+  backend: RendererCapabilities['backendKind'] | null;
+  /** Why the viewer failed to start, when it did; absent otherwise. */
+  error?: string;
   /** The renderer the URL asked for (`?renderer=`), or null for the default policy. */
   requested: 'webgl' | 'webgpu' | null;
   /** Whether the browser exposes WebGPU at all (`navigator.gpu`). */
@@ -78,15 +83,20 @@ async function adapterSummary(gpu: GpuLike | undefined): Promise<DisplayReport['
   }
 }
 
-/** Assemble the report for this page. */
+/**
+ * Assemble the report for this page: from its renderer, or -- when the viewer
+ * failed to start, possibly before it had one -- from the ``error``.
+ */
 export async function buildDisplayReport(
-  capabilities: RendererCapabilities,
-  requested: 'webgl' | 'webgpu' | null
+  capabilities: RendererCapabilities | undefined,
+  requested: 'webgl' | 'webgpu' | null,
+  error?: string
 ): Promise<DisplayReport> {
   const gpu = (navigator as Navigator & { gpu?: GpuLike }).gpu;
   return {
-    api: capabilities.apiSurface,
-    backend: capabilities.backendKind,
+    api: capabilities?.apiSurface ?? null,
+    backend: capabilities?.backendKind ?? null,
+    ...(error !== undefined ? { error } : {}),
     requested,
     webgpuAvailable: gpu !== undefined,
     adapter: await adapterSummary(gpu),
@@ -102,8 +112,9 @@ export async function buildDisplayReport(
  * a failure is the server's to notice (it warns when no report arrives).
  */
 export async function sendDisplayReport(
-  capabilities: RendererCapabilities,
+  capabilities: RendererCapabilities | undefined,
   requested: 'webgl' | 'webgpu' | null,
+  error?: string,
   post: (url: string, body: string) => Promise<unknown> = (url, body) =>
     fetch(url, {
       method: 'POST',
@@ -113,7 +124,7 @@ export async function sendDisplayReport(
     })
 ): Promise<void> {
   try {
-    const report = await buildDisplayReport(capabilities, requested);
+    const report = await buildDisplayReport(capabilities, requested, error);
     await post(new URL(DISPLAY_REPORT_PATH, window.location.origin).href, JSON.stringify(report));
   } catch {
     // Best effort by design: see the module doc.

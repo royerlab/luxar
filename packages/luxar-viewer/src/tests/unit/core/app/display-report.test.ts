@@ -68,11 +68,25 @@ describe('buildDisplayReport', () => {
   });
 });
 
+describe('a viewer that failed to start', () => {
+  it('still reports, with the reason and no renderer', async () => {
+    withGpu(null);
+    const post = vi.fn(async () => undefined);
+    await sendDisplayReport(undefined, 'webgpu', 'WebGL is not supported', post);
+    const [, body] = post.mock.calls[0] as unknown as [string, string];
+    expect(JSON.parse(body)).toMatchObject({
+      api: null,
+      backend: null,
+      error: 'WebGL is not supported',
+    });
+  });
+});
+
 describe('sendDisplayReport', () => {
   it('posts the report as JSON to the same-origin path', async () => {
     withGpu(null);
     const post = vi.fn(async () => undefined);
-    await sendDisplayReport(native, 'webgpu', post);
+    await sendDisplayReport(native, 'webgpu', undefined, post);
     expect(post).toHaveBeenCalledTimes(1);
     const [url, body] = post.mock.calls[0] as unknown as [string, string];
     expect(url).toBe(new URL(DISPLAY_REPORT_PATH, window.location.origin).href);
@@ -82,7 +96,7 @@ describe('sendDisplayReport', () => {
   it('never throws: a server that does not listen changes nothing', async () => {
     withGpu(null);
     await expect(
-      sendDisplayReport(native, null, async () => {
+      sendDisplayReport(native, null, undefined, async () => {
         throw new Error('404');
       })
     ).resolves.toBeUndefined();
