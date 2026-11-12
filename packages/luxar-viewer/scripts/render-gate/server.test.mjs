@@ -15,13 +15,14 @@ beforeAll(() => {
   dist = join(root, 'dist');
   data = join(root, 'datasets');
   mkdirSync(dist);
+  mkdirSync(join(dist, 'wasm'));
   mkdirSync(join(data, 'gate'), { recursive: true });
   writeFileSync(join(dist, 'index.html'), '<html></html>');
   writeFileSync(join(dist, 'viewer.js'), 'export const payload = "' + 'x'.repeat(10000) + '";');
   writeFileSync(join(dist, 'viewer.css'), 'body{' + 'color:red;'.repeat(1000) + '}');
   writeFileSync(join(dist, 'empty.js'), '');
   writeFileSync(join(dist, 'viewer.mjs'), 'export const value = 42;');
-  writeFileSync(join(dist, 'module.wasm'), Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
+  writeFileSync(join(dist, 'wasm', 'module.wasm'), Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
   writeFileSync(join(dist, 'config.json'), '{"enabled":true}');
   writeFileSync(join(dist, 'icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
   writeFileSync(join(data, 'gate', 'blob.bin'), BODY);
@@ -58,7 +59,7 @@ describe('startServer', () => {
   it.each([
     ['/', 'text/html; charset=utf-8', '<html></html>'],
     ['/viewer.mjs', 'text/javascript; charset=utf-8', 'export const value = 42;'],
-    ['/module.wasm', 'application/wasm', Buffer.from([0, 97, 115, 109, 1, 0, 0, 0])],
+    ['/wasm/module.wasm', 'application/wasm', Buffer.from([0, 97, 115, 109, 1, 0, 0, 0])],
     ['/config.json', 'application/json', '{"enabled":true}'],
     ['/icon.svg', 'image/svg+xml', '<svg xmlns="http://www.w3.org/2000/svg"></svg>'],
   ])('gzips static %s with its content type', async (path, contentType, expected) => {
