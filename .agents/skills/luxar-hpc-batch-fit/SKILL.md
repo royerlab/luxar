@@ -108,14 +108,21 @@ luxar gsplat batch-fit validate out/ --fix  # clean failures, then re-submit to 
 luxar gsplat batch-fit merge out/ --recipe stream --n-lods 6
 ```
 
-Build the CUDA extension on a GPU node first if needed: `make build-cuda SLURM=1`.
+The CUDA kernels compile on the GPU node at first use (NVRTC, cached under
+`~/.cache/luxar/cuda`); `make build-cuda SLURM=1` is an optional ahead-of-time build.
 
 ## Notes
 
 - **Full flag tables** (every `submit`/`run`/`merge`/`benchmark` option, defaults, and
-  the output-dir layout) are in `references/batch-fit-options.md`.
+  the output-dir layout) are in [references/batch-fit-options.md](references/batch-fit-options.md).
 - Content mode REQUIRES a density: `--cal` (from `luxar gsplat cal`) or
   `--k-star-ref` + `--n-features-ref`.
+- `--floor` (default `auto`) resolves ONE level for the whole timelapse at plan
+  time: the minimum over up to 4 timepoints (always `t=0` and `t=T-1`) x up to 4
+  channel-like coordinates. A dimmer slice that was not sampled can still clip to
+  zero; pass `--floor none` or `--floor N` when one must survive (`--floor
+  specimen` is rejected here). Details: the `luxar-gsplat-pipeline` skill's
+  [background-floor.md](../luxar-gsplat-pipeline/references/background-floor.md).
 - `--axes` must be consistent across plan and tasks; pass it explicitly if
   auto-detection is ambiguous (e.g. `--axes time,camera,channel,z,y,x`).
 - For the single-volume / non-timelapse path, calibration, and the LOD recipe

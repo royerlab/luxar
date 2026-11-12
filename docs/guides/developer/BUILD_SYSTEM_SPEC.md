@@ -277,7 +277,7 @@ MIN_NODE_MINOR := 22
 | `make check-typescript` | Run all TypeScript checks (typecheck, lint, test) |
 | `make check-rust` | Run Rust type/lint checks (cargo check + clippy) |
 | `make check-knip` | **Report only, non-gating** — full knip (unused files/exports/types + `@internal` tag hints). Two gates run inside `make check-all`: `check:knip:ci` (`files,dependencies`, zero tolerance) and `check:knip:ratchet` (unused exports/types/enum members ratcheted against `packages/luxar-viewer/knip-baseline.json`: a new entry fails, a paid-down or moved one fails until `pnpm run check:knip:ratchet --update-baseline`, and a `knip.json` or issue-type change fails closed). |
-| `make test-fast` | Inner loop, **not a gate**: Python under xdist with `-m 'not slow'` plus the TypeScript units, no coverage. Scope it with `PYTEST_ARGS` — which *replaces* the default paths (`make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'`); options-only args fall through to pytest's `testpaths`. `LUXAR_PYTEST_JOBS` sets the worker count. Both halves always run and the exit status aggregates them; Ctrl-C during the Python half stops there. `--max-worker-restart=0` (also in the local `hatch run test` / `test-cov-all` scripts) aborts the run at the first worker crash instead of respawning workers and hanging at 99%. |
+| `make test-fast` | Inner loop, **not a gate**: Python under xdist with `-m 'not slow'` plus the TypeScript units, no coverage. Scope it with `PYTEST_ARGS` — which *replaces* the default paths (`make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'`); options-only args fall through to pytest's `testpaths`. `TS_ARGS` scopes the vitest half the same way (paths relative to `packages/luxar-viewer/`). Scoping one half skips the other — a `PYTEST_ARGS`-only run does not also run the whole vitest suite; pass both to run both. `LUXAR_PYTEST_JOBS` sets the worker count. Whichever halves run, the exit status aggregates them; Ctrl-C during the Python half stops there. `--max-worker-restart=0` (also in the local `hatch run test` / `test-cov-all` scripts) aborts the run at the first worker crash instead of respawning workers and hanging at 99%. |
 | `make test-all` | Run all tests (Python + Rust/WASM + TypeScript, plus Go launcher tests when that toolchain is available). CUDA extension tests are part of the Python suite — they live under pytest's `testpaths` and skip themselves without a GPU. |
 | `make test-cov-all` | Run all tests with coverage (Python, minus `-m slow`, + TypeScript) |
 | `make test-python` | Run Python tests only |
@@ -1068,14 +1068,20 @@ After a dispatched window completes the five protected contexts successfully,
 `repair-cancelled-push-checks` resolves dev's current tip and enumerates commits in
 `main..dev`, newest first. This is necessary because GitHub branch protection does not
 necessarily replace a cancelled push check with a later successful check of the same
-name on the same SHA. It reruns cancelled required jobs from up to two completed push
-suites. The second candidate hedges against a genuinely red newest candidate; repairing
-still-older commits cannot advance the same promotion. One cancelled context uses a
-job-level rerun. Multiple contexts use one failed-jobs rerun because GitHub rejects a
-second job-level rerun after the attempt changes; that run-level path also re-enqueues
-cancelled or failed non-required legs such as Python 3.13/3.14. A failed repaired job is
-terminal for that SHA unless a multi-job failed-jobs rerun includes it; otherwise it
-needs a manual rerun. The repair checkout must remain on dev's ancestry, and an
+name on the same SHA. It repairs required jobs in up to two completed push suites.
+Cancelled jobs qualify directly. A failed job qualifies for interrupt recovery only
+when the last 500 log lines contain an interrupt signature and no pytest failure or
+error marker; an unreadable log is treated as a genuine failure. If any required job
+has a genuine failure, interrupt recovery is skipped for that run, while cancelled
+jobs keep their existing repair path. The second candidate hedges against a genuinely
+red newest candidate; repairing still-older commits cannot advance the same promotion.
+One qualifying context uses a job-level rerun. Multiple contexts use one failed-jobs
+rerun because GitHub rejects a second job-level rerun after the attempt changes; that
+run-level path also re-enqueues cancelled or failed non-required legs such as Python
+3.13/3.14. A repaired job that fails again remains eligible for automatic recovery
+if its latest log tail meets the same interrupt checks above. A genuine failure
+needs a manual rerun unless a multi-job failed-jobs rerun includes it. The repair
+checkout must remain on dev's ancestry, and an
 unresolvable dev ref or off-dev checkout fails loudly. Candidate API failures and
 rejected reruns are warnings so one candidate does not abort the remaining walk.
 

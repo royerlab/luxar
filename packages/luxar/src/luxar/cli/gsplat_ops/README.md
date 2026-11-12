@@ -18,13 +18,15 @@ importers name the owning module directly, never a re-export root.
 ### Package root
 
 - `scene_commands.py` — Typer command signatures + registration for convert/migrate-format/reencode
-- `scene_orientation.py` — `resolve_convert_orientation`: names the fitted center columns (stored `dimension_metadata` > `--dim-order` > array order), maps them onto x, y, z-ordered scene dims via `dim_order`, and builds convert's image-convention camera (`view_axis` + `up = -y`; the flip is a camera choice, not a mirror)
+- `scene_build.py` — `build_gsplat_scene` / `SceneBuildOptions`: the one scene-building path shared by `convert` and `view` (`view` writes it to a temp dir; `--raw` skips it). Under `--blending-mode volumetric` it also prints the `--display-gain` additive auto exposure would use and the matching `--absorption`
+- Convert's orientation and exposure resolvers live in the library, not here: `luxar.core.scene_orientation`, `luxar.core.scene_exposure`, and `luxar.core.scene_defaults.resolve_fitted_scene`, which `scene_build.py` calls and Python callers reach through `fitted_scene_defaults`, so the CLI and Python scenes cannot drift
 - `inspect_commands.py` — Typer command signatures + registration for inspect commands
-- `compare_ops.py` — `compare` implementation: scoring grid, basis, foreground, report/JSON
+- `compare_ops.py` — `compare` implementation: scoring grid, basis, `--region` crop scoring (`--whole-volume`), foreground, noise ceiling + verdict, report/JSON
 - `interchange_commands.py` — Typer command signatures + registration for `import` / `export`
 - `benchmark.py` — GPU benchmark helpers
 - `recipe_shared.py` — `--recipe` names/methods/validators shared by the CLI and `cli/lod.py`
 - `planner.py` — content-plan resolution + `run_content_fit`
+- `voxel_frame.py` — voxel spacing (`--voxel-size` > config > `--physical` metadata: NGFF / OME-TIFF / ImageJ) and the `--region` crop for `fit`/`cal`; `FitFrame` applies the crop offset and stamps `fitting/voxel_size`, `voxel_unit`, `voxel_size_source`, `physical_coordinates`, `source_region` at save. `batch-fit --physical` shares its NGFF reading
 - `encoding.py` — `_resolve_encoding_mode` shared by the transform, scene and interchange commands
 - `loading.py` — shared matrix-only loading policy and flatten-first guidance
 

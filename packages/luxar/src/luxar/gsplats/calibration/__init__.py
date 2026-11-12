@@ -23,7 +23,7 @@ held-out evaluation, K-grid construction, peak detection, and noise-floor
 estimation.
 
 This module is a package split by phase (masking / metrics / content /
-noise_floor / curve_analysis / result / driver); it re-exports the full public
+noise_floor / curve_analysis / grid / sweep_control / result / driver); it re-exports the full public
 surface so ``luxar.gsplats.calibration.X`` keeps resolving as before.
 """
 
@@ -51,10 +51,11 @@ from .curve_analysis import (
     k_star_grid_warnings,
 )
 from .driver import (
-    ProgressCallback,
+    CalibrationInterrupted,
     calibrate,
     calibrate_saturation_exponent,
 )
+from .grid import AutoKBounds, auto_k_bounds
 from .masking import cv_mask, donut_median_fill
 from .metrics import (
     held_out_gain_db,
@@ -71,8 +72,13 @@ from .noise_floor import (
     estimate_noise_floor,
 )
 from .result import CalibrationResult, _json_safe, _rehydrate_nan_dict
+from .sweep import ProgressCallback
+from .sweep_control import SweepControl
+from .whole_volume import input_element_count, whole_volume_seeds
 
 __all__ = [
+    "AutoKBounds",
+    "CalibrationInterrupted",
     "CalibrationResult",
     "ExponentFit",
     "FloorEstimate",
@@ -82,10 +88,12 @@ __all__ = [
     "RDModel",
     "RegionSelection",
     "SplatDensity",
+    "SweepControl",
     "_json_safe",
     "_otsu_threshold",
     "_rehydrate_nan_dict",
     "_robust_feature_level",
+    "auto_k_bounds",
     "build_k_grid",
     "calibrate",
     "calibrate_saturation_exponent",
@@ -108,4 +116,6 @@ __all__ = [
     "k_star_grid_warnings",
     "predict_zero_baseline_mse",
     "select_calibration_region",
+    "input_element_count",
+    "whole_volume_seeds",
 ]

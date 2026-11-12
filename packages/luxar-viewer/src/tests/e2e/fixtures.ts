@@ -54,8 +54,9 @@
  * @module tests/e2e/fixtures
  */
 
-import { test as base } from '@playwright/test';
+import { test as playwrightTest } from '@playwright/test';
 import { StorageKeys } from '../../utils/storage-keys';
+import { isWebGPUProject, withWebGPURenderer } from './webgpu-project';
 import {
   EXAMPLE_DATASETS_STATUS_ENV,
   type ExampleFixtureStatus,
@@ -182,8 +183,34 @@ export function exampleDatasetFailureWarning(
 }
 
 /**
+ * `@playwright/test`'s `test` plus the native-WebGPU project's URL rewrite and
+ * nothing else — no console-error gate, no rail-hint init script.
+ *
+ * In the `chromium-webgpu` project every `page.goto` to a viewer URL that does
+ * not already choose `renderer=` gets `renderer=webgpu` appended (see
+ * {@link withWebGPURenderer}); `waitForLuxarReady` then refuses a page that did
+ * not come up native. In every other project the page is untouched.
+ *
+ * For the specs that predate the shared gate and import `test` from
+ * `@playwright/test` directly: importing this instead puts them in the WebGPU
+ * project without changing what they assert anywhere else. New specs use
+ * {@link test}.
+ */
+export const rendererTest = playwrightTest.extend({
+  page: async ({ page, baseURL }, use, testInfo) => {
+    if (isWebGPUProject(testInfo)) {
+      const goto = page.goto.bind(page);
+      page.goto = (url, options) => goto(withWebGPURenderer(url, baseURL), options);
+    }
+    await use(page);
+  },
+});
+
+const base = rendererTest;
+
+/**
  * Extended `test` fixture: drop-in replacement for `@playwright/test`'s
- * `test`. Specs that import from this module get the timed control-rail hint
+ * `test`, built on {@link rendererTest}. Specs that import from this module get the timed control-rail hint
  * dismissed before navigation and auto console-error checking after each test.
  *
  * The check subscribes to Playwright's own `console` and `pageerror` page

@@ -7,7 +7,7 @@ Both load (or fit) a GSplatData object and then call
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -75,6 +75,21 @@ def _grafted_partition_bsp_tree(
     return None
 
 
+def _load_or_reuse(
+    path: Path, preloaded: Optional[Tuple[Any, Dict[str, Any]]]
+) -> Tuple[Any, Dict[str, Any]]:
+    """``(node, stats)`` for ``path``: the fitted-store default's copy if given.
+
+    ``fitted_defaults.py`` already read the store to resolve convert's defaults
+    and hands its ``(node, stats)`` on, so the store is loaded once.
+    """
+    if preloaded is not None:
+        return preloaded
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+    return load_gsplat_node(path, include_stats=True)
+
+
 def add_gsplats_from_file_impl(
     group: "Group",
     *,
@@ -89,9 +104,9 @@ def add_gsplats_from_file_impl(
     lod_group: Any = None,
     additive_lod: Any = None,
     flatten: bool = False,
+    _preloaded: Optional[Tuple[Any, Dict[str, Any]]] = None,
     **attrs: Any,
 ) -> Union["GSplats", "Group"]:
-    from luxar.gsplats.io.load_gsplats import load_gsplat_node
     from luxar.gsplats.tree import is_matrix_shaped
 
     path = Path(path)
@@ -149,7 +164,7 @@ def add_gsplats_from_file_impl(
     # tree (kind=partition root, or lod with non-leaf children) has no flat
     # GSplatData equivalent, so it is GRAFTED node-for-node, reusing the scene's
     # own builders — the same subtree the file already holds.
-    node, stats = load_gsplat_node(path, include_stats=True)
+    node, stats = _load_or_reuse(path, _preloaded)
     source_dtype = stats.get("source_dtype")
     source_dtype = source_dtype if isinstance(source_dtype, str) else None
 

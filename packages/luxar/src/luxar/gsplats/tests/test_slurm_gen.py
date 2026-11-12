@@ -47,6 +47,10 @@ def test_parallel_fit_scales_allocation_and_isolates_workers() -> None:
     assert "#SBATCH --mem=96G" in script
     assert "export OMP_NUM_THREADS=4" in script
     assert "export MKL_NUM_THREADS=4" in script
+    assert (
+        'if [ "${LUXAR_CPU_THREADS:-0}" = "0" ]; then export LUXAR_CPU_THREADS=4; fi'
+        in script
+    )
     assert "export LUXAR_QUALITY_WORKERS_PER_HOST=3" in script
     assert "export LUXAR_QUALITY_WORKERS_PER_DEVICE=2" in script
     assert "local WORKER_GPU_INDEX=$((WORKER_OFFSET % 2))" in script
@@ -387,3 +391,33 @@ def test_sbatch_output_dir_rejects_line_terminators(separator: str) -> None:
 
     with pytest.raises(ValueError, match="must not contain"):
         generate_fit_sbatch(manifest, "")
+
+
+@pytest.mark.parametrize(("preset", "expected"), [(None, "4"), ("0", "4"), ("7", "7")])
+def test_parallel_worker_cpu_kernel_threads_default_to_the_worker_share(
+    preset: "str | None", expected: str
+) -> None:
+    manifest = _packed_manifest(3)
+    manifest.parallel_tasks_per_job = True
+    manifest.slurm_gpus = 1
+    manifest.slurm_cpus = 4
+    lines = _parallel_worker_env_lines(manifest, 3)
+    harness = "\n".join(
+        [
+            "unset LUXAR_CPU_THREADS"
+            if preset is None
+            else f"export LUXAR_CPU_THREADS={preset}",
+            "BASE_TASK=0",
+            "worker() {",
+            "    local TASK_ID=1",
+            *lines,
+            '    printf "%s\\n" "$LUXAR_CPU_THREADS"',
+            "}",
+            "worker",
+        ]
+    )
+    result = subprocess.run(
+        ["bash"], input=harness, capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == expected

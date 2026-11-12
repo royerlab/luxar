@@ -2,7 +2,7 @@
 
 A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific datasets stored in Zarr format. Delivers maximum visualization performance limited only by your graphics hardware, display resolution, and network bandwidth—not by software constraints. Features advanced HDR rendering, real-time effects, and intuitive navigation controls.
 
-**[▶ Try it in your browser](https://demos.luxarviewer.dev)** — 88 live demos as interactive scenes, no install. To open your own compiled archive, the viewer is deployed on its own at [luxarviewer.dev](https://luxarviewer.dev)`?src=<url-to-your-scene>`.
+**[▶ Try it in your browser](https://demos.luxarviewer.dev)** — 90 live demos as interactive scenes, no install. To open your own compiled archive, the viewer is deployed on its own at [luxarviewer.dev](https://luxarviewer.dev)`?src=<url-to-your-scene>`.
 
 ## ✨ Features
 
@@ -66,6 +66,98 @@ hardcoded colors or spacing. See
 [`src/styles/base/README.md`](src/styles/base/README.md) for the full
 group table.
 
+### Custom shader materials
+
+`ShaderSource` and `buildMaterial` are exported from `@luxar/viewer` for
+embedders that add their own materials to a Three.js scene. Supply GLSL3
+strings for `WebGLRenderer` and a synchronous TSL `NodeMaterial` factory for
+`WebGPURenderer`:
+
+```ts
+import { buildMaterial, type ShaderSource } from '@luxar/viewer';
+import { NodeMaterial } from 'three/webgpu';
+import { vec4 } from 'three/tsl';
+
+const source: ShaderSource = {
+  name: 'my-overlay',
+  webgl: {
+    vertex:
+      'void main() { gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragment: 'out vec4 fragColor; void main() { fragColor = vec4(0.2, 0.8, 1.0, 1.0); }',
+  },
+  webgpu: () => {
+    const material = new NodeMaterial();
+    material.colorNode = vec4(0.2, 0.8, 1.0, 1.0);
+    return material;
+  },
+};
+
+const material = buildMaterial(
+  source,
+  { depthWrite: false },
+  {
+    apiSurface: 'isWebGPURenderer' in renderer ? 'webgpu' : 'webgl2',
+  }
+);
+```
+
+Use `'webgpu'` for `WebGPURenderer` even when it runs on its internal WebGL2
+backend (`webgpuForceWebGL` or no adapter): it still requires a `NodeMaterial`.
+Passing `'webgl2'` there creates a `ShaderMaterial` that it cannot draw.
+
+`buildMaterial` passes the same `config.uniforms` table to either path and
+applies the requested blending, depth, transparency, tone-mapping, and side
+state to both. The TSL factory must use those uniform references when its
+values need to change after construction. GLSL `defines` and
+`onBeforeCompile` patches have no TSL equivalent; express those changes in
+the `webgpu` factory. A factory that needs custom blend factors should set
+them after `buildMaterial` returns, since its basic render-state config does
+not include blend factors.
+
+If the active renderer uses the WebGPU API surface and `webgpu` is absent,
+`buildMaterial` throws an error naming the source. It does not change the
+renderer for a single material: `WebGPURenderer` cannot draw a GLSL
+`ShaderMaterial`, even on its internal WebGL2 backend. Unlike the
+[adapter-missing fallback in #3147](https://github.com/royerlab/luxar/issues/3147),
+which selects a renderer before materials are built, changing renderers for one
+material would leave it in a scene using the other renderer. For a known
+GLSL-only plugin, set `LuxarAppOptions.renderer: 'webgl'` in app mode, or
+construct a `WebGLRenderer` as the host renderer in layer mode, before building
+materials.
+
+The viewer's own WebGPU code remains lazily loaded; a host that imports
+`three/webgpu` for its factory controls when that dependency loads.
+
+To change a built-in visual Points, Lines, GSplats, or Mesh TSL material (not a
+`material="physical"` mesh), use `setTSLNodeOverride` on that material after it
+is created. In layer mode, find the rendered leaf object in the host scene and
+read its current `object.material` each time you set or clear an override.
+Luxar creates a separate material per node, and a Layers appearance edit may
+replace it with a clone. The callback receives the material's original output
+nodes and returns only the outputs to replace:
+
+```ts
+import { setTSLNodeOverride } from '@luxar/viewer';
+import { mul, vec4 } from 'three/tsl';
+
+setTSLNodeOverride(material, ({ colorNode }) => ({
+  colorNode: mul(colorNode, vec4(1, 0.5, 1, 1)),
+}));
+```
+
+The callback runs again when Luxar rebuilds the TSL graph (for example, after a
+colormap or gamma variant change), and follows the material when it is cloned.
+If it throws during a rebuild, that variant uses its base graph; the callback
+stays registered and runs again on the next rebuild. Overrides affect only the
+visual pass: `vertexNode` and `depthNode` changes are not mirrored into picking,
+so displaced geometry is still picked at its built-in position.
+It must return new nodes without mutating the original nodes, which are shared
+by materials of the same configuration. Pass `null` to restore the built-in
+graph. This hook applies to Luxar's built-in visual TSL materials; a
+custom `NodeMaterial` uses its own node properties. On WebGL, use the material's
+GLSL `onBeforeCompile` hook. Keep the two backend implementations equivalent
+when an extension is intended to work in both renderers.
+
 ### `LuxarAppOptions`
 
 | Option             | Type                  | Default         | Notes                                                                                                                                                                                                                                                                   |
@@ -93,7 +185,7 @@ group table.
 | `lodFinest`        | `boolean`             | `false`         | Force the finest replacement LOD regardless of projected coverage; useful for high-quality still or video capture.                                                                                                                                                      |
 | `lodBias`          | `number`              | `1`             | Bias replacement LOD selection in screen-area units; `2` selects one occupancy-halved level finer and `4` selects two. Below `1`, a partition-anchored ladder cannot reach its finest level; below `0.5`, neither can a whole-object ladder.                            |
 | `depthSort`        | `boolean`             | `true`          | Enable worker-based back-to-front sorting for order-dependent geometry; disable for deterministic comparisons.                                                                                                                                                          |
-| `blendWarmup`      | `boolean`             | device          | WebGL blend-program warm-up (one variant compile per macrotask). On for laptops/desktops, off on phones/tablets; `false` opts out (`?noBlendWarmup`).                                                                                                                   |
+| `blendWarmup`      | `boolean`             | device          | Blend-program warm-up, WebGL programs and WebGPU pipelines (one variant compile per macrotask). On for laptops/desktops, off on phones/tablets; `false` opts out (`?noBlendWarmup`).                                                                                    |
 | `densityGuard`     | `boolean`             | `true`          | Projected-density guard: thin blendable nodes packing more elements per pixel than `config.densityGuard` allows (brightness compensated) and cap refinement rungs (`?noDensityGuard`).                                                                                  |
 | `densityCap`       | `number`              | config          | Session-only override of the density guard's blendable cap, in elements per drawing-buffer pixel (`?densityCap=8`).                                                                                                                                                     |
 | `bakeEnvironment`  | `object`              | —               | `{ probe?, resolution? }`: bake the scene-derived environment once the load settles, for `luxar env bake` (`?bakeEnv&probe=…&envResolution=…`). Omit for normal viewing.                                                                                                |
@@ -186,7 +278,7 @@ app.on('element-contextmenu', (event) => console.log(event));
 app.on('camera-changed', (pose) => mirror(pose)); // frame rate while moving; throttle if relaying
 app.on('sound-started', ({ name }) => console.log('playing', name)); // and 'sound-ended'
 app.on('waypoint-arrived', ({ index, completed }) => console.log(index, completed)); // and 'waypoint-departed'
-app.on('webgpu-device-lost', ({ reason }) => location.reload()); // unrecoverable in this release
+app.on('webgpu-device-unrecoverable', () => location.reload()); // after a WebGPU device loss the viewer recovers on its own when it can
 // off();
 ```
 
@@ -809,8 +901,9 @@ monitor.element; // the widget element (mounted by the control rail)
 ### Browser Compatibility
 
 Requires **WebGL 2.0**, which is the default backend. WebGPU is opt-in via
-`?renderer=webgpu` and falls back to an internal WebGL2 backend when no adapter
-is available. The build targets `esnext` with no `browserslist`, so there is no
+`?renderer=webgpu`; with no WebGPU adapter that explicit choice runs on three's
+internal WebGL2 backend, while `VITE_LUXAR_USE_WEBGPU=1` falls back to the
+WebGL renderer. The build targets `esnext` with no `browserslist`, so there is no
 toolchain-derived version floor.
 
 Verified 2026-09-04 on macOS arm64 by running the E2E smoke subset (13 tests)
@@ -872,7 +965,7 @@ the native WKWebView launcher fall back to L1-only caching; see the
 - `?noLodEnergy` — Disable stream-ladder energy compensation (enabled by default)
 - `?lodFinest` — Force the finest replacement LOD regardless of projected coverage
 - `?lodBias=<N>` — Bias replacement LOD selection in screen-area units (`2` = one level finer on occupancy-halved ladders; positive values only). Because finite screen-area coverage tops out at `1`, values below `1` make a partition-anchored finest threshold of `1` unreachable, and values below `0.5` make a whole-object finest threshold of `0.5` unreachable; near-plane saturation can still select finest
-- `?noBlendWarmup` — Disable the WebGL blend-variant program warm-up (enabled by default): each reachable blend-mode program is otherwise pre-linked off the interaction path after a dataset load, so the first Layers-panel blend switch does not pay the link cost on the click
+- `?noBlendWarmup` — Disable the blend-variant warm-up (enabled by default; WebGL programs and WebGPU pipelines): each reachable blend-mode program is otherwise pre-linked off the interaction path after a dataset load, so the first Layers-panel blend switch does not pay the link cost on the click
 - `?noLinks` — Disable element-authored navigation and link menu items while preserving copy actions and `element-click` / `element-contextmenu` events
 - `?depthSort=0` — Disable worker depth sorting (`false` and `off` are also accepted)
 - `?noDensityGuard` — Disable the projected-density guard (per-node keep-fraction thinning + refinement rung cap on over-drawn nodes; enabled by default) for the session

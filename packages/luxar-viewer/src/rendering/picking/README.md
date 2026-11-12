@@ -110,7 +110,7 @@ When the mega-shader is applying Brown–Conrady distortion, the visible frame a
 
 On WebGL `webglcontextrestored`, `NodeFactory.rebuildAfterContextRestore` calls `PickingSystem.clearRegistrationsForRebuild()`. That helper drops every pick material from `materialManager`'s broadcast list **without** calling `.dispose()` (the GPU object is already invalid), matching the `SOFT_DISPOSE_FLAG` contract in `../material-manager/lifecycle.ts`. The caller then re-registers every node, producing fresh pick materials against the new context.
 
-WebGPU device loss is currently treated as unrecoverable — see `scene-manager.ts::setupContextLossHandling`.
+After WebGPU device loss the scene manager rebuilds the renderer on a fresh device; `webgpu-device-restored` runs the same `NodeFactory.rebuildAfterContextRestore`, handing the new renderer to `PickingSystem.setRenderer` first.
 
 ## Subpackages
 

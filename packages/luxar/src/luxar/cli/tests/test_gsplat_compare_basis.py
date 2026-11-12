@@ -13,7 +13,7 @@ import pytest
 from typer.testing import CliRunner
 
 from luxar.cli.main import app
-from luxar.cli.tests._testing import normalized_cli_output
+from luxar.cli.tests._testing import assert_mappings_close, normalized_cli_output
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
 
@@ -189,7 +189,7 @@ def test_a_physical_fit_scores_like_the_same_model_in_voxels(
 
     assert by_phys["voxel_size"] == [2.0, 0.4, 0.25]
     assert by_voxel["voxel_size"] is None
-    assert _scores(by_phys) == pytest.approx(_scores(by_voxel), rel=1e-4, abs=1e-6)
+    assert_mappings_close(_scores(by_phys), _scores(by_voxel), rel=1e-4, abs=1e-6)
 
 
 def test_an_unstamped_physical_store_warns_and_accepts_voxel_size(
@@ -210,7 +210,7 @@ def test_an_unstamped_physical_store_warns_and_accepts_voxel_size(
     overridden = _json_compare(
         store, ref, tmp_path / "b.json", "--voxel-size", "2,0.4,0.25"
     )
-    assert _scores(overridden) == pytest.approx(_scores(by_voxel), rel=1e-4, abs=1e-6)
+    assert_mappings_close(_scores(overridden), _scores(by_voxel), rel=1e-4, abs=1e-6)
 
 
 def test_a_bad_voxel_size_is_a_usage_error(tmp_path, blob_reference) -> None:
@@ -225,13 +225,17 @@ def test_json_carries_both_peaks_with_clear_keys(tmp_path, blob_reference) -> No
     _save(_voxel_model(), tmp_path / "vox.gsplats.zarr")
     payload = _json_compare(tmp_path / "vox.gsplats.zarr", ref, tmp_path / "m.json")
     assert payload["psnr_headline"] == "psnr_robust_db"
+    assert payload["ssim_headline"] == "ssim_robust"
     assert payload["robust_peak_quantile"] == 0.9999
     for key in (
         "psnr_robust_db",
         "psnr_db",
         "foreground_psnr_robust_db",
         "foreground_psnr_db",
+        "ssim",
+        "ssim_robust",
         "foreground_ssim",
+        "foreground_ssim_robust",
         "robust_data_range",
         "data_range",
     ):
@@ -302,7 +306,7 @@ def test_axes_and_array_key_select_the_fitted_channel(tmp_path, blob_reference):
         "--channel",
         "1",
     )
-    assert _scores(selected) == pytest.approx(_scores(direct), rel=1e-6, abs=1e-9)
+    assert_mappings_close(_scores(selected), _scores(direct), rel=1e-6, abs=1e-9)
 
 
 def test_a_tiff_channel_without_axes_is_refused(tmp_path, blob_reference) -> None:
@@ -317,7 +321,7 @@ def test_a_tiff_channel_without_axes_is_refused(tmp_path, blob_reference) -> Non
 
     result = _run(str(store), str(tif), "--channel", "1")
     output = normalized_cli_output(result)
-    assert result.exit_code == 1, output
+    assert result.exit_code == 2, output  # a usage error, as on fit and cal
     assert "channel=1" in output and "--axes" in output
 
     ok = _run(str(store), str(tif), "--channel", "1", "--axes", "c,z,y,x")
@@ -335,8 +339,9 @@ def test_fit_and_cal_refuse_an_inapplicable_tiff_index(tmp_path, command) -> Non
         app, ["gsplat", command, str(tif), str(out), "--timepoint", "1"]
     )
     output = normalized_cli_output(result)
-    assert result.exit_code == 1, output
+    assert result.exit_code == 2, output  # a usage error, reported without a traceback
     assert "timepoint=1" in output
+    assert "Traceback" not in result.output
 
 
 def test_at_fit_resolution_scores_on_the_decimated_grid(tmp_path) -> None:
@@ -370,7 +375,7 @@ def test_at_fit_resolution_scores_on_the_decimated_grid(tmp_path) -> None:
     run_keys = {"scored_grid", "downscale_factors", "n_splats"}
     a = {k: v for k, v in _scores(at_fit).items() if k not in run_keys}
     b = {k: v for k, v in _scores(by_hand).items() if k not in run_keys}
-    assert a == pytest.approx(b, rel=1e-4, abs=1e-6)
+    assert_mappings_close(a, b, rel=1e-4, abs=1e-6)
 
     full = _json_compare(store, ref, tmp_path / "s.json")
     assert full["shape"] == [20, 20, 20] and full["scored_grid"] == "source"

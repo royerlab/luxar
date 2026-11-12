@@ -791,6 +791,57 @@ def validate_offset(offset: Any) -> float:
     return offset_float
 
 
+def _finite_float(value: Any, label: str) -> float:
+    """``value`` as a finite float; ``bool`` refused (it is an ``int``)."""
+    if isinstance(value, bool):
+        raise TypeError(f"{label} must be a number, got bool")
+    try:
+        result = float(value)
+    except (ValueError, TypeError) as e:
+        raise TypeError(
+            f"{label} must be convertible to float, got {type(value).__name__}"
+        ) from e
+    if not math.isfinite(result):
+        raise ValueError(f"{label} must be finite, got {result}")
+    return result
+
+
+def validate_display_gain(value: Any) -> float:
+    """Validate a gsplats ``display_gain`` (a positive, finite brightness factor).
+
+    Unbounded above on purpose: it converts an amplitude in SOURCE DATA units
+    into the renderer's working brightness, so it spans the data's own scale —
+    ``1/4000`` for a 12-bit camera, ``1e5`` for a float volume in ``[0, 1e-5]``.
+    """
+    gain = _finite_float(value, "display_gain")
+    if gain <= 0.0:
+        raise ValueError(f"display_gain must be positive, got {gain}")
+    return gain
+
+
+def validate_amplitude_unit(value: Any) -> str:
+    """Validate a gsplats ``amplitude_unit`` label (a non-empty string)."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"amplitude_unit must be a non-empty string, got {value!r}")
+    return value
+
+
+def validate_amplitude_offset(value: Any) -> float:
+    """Validate a gsplats ``amplitude_offset`` (a finite level in data units)."""
+    return _finite_float(value, "amplitude_offset")
+
+
+def validate_source_data_range(value: Any) -> List[float]:
+    """Validate a gsplats ``source_data_range`` (``[lo, hi]``, finite, lo <= hi)."""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError(f"source_data_range must be a [lo, hi] pair, got {value!r}")
+    lo = _finite_float(value[0], "source_data_range[0]")
+    hi = _finite_float(value[1], "source_data_range[1]")
+    if lo > hi:
+        raise ValueError(f"source_data_range must have lo <= hi, got {value!r}")
+    return [lo, hi]
+
+
 def validate_layer(value: Any) -> bool:
     """Validate and convert layer flag.
 

@@ -179,6 +179,40 @@ class TestSceneMethods:
                 ]
                 assert len(range_warnings) == 0
 
+    @pytest.mark.parametrize(
+        ("offset_ulps", "warns"), [(1, False), (2, False), (1e5, True)]
+    )
+    def test_dimension_range_tolerates_float32_rounding(
+        self, tmp_path, offset_ulps: float, warns: bool
+    ) -> None:
+        """A bound only a float32 ulp past the range is the bound, not outside it.
+
+        A range derived from float64 data can sit an ulp inside the same values
+        rounded to float32; that must stay quiet while a genuine excursion still
+        warns.
+        """
+        hi = 20.182619094848633
+        eps = float(np.finfo(np.float32).eps) * hi
+        dims = Dimensions(
+            [
+                Dimension("x", range=(-7.5, hi)),
+                Dimension("y", range=(-7.5, hi)),
+                Dimension("z", range=(-7.5, hi)),
+            ]
+        )
+        positions = np.array(
+            [[-7.5, 0.0, 0.0], [hi + offset_ulps * eps, hi, hi]], dtype=np.float64
+        )
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                scene.add_points("edge", positions)
+        range_warnings = [
+            warning for warning in w if "outside declared range" in str(warning.message)
+        ]
+        assert bool(range_warnings) is warns
+
     def test_dimension_validation_helpful_error_message(self, tmp_path) -> None:
         """Test that dimension mismatch error has helpful message."""
         dims = Dimensions(

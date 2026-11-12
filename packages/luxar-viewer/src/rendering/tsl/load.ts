@@ -1,13 +1,15 @@
 /**
- * The one dynamic edge above the TSL / WebGPU cone.
+ * The normal dynamic load of the TSL / WebGPU cone.
  *
- * `loadTslMaterials()` is the only place that imports
- * `rendering/tsl/registry`, and it does so with `await import()`.
- * Because that is the sole path from the entry point to the `*-tsl` modules,
- * rolldown emits them — and the `three-webgpu` chunk they pull in — as a lazy
- * chunk instead of a static dependency of `index-*.js`. A WebGL session never
- * calls this, so it never pays for ~182 kB gzipped of the three.js node system
- * (issue #1679).
+ * `loadTslMaterials()` imports `rendering/tsl/registry` with `await import()`.
+ * The small standalone prefetch entry also imports it dynamically, before
+ * the main viewer bundle runs. Both edges keep the `three-webgpu` cone lazy
+ * for WebGL, while the browser deduplicates their shared module fetch.
+ * Rolldown emits the TSL modules and `three-webgpu` as lazy chunks instead
+ * of static dependencies of `index-*.js`. A session that selects
+ * `WebGLRenderer` at the outset never calls this, so it never pays for
+ * ~182 kB gzipped of the three.js node system (issue #1679). A WebGPU
+ * request that later falls back may already have started the fetch.
  *
  * The nine TSL material classes deliberately keep their ordinary
  * `extends NodeMaterial` shape. A class body cannot be evaluated before an

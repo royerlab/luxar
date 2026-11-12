@@ -24,6 +24,7 @@ import { archiveFaultFrom } from '../cache/chunk-source';
 import { unsupportedFormatVersionFrom } from '../data/format-version';
 import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
+import { resolveRendererOverride } from '../config/renderer-preference';
 import { buildInfo, buildInfoLine } from '../config/build-info';
 import { VIEWER_VERSION } from '../version';
 import { applyUrlPerformanceOverrides, initUserSettings } from '../config/user-settings';
@@ -45,6 +46,11 @@ import { perfCounters } from '../profiling/perf-counters';
 import { prefetchRootDocument } from '../cache/root-document-prefetch';
 import { normalizeURL } from '../data/scene-loader/lifecycle/url-normalization';
 import { loadsDirectlyWithoutProbe } from './app/dataset/should-show-browser';
+import {
+  requestWebGPUDevice,
+  selectBackend,
+} from '../scene/scene-manager/render-pipeline/renderer-setup';
+import { takePreRequestedWebGPUDevice } from '../scene/scene-manager/render-pipeline/early-device-request';
 
 /**
  * Options for {@link bootstrapStandalone}.
@@ -317,11 +323,9 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     },
     // `?renderer=webgl|webgpu` forces a backend regardless of the
     // build-time env, then the stored Settings preference, then undefined →
-    // SceneManager falls back to the env var, then the WebGL default. See
+    // SceneManager falls back to the env vars, then the platform policy. See
     // `setupRenderer` for the precedence chain.
-    renderer:
-      urlParams.renderer ??
-      (userSettings.advanced.renderer !== 'auto' ? userSettings.advanced.renderer : undefined),
+    renderer: resolveRendererOverride(urlParams.renderer, userSettings.advanced.renderer),
     webgpuForceWebGL: urlParams.webgpuForceWebGL,
     perfTimestamp: urlParams.perfTimestamp,
     // HDR output: on by default (it still needs WebGPU + an HDR display and
@@ -367,6 +371,20 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       ? { probe: urlParams.probe ?? undefined, resolution: urlParams.envResolution ?? undefined }
       : undefined,
   };
+
+  // Start native device acquisition before LuxarApp's renderer setup chain.
+  // The promise belongs to this initialization only; a recovered renderer
+  // calls createWebGPURenderer without it and gets a fresh device.
+  const backendSelection = selectBackend(appOptions.renderer);
+  if (backendSelection.backend === 'webgpu' && !appOptions.webgpuForceWebGL) {
+    appOptions.preRequestedWebGPUDevice = requestWebGPUDevice(
+      appOptions.renderer,
+      backendSelection.requireNativeAdapter,
+      backendSelection.platformRules,
+      takePreRequestedWebGPUDevice()
+    );
+    void appOptions.preRequestedWebGPUDevice.catch(() => undefined);
+  }
 
   // Put the dataset's root document on the wire NOW, in parallel with renderer
   // init (shader links, adapter negotiation), instead of after it: startup was

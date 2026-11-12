@@ -52,6 +52,13 @@ export interface LuxarMaterial extends THREE.Material {
    */
   updateAbsorption?(v: number): void;
   /**
+   * Update the gsplats display gain (`display_gain`, the Layers panel's
+   * Brightness). Only the gsplat materials implement it: it scales a splat
+   * AMPLITUDE, which no other geometry type has, so the optional-chained call
+   * site is the type gate.
+   */
+  updateDisplayGain?(v: number): void;
+  /**
    * The §6.2 mesh appearance knobs: wrapped diffuse, specular, and the
    * `opaque`-mode cutout threshold.
    *

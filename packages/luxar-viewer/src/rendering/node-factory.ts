@@ -39,6 +39,7 @@ import { isGeometryType, isPooledGeometry } from '../types/geometry-capabilities
 import { log, Modules } from '../utils/log';
 import { eventBus } from '../utils/cross-layer/event-bus';
 import type { PickingSystem } from './picking/picking-system';
+import type { Renderer, RendererCapabilities } from './renderer-capabilities';
 import {
   validateLoadedPointsData as validateLoadedPointsDataImpl,
   validateColorMode as validateColorModeImpl,
@@ -412,7 +413,11 @@ export class NodeFactory {
    * upload to a suffix-only partial, leaving the prefix stale. This runs
    * unconditionally (picking may be disabled).
    */
-  rebuildAfterContextRestore(root: THREE.Object3D): void {
+  rebuildAfterContextRestore(
+    root: THREE.Object3D,
+    /** A renderer that REPLACED the old one (WebGPU device recovery) for picking to adopt. */
+    newRenderer?: { renderer: Renderer; capabilities: RendererCapabilities }
+  ): void {
     root.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh)) return;
       if (isPooledGeometry(obj.userData?.nodeType)) {
@@ -449,6 +454,7 @@ export class NodeFactory {
     });
 
     if (!this.pickingSystem) return;
+    if (newRenderer) this.pickingSystem.setRenderer(newRenderer.renderer, newRenderer.capabilities);
     this.pickingSystem.clearRegistrationsForRebuild();
     // Reset every scene node's pickId so registerExistingSceneNodes
     // re-allocates a fresh one on the rebuilt picking system.

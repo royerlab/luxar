@@ -2,6 +2,8 @@
 Tests for fit_gaussian_splats function and optimization pipeline.
 """
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -544,7 +546,7 @@ class TestConstraints:
 class TestDeviceSupport:
     """Test device support (CPU/CUDA)."""
 
-    def test_auto_device_honors_use_cuda_false(self, monkeypatch) -> None:
+    def test_auto_device_honors_use_cuda_false(self, monkeypatch, capsys) -> None:
         """Fitter auto-selection should not pick CUDA when CUDA is disabled."""
 
         class FakeMPSBackend:
@@ -553,11 +555,43 @@ class TestDeviceSupport:
 
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         monkeypatch.setattr(torch.backends, "mps", FakeMPSBackend(), raising=False)
+        monkeypatch.setattr(
+            "luxar.gsplats.fit_gsplats._CPU_NOTE_PRINTED", False, raising=False
+        )
 
-        with pytest.warns(UserWarning, match="running on CPU"):
+        # Choosing the CPU is a printed note, not a UserWarning: it used to trip
+        # `-W error` even when the fit then ran on the fast native CPU kernels.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
             fitter = GaussianSplatFitter(use_cuda=False, use_metal=True)
+            second_fitter = GaussianSplatFitter(use_cuda=False, use_metal=True)
 
         assert fitter.device.type == "cpu"
+        assert second_fitter.device.type == "cpu"
+        assert capsys.readouterr().out.count("Fitting on the CPU") == 1
+
+    def test_pytorch_cpu_fit_warns_once_with_the_honest_reason(
+        self, simple_2d_blob, simple_candidates_2d
+    ) -> None:
+        """The slow PyTorch path (here 2D) still gets WP2's warning, once."""
+        from luxar.gsplats.utils.device import cpu_fallback_hint
+
+        with pytest.warns(UserWarning, match="running on CPU") as record:
+            for _ in range(2):
+                fit_gaussian_splats(
+                    V=simple_2d_blob,
+                    seeds=simple_candidates_2d,
+                    device="cpu",
+                    n_iters=2,
+                    verbose=False,
+                    enable_dynamic_ops=False,
+                )
+        messages = [
+            str(w.message) for w in record if "running on CPU" in str(w.message)
+        ]
+        assert len(messages) == 1
+        assert cpu_fallback_hint() in messages[0]
+        assert "make setup-cuda" not in messages[0]
 
     def test_cpu_device(self, simple_2d_blob, simple_candidates_2d) -> None:
         """Test explicit CPU device."""

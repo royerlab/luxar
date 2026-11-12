@@ -135,6 +135,52 @@ def test_partition_quality_reaches_the_archive_and_info(
     assert f"psnr_db: {fitting['psnr_db']:.6f}" in info
 
 
+def test_sequential_tile_merge_keeps_fit_records_and_regions() -> None:
+    from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    def tile(index: int) -> GSplatData:
+        return GSplatData(
+            centers=np.array([[1.0, 1.0, 1.0 + 4 * index]], np.float32),
+            amplitudes=np.array([1.0], np.float32),
+            cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], np.float32),
+            stats={
+                "fit_provenance": {
+                    "schema_version": 1,
+                    "outcome": {
+                        "final_loss": float(index),
+                        "early_stop_reason": None,
+                    },
+                    "loss_curve": [[i, float(index), 0.1] for i in range(256)],
+                }
+            },
+        )
+
+    node = merge_tile_results(
+        [tile(0), tile(1)],
+        volume_shape=(4, 4, 8),
+        tile_size=4,
+        overlap=0,
+        num_tiles=2,
+        progressive=False,
+        cull_retention=None,
+        elapsed=1.0,
+        verbose=False,
+        partition=True,
+    )
+    parts = node.meta["fit_stats"]["part_provenance"]
+    assert [p["slot_id"] for p in parts] == ["tile_0", "tile_1"]
+    assert parts[1]["region"] == [[0, 4], [0, 4], [4, 8]]
+    import json
+
+    assert parts[1]["fitting"]["fit_provenance"]["outcome"]["final_loss"] == 1.0
+    assert "early_stop_reason" in parts[1]["fitting"]["fit_provenance"]["outcome"]
+    curve = parts[1]["fitting"]["fit_provenance"]["loss_curve"]
+    assert len(curve) == 32
+    assert curve[0][0] == 0 and curve[-1][0] == 255
+    assert len(json.dumps(parts)) < 3000
+
+
 def test_partition_lod_density_uses_the_persisted_total_splat_count() -> None:
     """Root ``n_splats`` and ``voxels_per_splat`` describe the same artifact."""
     from luxar.gsplats.fit_tiled_gsplats import merge_tile_results

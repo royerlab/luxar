@@ -46,6 +46,13 @@ Convenience constructors: `Dimensions.default_2d()`, `default_3d()`,
 The first 2-3 `display=True` dims are the viewport axes; non-displayed dims (time,
 channel, z-stack) become nD slider axes navigated with keys `1`-`9` and `[` / `]`.
 
+A discrete axis's `step` must be exactly representable, with `range=(0, (n-1)*step)`.
+Author the round interval (`step=10.0` minutes, not a measured `0.1667` h): the
+slider is an `<input type="range">` that snaps to `min + k*step`, and with a
+non-round float `(n-1)*step` can land a hair past `max`, so the browser clamps
+to the previous stop and the last timepoint cannot be selected (measured on the
+zebrafish demo: the slider ended at 298.02 of a declared 300.022 min).
+
 ## add_points
 
 ```python
@@ -84,8 +91,11 @@ scene.add_lines(
 # raw arrays — cholesky_factors packed lower-triangular; 3D=(N,6) [L00,L10,L11,L20,L21,L22]
 scene.add_gsplats(name, centers, amplitudes, cholesky_factors, colors=None, **attrs)
 
-# from a fitted .gsplats.zarr file (auto-lowers multi-level LOD to a kind=lod group)
-scene.add_gsplats_from_file(name, path, **attrs)
+# from a fitted .gsplats.zarr file (auto-lowers multi-level LOD to a kind=lod group);
+# a FITTED store gets gsplat convert's defaults (dim_order, auto exposure, layer,
+# and dims + y-down camera on a fresh default_3d scene); fitted_defaults=False
+# gives the plain adder
+scene.add_gsplats_from_file(name, path, fitted_defaults=None, **attrs)
 
 # from an in-memory GSplatData (output of fit_gaussian_splats / make_additive_lod)
 scene.add_gsplats_from_data(name, result, **attrs)

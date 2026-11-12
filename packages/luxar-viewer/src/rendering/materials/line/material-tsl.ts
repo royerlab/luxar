@@ -31,7 +31,8 @@ import {
   type LineTSLNodes,
 } from './shader-tsl';
 import { copyRuntimeUniforms, LINE_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
-import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
+import { applySharedVisualTSLGraph } from '../_shared/shared-graph-tsl';
+import { copyTSLNodeOverride } from '../_shared/tsl-node-override';
 import {
   isOrthographicProjection,
   type ProjectionVariantMaterial,
@@ -349,7 +350,7 @@ export class LineTSLMaterial
     // RESOLVED join (the factory resolves the session `?lineJoin=` override
     // at build time, so it selects code too).
     const key = { ...config, primitive, resolvedJoin: resolveLineJoin(config.join) };
-    applySharedTSLGraph(this, 'line', key, this.tslNodes, (inputs, scratch) => {
+    applySharedVisualTSLGraph(this, 'line', key, this.tslNodes, (inputs, scratch) => {
       factory(inputs as LineTSLNodes, config, scratch);
     });
     applyLineMaterialState(
@@ -549,6 +550,7 @@ export class LineTSLMaterial
   }
 
   applyBlendingMode(mode: BlendingMode): void {
+    const wasNormal = this.userData.blendingMode === 'normal';
     // A runtime mode switch takes FULL ownership of the blending state:
     // clear the constructor's explicit depthTest/transparent overrides
     // so the mode-derived state below (and every later rebuild) wins.
@@ -564,7 +566,6 @@ export class LineTSLMaterial
       this.defines = {};
     }
 
-    const previousMode = this.userData.blendingMode as BlendingMode | undefined;
     const wantsContrib = state.shaderOutputMode === 'rgb-contribution';
     const hasContrib = 'LUXAR_MAX_RGB_CONTRIBUTION' in this.defines;
     const wantsOpaqueContrib = mode === 'opaque';
@@ -576,7 +577,7 @@ export class LineTSLMaterial
     // must not strand the branch.
     const wantsVolumetric = isVolumetricMode(mode);
     const hasVolumetric = 'LUXAR_VOLUMETRIC' in this.defines;
-    const stateChanged = applyBlendingStateToMaterial(this, state);
+    applyBlendingStateToMaterial(this, state);
     let definesChanged = false;
     if (wantsContrib && !hasContrib) {
       this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
@@ -603,15 +604,14 @@ export class LineTSLMaterial
     this.userData.depthTest = state.depthTest;
 
     // The TSL factory reads `blendingMode` to decide the shader-output
-    // shape (`max`, `opaque`, and `volumetric` are build-time branches).
+    // shape (`max`, `opaque`, `volumetric`, and the normal-only density
+    // alpha compensation are build-time branches).
     // Crossing any of them changes the graph; rebuild so the colorNode
     // reflects the new branch. userData.blendingMode
     // is already the new mode, so the rebuild's factory config picks
     // up the right branch.
-    if (definesChanged) {
+    if (definesChanged || wasNormal !== (mode === 'normal')) {
       this.rebuildGraph();
-    } else if (previousMode !== mode && stateChanged) {
-      this.needsUpdate = true;
     }
   }
 
@@ -656,6 +656,8 @@ export class LineTSLMaterial
     // width). No-op when still on the placeholder.
     const lineTex = this.uniforms.uLineTex?.value as THREE.DataTexture | null | undefined;
     if (lineTex) cloned.updateLineTexture(lineTex);
+
+    copyTSLNodeOverride(this, cloned);
 
     return cloned as this;
   }

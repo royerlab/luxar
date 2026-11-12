@@ -18,6 +18,21 @@ luxar serve my_data.luxar.zarr --viewer
 luxar info my_data.luxar.zarr --stats
 ```
 
+**Fitting your own volume? Start here.** Three commands take a TIFF, OME-Zarr or
+`.npy` volume to the viewer (`--physical` uses the voxel spacing an OME/ImageJ
+TIFF or OME-Zarr records; a `.npy` has none, so drop it there or pass
+`--voxel-size`):
+
+```bash
+luxar gsplat fit stack.tif fit.gsplats.zarr --physical   # spacing from TIFF/OME-Zarr metadata
+luxar gsplat convert fit.gsplats.zarr scene.luxar.zarr
+luxar serve scene.luxar.zarr --viewer
+```
+
+`luxar gsplat view fit.gsplats.zarr` does the last two in one step. Everything
+below is the full option reference; reach for it (and `luxar gsplat cal`, which
+picks the splat budget) once the defaults are not enough.
+
 The same commands are also available programmatically: `luxar.cli` exports the
 Typer `app`, which you can invoke directly (e.g. from a script or a test):
 
@@ -312,13 +327,28 @@ See `packages/luxar-launcher/README.md` for the launcher source itself.
 Print dataset statistics for a `.gsplats.zarr` (splat count, dimensions, bounds, LOD structure).
 ```bash
 luxar gsplat info splats.gsplats.zarr
+luxar gsplat info splats.gsplats.zarr --provenance  # fit stages, slow tiles, outcomes
 ```
 
+New fits save a bounded `fitting/fit_provenance` record with the command, effective
+fit settings, environment, stage timings, final outcomes, and sampled loss and
+relocation histories. Tiled and batch merges retain those records under
+`fitting/part_provenance`, with spatial slot IDs and source voxel regions. Batch
+merges keep at most 32 samples per curve in each part; a single fit retains its
+full bounded history. The reported slowest parts are ranked by fit stages
+(preprocessing, seeding, optimization, and finalization) when those timings exist.
+Batch outputs also record planning, merge, and LOD times; the batch manifest keeps
+measured task times and local worker attempts. `--provenance` summarizes these
+records without printing the nested metadata. Use `--full-provenance` to inspect
+the raw records.
+
 #### `luxar gsplat view`
-Open a `.gsplats.zarr` in the web viewer. The standalone `.gsplats.zarr` is a v3.4 node subtree — exactly what the viewer renders inside a scene — so it is served **directly** via `?src=` with no scene-compile round-trip (works for a single leaf, an additive ladder, a `kind=lod` hierarchy, a `kind=partition` split, and arbitrary nestings; archives are extracted first).
+Open a `.gsplats.zarr` in the web viewer. By default it builds the scene `gsplat convert` would write — image-convention orientation and opening camera, auto exposure, the same defaults — in a temporary directory that is removed on exit, and serves that, printing the Exposure line and a "Built a temporary scene" line. The build re-writes the splats (a partition/nested store is grafted node for node, which still copies its arrays): about 1 s for a 30k-splat fit and 8-11 s for 1M splats on a laptop CPU, roughly half of it auto exposure. `--auto-exposure/--no-auto-exposure`, `--target-brightness`, `--dim-order`, `--view` and `--colormap` work as on `convert`. `--raw` serves the store **directly** via `?src=` with no scene round-trip: the standalone `.gsplats.zarr` is a v3.4 node subtree the viewer renders as is (every tree shape; archives are extracted first), shown with its stored amplitudes and positional axes.
 ```bash
 luxar gsplat view splats.gsplats.zarr
-luxar gsplat view splats.gsplats.zarr --host 0.0.0.0   # reachable from the LAN
+luxar gsplat view splats.gsplats.zarr --target-brightness 3  # brighter opening view
+luxar gsplat view splats.gsplats.zarr --raw                  # node tree as stored
+luxar gsplat view splats.gsplats.zarr --host 0.0.0.0         # reachable from the LAN
 ```
 
 #### `luxar gsplat fit`
@@ -327,15 +357,77 @@ Fit Gaussian splats to a volume with preset or YAML config.
 luxar gsplat fit volume.npy splats.gsplats.zarr --preset standard --seeds 8000
 luxar gsplat fit volume.tiff splats.gsplats.zarr --config params.yaml
 luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config template
+luxar gsplat fit stack.ome.tif splats.gsplats.zarr --physical            # µm from the file's metadata
+luxar gsplat fit stack.tif splats.gsplats.zarr --voxel-size 0.29,0.108,0.108  # Z,Y,X in µm
+luxar gsplat fit big.zarr crop.gsplats.zarr --region 40:120,:,1024:2048  # fit a crop
+luxar gsplat fit volume.npy splats.gsplats.zarr --overwrite   # replace an existing output
 ```
 
-**Presets:** `draft` (fast preview), `standard` (balanced), `hifi` (high quality), `ultra` (max quality). With no `--preset`, `fit` uses `standard` (5000 iterations with early stopping); a `--config` without `--preset` layers on top of `standard`. The Python `fit_gaussian_splats` keeps its own signature defaults (1000 iterations). `--lr`, `--loss`, `--seed-method`, `--downscale`, `--cull-retention` and `--reseed-sigma` are listed under **Advanced** in `fit --help`.
+`fit` refuses an OUTPUT that already exists unless `--overwrite` is passed, as
+`gsplat lod` and `luxar export` do. Internal worker invocations (`--tile k/M`,
+`--plan-box`, which `-j N` and `batch-fit` spawn) write the path their parent
+chose and are exempt. So is `--plan-only`, which writes only a plan JSON —
+OUTPUT itself when OUTPUT is not store-like, else `<stem>.plan.json` beside it —
+and says so when it replaces an existing plan. `--plan-only` needs a fit that
+resolves to `--tiling content` and is refused otherwise (any other tiling would
+run a full fit). A remote input (`http(s)://`, `s3://`, `gs://`, ...) is refused with a
+usage error: `fit`, `cal`, `compare` and `info` read local paths only, so
+download the data (or the crop you need) first. The closing `Done:` line reports
+the optimization time of a flat fit and wall-clock time for a uniform tiled one
+(sequential, or `-j N` from the start of the parallel dispatch); a content fit
+ends on its own `Fit N boxes → … in Xs` line.
+
+**Anisotropic stack to a physically scaled scene (one command each):**
+```bash
+luxar gsplat fit stack.ome.tif stack.gsplats.zarr --physical
+luxar gsplat convert stack.gsplats.zarr stack.luxar.zarr --tone-mapping ACES
+luxar serve stack.luxar.zarr --viewer
+```
+`--physical` reads the voxel size the file records — the OME-Zarr NGFF
+`coordinateTransformations` scale, OME-TIFF `PhysicalSizeZ/Y/X`, or a calibrated
+ImageJ TIFF's z `spacing` and XY resolution (TIFF sizes are converted to
+micrometres; an NGFF scale keeps its own unit) — and fits in physical
+coordinates. The fit prints one line naming the spacing and where it came from,
+e.g. `Voxel size Z,Y,X = 0.29×0.108×0.108 µm (from OME-TIFF metadata)`, and
+warns (staying in voxel units) when the file records none. `--voxel-size Z,Y,X`
+gives the spacing explicitly, in micrometres and the array's axis order (`Y,X`
+for a plane); it takes precedence over the metadata and over a config
+`voxel_size`, which in turn wins over the metadata. Without either flag the fit
+stays in voxel units and, when the file records an ANISOTROPIC spacing, prints a
+one-line hint to pass `--physical`. A physical fit stamps `fitting/voxel_size`,
+`voxel_unit`, `voxel_size_source` and `physical_coordinates` (every CLI fit
+stamps the last, `false` in voxel units), and names its axes with the unit
+(`dimension_metadata` `{"name": "z", "unit": "um"}`, ...), so `convert` builds
+µm scene dimensions in the image orientation and the scale bar reads in µm.
+With `--tiling content`, physical output needs `-j 1`. An `output_space: voxel`
+in `--config` keeps the output in voxel units even with `--voxel-size` (the
+spacing still shapes the fit and is recorded, with `physical_coordinates:
+false`); `--physical` refuses that combination.
+
+`--region z0:z1,y0:y1,x0:x1` fits a crop: numpy-style half-open voxel spans of
+the loaded volume in array order, where an empty span or `:` keeps the whole
+axis and `100:` / `:64` leave one side open (no steps, no negative indices). A
+zarr crop is read lazily; a TIFF/NPY is read whole and then cropped. The splats
+are translated by the crop's start (× the voxel size for a physical fit), so
+their centers are in **full-volume coordinates** and a crop overlays the whole
+(convert with `--no-center` to keep that placement in the scene).
+`fitting/source_region` records `[[start, stop], ...]`; `fitting/source_shape`
+is the crop's shape, so a reader rendering onto the crop's own grid subtracts
+the region start first. Every tiling mode and `-j N` accept it (the workers read
+the same crop; the offset is applied once, at the merged save), except a
+hand-run `--tile k/M`, which refuses `--region`. The internal
+`--tile-region` worker handoff is a different thing — one apodized tile of a
+grid over the full volume — and cannot be combined with `--region`.
+
+**Presets:** `draft` (fast preview), `standard` (balanced), `hifi` (high quality), `ultra` (max quality). With no `--preset`, `fit` uses `standard` (5000 iterations with early stopping); a `--config` without `--preset` layers on top of `standard`. The Python `fit_gaussian_splats` keeps its own signature defaults (1000 iterations). Every preset also stops on relative progress (`early_stop_rel_tol: 0.001`): a fit ends once its best loss improved by less than 0.1% over the `early_stop_patience` window, instead of running out its budget on improvements of a few parts per million. On four test volumes this made `fit` 1.0-3.2x and `cal` 1.0-7.3x faster; K\* under the default `psnr_foreground` criterion was unchanged (on a flat curve the `psnr_minmax` K\* moved) and foreground PSNR losses were at most 0.10 dB. `early_stop_rel_tol: null` in a `--config` restores the plain rule. The paper's Noise2Self tables use the Python API and are unchanged; to reproduce the CLI recipe timings in the consumer-GPU and tiled-fitting supplementary documents, set `early_stop_rel_tol: null`. `--lr`, `--loss`, `--seed-method`, `--downscale`, `--cull-retention` and `--reseed-sigma` are listed under **Advanced** in `fit --help`.
 
 `--cull-retention` removes, after fitting, the weakest splats that together contribute less than `(1 - value)` of the total amplitude. Every preset uses `0.999` (near-lossless), as does `--tiling content`; `0` keeps every splat. An aggressive `0.95` drops the bottom 5% of cumulative amplitude, and on a sparse, heavy-tailed volume that can be most of the splats. A `--tile k/M` worker applies the cull to its own tile, and `batch-fit` does the same before merging, so `--flat` approximates rather than exactly matches one global cull over the merged splats. The fit summary reports the compression of the SAVED (post-cull) store, and its quality: a whole-volume fit and a `--progressive` fit re-score the culled splats, so the stored `psnr_db` (and, for a whole-volume fit, SSIM/MSE/foreground PSNR) describe the saved model, with the pre-cull line printed separately and labelled. Two scores stay pre-cull by design: a progressive fit's per-pass ladder (`pass_psnrs`), and on a tiled partition each part's own tile score; the merged whole-volume score of a tiled fit is measured on the saved set. If a re-score fails, one warning is printed, the pre-cull score stands, and the reason is recorded as `quality_error`.
 
-`--min-extent` (default `0.6`; `0` keeps everything) drops, after the fit and before `--cull-retention`, the sub-voxel "specks" that relocation leaves near its 0.5-voxel reseed size: every splat whose geometric-mean spatial sigma is below that many fitted voxels (a `voxel_size` / `--downscale` is undone first; a stacked time/channel axis is ignored). Measured on nine fits it removed 8-70% of the splats for a held-out PSNR change within -0.07 dB (+0.40 dB on a Tribolium light-sheet stack). If pruning would remove more than 2% of the fitted brightness (typical after a high `--floor`, where it removed 4.3-15%), that fit, tile or box keeps its splats, prints one note and records `min_extent_skipped`; the threshold is the config/YAML key `min_extent_max_mass_share`. The fit prints the removed count and brightness share, stores them as `min_extent_removed` / `min_extent_removed_mass_share`, and re-scores the saved set, so the stored quality covers the pruning. Tiles and content boxes prune their own splats (a `-j N` parent forwards an explicit value to its workers; `batch-fit run/submit` take `--min-extent` / `--reseed-sigma` too) and the merge sums the record. `gsplat cal` always measures with `min_extent=0`, so K\* is an unpruned count. `--reseed-sigma` warns when relocation is off (e.g. `--progressive`). `--reseed-sigma` (Advanced; default 0.5) is the opt-in alternative that avoids the specks at the source: 0.75-1.0 left none and fitted up to 2x faster, moving held-out PSNR -0.02 to +0.41 dB. Both are also YAML keys (`min_extent`, `relocation_reseed_sigma_vox`) and appear in `--dump-config`.
+`--min-extent` (default `0.6`; `0` keeps everything) drops, after the fit and before `--cull-retention`, the sub-voxel "specks" that relocation leaves near its 0.5-voxel reseed size: every splat whose geometric-mean spatial sigma is below that many fitted voxels (a `voxel_size` / `--downscale` is undone first; a stacked time/channel axis is ignored). Measured on nine fits it removed 8-70% of the splats for a held-out PSNR change within -0.07 dB (+0.40 dB on a Tribolium light-sheet stack). On diffraction-limited FISH puncta (EASI-FISH crops at pyramid levels 0 and 1, 1,496 and 398 detected spots, `--seeds 30000`) it removed 9% and 6% of the splats, kept spot recall at 0.98 and 1.00 (0.99 and 1.00 unpruned) and cost 0.1 and 1.0 dB of foreground PSNR against the noisy source; at level 1, 92% of the removed specks sat more than 1.5 voxels from any detected spot. For spot-level measurements `--min-extent 0` keeps the remainder. If pruning would remove more than 2% of the fitted brightness (typical after a high `--floor`, where it removed 4.3-15%), that fit, tile or box keeps its splats, prints one note and records `min_extent_skipped`; the threshold is the config/YAML key `min_extent_max_mass_share`. The fit prints the removed count and brightness share, stores them as `min_extent_removed` / `min_extent_removed_mass_share`, and re-scores the saved set, so the stored quality covers the pruning. Tiles and content boxes prune their own splats (a `-j N` parent forwards an explicit value to its workers; `batch-fit run/submit` take `--min-extent` / `--reseed-sigma` too) and the merge sums the record. `gsplat cal` always measures with `min_extent=0`, so K\* is an unpruned count. `--reseed-sigma` warns when relocation is off (e.g. `--progressive`). `--reseed-sigma` (Advanced; default 0.5) is the opt-in alternative that avoids the specks at the source: 0.75-1.0 left none and fitted up to 2x faster, moving held-out PSNR -0.02 to +0.41 dB. Both are also YAML keys (`min_extent`, `relocation_reseed_sigma_vox`) and appear in `--dump-config`.
 
 `--quiet` drops the fit narration but still prints the one-line `Fitting backend: …` summary (model class + kernel backend), so a silent fall back to the slow PyTorch renderer is visible; quiet inner fits (`cal`, content boxes) print it once per process. A content-tiled fit (`--tiling content`) quiets its inner box fits (no per-box fit tree; each distinct warning, such as the CPU-fallback ones, is shown once for the run) and prints one progress stream instead: a start line per box (zero-based `--plan-box` number, one-based position in the run, budget), iteration lines at 25/50/75% of each box, and a completion line with kept splats, the box PSNR (on its padded crop), elapsed time and a budget-weighted ETA. `-j N` prints the completion (or FAILED) line per finished worker.
+
+On the CPU (`--device cpu`, or no GPU), a 3D fit runs on fused numba kernels (`Model class: GaussianSplatModelCPUNative`; in the `gsplats` extra, compiled on first use and cached) on the physical cores; 2D and 4D+ CPU fits, or a 3D fit without numba, use the PyTorch renderer. `fit` and `cal` also widen torch's own thread count to `min(physical cores, 8)` when it is still on one thread (as under the `hatch run` pin) and print `CPU: using N threads`. `--tile`/`--plan-box` workers skip automatic widening, but a parent-provided `LUXAR_CPU_THREADS` share sets torch's count there too. `LUXAR_CPU_THREADS=N` sets both counts (`0` leaves torch alone) and `LUXAR_CPU_BACKEND=auto|native|torch` forces the renderer. What to expect and how to keep a CPU fit short: "Fitting on a CPU or a Mac" in [`gsplats/README.md`](../gsplats/README.md#fitting-on-a-cpu-or-a-mac).
 
 `--floor specimen` is the opt-in specimen-in-medium mode. It first excludes the bright signal class with a full-distribution Otsu cut, then splits the remaining background band and accepts its upper mode only when both background populations are compact; otherwise it falls back to `auto`. The chosen branch is recorded as `floor_strategy` next to the applied `floor`. `batch-fit` rejects this spec because its one-level-across-time reduction cannot safely combine selected and fallback slices; calibrate a representative volume and pass the measured numeric floor instead.
 
@@ -351,10 +443,57 @@ A folded tile is the one case where a tile is **larger** than `--tile-size`: the
 Convert .gsplats.zarr to a Luxar scene for the web viewer.
 ```bash
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --center
-luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --scale-intensity 0.1
+luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --display-gain 1e-4  # brightness only; data untouched
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --view xz        # face the XZ plane
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --dim-order x,y,z  # opt out
+luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --target-brightness 3  # brighter
+luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --no-auto-exposure     # legacy
 ```
+
+**True data units.** The scene keeps the fit's amplitudes exactly as the
+`.gsplats.zarr` stores them — source data units above the subtracted background
+(detector counts for an integer source) — so the viewer's Layers panel reads in
+the data's own units: the **Splat amplitude** window's tooltip gives the unit
+(e.g. "counts above background") and the data's own range with its floor
+(`source_data_range`, "Data range: 0 – 12,000 (floor 100)").
+A splat amplitude is one Gaussian's PEAK; overlapping splats sum to the data
+value, so the window sits below the data range. Brightness is a separate
+per-node `display_gain` attr (the panel's **Brightness** control), which the
+viewer multiplies into the emission (and the volumetric density) but not the
+colormap lookup, so the render is the one rescaling the data would have given.
+Convert stamps `amplitude_unit` (`counts` / `data units`, `above background`
+when a floor was subtracted, `above minimum` when only the source minimum was,
+`a.u.` for a store with no recorded normalisation basis), `amplitude_offset`
+(that level, possibly negative for float data) and `source_data_range`; see `docs/guides/user/LUXAR_ZARR_FORMAT.md`
+§ "Amplitude units and display gain". `--intensity` on a colormapped node is
+restated as the matching data-unit window (`I × gain`).
+
+**Auto exposure (default).** Additive blending sums every splat along the view
+ray, so normalizing each splat's amplitude (p99.9 → 1) still opens a dense fit as
+a saturated white blob. Convert predicts the opening view's per-pixel sum down
+its view axis (each splat's projected footprint, LUT/colour gain and opacity
+included, through the colour window the compiler will stamp;
+`luxar.gsplats.exposure`) and dims the display gain so its p99.9 equals
+`--target-brightness` — default 2.0 under ACES/AgX/Neutral/Reinhard/Cineon (and
+when `--tone-mapping` is unset), 0.9 under `None`/`Linear`, which clip at 1.0 —
+printing e.g. `Exposure:
+display gain 2.4e-4 (×0.31 below per-splat normalisation) so the default view isn't saturated (projected
+p99.9 6.4 → 2.0; --no-auto-exposure to disable)`. The two side views (orbit
+90°) and up to four more evenly spaced timepoints of the first hidden discrete
+axis are predicted too and capped at 4× the target (`SIDE_CAP`), so a thin slab
+seen face-on, or a timelapse that brightens later, is dimmed further and the
+line says "capped by side views" / "capped by other timepoints". Hidden axes are
+weighted where the viewer opens them (a discrete axis at its minimum — a
+timelapse at its first timepoint — a continuous one at its centre). It never
+brightens, applies only to `additive`/`luminous` blending, and works on
+partition/LOD stores; 10M splats take ~7 s and ~1 GB (the set is subsampled to
+2M before any covariance is built). The gain (per-splat normalization × the
+exposure factor) is stamped as `display_gain`, with
+`amplitude_normalization_mode="projected"` and the prediction; the stored
+amplitudes are the fit's own and the `.gsplats.zarr` is untouched.
+`--no-auto-exposure` makes the gain the legacy per-splat normalization alone
+(mode `"per_splat"`, the legacy render); `--display-gain S` (old name `--scale-intensity`, unlike `gsplat transform --scale-intensity`, which edits the data) makes it exactly
+`S` (mode `"manual"`) on any tree shape, partitions included.
 
 Fitted image volumes open in the **image convention** (the Fiji/napari view: x
 right, y down, looking along +z through the stack). A fit's center columns are
@@ -389,8 +528,10 @@ units). Without `--shape`, a fit renders on its own source grid
 (`fitting/source_shape`), so the output lines up voxel-for-voxel with the fitted
 volume (not a stacked timelapse, whose `source_shape` lists time first, and only
 when most centers land inside it); any other store renders on the bounding box of its centers starting at
-the lowest center (the origin is printed). The render is background-relative —
-see `compare` for scoring it.
+the lowest center (the origin is printed). The render is background-relative:
+it prints the level the fit subtracted (`image_min`, in source units), which
+must be added back before comparing with the raw volume. See `compare` for
+scoring it.
 ```bash
 luxar gsplat render fitted.gsplats.zarr rendered.npy                      # source grid
 luxar gsplat render fitted.gsplats.zarr rendered.npy --shape 128,128,128
@@ -398,8 +539,14 @@ luxar gsplat render fitted.gsplats.zarr rendered.tiff --device cuda
 ```
 
 #### `luxar gsplat merge`
-Combine multiple flat gsplat datasets (concatenation, new dimension, or channel
-colors). Partition/nested inputs must be flattened first with `luxar gsplat flatten`.
+Combine multiple gsplat datasets (concatenation, new dimension, or channel
+colors). A partition/nested input — the default output of a tiled `fit` — is
+flattened to one leaf first by the same streaming code `luxar gsplat flatten`
+runs, staged in a temporary store beside the output (in the system temp
+directory when the output's directory does not exist yet) — one uncompressed
+flat copy of that input on disk while it is read — and the merge prints a line
+naming it. Whether an input is flat is read from its group attrs, so a flat
+input is loaded once.
 ```bash
 luxar gsplat merge a.zarr b.zarr -o merged.zarr
 luxar gsplat merge t0.zarr t1.zarr t2.zarr -o 4d.zarr --as-dimension --values 0,1,2
@@ -474,9 +621,12 @@ Compare reconstruction quality against a reference volume (PSNR, SSIM, MSE, rela
 What it reconciles before scoring:
 
 - **Basis.** The render is background-relative, so the reference is shifted by the fit's `image_min` (`--image-min` for stores that predate the stamp).
-- **Grid.** A physical-output fit's centers are divided by the stored `voxel_size` so they land on the reference's voxel grid (`--voxel-size` for an unstamped physical store; `1` disables). A store stamped `physical_coordinates: false` is left alone. A `--region` crop fit (`fitting/source_region`, crop-shaped `source_shape`, full-volume centers) is scored with the crop start subtracted when the reference is the crop, and in full-volume coordinates otherwise; `render` renders the crop. A warning names the cause when most centers miss the grid. `--at-fit-resolution` scores a `--downscale` fit on the grid it was fitted on: the reference is decimated the same way (anti-aliased, strided, factors recovered from `fitted_shape`/`source_shape`).
-- **Peak.** The headline `PSNR` uses a robust peak, reference p99.99 minus the floor (the fit-basis minimum), which one hot pixel cannot move (on a volume of at least 10,000 voxels; below that the nearest-rank p99.99 is the maximum). `PSNR (full range)` is the classical `max - min` figure, the one stored fits record as `psnr_db`. Both are printed, and the JSON carries `psnr_robust_db` (headline, named by `psnr_headline`), `psnr_db` (full range), the foreground pair `foreground_psnr_robust_db` / `foreground_psnr_db`, and both peaks (`robust_data_range`, `data_range`). SSIM uses the full range.
+- **Grid.** A physical-output fit's centers are divided by the stored `voxel_size` so they land on the reference's voxel grid (`--voxel-size` for an unstamped physical store; `1` disables). A store stamped `physical_coordinates: false` is left alone. A `--region` crop fit (`fitting/source_region`, crop-shaped `source_shape`, full-volume centers) is scored on the region it fitted: a reference of the crop's shape is scored as is, and a full source volume is cropped to the region first (JSON `scored_region`), so the default foreground mask is the one the fit stamped. Outside the region the fit saw nothing, so scoring there counts every structure it was never asked to model as error; `--whole-volume` does that anyway, in full-volume coordinates. A full-volume `--mask` is cropped with the reference, the compression ratio is taken against the region (the fit's own stamp), and JSON `fitted_region` names the region under `--whole-volume` too. `render` renders the crop. A warning names the cause when most centers miss the grid. `--at-fit-resolution` scores a `--downscale` fit on the grid it was fitted on: the reference is decimated the same way (anti-aliased, strided, factors recovered from `fitted_shape`/`source_shape`).
+- **Peak.** The headline `PSNR` uses a robust peak, reference p99.99 minus the floor (the fit-basis minimum), which one hot pixel cannot move (on a volume of at least 10,000 voxels; below that the nearest-rank p99.99 is the maximum). `PSNR (full range)` is the classical `max - min` figure, the one stored fits record as `psnr_db`. Both are printed, and the JSON carries `psnr_robust_db` (headline, named by `psnr_headline`), `psnr_db` (full range), the foreground pair `foreground_psnr_robust_db` / `foreground_psnr_db`, and both peaks (`robust_data_range`, `data_range`). SSIM follows the same convention: `SSIM` / `SSIM foreground` are on the robust peak (JSON `ssim_robust` / `foreground_ssim_robust`, named by `ssim_headline`), with the full-range figures labelled beside them (`ssim` / `foreground_ssim`, the meaning those keys always had). The full range matters more for SSIM than for PSNR: its constants `(0.01 L)^2` and `(0.03 L)^2` scale with the range `L`, so a full range set by one hot pixel swamps the real local variance and pushes SSIM towards 1 for almost any reconstruction (on a nuclear-stain stack with maximum 2002 and p99.99 524, one fit read whole-volume SSIM 0.95 on the full range and about 0.20 on the robust range).
 - **Foreground.** Foreground PSNR and SSIM are taken over a smoothed-Otsu mask by default (one tent blur, then Otsu, as calibration does, with the Otsu histogram stopped at the reference's p99.99 so a hot pixel cannot push every real structure below the threshold). It is the same definition the fit summary stamps. `--mask <file>` (a volume of the reference's shape, voxels > 0) or `--fg-threshold <value>` (in the reference's raw units) override it; JSON `foreground_method` says which applied.
+- **Noise ceiling.** Below the foreground PSNR, `Noise ceiling` is the foreground PSNR a perfect noise-free model would score against this noisy reference, `20 log10(robust peak / sigma)`, with sigma the RMS noise measured in the foreground (`luxar.gsplats.calibration.noise_floor.estimate_masked_noise`: the in-plane Haar HH-band MAD, pooled over local-intensity bins because shot noise grows with the signal). `Verdict` places the score against it: within 1 dB below is "at the noise floor" (model error at most ~half the noise sigma), down to 3 dB below "near" it (error at most one sigma), further below "signal left to fit". A score above the ceiling is never called definitively: 1-3 dB above reads "ambiguous" (the model may be reproducing noise, or the reference has structure the estimate counts as noise), and more than 3 dB above is "undetermined". Structure near the voxel scale (spots at the PSF size) reads as noise, so the same sigma is also measured on 2x2-averaged planes; if the two disagree by more than 30% (`noise_scale_ratio` > 1.3) the finest band is not white (that structure, or spatially correlated noise from a deconvolved, upsampled or `--at-fit-resolution` downscaled reference), the ceiling is printed as UNRELIABLE and the verdict is "undetermined". By design this withholds the verdict on many clean, high-SNR volumes. The check is blind to structure finer than ~0.7 voxel in-plane (sparse undersampled puncta, hot pixels), which inflates sigma while keeping the ratio near 1; that is why an above-ceiling score is never taken as proof of fitted noise. On A549 (Cell Tracking Challenge, `01/t000.tif`; scale ratio 1.16) the ceiling is 20.9 dB, against 21.0 dB for the raw data scored against a lightly blurred copy of itself; a K=1000 fit scores 20.0 dB (at the floor, model error ~0.47 sigma) and a K=10000 fit 22.9 dB (2.0 dB above: ambiguous). JSON: `noise_sigma`, `noise_scale_ratio`, `noise_ceiling_reliable`, `foreground_psnr_noise_ceiling_db`, `foreground_psnr_vs_noise_ceiling_db`, `model_error_over_noise_sigma`, `noise_verdict`. It assumes noise independent between neighbouring voxels: correlated noise (a deconvolved or upsampled reference) reads low.
+
+  *Reading the verdict.* It reports a measurement (the gap between the foreground PSNR and an ESTIMATED ceiling) and what that gap may mean; it is not a pass mark. Three cases deserve care. (1) "At" or "near the noise floor by this estimate" assumes the finest in-plane band is noise. Real texture at that scale (chromatin, fine processes, neuropil) is counted as noise too, which lowers the ceiling, so a fit that smoothed the texture away can still read as near it; the verdict says so and asks you to confirm on slices. (2) "Undetermined: N dB above the estimated ceiling" (over 3 dB; 1-3 dB above reads "ambiguous") means the residual is smaller than the estimated noise by more than the estimate's own error explains. That has two readings the command cannot tell apart: the model is reproducing noise (more splats than the signal needs; held-out scoring with `gsplat cal` tests this), or the reference has fine structure the estimate counts as noise. (3) "Undetermined: the noise estimate failed its scale check" means no ceiling is trusted at all, for the reasons above. The `Noise floor` / `PSNR ceiling` that `cal` prints is a different estimate (a median of several whole-volume estimators on the full-range peak, background voxels included) and can differ from this ceiling by tens of dB; judge a fit's foreground PSNR against `compare`'s.
 - **Input selection.** `--axes`, `--array-key`, `--channel`, `--timepoint` mirror `gsplat fit`, so the reference is the volume that was fitted. A `--channel`/`--timepoint` given for a TIFF/NumPy input without `--axes` is an error (it used to be ignored silently), here and in `fit`/`cal`.
 
 Memory: full-volume reductions are streamed and SSIM is tiled on every device, so a 256x512x512 float32 comparison on CPU peaked at 3.2 GB max RSS (1.5 GB macOS peak footprint) in our measurement on macOS. `-q` prints nothing (errors still reach stderr).
@@ -492,14 +642,80 @@ luxar gsplat compare fitted.gsplats.zarr original.tiff --at-fit-resolution
 #### `luxar gsplat cal`
 Calibrate the splat count `K` via blind-spot cross-validation. Sweeps `K`, identifies the held-out PSNR peak (`K*`) using the manuscript's Noise2Self protocol (5% donut-median masking), and reports the noise floor. Defaults to the `n2s` fit preset so the held-out curve has enough optimizer budget to reach the overfit regime.
 ```bash
-luxar gsplat cal volume.tiff cal.json                            # 10-point sweep, [1K, 512K]
+luxar gsplat cal volume.tiff cal.json                            # 10 points, bounds from the foreground
 luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000  # Faster sweep
 luxar gsplat cal volume.zarr cal.json --k-grid '1000,4000,16000,64000,256000'  # Explicit
 luxar gsplat cal volume.tiff cal.json --pdf cal_report.pdf       # Multi-page PDF report
 luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomial K spacing
+luxar gsplat cal stack.ome.tif cal.json --physical               # K* for a `fit --physical`
+luxar gsplat cal big.zarr cal.json --region 40:120,:,1024:2048   # K* for `fit --region` (same spans)
 ```
 
-**Options**: `--k-grid` (explicit comma-separated K values), `--n-grid` (default 10), `--k-min` (default 1000), `--k-max` (default 512000), `--progression` (exp/power), `--power`, `--mask-seed`, `--mask-fraction` (default 0.05), `--preset` (default n2s), `--config`, `--floor` (background floor / DC-offset suppression, default `auto` — K* is measured on floor-suppressed data, matching `fit`; pass `none` for the legacy hard-min behavior), `--device/-d`, `--k-star-metric` (psnr_minmax/psnr_foreground/psnr_fg_weighted/gain), `--fg-bg-ratio` (default 1, equal total foreground/background weight for `psnr_fg_weighted`), `--auto-region/--no-auto-region` + `--region-size`/`--region-strategy` (calibrate on a content-rich sub-region), `--feature-metric`, `--saturation-exponent`, `--rd-model/--no-rd-model`, `--fit-exponent`/`--exponent-scales` (measure the saturation exponent alpha instead of assuming the default), `--pdf` (multi-page PDF report), `--keep-fits` (persist per-K fits), `--quiet/-q`, plus volume-loader pass-through (`--channel/-c`, `--timepoint`, `--array-key`, `--axes`). For sparse or deconvolved volumes, prefer `psnr_fg_weighted`: it balances signal fidelity against background haze. `gain` remains a useful reported diagnostic, but its K* is identical to `psnr_minmax` because the predict-zero baseline is constant across K.
+Sweep defaults (details and measurements: the `luxar-gsplat-pipeline` skill's calibration-sweep reference):
+with no `--k-grid`/`--k-min`/`--k-max` the bounds come from the volume (`k_max` =
+foreground voxels / 2, clamped to [4000, 512000]; `k_min` = `k_max` / 512; recorded
+under `sweep.auto_grid`); the sweep stops after 2 points without a > 0.1 dB gain
+on the K\*-metric, or at once when a point falls ≥ 0.2 dB below the best, but
+only once the measured curve spans the 0.3 dB knee margin and is not still
+climbing (`--no-early-stop`); a K\* on the smallest point that is also the
+curve's best adds up to 2 cheaper points below it, once (`--no-extend-below`); and K\* is chosen on the
+FOREGROUND held-out curve (`--k-star-metric psnr_foreground`; the whole-volume
+`psnr_minmax` K\* is still reported). Each point prints elapsed time and an ETA,
+and `cal.json` is rewritten after every point (`status: partial`); Ctrl-C keeps
+the measured points (`status: interrupted`, exit 130) and prints the best-so-far
+K\*. PSNRs print on the robust peak (p99.99 - floor), as `fit`/`compare` report
+them; `cal.json` also keeps the full-range curves. K\* is a SEEDING budget: the
+table's `stored` column and the closing line say how many splats `fit --seeds K`
+keeps after its default speck pruning + cull (estimated from cal's own fits). A
+`--region`/`--auto-region` K\* is a crop budget; `cal` also prints (and stores as
+`whole_volume_seeds`) a whole-input `--seeds` budget, the content planner's density
+transfer summed over crop-sized boxes.
+
+`--voxel-size` / `--physical` resolve the spacing exactly as `fit` does. Each K is
+fitted WITH that spacing (it shapes the fit: anisotropic initial sigma,
+physical-space sigma bounds), so K\* is measured for the fit `--physical` will
+run, but the splats stay on the voxel grid (`output_space: voxel`) because the
+held-out score renders them there. K\* is a splat count either way. `--region`
+calibrates on a crop, so its K\* is the budget for that crop: pass it to
+`fit --region` with the same spans (or transfer the density with `fit --tiling
+content --cal`). It excludes `--auto-region`. `cal.json` records the spacing and
+crop under `input_frame`.
+
+`--pdf` needs matplotlib (`pip install matplotlib`, or the `luxar[demos]`
+extra); `cal` checks for it before the sweep and exits at once when it is
+missing. The report's slice page renders the per-K fits, so `--pdf` without
+`--keep-fits` keeps them in a temporary directory beside `cal.json` (said
+before the sweep; a run killed without cleanup leaves it there, not in `/tmp`)
+and deletes them once the report is written. Rendering that page re-renders
+three fits on the CPU and is not free: about 1.8 min for a 37 Mvox volume at
+K=64,000; `--keep-fits DIR` keeps them and
+records their paths in `cal.json`. `--keep-fits` alone needs nothing extra.
+Every PSNR in the report is on the same robust peak (p99.99 - floor) as the
+terminal table, and the axes say so.
+
+The summary's noise line is the RMS noise of the floor-subtracted volume (the
+in-plane Haar band binned by local intensity, the estimator `compare` uses
+inside its mask) and the held-out PSNR ceiling it implies, on the table's
+robust-peak basis. Shot noise makes the bright voxels dominate a held-out MSE,
+so the median-voxel ensemble `noise_floor.sigma_hat` (still in `cal.json`)
+reads the quiet background and puts the ceiling far too high on fluorescence.
+When that estimate passes its own scale check and the best held-out score sits within
+0.3 dB of the ceiling (either side), the summary adds an "At the noise ceiling" line:
+on held-out voxels more K mostly fits noise. Both figures are whole-volume, so the
+line points at the fg held-out column, where detail can still improve (on the Allen
+hiPSC stack the whole-volume score is at the ceiling while the foreground still
+gains 0.07 dB from K = 107635 to 512000). A failed scale check prints the "may read
+low" caveat instead and never the note.
+A long grid point prints an in-fit progress line at most every 30 s.
+
+On a CPU, `cal --preset standard --n-grid 5` is the quicker first look: about
+0.5-0.8x of the default sweep's total iterations (and so of its CPU time) on four
+test volumes, with K\* one coarse grid step from the default's on a peaked curve;
+on a creeping curve read the knee instead. `--preset draft` under-trains the top
+point and is not safe for K\*. Measurements: the pipeline skill's
+calibration-sweep reference.
+
+**Options**: `--k-grid` (explicit comma-separated K values), `--n-grid` (default 10), `--k-min`/`--k-max` (default: from the volume, above), `--early-stop/--no-early-stop`, `--extend-below/--no-extend-below`, `--progression` (exp/power), `--power`, `--mask-seed`, `--mask-fraction` (default 0.05), `--preset` (default n2s), `--config`, `--floor` (background floor / DC-offset suppression, default `auto` — K* is measured on floor-suppressed data, matching `fit`; pass `none` for the legacy hard-min behavior), `--device/-d`, `--k-star-metric` (psnr_foreground default / psnr_minmax / psnr_fg_weighted / gain), `--fg-bg-ratio` (default 1, equal total foreground/background weight for `psnr_fg_weighted`), `--auto-region/--no-auto-region` + `--region-size`/`--region-strategy` (calibrate on a content-rich sub-region), `--feature-metric`, `--saturation-exponent`, `--rd-model/--no-rd-model`, `--fit-exponent`/`--exponent-scales` (measure the saturation exponent alpha instead of assuming the default), `--pdf` (multi-page PDF report), `--keep-fits` (persist per-K fits), `--quiet/-q`, plus volume-loader pass-through (`--channel/-c`, `--timepoint`, `--array-key`, `--axes`). For sparse or deconvolved volumes, prefer `psnr_fg_weighted`: it balances signal fidelity against background haze. `gain` remains a useful reported diagnostic, but its K* is identical to `psnr_minmax` because the predict-zero baseline is constant across K.
 
 #### `luxar gsplat migrate-format`
 Convert a legacy `.gsplats.zarr` layout to the current node-tree format. Five input shapes are auto-detected: v1.0 (single flat splat set), v1.1 (multi-LOD additive `/splats/lod_<i>/` subgroups), a pre-v2.0 substitutive directory (`manifest.json` + `level_<i>.gsplats.zarr`), the v2.0 `substitutive_<s>/additive_<a>/` matrix, and a v3.0/v3.1 store whose `kind=lod` groups still carry the pre-v3.2 `pixel_size` selector attrs (rewritten as `selector: "screen-area"` + derived per-child `coverage_fraction`). All migrate to a single current-format (v3.4) `.gsplats.zarr`. By default the output adopts the AUTO encoding policy, so legacy float32 Cholesky factors are re-encoded as the split diagonal/off-diagonal arrays with certified uint8 per-column quantization (the encode-time covariance certificate escalates to uint16 when the measured Σ error demands it); pass `--lossless` to keep them float32 for archival fidelity.
@@ -644,7 +860,7 @@ luxar gsplat benchmark --list                         # Show profiled GPUs
 The `batch-fit` group fits a whole nD dataset at scale (the scaled-up sibling of `gsplat fit`), either **locally across GPUs** (`run`) or on a **Slurm cluster** (`submit`). Both plan the decomposition once (uniform tiles or a shared content box plan over T×C) and then run a memory-safe streaming merge to a single `kind=partition`. `status`/`validate`/`merge`/`cancel` are shared. Content planning rejects on-the-fly `--denoise` and `--progressive` because content-box workers do not implement them; `batch-fit submit --preprocess` is the supported denoising route because it denoises to a store before the boxes fit. Output remains in voxel index space by default. Pass `--physical` to scale fitted centers, covariance, tile/box origins, partition split planes, and quality scoring with the selected NGFF `coordinateTransformations` spatial scale; an explicit `voxel_size` in `--config` wins. Merged stores record scaled spatial axes at scale 1 and retain the NGFF unit only when it supplied the spacing, so converted scenes can label the scale bar honestly. Planning rejects `--physical` when no spacing is available, when the config requests `output_space: voxel`, or when `--merge-refine volume` would crop a physical-space part on the source voxel grid.
 
 #### `luxar gsplat batch-fit run`
-Fit a whole timelapse **locally** across multiple GPUs (no Slurm), then merge. Workers are pinned per GPU via `CUDA_VISIBLE_DEVICES`; automatic concurrency accounts for GPU memory and shared host RAM/CPU limits. Resumable — re-running skips tiles already on disk.
+Fit a whole timelapse **locally** across multiple GPUs (no Slurm), then merge. Workers are pinned per GPU via `CUDA_VISIBLE_DEVICES`; automatic concurrency accounts for GPU memory and shared host RAM/CPU limits; on CUDA integrated GPUs that share host memory (e.g. GB10/Jetson) device and host cost per worker come out of one pool (Apple MPS unchanged), sized from `MemAvailable` at ~3 GB + 64 B per task voxel. Each tile is promoted to its final name as soon as its worker finishes, so `batch-fit status` counts it and an interrupted run resumes from it. Resumable — re-running skips tiles already on disk.
 ```bash
 luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256                  # uniform, every GPU
 luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256 --physical       # NGFF physical coordinates

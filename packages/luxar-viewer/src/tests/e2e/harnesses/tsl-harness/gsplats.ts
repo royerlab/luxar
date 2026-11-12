@@ -239,6 +239,7 @@ function gsplatPickNeutralUniforms(): Record<string, THREE.IUniform> {
     ...pickVisibilityUniforms(),
     uProjectionMode: { value: 1 },
     uRayIntegralFactor: { value: 2.433 },
+    uDisplayGain: { value: 1.0 },
     uCoverageTruncate: { value: 1.5 },
   };
 }
@@ -297,6 +298,9 @@ function buildCubeCaptureGSplatEntry(buildCamera: () => THREE.Camera): RegistryE
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
+      // Declared in the GLSL vertex stage: an omitted uniform reads 0 there
+      // (black splats) while the TSL adapter defaults it to 1.
+      uDisplayGain: { value: 1.0 },
       uOffset: { value: 0.0 },
       uShiftC: { value: Math.exp(-0.5 * 9) },
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
@@ -336,6 +340,9 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
+      // Declared in the GLSL vertex stage: an omitted uniform reads 0 there
+      // (black splats) while the TSL adapter defaults it to 1.
+      uDisplayGain: { value: 1.0 },
       uOffset: { value: 0.0 },
       uShiftC: { value: Math.exp(-0.5 * 9) }, // exp(-T²/2) for T=3
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
@@ -376,6 +383,9 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
+      // Declared in the GLSL vertex stage: an omitted uniform reads 0 there
+      // (black splats) while the TSL adapter defaults it to 1.
+      uDisplayGain: { value: 1.0 },
       uOffset: { value: 0.0 },
       uShiftC: { value: Math.exp(-0.5 * 9) },
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
@@ -412,6 +422,9 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
+      // Declared in the GLSL vertex stage: an omitted uniform reads 0 there
+      // (black splats) while the TSL adapter defaults it to 1.
+      uDisplayGain: { value: 1.0 },
       uOffset: { value: 0.0 },
       uShiftC: { value: Math.exp(-0.5 * 9) },
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
@@ -449,6 +462,9 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
+      // Declared in the GLSL vertex stage: an omitted uniform reads 0 there
+      // (black splats) while the TSL adapter defaults it to 1.
+      uDisplayGain: { value: 1.0 },
       uOffset: { value: 0.0 },
       uShiftC: { value: Math.exp(-0.5 * 9) },
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
@@ -486,6 +502,9 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
+      // Declared in the GLSL vertex stage: an omitted uniform reads 0 there
+      // (black splats) while the TSL adapter defaults it to 1.
+      uDisplayGain: { value: 1.0 },
       uOffset: { value: 0.0 },
       uShiftC: { value: Math.exp(-0.5 * 9) },
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
@@ -522,6 +541,9 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 },
       uIntensity: { value: 1.0 },
+      // Declared in the GLSL vertex stage: an omitted uniform reads 0 there
+      // (black splats) while the TSL adapter defaults it to 1.
+      uDisplayGain: { value: 1.0 },
       uOffset: { value: 0.0 },
       uShiftC: { value: Math.exp(-0.5 * 9) },
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
@@ -560,6 +582,9 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 }, // gamma kept slow path; only no-GOG is exercised
       uIntensity: { value: 1.0 },
+      // Declared in the GLSL vertex stage: an omitted uniform reads 0 there
+      // (black splats) while the TSL adapter defaults it to 1.
+      uDisplayGain: { value: 1.0 },
       uOffset: { value: 0.0 },
       uShiftC: { value: Math.exp(-0.5 * 9) },
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
@@ -603,6 +628,9 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       uAbsorption: { value: 1.5 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
+      // Declared in the GLSL vertex stage: an omitted uniform reads 0 there
+      // (black splats) while the TSL adapter defaults it to 1.
+      uDisplayGain: { value: 1.0 },
       uOffset: { value: 0.0 },
       uShiftC: { value: Math.exp(-0.5 * 9) },
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
@@ -648,6 +676,9 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       uHasElementAlpha: { value: 1 }, // the gate under test
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
+      // Declared in the GLSL vertex stage: an omitted uniform reads 0 there
+      // (black splats) while the TSL adapter defaults it to 1.
+      uDisplayGain: { value: 1.0 },
       uOffset: { value: 0.0 },
       uShiftC: { value: Math.exp(-0.5 * 9) },
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
@@ -685,6 +716,9 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       uOpacity: { value: 0.6 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
+      // Declared in the GLSL vertex stage: an omitted uniform reads 0 there
+      // (black splats) while the TSL adapter defaults it to 1.
+      uDisplayGain: { value: 1.0 },
       uOffset: { value: 0.0 },
       uShiftC: { value: Math.exp(-0.5 * 9) },
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
@@ -719,6 +753,9 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       uOpacity: { value: 0.6 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
+      // Declared in the GLSL vertex stage: an omitted uniform reads 0 there
+      // (black splats) while the TSL adapter defaults it to 1.
+      uDisplayGain: { value: 1.0 },
       uOffset: { value: 0.0 },
       uShiftC: { value: Math.exp(-0.5 * 9) },
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
@@ -759,6 +796,9 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
+      // Declared in the GLSL vertex stage: an omitted uniform reads 0 there
+      // (black splats) while the TSL adapter defaults it to 1.
+      uDisplayGain: { value: 1.0 },
       uOffset: { value: 0.0 },
       uShiftC: { value: Math.exp(-0.5 * 9) },
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
@@ -798,6 +838,9 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
+      // Declared in the GLSL vertex stage: an omitted uniform reads 0 there
+      // (black splats) while the TSL adapter defaults it to 1.
+      uDisplayGain: { value: 1.0 },
       uOffset: { value: 0.0 },
       uShiftC: { value: Math.exp(-0.5 * 9) },
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
@@ -831,6 +874,9 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
+      // Declared in the GLSL vertex stage: an omitted uniform reads 0 there
+      // (black splats) while the TSL adapter defaults it to 1.
+      uDisplayGain: { value: 1.0 },
       uOffset: { value: 0.0 },
       uShiftC: { value: Math.exp(-0.5 * 9) },
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
@@ -843,6 +889,43 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
         useColormap: true,
         blendingMode: 'max', // matches uProjectionMode=1 (see `gsplat` variant note)
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildGSplatInstancedMesh,
+  },
+  // Display gain ≠ 1 (WP16): the gain scales the emitted amplitude on both
+  // backends while the colormap LUT still indexes the UN-gained amplitude.
+  'gsplat-display-gain': {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTexture() },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uCov2DDilation: { value: 0 }, // explicit: the TSL adapter falls back to production's 0.3
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uDisplayGain: { value: 0.37 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+      uColormapTex: { value: buildColormapTexture() },
+      uScalarMin: { value: 0.0 },
+      uScalarScale: { value: 0.5 },
+    }),
+    buildDefines: () => ({ USE_COLORMAP: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
+        useColormap: true,
+        blendingMode: 'max',
       }) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
@@ -893,6 +976,9 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
+      // Declared in the GLSL vertex stage: an omitted uniform reads 0 there
+      // (black splats) while the TSL adapter defaults it to 1.
+      uDisplayGain: { value: 1.0 },
       uOffset: { value: 0.0 },
       uShiftC: { value: Math.exp(-0.5 * 9) },
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },

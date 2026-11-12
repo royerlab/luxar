@@ -12,6 +12,7 @@ _PUBLISHED_STACKS = {
     "demo_gsplats_4d_celegans_tracking.py": "preprocessed",
     "demo_gsplats_4d_cell_tracking_challenge.py": "preprocessed",
     "demo_gsplats_4d_nexrad_supercell.py": "synthetic",
+    "demo_gsplats_4d_organoid_budding.py": "preprocessed",
     "demo_gsplats_4d_zebrafish_timelapse.py": "preprocessed",
 }
 _EXEMPT_STACKS = {

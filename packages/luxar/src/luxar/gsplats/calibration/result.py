@@ -43,7 +43,8 @@ class CalibrationResult:
     """PSNR over the whole volume against the original — for cross-run comparison."""
 
     full_ssim: List[float]
-    """SSIM over the whole volume against the original."""
+    """SSIM over the whole volume against the original, on the full range
+    (``max - min``); see ``full_ssim_robust`` for the robust-peak figure."""
 
     held_out_peak: HeldOutPeak
     """The recommended K* and curve type."""
@@ -94,7 +95,20 @@ class CalibrationResult:
     calibration_region: Optional[Dict[str, Any]] = None
     """Provenance when an auto-selected sub-region was calibrated (else None)."""
     original_volume_shape: Optional[List[int]] = None
-    """Shape of the full input before any region crop (disambiguates cropped PSNR)."""
+    """Shape of the loaded input before any ``--auto-region`` crop.
+
+    Disambiguates cropped PSNR. Under ``cal --region`` the load itself is
+    cropped, so this is the ``--region`` crop's shape (the full input is not read);
+    ``input_frame["source_region"]`` says where that crop sits in the input.
+    """
+    input_frame: Optional[Dict[str, Any]] = None
+    """The voxel spacing and ``--region`` crop the sweep ran on (``cal`` CLI).
+
+    Keys as in a fitted store's ``fitting/`` group: ``voxel_size``,
+    ``voxel_unit``, ``voxel_size_source``, ``physical_coordinates`` (always
+    false: calibration fits stay on the voxel grid) and ``source_region``.
+    ``None`` for a plain voxel-unit, whole-volume calibration.
+    """
     splat_density: Optional[Dict[str, Any]] = None
     """Transferable :class:`SplatDensity` (as dict) for the planner."""
     rd_model: Optional[Dict[str, Any]] = None
@@ -104,9 +118,110 @@ class CalibrationResult:
     exponent_fit: Optional[Dict[str, Any]] = None
     """Multi-scale :class:`ExponentFit` (as dict) when ``cal --fit-exponent`` ran;
     its ``alpha`` is also written into ``splat_density.saturation_exponent``."""
+    sweep: Optional[Dict[str, Any]] = None
+    """What the sweep did beyond the grid it was handed (``SweepControl`` as a
+    dict): whether early stopping ended it and which K were skipped, the points
+    added below the grid when K* landed on its bottom edge, and where the grid
+    came from (explicit / bounds / data-derived ``auto``, with provenance).
+    ``None`` when the caller ran a plain fixed grid."""
+    status: str = "complete"
+    """``complete``, ``partial`` (a per-point checkpoint written while the sweep
+    runs — what a crash leaves behind) or ``interrupted`` (Ctrl-C; the points
+    measured so far)."""
+    held_out_psnr_robust_db: List[float] = field(default_factory=list)
+    """Held-out PSNR on the ROBUST peak (``p99.99 - min`` of the calibrated
+    volume) — the convention ``fit`` and ``compare`` headline. A constant offset
+    from ``held_out_psnr_db`` (the full-range ``max - min`` peak), so it selects
+    the same K*."""
+    held_out_psnr_fg_robust_db: List[float] = field(default_factory=list)
+    """Foreground held-out PSNR on the robust peak (offset of
+    ``held_out_psnr_fg_db``)."""
+    data_range: float = float("nan")
+    """Full-range peak (``max - min``) of the calibrated volume."""
+    robust_data_range: float = float("nan")
+    """Robust peak (``p99.99 - min``) of the calibrated volume."""
+    full_ssim_robust: List[float] = field(default_factory=list)
+    """Whole-volume SSIM on the ROBUST peak, the SSIM ``fit`` / ``compare``
+    headline. ``full_ssim`` keeps the full range, which one hot pixel inflates
+    (SSIM's constants scale with the range). Empty in older files."""
+    k_values_fitted: List[int] = field(default_factory=list)
+    """Splats each fit ended with, before any closing reduction."""
+    k_values_stored: List[int] = field(default_factory=list)
+    """Splats ``fit --seeds K`` would STORE for that fit: the default speck
+    pruning (``min_extent``) then the cumulative cull (``cull_retention``).
+    ``k_values_effective`` is after the cull only (the scored model)."""
+    k_star_stored: Optional[int] = None
+    """``k_values_stored`` at the selected K*: what ``fit --seeds K*`` keeps.
+    ``K*`` itself is a SEEDING budget, not a stored count."""
+    noise_sigma_rms: float = float("nan")
+    """RMS noise sigma of the calibrated volume, in its intensity units.
+
+    The in-plane Haar HH band binned by local intensity and pooled as an RMS
+    (:func:`~.noise_floor.estimate_masked_noise` over the whole volume), measured
+    on the floor-subtracted volume the held-out scores use as their reference.
+    It is what a held-out MSE averages:
+    fluorescence noise grows with the signal, so the bright voxels set it, while
+    ``noise_floor.sigma_hat`` (a median) reads the dark background. ``nan`` for a
+    ``cal.json`` that predates it."""
+    noise_scale_ratio: float = float("nan")
+    """Coarse- over fine-scale sigma of :attr:`noise_sigma_rms`; above
+    :data:`~.noise_floor.MASKED_SIGMA_MAX_SCALE_RATIO` the finest band also holds
+    signal, so the sigma reads high and the ceiling below reads low."""
+    psnr_ceiling_robust_db: float = float("nan")
+    """Held-out PSNR ceiling on the robust peak (the table's basis):
+    ``20 log10(robust_data_range / noise_sigma_rms)``. A held-out score cannot
+    sit far above it, since the held-out error includes the noise itself."""
+    spot_count: Optional[int] = None
+    """Puncta detected on the floor-subtracted volume (:mod:`.spots`); ``None``
+    for a ``cal.json`` that predates the check or a volume with no spread."""
+    spot_peak_ratio: List[float] = field(default_factory=list)
+    """Per K: median rendered/reference peak at the detected puncta (blurred,
+    ``sigma = 1`` voxel). Report-only; ``cal`` warns when K* reaches under 95% of
+    the sweep's best on a punctate volume (``luxar.gsplats.calibration.spots``)."""
+    whole_volume_seeds: Optional[Dict[str, Any]] = None
+    """For a crop calibration (``cal --region`` / ``--auto-region``): the
+    whole-input ``fit --seeds`` budget — the content planner's per-box density
+    transfer summed over crop-sized boxes of the input — with its provenance
+    (``seeds``, ``n_boxes``, feature counts, ``rule``). ``None`` otherwise."""
+
+    def robust_offset_db(self) -> float:
+        """dB to ADD to a full-range PSNR to restate it on the robust peak.
+
+        PSNR is ``10 log10(peak^2 / MSE)`` and the peak is one constant per
+        volume, so moving from the full range (``max - min``) to the robust
+        peak (``p99.99 - min``, the ``fit``/``compare`` headline) is a constant
+        ``20 log10(robust / full)``: every curve shifts together and K* does
+        not move. ``0`` for a ``cal.json`` that predates the robust peak.
+        """
+        full, robust = self.data_range, self.robust_data_range
+        if math.isfinite(full) and math.isfinite(robust) and full > 0 and robust > 0:
+            return 20.0 * math.log10(robust / full)
+        return 0.0
+
+    def incomplete_warning(self) -> Optional[str]:
+        """A loud warning when this calibration did not finish, else ``None``.
+
+        A ``partial`` file is a per-point checkpoint (a crashed or still
+        running ``cal``); an ``interrupted`` one holds the points measured
+        before Ctrl-C. Either way K*, the density and its saturation cap come
+        from a truncated sweep, so a consumer must say so.
+        """
+        if self.status == "complete":
+            return None
+        what = (
+            "a per-point checkpoint of a calibration that crashed or is still running"
+            if self.status == "partial"
+            else "a calibration interrupted by Ctrl-C"
+        )
+        return (
+            f"⚠ cal.json status is {self.status!r}: {what}, measured at K = "
+            f"{self.k_values_requested}. Its K* and splat density come from that "
+            "truncated sweep; re-run `gsplat cal` to completion for a reliable "
+            "budget."
+        )
 
     def to_json(self, path: Path) -> None:
-        """Serialise to JSON. Non-finite floats become ``null``."""
+        """Serialise to JSON (atomically). Non-finite floats become ``null``."""
 
         def _safe(v: Any) -> Any:
             if isinstance(v, float):
@@ -122,7 +237,7 @@ class CalibrationResult:
 
         data = asdict(self)
         data = _safe(data)
-        Path(path).write_text(json.dumps(data, indent=2))
+        _atomic_write_text(Path(path), json.dumps(data, indent=2))
 
     @classmethod
     def from_json(cls, path: Path) -> "CalibrationResult":
@@ -220,11 +335,68 @@ class CalibrationResult:
                 if raw.get("original_volume_shape") is not None
                 else None
             ),
+            input_frame=raw.get("input_frame"),
             splat_density=_rehydrate_nan_dict(raw.get("splat_density")),
             rd_model=_rehydrate_nan_dict(raw.get("rd_model")),
             not_converged=bool(raw.get("not_converged", False)),
             exponent_fit=_rehydrate_nan_dict(raw.get("exponent_fit")),
+            sweep=raw.get("sweep"),
+            status=str(raw.get("status", "complete")),
+            held_out_psnr_robust_db=_hydrate_float_list(
+                raw.get("held_out_psnr_robust_db", [])
+            ),
+            held_out_psnr_fg_robust_db=_hydrate_float_list(
+                raw.get("held_out_psnr_fg_robust_db", [])
+            ),
+            data_range=_opt_float(raw.get("data_range")),
+            robust_data_range=_opt_float(raw.get("robust_data_range")),
+            full_ssim_robust=_hydrate_float_list(raw.get("full_ssim_robust", [])),
+            k_values_fitted=[int(x) for x in raw.get("k_values_fitted", [])],
+            k_values_stored=[int(x) for x in raw.get("k_values_stored", [])],
+            whole_volume_seeds=raw.get("whole_volume_seeds"),
+            spot_count=(
+                int(raw["spot_count"]) if raw.get("spot_count") is not None else None
+            ),
+            spot_peak_ratio=_hydrate_float_list(raw.get("spot_peak_ratio", [])),
+            noise_sigma_rms=_opt_float(raw.get("noise_sigma_rms")),
+            noise_scale_ratio=_opt_float(raw.get("noise_scale_ratio")),
+            psnr_ceiling_robust_db=_opt_float(raw.get("psnr_ceiling_robust_db")),
+            k_star_stored=(
+                int(raw["k_star_stored"])
+                if raw.get("k_star_stored") is not None
+                else None
+            ),
         )
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` via a temp file in the same directory.
+
+    ``gsplat cal`` rewrites ``cal.json`` after every grid point; a crash or a
+    Ctrl-C mid-write must leave the previous complete file, never a truncated
+    one, so the bytes land in a sibling temp file that ``os.replace`` (atomic
+    on one filesystem) swaps in.
+    """
+    import os
+    import secrets
+    import stat
+
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(12)}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        if path.exists():
+            os.chmod(tmp, stat.S_IMODE(path.stat().st_mode))
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _opt_float(x: Any) -> float:
+    """``null`` (a non-finite float on write) back to ``nan``."""
+    return float("nan") if x is None else float(x)
 
 
 def _rehydrate_nan_dict(d: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

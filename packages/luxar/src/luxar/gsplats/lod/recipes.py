@@ -45,7 +45,17 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from typing import Callable, List, Literal, Optional, Tuple, Union, get_args
+from typing import (
+    Any,
+    Callable,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Tuple,
+    Union,
+    get_args,
+)
 
 import numpy as np
 
@@ -169,6 +179,9 @@ class RecipeParams:
     # paths cannot recover top-level stats from a bare tree node, so the owning
     # caller carries it alongside the volume payload.
     image_min: Optional[float] = None
+    # The input store's ``transform --scale-intensity`` factor, carried for the
+    # same reason (``None`` = read it from the data's stats, else ``1.0``).
+    intensity_scale: Optional[float] = None
     # ``volume_axes[i]`` is the volume axis holding center dim ``i``; None means
     # the identity. A stacked timelapse needs it: Luxar puts spatial dims first
     # and the stacked axis LAST, while the source array is usually time-FIRST.
@@ -202,6 +215,24 @@ class RecipeParams:
 # ────────────────────────────────────────────────────────────────────────
 # Individual recipe builders
 # ────────────────────────────────────────────────────────────────────────
+
+
+def with_input_basis(
+    params: RecipeParams, stats: Optional[Mapping[str, Any]]
+) -> RecipeParams:
+    """``params`` with the input fit's ``image_min`` / ``intensity_scale`` filled in.
+
+    Per-part recipes build from bare tree nodes, which carry no top-level stats,
+    so the caller that still holds them resolves both here. An explicit value on
+    ``params`` wins; a missing ``intensity_scale`` resolves to ``1.0``.
+    """
+    from luxar.gsplats.fit_basis import fit_image_min, stored_intensity_scale
+
+    if params.image_min is None:
+        params = replace(params, image_min=fit_image_min(stats))
+    if params.intensity_scale is None:
+        params = replace(params, intensity_scale=stored_intensity_scale(stats))
+    return params
 
 
 def build_flat(data: GSplatData, params: RecipeParams) -> GSplatData:
@@ -439,6 +470,7 @@ def _substitutive_for_part(
         volume=params.volume,
         volume_axes=params.volume_axes,
         image_min=params.image_min,
+        intensity_scale=params.intensity_scale,
         volume_box=_cell_for_coarsened_dims(cell, params, part_data.ndim),
         device=params.device,
         seed=params.seed,
@@ -505,10 +537,7 @@ def build_adaptive(data: GSplatData, params: RecipeParams) -> GSplatPartition:
     cap above one partition. ``adaptive`` is the per-part substitutive form — the
     most adaptive of the three, for the largest scenes.
     """
-    from luxar.gsplats.fit_basis import fit_image_min
-
-    if params.image_min is None:
-        params = replace(params, image_min=fit_image_min(data.stats))
+    params = with_input_basis(params, data.stats)
     base = data.flattened()
     partition = base.to_spatial_partition(
         max_elements=params.effective_max_elements,

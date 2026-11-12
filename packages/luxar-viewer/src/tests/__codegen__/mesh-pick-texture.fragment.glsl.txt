@@ -94,7 +94,7 @@ float nodeVar18;
 int nodeVar19;
 vec4 DiffuseColor;
 vec4 Output;
-vec4 nodeVar22;
+vec4 nodeVar21;
 
 // codes
 
@@ -238,10 +238,10 @@ void main() {
 
 	DiffuseColor = vec4( nodeVarying4, nodeVarying5.x, meshPickBrightness, nodeVarying5.y );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform17 );
-	nodeVar22 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar22;
+	nodeVar21 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar21;
 
 	// result
-	fragColor = nodeVar22;
+	fragColor = nodeVar21;
 
 }

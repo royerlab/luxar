@@ -40,6 +40,7 @@ const EXPECTED: [string, () => unknown, () => unknown, string[]][] = [
       ...WEIGHT,
       'uProjectionMode',
       'uRayIntegralFactor',
+      'uDisplayGain',
     ],
   ],
   [

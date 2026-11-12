@@ -204,6 +204,7 @@ class TestRun:
         assert result.exit_code == 0
         out = _strip_ansi(result.stdout)
         assert "--host" in out and "--no-open" in out
+        assert "--port" in out and "--viewer-port" in out
         assert "-- --help" in out
 
     def test_a_running_demo_is_not_started_twice(self, runner, monkeypatch) -> None:
@@ -329,6 +330,135 @@ class TestRun:
         assert result.exit_code == 0
         argv = mock_run.call_args.args[0]
         assert argv[-3:] == ["--host", "0.0.0.0", "--no-open"]
+
+    def test_ports_are_forwarded_and_keep_the_default_build(self, runner) -> None:
+        """A port forward needs fixed ports; pinning them changes no scene."""
+        with patch("luxar.cli.demo_commands.run_child_process") as mock_run:
+            mock_run.return_value = 0
+            result = runner.invoke(
+                app,
+                ["demo", "run", "lorenz", "--port", "9100", "--viewer-port", "9200"],
+            )
+        assert result.exit_code == 0
+        argv = mock_run.call_args.args[0]
+        assert argv[-4:] == ["--port", "9100", "--viewer-port", "9200"]
+        assert "env" not in mock_run.call_args.kwargs
+        assert _custom_build_args(["--port", "1", "--viewer-port=2"]) == []
+
+    def test_serving_flags_after_the_double_dash_keep_the_default_build(
+        self, runner
+    ) -> None:
+        """Tester F3: `-- --host 0.0.0.0` on a built demo must not build a variant."""
+        argv = [
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "9100",
+            "--viewer-port=9200",
+            "--no-open",
+        ]
+        with patch("luxar.cli.demo_commands.run_child_process") as mock_run:
+            mock_run.return_value = 0
+            result = runner.invoke(app, ["demo", "run", "lorenz", "--", *argv])
+        assert result.exit_code == 0
+        assert "env" not in mock_run.call_args.kwargs
+        assert mock_run.call_args.args[0][-len(argv) :] == argv
+
+    def test_a_built_demo_says_how_to_serve_it_without_rebuilding(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        from luxar.cli import demo_commands
+        from luxar.demos._support.runtime.viewer import demo_ports
+
+        built = tmp_path / "lorenz.luxar.zarr"
+        built.mkdir()
+        monkeypatch.setattr(
+            demo_commands.registry, "demo_output_paths", lambda info: [built]
+        )
+        with patch("luxar.cli.demo_commands.run_child_process", return_value=0):
+            result = runner.invoke(
+                app, ["demo", "run", "lorenz", "--", "--host", "0.0.0.0"]
+            )
+        out = " ".join(_strip_ansi(result.stdout).split())
+        _, viewer = demo_ports(built)
+        assert "To serve the existing build instead: luxar serve" in out
+        assert f"--host 0.0.0.0 --port {demo_ports(built)[0]}" in out
+        assert f"--viewer-port {viewer}" in out
+
+    def test_no_serve_hint_for_an_unbuilt_demo(self, runner, tmp_path, monkeypatch):
+        from luxar.cli import demo_commands
+
+        monkeypatch.setattr(
+            demo_commands.registry,
+            "demo_output_paths",
+            lambda info: [tmp_path / "missing.luxar.zarr"],
+        )
+        with patch("luxar.cli.demo_commands.run_child_process", return_value=0):
+            result = runner.invoke(app, ["demo", "run", "lorenz"])
+        assert "existing build" not in result.stdout
+
+    def test_serve_only_does_not_suggest_serving_an_existing_build(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        from luxar.cli import demo_commands
+
+        built = tmp_path / "lorenz.luxar.zarr"
+        built.mkdir()
+        monkeypatch.setattr(
+            demo_commands.registry, "demo_output_paths", lambda info: [built]
+        )
+        with patch("luxar.cli.demo_commands.run_child_process", return_value=0) as run:
+            result = runner.invoke(app, ["demo", "run", "lorenz", "--", "--serve-only"])
+        assert result.exit_code == 0
+        assert run.call_args.args[0][-1] == "--serve-only"
+        assert "Rebuilding" not in result.stdout
+        assert "To serve the existing build instead" not in result.stdout
+
+    @pytest.mark.parametrize("flag", ["--port", "--viewer-port"])
+    @pytest.mark.parametrize("value", ["0", "65536"])
+    def test_out_of_range_ports_are_a_usage_error(self, runner, flag, value) -> None:
+        with patch("luxar.cli.demo_commands.run_child_process") as mock_run:
+            result = runner.invoke(app, ["demo", "run", "lorenz", flag, value])
+        assert result.exit_code == 2
+        mock_run.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["lorenz", "--help"],
+            ["--host", "0.0.0.0", "lorenz", "--help"],
+            ["lorenz", "--help", "--", "--no-serve"],
+        ],
+    )
+    def test_help_after_the_key_describes_the_demo(self, runner, args) -> None:
+        """`hatch run luxar demo run X -- --help` reaches us as `X --help`.
+
+        hatch (like any Click wrapper) swallows the `--`, so the eager
+        `--help` used to print the generic `demo run` usage instead.
+        """
+        with patch("luxar.cli.demo_commands.run_child_process") as mock_run:
+            result = runner.invoke(app, ["demo", "run", *args])
+        assert result.exit_code == 0
+        mock_run.assert_not_called()
+        out = _strip_ansi(result.stdout)
+        assert "Common demo flags" in out and "--viewer-port" in out
+
+    def test_help_without_a_key_stays_the_command_usage(self) -> None:
+        from luxar.cli.demo_commands import _route_help_to_demo
+
+        assert _route_help_to_demo(["--help"]) == ["--help"]
+        assert _route_help_to_demo(["--host", "h", "--help"]) == [
+            "--host",
+            "h",
+            "--help",
+        ]
+        assert _route_help_to_demo(["x", "--", "--help"]) == ["x", "--", "--help"]
+        assert _route_help_to_demo(["x", "--help", "--", "-q"]) == [
+            "x",
+            "--",
+            "--help",
+            "-q",
+        ]
 
 
 class TestRunAll:

@@ -15,6 +15,29 @@ const viewerRoot = fileURLToPath(new URL('.', import.meta.url));
 const projectRoot = resolve(viewerRoot, '../..');
 const identity = buildIdentity();
 
+function earlyWebgpuPrefetchHtmlPlugin(): Plugin {
+  const entry = resolve(viewerRoot, 'src/core/early-webgpu-prefetch.ts');
+  return {
+    name: 'early-webgpu-prefetch',
+    transformIndexHtml: {
+      order: 'post',
+      handler(html, ctx) {
+        if (ctx.filename !== resolve(viewerRoot, 'index.html')) return;
+        const chunk = Object.values(ctx.bundle ?? {}).find(
+          (asset) => asset.type === 'chunk' && asset.facadeModuleId === entry
+        );
+        const src = chunk ? `./${chunk.fileName}` : '/src/core/early-webgpu-prefetch.ts';
+        // Keep the prefetch first: check-eager-chunks.mjs asserts this two-script
+        // layout. A static modulepreload would also fetch WebGPU for WebGL sessions.
+        return html.replace(
+          '<script type="module"',
+          `<script type="module" src="${src}" data-webgpu-prefetch></script>\n    <script type="module"`
+        );
+      },
+    },
+  };
+}
+
 export default defineConfig(({ command }) => ({
   // Stamp the bundle with version + commit + build time. Reaches `dist/` and
   // therefore the wheel, `luxar export` folders and the hosted site in one
@@ -22,6 +45,7 @@ export default defineConfig(({ command }) => ({
   // bare package version rides along as `VIEWER_VERSION` (src/version.ts).
   define: { ...buildDefine(identity), ...viewerVersionDefine() },
   plugins: [
+    earlyWebgpuPrefetchHtmlPlugin(),
     buildIdentityHtmlPlugin(identity),
     ...(command === 'serve'
       ? [
@@ -58,9 +82,10 @@ export default defineConfig(({ command }) => ({
     // lazy (that is the assertion with teeth — see scripts/check-eager-chunks.mjs).
     chunkSizeWarningLimit: 1700,
     rolldownOptions: {
-      // TWO html entries, and both must be named. Vite's implicit default is
-      // `index.html` alone; the moment `input` is set that default is gone, so
-      // omitting `index` here would silently build only the control panel.
+      // Both HTML entries and the tiny WebGPU prefetch script are separate
+      // inputs. Vite's implicit default is `index.html` alone; setting input
+      // removes that default. The prefetch must remain a separate chunk so it
+      // can start the lazy WebGPU download before the viewer entry runs.
       //
       // `control.html` is the kiosk touch panel. It shares this build (rather
       // than living in its own package) so it rides into `dist`, `luxar export`
@@ -72,6 +97,7 @@ export default defineConfig(({ command }) => ({
       input: {
         index: resolve(viewerRoot, 'index.html'),
         control: resolve(viewerRoot, 'control.html'),
+        earlyWebgpuPrefetch: resolve(viewerRoot, 'src/core/early-webgpu-prefetch.ts'),
       },
       output: {
         // Split the `three` package into core / tsl / webgpu so each

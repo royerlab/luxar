@@ -31,7 +31,8 @@
  * moved — see the DELETE-WHEN-IT-LANDS note at the assertion site.
  */
 
-import { test, expect, type Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
+import { rendererTest as test } from './fixtures';
 import { captureElementScreenshot, openLayersPanel } from './helpers';
 import { StorageKeys } from '../../utils/storage-keys';
 

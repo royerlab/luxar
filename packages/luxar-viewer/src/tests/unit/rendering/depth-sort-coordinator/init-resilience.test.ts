@@ -209,9 +209,34 @@ describe('SortWorker startup (warm-up, configured deadline, guard arms)', () => 
     await flush();
 
     expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+    expect(mockApi.registerNode.mock.calls[0]?.[0].orderingCapacity).toBeUndefined();
     expect(mockApi.sort).toHaveBeenCalledTimes(1);
     expect(constructedWorkers).toHaveLength(1);
     expect(mockApi.initialize).toHaveBeenCalledTimes(1);
+  });
+
+  it('registers the sorted-index capacity for WebGPU worker results', async () => {
+    const coord = await loadCoordinator('immediate');
+    const { configureSortedIndexChunkedApply } =
+      await import('../../../../rendering/element-storage');
+    configureSortedIndexChunkedApply(false);
+    coord.configure({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = makeSortableMesh(2);
+    mesh.geometry.setAttribute(
+      'aSortedIndex',
+      new THREE.InstancedBufferAttribute(new Uint32Array(5), 1)
+    );
+    mesh.geometry.setAttribute(
+      'aSortedIndexB',
+      new THREE.InstancedBufferAttribute(new Uint32Array(5), 1)
+    );
+
+    coord.noteCommit(mesh, CENTERS(), 2);
+    await flush();
+
+    expect(mockApi.registerNode).toHaveBeenCalledWith(
+      expect.objectContaining({ count: 2, orderingCapacity: 5 })
+    );
   });
 
   it('warms up nothing when depth sorting is disabled (?depthSort=0)', async () => {

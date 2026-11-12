@@ -194,7 +194,7 @@ def _find_residual_peaks_global(
 
     # Get values and sort by magnitude
     peak_values = residual_positive[tuple(peak_indices.T)]
-    sorted_indices = torch.argsort(peak_values, descending=True)
+    sorted_indices = torch.sort(peak_values, descending=True, stable=True)[1]
 
     # Take top k
     top_k = min(k_max_residuals, len(sorted_indices))
@@ -300,6 +300,40 @@ def _strong_peak_threshold(residual_positive: torch.Tensor) -> float:
     return float(torch.quantile(positive_sample.float(), 0.75).item())
 
 
+def _top_k_stable(x: torch.Tensor, k: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Row-wise top-``k`` of a 2D tensor with ties broken by lowest index.
+
+    ``torch.topk`` leaves the order of equal values unspecified, and it does
+    differ between CPU backends (x86 vs arm64), which made relocation peaks --
+    and so whole fits -- platform-dependent. ``max`` is documented to return
+    the first maximum. For ``k > 1`` the ``topk`` SET is already unique unless
+    a row has more than ``k`` elements >= its k-th value; the set is then just
+    re-ordered by (value desc, index asc), a sort of only ``k`` columns. Rows
+    that do tie at the k-th value instead take everything above it plus the
+    lowest-index tied elements. ``-inf`` is padding (non-peaks the caller
+    drops), so a row whose k-th value is ``-inf`` does not count as tied and
+    its padding indices are unspecified. The extra passes cost about 2-3x a
+    bare ``topk`` without ties and 3.5-8x with frequent k-th-value ties
+    (milliseconds per relocation step); a full stable row sort was ~20x.
+    """
+    if k == 1:
+        vals, idx = x.max(dim=1, keepdim=True)
+        return vals, idx
+    vals, idx = torch.topk(x, k, dim=1)
+    kth = vals[:, -1:]
+    tied_rows = ((x >= kth).sum(dim=1) > k) & (kth[:, 0] > -math.inf)
+    if bool(tied_rows.any()):
+        above = x > kth
+        tied = x == kth
+        slots = k - above.sum(dim=1, keepdim=True)
+        chosen = above | (tied & (torch.cumsum(tied, dim=1) <= slots))
+        idx = torch.nonzero(chosen)[:, 1].view(x.shape[0], k)  # ascending per row
+    else:
+        idx = idx.sort(dim=1).values
+    order = torch.sort(torch.gather(x, 1, idx), dim=1, descending=True, stable=True)
+    return order.values, torch.gather(idx, 1, order.indices)
+
+
 def _top_tile_peaks(
     residual_positive: torch.Tensor,
     num_tiles_per_dim: int,
@@ -313,7 +347,7 @@ def _top_tile_peaks(
     than ``k`` peaks; ``None`` when tiles are too small to search (< 4
     voxels, as before). Everything stays on the device: the tiles are
     gathered in batches into ``(T_batch, *tile_shape)``, max-pooled once per
-    batch and reduced with one ``topk`` -- versus one pool, ``nonzero`` and
+    batch and reduced with one stable top-``k`` -- versus one pool, ``nonzero`` and
     ``.tolist()`` host sync per tile in the old loop (~2,500 blocking syncs
     per relocation step on a 3D volume).
     """
@@ -336,7 +370,7 @@ def _top_tile_peaks(
         pooled = _batched_tile_max_pool(tiles, kernel_size)
         is_peak = (tiles >= pooled) & (tiles > 0)
         masked = tiles.masked_fill(~is_peak, -math.inf)
-        vals, local = torch.topk(masked.reshape(tiles.shape[0], P), k, dim=1)
+        vals, local = _top_k_stable(masked.reshape(tiles.shape[0], P), k)
         values_parts.append(vals)
         local_parts.append(local)
     values = torch.cat(values_parts)
@@ -395,9 +429,8 @@ def _find_residual_peaks_tiled(
           the probabilistic mode makes ONE host transfer of the per-tile best
           values so the keep draws are consumed in the same tile order, from
           the same seeded RNG, as the old per-tile loop. Peaks of exactly
-          equal value may be chosen or ordered differently from that loop
-          (``topk`` and the old ``argsort`` break ties differently; neither is
-          stable), which is the only divergence.
+          equal value are chosen and ordered by lowest index (stable), which
+          the old unstable per-tile ``argsort`` did not guarantee.
     """
     # Only consider positive residuals (undershoot: target > prediction)
     # Negative residuals mean overshoot - adding more splats would make it worse
@@ -434,4 +467,4 @@ def _find_residual_peaks_tiled(
         return empty
     # Sort peaks by residual magnitude (descending) to match global mode
     # This ensures convergence guard checks the actual strongest peak
-    return peaks[torch.argsort(peak_values, descending=True)]
+    return peaks[torch.sort(peak_values, descending=True, stable=True)[1]]

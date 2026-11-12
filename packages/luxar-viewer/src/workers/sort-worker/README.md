@@ -34,7 +34,7 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 **`sort-worker/state.ts`** — Shared mutable context:
 
 - `wasm: WasmModule | null` — WASM module instance (compiled or TypeScript fallback)
-- `nodes: Map<string, RegisteredNode>` — per-node center registry (nodeId → { generation, centers3, count })
+- `nodes: Map<string, RegisteredNode>` — per-node center registry (nodeId → { generation, centers3, count, orderingCapacity })
 - `requireWasm(ctx)` — throws when `ctx.wasm` is null (used before `initialize()`)
 - `NOT_INITIALIZED_MSG` — single source of truth for the error message
 
@@ -55,7 +55,7 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 ```typescript
 {
   wasm: WasmModule | null; // WASM module (compiled or TS fallback)
-  nodes: Map<string, RegisteredNode>; // nodeId → { generation, centers3, count }
+  nodes: Map<string, RegisteredNode>; // nodeId → { generation, centers3, count, orderingCapacity }
 }
 ```
 
@@ -66,6 +66,7 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
   generation: number; // Per-node monotonic non-noop commit counter
   centers3: Float32Array; // Projected 3D centers [count * 3], TRANSFERRED from main thread
   count: number; // Number of elements
+  orderingCapacity?: number; // Sorted-index capacity on WebGPU; omitted for mesh/WebGL
 }
 ```
 
@@ -109,7 +110,7 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 
 1. Clamp `count` to `Math.min(count, Math.floor(centers3.length / 3))` (safety)
 2. Log a warning if clamped
-3. Store/replace `ctx.nodes.set(nodeId, { generation, centers3, count })`
+3. Store/replace `ctx.nodes.set(nodeId, { generation, centers3, count, orderingCapacity })`
 
 **Called** on every non-noop commit of an order-dependent node (main thread `DepthSortCoordinator.noteCommit`). Replaces any previous registration wholesale.
 
@@ -134,7 +135,7 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 1. `requireWasm(ctx)` — throws if not initialized
 2. Lookup `node = ctx.nodes.get(nodeId)`
 3. **Stale-drop**: return `null` when `!node || node.generation !== params.generation`
-4. Allocate output: `ordering = new Uint32Array(node.count)`
+4. Allocate output to `orderingCapacity` when supplied, and sort into a `node.count`-length view of that buffer
 5. Time the backend call: `wasm.sort_splats_by_depth(node.centers3, params.modelView, ordering, node.count)`
 6. Return TRANSFERRED result: `transfer({ generation: node.generation, ordering, kernelMs, workerMs }, [ordering.buffer])`
 
@@ -257,6 +258,7 @@ Only one SortWorker exists per page, shared by every host's coordinator. Spawned
 
 - `centers3.buffer` is TRANSFERRED from the main thread (detached) — the main thread must hand over a buffer with no other readers
 - `ordering.buffer` is TRANSFERRED to the main thread (detached) — the worker must allocate a fresh array
+- The main thread may keep that buffer as the inactive `aSortedIndex` backing store; never recycle an adopted ordering buffer back to the worker.
 
 ### Generation Uniqueness
 

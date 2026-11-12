@@ -14,7 +14,7 @@
  * @module tests/e2e/points-rendering-perf.spec
  */
 
-import { test } from '@playwright/test';
+import { rendererTest as test } from './fixtures';
 import { waitForLuxarReady } from './helpers';
 import * as fs from 'fs';
 import * as os from 'os';

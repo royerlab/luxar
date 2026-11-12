@@ -636,3 +636,50 @@ def test_a_uniform_fit_does_not_adopt_the_calibration_floor(
     )
     assert result.exit_code == 0, result.output
     assert seen == {"floor": None, "tiling": "uniform"}
+
+
+@pytest.mark.parametrize("flat", [False, True])
+def test_content_fit_records_the_source_dtype(
+    monkeypatch, tmp_path: Path, flat: bool
+) -> None:
+    """A content fit's root stats carry ``source_dtype`` (WP16 review item 5):
+    without it ``gsplat convert`` labels an integer stack "data units"."""
+    pytest.importorskip("torch")
+    import luxar.gsplats.planner as gplanner
+    from luxar.cli.gsplat_ops import planner
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node, load_gsplats
+
+    def _fake_fit_planned(vol: Any, fitplan: Any, **kwargs: Any) -> Any:
+        regions = [_stub_leaf(), _stub_leaf()]
+        if kwargs.get("partition", True):
+            result = GSplatData.partition_from_regions(regions)
+            result.meta["fit_stats"] = {"planned_fit": True}
+            return result
+        return GSplatData.concatenate(regions)
+
+    monkeypatch.setattr(gplanner, "fit_planned", _fake_fit_planned)
+    rng = np.random.RandomState(5)
+    volume = rng.normal(100.0, 1.0, size=(48, 48, 48)).astype(np.float32)
+    volume[16:32, 16:32, 16:32] += 200.0
+    output = tmp_path / f"content_dtype_{flat}.gsplats.zarr"
+    planner.run_content_fit(
+        tmp_path / "unused.npy",
+        output,
+        volume=volume,
+        dimension_metadata=[{"name": "x"}, {"name": "y"}, {"name": "z"}],
+        k_star_ref=1000,
+        n_features_ref=100,
+        floor="100.0",
+        flat=flat,
+        min_leaf=16,
+        max_leaf=32,
+        cell=8,
+        overlap=4,
+        source_dtype="uint16",
+        verbose=False,
+    )
+    if flat:
+        stats = load_gsplats(output, include_stats=True).stats
+    else:
+        _, stats = load_gsplat_node(output, include_stats=True)
+    assert stats["source_dtype"] == "uint16"

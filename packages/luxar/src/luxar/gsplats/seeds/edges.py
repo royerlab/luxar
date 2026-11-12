@@ -14,6 +14,7 @@ from scipy import ndimage as ndi
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.seeds.utils import (
     SEED_AMPLITUDE_SCALE,
+    argsort_descending,
     greedy_min_distance_select,
     sigmas_to_cholesky_isotropic,
 )
@@ -322,7 +323,7 @@ def _poisson_disk_sample_weighted(
     # Replaces weighted rng.choice(replace=False, p=prob) which is O(N log N)
     # with high constants on millions of candidates.
     valid_density = density[tuple(valid_coords.T)]
-    order = np.argsort(-valid_density)
+    order = argsort_descending(valid_density)
 
     n_candidates = min(len(valid_coords), n_samples * 10)
     candidates = valid_coords[order[:n_candidates]].astype(np.float32)

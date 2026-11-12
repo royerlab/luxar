@@ -18,11 +18,11 @@ import type { PointsMetadata } from '../../../types/points';
 import { releaseWorkerPool, retainWorkerPool } from '../../../workers/worker-pool';
 import { eventBus } from '../../../utils/cross-layer/event-bus';
 import {
-  WebGLBlendWarmupManager,
+  BlendWarmupManager,
   registerBlendWarmupManager,
   scheduleBlendModeProgramWarmupForObject,
   unregisterBlendWarmupManager,
-} from '../../../rendering/webgl-blend-warmup';
+} from '../../../rendering/blend-warmup';
 
 function pointsPlaceholder(factory: NodeFactory): THREE.Mesh {
   const attrs = { n_points: 3 } as unknown as PointsMetadata;
@@ -103,7 +103,7 @@ describe('the data-worker pool is released by the last host', () => {
 describe('blend warm-up is routed to the scene a node lives in', () => {
   it("schedules a layer's node on the layer's warm-up, not the app's", () => {
     const layerScene = new THREE.Scene();
-    const layerWarmup = new WebGLBlendWarmupManager();
+    const layerWarmup = new BlendWarmupManager();
     layerWarmup.configure({
       enabled: false,
       renderer: null,

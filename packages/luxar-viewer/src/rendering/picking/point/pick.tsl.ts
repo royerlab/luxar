@@ -13,8 +13,7 @@
  *     carry the whole index exactly — see `luxarElementIdParts`)
  *
  * Per-point data comes from the RGBA32F point texture (`uPointTex`,
- * 3 texels/point; picking needs texels 0-1 only — center/radius/
- * sharpness), fetched in the vertex stage via `textureLoad` and
+ * 3 texels/point), fetched in the vertex stage via `textureLoad` and
  * indexed by `aSortedIndex` (visual-factory parity, shader-tsl.ts).
  *
  * Depth is set to `1.0 / (1.0 + brightness)` (brightness-as-depth) so the
@@ -69,6 +68,7 @@ import {
   sanitizeNonNegative,
   sanitizeAlpha,
   type TSLNode,
+  loadTexel,
   sortedIndexNode,
   densityDroppedNode,
 } from '../../materials/_shared/tsl-helpers';
@@ -207,9 +207,9 @@ export function pointPickWebGPUFactory(
     ).toVar();
     const texelX: TSLNode = pointBase.mod(pointTexW).toVar();
     const texelY: TSLNode = pointBase.div(pointTexW).toVar();
-    const pointT0: TSLNode = uPointTex.load(ivec2(texelX, texelY)).toVar();
-    const pointT1: TSLNode = uPointTex.load(ivec2(texelX.add(int(1)), texelY)).toVar();
-    const pointT2: TSLNode = uPointTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
+    const pointT0: TSLNode = loadTexel(uPointTex, ivec2(texelX, texelY)).toVar();
+    const pointT1: TSLNode = loadTexel(uPointTex, ivec2(texelX.add(int(1)), texelY)).toVar();
+    const pointT2: TSLNode = loadTexel(uPointTex, ivec2(texelX.add(int(2)), texelY)).toVar();
     const aCenter: TSLNode = vec3(pointT0).toVar();
     const aRadius: TSLNode = pointT0.w.toVar();
     const aSharpness: TSLNode = pointT1.w.toVar();

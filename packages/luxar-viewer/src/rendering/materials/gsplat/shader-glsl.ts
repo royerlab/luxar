@@ -70,6 +70,13 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     uniform highp float uTruncateSq;
     uniform mediump float uIntensity;
     uniform lowp float uHasElementAlpha;
+    // Display gain (node display_gain attr): data-unit amplitude → rendered
+    // amplitude. Folded into vAmplitude2D here — every amplitude-linear term
+    // downstream (emission, optical depth, coverage, the footprint) reads it —
+    // but NOT into the colormap lookup, which windows the amplitude in its
+    // stored units. Vertex-only, so the mediump varying never carries raw
+    // data units (counts reach 6e4; fp16 tops out at 65504).
+    uniform highp float uDisplayGain;
 
     // Colormap uniforms (only active when USE_COLORMAP is defined)
     #ifdef USE_COLORMAP
@@ -264,10 +271,10 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
             // projection only: this branch's quantity IS that integral, so
             // conserving it is exactly right. The peak branch below reports a
             // peak, not an integral, and is left alone.
-            vAmplitude2D = aAmplitude * rayIntegrationBoost * nearFade * dilationCompensation;
+            vAmplitude2D = aAmplitude * uDisplayGain * rayIntegrationBoost * nearFade * dilationCompensation;
         } else {
             // Max projection: no boost needed
-            vAmplitude2D = aAmplitude * nearFade;
+            vAmplitude2D = aAmplitude * uDisplayGain * nearFade;
         }
 
         // Compute 2D Cholesky for fragment shader

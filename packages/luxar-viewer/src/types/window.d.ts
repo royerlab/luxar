@@ -57,9 +57,8 @@ declare global {
       // Populated by LuxarApp.setupDebugInterface (post-init).
       scene?: THREE.Scene;
       camera?: LuxarCamera;
-      // Either backend may be active — `THREE.WebGLRenderer` under
-      // the production default, or `WebGPURenderer` when opted in via
-      // `?renderer=webgpu` / `VITE_LUXAR_USE_WEBGPU=1`. Typed loosely
+      // Either backend may be active according to the renderer override,
+      // build-time env vars, and platform policy. Typed loosely
       // as `unknown` so the window declaration doesn't import from
       // `three/webgpu`; callers narrow via the `isWebGLRenderer`
       // helper or `caps.apiSurface`.

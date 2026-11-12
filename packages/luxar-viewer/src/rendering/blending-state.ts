@@ -410,8 +410,9 @@ export function getPointBlendingState(
 
 /**
  * Apply a CompleteBlendingState to a THREE material in-place. Returns
- * `true` when any THREE.js side state actually changed (callers can
- * use this to decide whether to set `needsUpdate`).
+ * `true` when any THREE.js side state actually changed. WebGL callers
+ * may need `needsUpdate`; WebGPU observes pipeline state separately,
+ * so TSL callers only invalidate when the node graph changes.
  *
  * Does NOT update `userData.blendingMode` or shader defines —
  * material-specific `applyBlendingMode()` methods own those.
@@ -420,8 +421,7 @@ export function getPointBlendingState(
  * @param state - Output of {@link getCompleteBlendingState}.
  * @returns `true` if any of `blending` / `blendEquation` /
  *   `blendSrc` / `blendDst` / `depthTest` / `depthWrite` / `transparent`
- *   actually changed on the material. Use this to decide whether to set
- *   `material.needsUpdate = true`.
+ *   actually changed on the material.
  * @public
  */
 export function applyBlendingStateToMaterial(

@@ -43,7 +43,7 @@ import type { PickingSystem } from '../picking/picking-system';
 import { getColormapTexture } from '../colormap-textures';
 import { supportsScalarColormap } from '../material-colormap-helpers';
 import { resolveColormapWindow, type DisplayUniforms } from '../display-range';
-import { scheduleBlendModeProgramWarmupForObject } from '../webgl-blend-warmup';
+import { scheduleBlendModeProgramWarmupForObject } from '../blend-warmup';
 import { log, Modules } from '../../utils/log';
 import type { MeshSide } from '../../data/mesh/projection';
 import type { MeshShadingMode } from '../materials/mesh/appearance';

@@ -694,6 +694,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 scene.add_gsplats_from_file(
                     name="zebrafish_nuclei_4d",
                     path=str(parts_path),
+                    fitted_defaults=False,
                     # Loic's Layers-panel values on the time-part build
                     # (2026-09-10): volumetric compositing with a moderate
                     # absorption so the near half of the embryo reads in front of

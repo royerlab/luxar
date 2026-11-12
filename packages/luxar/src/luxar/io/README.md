@@ -590,7 +590,15 @@ sources fed to gsplat fitting/calibration), independent of the compiled
 - `volume.load_volume(path, channel=, timepoint=, array_key=, axes=, info=, region=)` —
   reads `.npy` / `.npz` / `.zarr` / `.zarr.zip` / `.tiff` / imageio-supported
   files to a float32 volume, with OME-Zarr-aware positional slicing and an
-  explicit `--axes` override. Missing optional readers raise `ImportError` (the
+  explicit `--axes` override. An OME-TIFF or ImageJ TIFF given a `channel` /
+  `timepoint` without `axes` uses the axes it declares, logging every axis size,
+  only when the metadata was NOT written by a known Python writer (OME `Creator`
+  starting `tifffile`, `bioio` or `aicsimageio`, or ImageJ `ImageJ=1.11a`, all of
+  which fill in default axes) and only with T/C/Z/Y/X letters; other non-zarr
+  inputs refuse the index. Those refusals, an
+  out-of-range index (on the positional zarr path too) and a bad axes spec raise
+  `VolumeSelectionError` (a `ValueError`), which the CLI reports as a usage
+  error. Missing optional readers raise `ImportError` (the
   CLI turns it into a clean exit). Pass an `info` dict to get back
   `source_dtype`, the element type the array was **stored** in — the return is
   always float32, so this is the last point at which it is knowable, and it is

@@ -83,7 +83,6 @@ mat4 modelViewMatrix;
 vec4 nodeVar13;
 vec4 nodeVar14;
 int nodeVar20;
-vec2 nodeVar21;
 
 // codes
 
@@ -120,8 +119,7 @@ void main() {
 	v_clipSpace = nodeVar14;
 	nodeVarying4 = nodeUniform16;
 	nodeVar20 = ( int( uint( gl_VertexID ) ) / 65536 );
-	nodeVar21 = vec2( float( ( int( uint( gl_VertexID ) ) - ( nodeVar20 * 65536 ) ) ), float( nodeVar20 ) );
-	nodeVarying5 = nodeVar21;
+	nodeVarying5 = vec2( float( ( int( uint( gl_VertexID ) ) - ( nodeVar20 * 65536 ) ) ), float( nodeVar20 ) );
 
 	// result
 	gl_Position = nodeVar14;

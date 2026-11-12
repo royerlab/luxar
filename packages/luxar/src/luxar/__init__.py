@@ -94,6 +94,7 @@ from .typing_utils.enums import (
     PhysicalUnit,
     RenderingLimits,
 )
+from .utils.color_output import apply_arbol_color_policy
 from .utils.verbosity import get_verbosity, set_verbosity, verbosity
 from .validation.nd_transforms import (
     apply_nd_transform_to_bounds,
@@ -101,7 +102,7 @@ from .validation.nd_transforms import (
     validate_nd_transform,
 )
 
-__version__ = "2026.09.22"
+__version__ = "2026.10.22"
 
 # Optional re-exports.
 # gsplats always provides names (real or stub that raises on use if torch is missing).
@@ -212,3 +213,7 @@ def __getattr__(name: str) -> object:
 
 def __dir__() -> list[str]:
     return sorted(set(globals()) | _LAZY_GSPLAT_EXPORTS)
+
+
+# Plain arbol output under NO_COLOR or when stdout is redirected to a file/pipe.
+apply_arbol_color_policy()

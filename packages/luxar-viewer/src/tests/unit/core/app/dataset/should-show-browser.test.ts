@@ -4,8 +4,8 @@
  * `shouldShowBrowser(src)` is the async wrapper around `classifyBrowserUrl`
  * that ALSO probes the URL for zarr metadata files. Decision tree:
  *   - Synchronous classification → must-browse → true (no fetch).
- *   - Probe `.zgroup`, `.zattrs`, `zarr.json` HEAD in parallel:
- *       any 2xx → false (load directly).
+ *   - Probe `zarr.json`, `.zgroup`, `.zattrs` HEAD one at a time:
+ *       first 2xx → false (load directly), later markers never requested.
  *       all fail / abort → true (open the browser).
  *
  * `classifyBrowserUrl` is unit-tested in browser-decision.test.ts;
@@ -116,17 +116,19 @@ describe('shouldShowBrowser', () => {
       expect(result).toBe(true);
     });
 
-    it('fires HEAD probes for all three zarr metadata filenames', async () => {
+    it('fires HEAD probes for all three zarr metadata filenames, v3 first', async () => {
       fetchSpy.mockResolvedValue(new Response(null, { status: 404 }));
 
       await shouldShowBrowser('https://example.com/dataset');
 
-      // 3 probes: .zgroup, .zattrs, zarr.json — all HEAD.
+      // 3 probes, in order: zarr.json, .zgroup, .zattrs — all HEAD.
       expect(fetchSpy).toHaveBeenCalledTimes(3);
       const urls = fetchSpy.mock.calls.map((c: unknown[]) => String(c[0]));
-      expect(urls).toContain('https://example.com/dataset/.zgroup');
-      expect(urls).toContain('https://example.com/dataset/.zattrs');
-      expect(urls).toContain('https://example.com/dataset/zarr.json');
+      expect(urls).toEqual([
+        'https://example.com/dataset/zarr.json',
+        'https://example.com/dataset/.zgroup',
+        'https://example.com/dataset/.zattrs',
+      ]);
       for (const call of fetchSpy.mock.calls) {
         const init = call[1] as RequestInit | undefined;
         expect(init?.method).toBe('HEAD');
@@ -146,28 +148,72 @@ describe('shouldShowBrowser', () => {
   });
 
   describe('first-success short-circuit', () => {
-    it('returns false as soon as the first probe resolves OK (does not wait for the others)', async () => {
-      // The first probe resolves immediately; the others are pending
-      // forever. The function must still return false promptly via
-      // Promise.any.
-      let neverResolveCount = 0;
-      fetchSpy.mockImplementation((url: string | URL | Request) => {
-        const u = String(url);
-        if (u.endsWith('.zgroup')) {
-          return Promise.resolve(new Response(null, { status: 200 }));
-        }
-        neverResolveCount++;
-        return new Promise(() => {
-          // never resolves
-        });
-      });
+    it('a format-3 store costs exactly one request and no 404', async () => {
+      // `luxar serve` mounts a store at `/` and an export at `/data`: both are
+      // suffix-less, so they reach this probe on every load. The parallel probe
+      // logged `.zgroup` and `.zattrs` 404s in the console each time.
+      fetchSpy.mockImplementation((url: string) =>
+        Promise.resolve(new Response(null, { status: url.endsWith('zarr.json') ? 200 : 404 }))
+      );
 
-      const result = await shouldShowBrowser('https://example.com/dataset');
+      const result = await shouldShowBrowser('https://example.com/data');
       expect(result).toBe(false);
-      // The other two probes were started (parallel fetch), even though
-      // we don't await them. Asserting the count is 2 confirms the
-      // parallel-issue strategy isn't accidentally serialized.
-      expect(neverResolveCount).toBe(2);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(fetchSpy.mock.calls[0][0]).toBe('https://example.com/data/zarr.json');
+    });
+
+    it('a format-2 store stops at .zgroup without probing .zattrs', async () => {
+      fetchSpy.mockImplementation((url: string) =>
+        Promise.resolve(new Response(null, { status: url.endsWith('.zgroup') ? 200 : 404 }))
+      );
+
+      await expect(shouldShowBrowser('https://example.com/data')).resolves.toBe(false);
+      const urls = fetchSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+      expect(urls).toEqual([
+        'https://example.com/data/zarr.json',
+        'https://example.com/data/.zgroup',
+      ]);
+    });
+
+    it('gives each probe its own budget, so a slow 404 does not starve the next', async () => {
+      vi.useFakeTimers();
+      try {
+        fetchSpy.mockImplementation(
+          (url: string) =>
+            new Promise((resolve) => {
+              // zarr.json 404s after 4 s; .zgroup answers 200 after 4 s more.
+              // A shared 5 s budget would abort .zgroup and open the browser.
+              setTimeout(
+                () => resolve(new Response(null, { status: url.endsWith('.zgroup') ? 200 : 404 })),
+                4000
+              );
+            })
+        );
+        const pending = shouldShowBrowser('https://example.com/dataset');
+        await vi.advanceTimersByTimeAsync(8000);
+        await expect(pending).resolves.toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('opens the browser when a probe hangs past the budget', async () => {
+      vi.useFakeTimers();
+      try {
+        fetchSpy.mockImplementation(
+          (_url: string | URL | Request, init?: RequestInit) =>
+            new Promise((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+            })
+        );
+        const pending = shouldShowBrowser('https://example.com/dataset');
+        await vi.advanceTimersByTimeAsync(5000);
+        await expect(pending).resolves.toBe(true);
+        // A hung server ends the loop: the later markers were never requested.
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

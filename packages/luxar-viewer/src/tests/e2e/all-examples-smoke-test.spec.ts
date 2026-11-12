@@ -28,6 +28,7 @@ import {
   getLuxarState,
   assertNoConsoleErrors,
   getConsoleMessages,
+  getWebGLErrors,
 } from './helpers';
 
 // Base URL for examples (served by HTTP server on port 9000)
@@ -231,26 +232,10 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
         }
       }
 
-      // Check for WebGL errors (CRITICAL for rendering issues)
-      const webglErrors = await page.evaluate(() => {
-        const canvas = document.querySelector('canvas');
-        if (!canvas) return ['No canvas found'];
-
-        const gl =
-          (canvas as HTMLCanvasElement).getContext('webgl2') ||
-          (canvas as HTMLCanvasElement).getContext('webgl');
-        if (!gl) return ['No WebGL context'];
-
-        const errors: string[] = [];
-        let error;
-        let count = 0;
-        while ((error = gl.getError()) !== gl.NO_ERROR && count < 100) {
-          errors.push(`GL Error: 0x${error.toString(16)}`);
-          count++;
-        }
-
-        return errors;
-      });
+      // Check for WebGL errors (CRITICAL for rendering issues). The shared
+      // helper drains the GL queue, or on a native WebGPU page the renderer's
+      // uncaptured GPU errors.
+      const webglErrors = await getWebGLErrors(page);
 
       if (webglErrors.length > 0) {
         console.error(`\n[${example}] ❌ WebGL Errors:`);
@@ -314,21 +299,7 @@ test.describe('Critical Examples - Deep Validation', () => {
     expect(state.totalPoints).toBeGreaterThan(10000);
 
     // Verify no WebGL buffer errors
-    const webglErrors = await page.evaluate(() => {
-      const canvas = document.querySelector('canvas');
-      if (!canvas) return [];
-      const gl =
-        (canvas as HTMLCanvasElement).getContext('webgl2') ||
-        (canvas as HTMLCanvasElement).getContext('webgl');
-      if (!gl) return [];
-
-      const errors: string[] = [];
-      let error;
-      while ((error = gl.getError()) !== gl.NO_ERROR) {
-        errors.push(`GL Error: 0x${error.toString(16)}`);
-      }
-      return errors;
-    });
+    const webglErrors = await getWebGLErrors(page);
 
     expect(webglErrors.length).toBe(0);
 

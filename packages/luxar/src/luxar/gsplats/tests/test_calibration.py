@@ -696,6 +696,32 @@ class TestPerKMetrics:
         for key, value in expected.items():
             assert got[key] == pytest.approx(value, rel=1e-5), key
         assert got["held_gain"] == pytest.approx(held_out_gain_db(held_mse, 0.1))
+        # Without a robust peak the robust SSIM is the full-range one.
+        assert got["full_ssim_robust"] == got["full_ssim"]
+
+    def test_robust_ssim_uses_the_robust_peak(self):
+        from luxar.gsplats.metrics import compute_ssim
+
+        g = torch.Generator().manual_seed(1)
+        ref = torch.rand(20, 40, 40, generator=g)
+        rendered = ref + 0.05 * torch.randn(20, 40, 40, generator=g)
+        mask = torch.rand(20, 40, 40, generator=g) < 0.05
+        fg = ref > 0.6
+        expected = compute_ssim(rendered, ref, data_range=0.25)
+        got = _per_k_metrics(
+            rendered.clone(),
+            ref,
+            mask,
+            fg[mask],
+            _foreground_weighting(mask, ref > 0.5, 2.0),
+            data_range=1.0,
+            baseline_mse=0.1,
+            compute_ssim=compute_ssim,
+            robust_range=0.25,
+        )
+        assert got["full_ssim_robust"] == pytest.approx(expected, rel=1e-5)
+        # A smaller peak shrinks SSIM's constants: the score can only drop.
+        assert got["full_ssim_robust"] < got["full_ssim"]
 
     def test_consumes_rendered_in_place(self):
         from luxar.gsplats.metrics import compute_ssim
@@ -968,8 +994,23 @@ class TestCalibrationResult:
 
 
 class TestCalibrateSmoke:
-    def test_small_volume_cpu(self, tmp_path: Path):
+    def test_small_volume_cpu(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         # Smoke test: run a 3-K sweep on a tiny synthetic volume on CPU
+        from luxar.gsplats.utils import device as device_utils
+
+        resolved: list[tuple[str | torch.device | None, bool, bool]] = []
+        real_resolve = device_utils.resolve_torch_device
+
+        def spy_resolve(
+            device: str | torch.device | None = None,
+            *,
+            use_cuda: bool = True,
+            use_metal: bool = True,
+        ) -> torch.device:
+            resolved.append((device, use_cuda, use_metal))
+            return real_resolve(device, use_cuda=use_cuda, use_metal=use_metal)
+
+        monkeypatch.setattr(device_utils, "resolve_torch_device", spy_resolve)
         rng = np.random.default_rng(0)
         # Smooth structured signal so even a few splats can land somewhere meaningful
         Y, X, Z = np.meshgrid(
@@ -987,13 +1028,13 @@ class TestCalibrateSmoke:
             k_grid=[20, 80, 200],
             fit_kwargs={
                 "n_iters": 50,
-                "device": "cpu",
                 "verbose": False,
                 "early_stop_patience": 50,
                 "use_cuda": False,
                 "use_metal": False,
             },
         )
+        assert resolved[0] == (None, False, False)
         assert isinstance(result, CalibrationResult)
         assert len(result.held_out_psnr_db) == 3
         assert len(result.train_psnr_db) == 3

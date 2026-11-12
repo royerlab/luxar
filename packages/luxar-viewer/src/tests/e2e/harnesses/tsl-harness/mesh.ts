@@ -10,9 +10,10 @@
  * The harness renders to an `UnsignedByteType` target, so the pick pass's id
  * channels — `nodeId` in R and the two 16-bit halves in G/A — clamp and quantize to
  * 8 bits. The pick entries therefore test what survives that: whether the two
- * backends **discard the same fragments** under the cutout, and whether they agree on
- * the `brightness` channel. The id SPLIT is pinned elsewhere, by construction rather
- * than by pixels — both backends route through one shared helper
+ * backends **discard the same fragments** under the cutout, whether they agree on
+ * the `brightness` channel, and whether WebGL and core WebGPU agree on the
+ * quantized original-first-corner id. The id SPLIT is pinned elsewhere, by
+ * construction rather than by pixels — both backends route through one shared helper
  * (`luxarElementIdSplit`, single-sourced in `glsl-lib.ts`), the codegen snapshot
  * shows the TSL side's `/ 65536` and `- hi * 65536`, and a unit test round-trips the
  * split against `voteWinner`'s recombination.
@@ -182,7 +183,11 @@ function buildMeshGeometry(
   if (withUVs) {
     geometry.setAttribute('uv', new THREE.BufferAttribute(QUAD_UVS, 2, false));
   }
-  geometry.setIndex(new THREE.BufferAttribute(QUAD_INDICES, 1, false));
+  // Each render owns its index buffer: the WebGL mesh-pick fallback rotates it
+  // in place, while the native WebGPU arm must retain the original ordering.
+  // The rotation loop also requires a finite draw range (the default is Infinity).
+  geometry.setIndex(new THREE.BufferAttribute(QUAD_INDICES.slice(), 1, false));
+  geometry.setDrawRange(0, QUAD_INDICES.length);
   return geometry;
 }
 

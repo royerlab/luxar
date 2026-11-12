@@ -219,3 +219,41 @@ class TestResolveColormap:
         lut = resolve_colormap("bgy")
         assert lut.shape == (256, 3)
         assert lut.dtype == np.uint8
+
+
+class TestUnknownColormapInstallHint:
+    """A name that fails only because a source is not installed says so."""
+
+    @staticmethod
+    def _uninstalled(name: str) -> None:
+        raise ModuleNotFoundError(f"No module named '{name}'")
+
+    def test_missing_matplotlib_names_the_install(self, monkeypatch) -> None:
+        from luxar.colormaps import registry
+
+        monkeypatch.setattr(
+            registry, "_from_matplotlib", lambda _n: self._uninstalled("matplotlib")
+        )
+        monkeypatch.setattr(
+            registry, "_from_colorcet", lambda _n: self._uninstalled("colorcet")
+        )
+        with pytest.raises(ValueError) as info:
+            resolve_colormap("magma")
+        message = str(info.value)
+        assert "Unknown colormap 'magma'" in message
+        assert "pip install matplotlib colorcet" in message
+
+    def test_installed_sources_get_no_install_hint(self, monkeypatch) -> None:
+        from luxar.colormaps import registry
+
+        def _not_found_mpl(_n: str) -> None:
+            raise ValueError("not a matplotlib colormap")
+
+        def _not_found_cc(_n: str) -> None:
+            raise KeyError("not a colorcet palette")
+
+        monkeypatch.setattr(registry, "_from_matplotlib", _not_found_mpl)
+        monkeypatch.setattr(registry, "_from_colorcet", _not_found_cc)
+        with pytest.raises(ValueError) as info:
+            resolve_colormap("nope")
+        assert "pip install" not in str(info.value)

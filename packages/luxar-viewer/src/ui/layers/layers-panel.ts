@@ -42,6 +42,7 @@ import { LayerApplyEngine } from './layer-apply';
 import { LayerControls } from './layer-controls';
 import { ALWAYS_GLOBAL_KEYS } from '../help-overlay/type-to-filter';
 import { SceneLoaderManager } from '../../data/scene-loader-manager';
+import { sceneDimsManager } from '../../scene/scene-dims-manager';
 
 /**
  * What the panel needs from the sound layer for its `sound` rows
@@ -157,6 +158,7 @@ export class LayersPanel {
   private applyEngine = new LayerApplyEngine({
     getRootGroup: () => this.rootGroup,
     getSceneNodeIndex: () => this.sceneNodeIndex,
+    getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? null,
     state: this.state,
     requestRender: () => this.requestRender(),
     requestReprocess: (paths) =>
@@ -736,6 +738,13 @@ export class LayersPanel {
       supportsColormap: l.supportsColormap,
       blendingMode: l.blendingMode,
       absorption: l.absorption,
+      brightness: l.brightness,
+      authoredBrightness: l.authoredBrightness,
+      ...(l.amplitudeUnit !== undefined ? { amplitudeUnit: l.amplitudeUnit } : {}),
+      ...(l.amplitudeOffset !== undefined ? { amplitudeOffset: l.amplitudeOffset } : {}),
+      ...(l.sourceDataRange !== undefined
+        ? { sourceDataRange: [...l.sourceDataRange] as [number, number] }
+        : {}),
       layerOrder: l.layerOrderExplicit && l.layerOrder !== undefined ? l.layerOrder : null,
       ...(l.sound ? { gain: l.sound.gain } : {}),
     }));
@@ -788,6 +797,10 @@ export class LayersPanel {
       absorption: (absorption) => {
         this.state.setAbsorption(path, absorption);
         this.applyEngine.applyAbsorption(live);
+      },
+      brightness: (brightness) => {
+        this.state.setBrightness(path, brightness);
+        this.applyEngine.applyBrightness(live);
       },
       layerOrder: (order) => {
         this.state.setLayerOrder(path, order);

@@ -183,8 +183,18 @@ from luxar.gsplats.gsplat_data import GSplatData
 data = GSplatData.load("file.gsplats.zarr.zip")
 ```
 
+A hosted archive is `ZIP_DEFLATED` (about 28% smaller than `ZIP_STORED`) with
+the store directory as its internal prefix (`<name>.gsplats.zarr/zarr.json`,
+...): the layout `GSplatData.save(..., compress="zip", zip_deflate=True)`
+writes, and what the EASI-FISH, kidney and h2afva archives use.
+
 ### Bundle `.zip` (timelapse demos)
 Outer zip containing many per-frame `.gsplats.zarr.zip` files. Automatically extracted to cache on first use.
+The outer zip is a flat `ZIP_STORED` archive (its members are already
+compressed; nexrad, C. elegans, organoid). `load_dataset_bundle` looks members up
+by name, so the organoid names them exactly as its per-frame cache files
+(`_frame_cache_name`, which encodes the fit recipe): a changed recipe misses the
+bundle and the demo refits rather than loading stale fits.
 
 ## Data Sources & Citations
 

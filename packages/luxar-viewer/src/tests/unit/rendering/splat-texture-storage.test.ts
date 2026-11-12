@@ -1960,6 +1960,89 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     expect(back.updateRanges[0]).toMatchObject({ start: 0, count: 12 });
   });
 
+  it('adopts a worker-owned full-capacity ordering on WebGPU without a 40 MB copy', () => {
+    configureSortedIndexChunkedApply(false);
+    const { geometry } = makeGeometry(16);
+    writeSortedIndexIdentity(geometry, 16);
+    const ordering = reversed(16);
+    const front = activeArr(geometry);
+    expect(
+      writeSortedIndexOrdering(geometry, ordering, 16, undefined, { adoptOrdering: true })
+    ).toBe(16);
+    expect(pumpSortedIndexOrderingApply(geometry).flipped).toBe(true);
+    expect(activeArr(geometry)).toBe(ordering);
+    expect(Array.from(activeArr(geometry))).toEqual(Array.from(reversed(16)));
+    expect(Array.from(front)).toEqual([...Array(16).keys()]);
+
+    // Partial populations retain the capacity-sized GPU buffer and copy only
+    // the live prefix. Replacing it with a shorter array would break the
+    // cached WebGPU buffer and clamp future draws after an append.
+    const partial = reversed(12);
+    expect(
+      writeSortedIndexOrdering(geometry, partial, 12, undefined, { adoptOrdering: true })
+    ).toBe(12);
+    expect(pumpSortedIndexOrderingApply(geometry).flipped).toBe(true);
+    expect(activeArr(geometry)).not.toBe(partial);
+    expect(activeArr(geometry).length).toBe(16);
+    expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual(Array.from(partial));
+
+    // A later worker result can be held while one ordering is staged; its
+    // ownership must survive promotion from pending to active.
+    const held = Uint32Array.from({ length: 16 }, (_, i) => (i + 1) % 16);
+    writeSortedIndexOrdering(geometry, reversed(16), 16);
+    writeSortedIndexOrdering(geometry, held, 16, undefined, { adoptOrdering: true });
+    expect(pumpSortedIndexOrderingApply(geometry).more).toBe(true);
+    expect(pumpSortedIndexOrderingApply(geometry).flipped).toBe(true);
+    expect(activeArr(geometry)).toBe(held);
+  });
+
+  it('adopts a worker ordering with the headroom of a pooled geometry', () => {
+    configureSortedIndexChunkedApply(false);
+    const pool = new GPUBufferPool(20, 300, 5, () => Infinity);
+    try {
+      const geometry = pool.acquireGSplatsGeometry('node', 1000);
+      const capacity = activeArr(geometry).length;
+      expect(capacity).toBeGreaterThan(1000);
+      writeSortedIndexIdentity(geometry, 1000);
+      const backing = new Uint32Array(capacity);
+      backing.set(reversed(1000));
+      const ordering = backing.subarray(0, 1000);
+      const expectedOrdering = Array.from(ordering);
+
+      expect(
+        writeSortedIndexOrdering(geometry, ordering, 1000, undefined, { adoptOrdering: true })
+      ).toBe(1000);
+      expect(pumpSortedIndexOrderingApply(geometry).flipped).toBe(true);
+      expect(activeArr(geometry).buffer).toBe(backing.buffer);
+      expect(activeArr(geometry).length).toBe(capacity);
+      expect(Array.from(activeArr(geometry).subarray(0, 1000))).toEqual(expectedOrdering);
+
+      geometry.instanceCount = 1000;
+      expect(holdSortedIndexDrawForAppend(geometry, 1000, 1001)).toBe(1000);
+      expect(releaseSortedIndexDrawHold(geometry)).toBe(true);
+      expect(Array.from(activeArr(geometry).subarray(0, 1000))).toEqual(expectedOrdering);
+      expect(activeArr(geometry)[1000]).toBe(1000);
+    } finally {
+      pool.dispose();
+    }
+  });
+
+  it('keeps borrowed orderings and WebGL slices independent of their source array', () => {
+    const { geometry } = makeGeometry(16);
+    const borrowed = reversed(16);
+    configureSortedIndexChunkedApply(false);
+    writeSortedIndexOrdering(geometry, borrowed, 16);
+    pumpSortedIndexOrderingApply(geometry);
+    expect(activeArr(geometry)).not.toBe(borrowed);
+
+    configureSortedIndexChunkedApply(true);
+    const workerOwned = Uint32Array.from({ length: 16 }, (_, i) => (i + 1) % 16);
+    writeSortedIndexOrdering(geometry, workerOwned, 16, undefined, { adoptOrdering: true });
+    drainSortedIndexApply(geometry);
+    expect(activeArr(geometry)).not.toBe(workerOwned);
+    expect(Array.from(activeArr(geometry))).toEqual(Array.from(workerOwned));
+  });
+
   it('rejects an ordering larger than the attribute capacity (never clamps to a prefix)', () => {
     const { geometry } = makeGeometry(8); // attr length 8
     writeSortedIndexIdentity(geometry, 8);

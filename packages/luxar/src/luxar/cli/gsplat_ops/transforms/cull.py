@@ -47,7 +47,9 @@ def _target_on_fit_basis(
     from luxar.gsplats.fit_basis import (
         MISSING_BASIS_HINT,
         fit_image_min,
+        reference_in_amplitude_units,
         reference_on_fit_basis,
+        stored_intensity_scale,
     )
 
     level = fit_image_min(stats)
@@ -56,6 +58,17 @@ def _target_on_fit_basis(
     elif level > 0.0:
         target = reference_on_fit_basis(target, level)
         aprint(f"Target shifted onto the fit's basis (image_min={level:.6g})")
+    # The culled store keeps its edited amplitudes, so the target moves into
+    # their units rather than the splats into the target's.
+    scale = stored_intensity_scale(stats)
+    if scale != 1.0:
+        # In place: the caller hands over the volume it just loaded (or the
+        # shifted copy above), which nothing else holds.
+        target = reference_in_amplitude_units(target, scale, in_place=True)
+        aprint(
+            f"Target multiplied by intensity_scale={scale:.6g} (a transform "
+            "--scale-intensity edit) to match the stored amplitudes"
+        )
     return target
 
 

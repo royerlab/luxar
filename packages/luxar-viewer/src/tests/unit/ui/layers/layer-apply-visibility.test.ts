@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 
 import { LayerApplyEngine } from '../../../../ui/layers/layer-apply';
+import { SceneNodeIndex } from '../../../../data/scene-loader/view-state/scene-node-index';
+import { LayerStateManager } from '../../../../ui/layers/layer-state';
+import type { SceneNode } from '../../../../data/data-loader-types';
 
 describe('LayerApplyEngine visibility', () => {
   it('stamps user-controlled visibility separately from the Three.js display flag', () => {
@@ -36,4 +39,32 @@ describe('LayerApplyEngine visibility', () => {
     engine.applyVisibility(layer.name, true);
     expect(requestReprocess).toHaveBeenCalledOnce();
   });
+});
+
+it('reprocesses Brightness on 2D and remapped 3D gsplats, but not standard 3D', () => {
+  const leaves = [
+    { path: '/two', type: 'gsplats', attrs: { layer: true, ndim: 2 } },
+    { path: '/three', type: 'gsplats', attrs: { layer: true, ndim: 3 } },
+  ] as unknown as SceneNode[];
+  const graph = { path: '/', type: 'scene', attrs: {}, children: leaves } as SceneNode;
+  const state = new LayerStateManager();
+  state.initFromSceneGraph(graph);
+  const requestReprocess = vi.fn();
+  let displayDims = [0, 1, 2];
+  const engine = new LayerApplyEngine({
+    getRootGroup: () => null,
+    getSceneNodeIndex: () => new SceneNodeIndex(graph),
+    getDisplayDims: () => displayDims,
+    state,
+    requestRender: vi.fn(),
+    requestReprocess,
+  });
+  engine.applyBrightness(state.getLayer('/two')!);
+  expect(requestReprocess).toHaveBeenLastCalledWith(['/two']);
+  requestReprocess.mockClear();
+  engine.applyBrightness(state.getLayer('/three')!);
+  expect(requestReprocess).not.toHaveBeenCalled();
+  displayDims = [2, 1, 0];
+  engine.applyBrightness(state.getLayer('/three')!);
+  expect(requestReprocess).toHaveBeenLastCalledWith(['/three']);
 });

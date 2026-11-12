@@ -3,7 +3,7 @@
  *
  * Pure helper: given a scene graph and a node, return a copy of the
  * node's attrs with `opacity`, `absorption`, `gamma`, `intensity`,
- * `offset`, `blending_mode`, `join`, `layer_order`, and `colormap` (with its
+ * `offset`, `display_gain`, `blending_mode`, `join`, `layer_order`, and `colormap` (with its
  * `customLutBytes`) replaced by the values from
  * {@link getEffectiveAttrsOfChain}. Falls back to the raw attrs when the
  * scene graph is unavailable.
@@ -40,6 +40,7 @@ export function applyEffectiveAttrs(
     gamma: eff.gamma,
     intensity: eff.intensity,
     offset: eff.offset,
+    display_gain: eff.display_gain,
     blending_mode: eff.blending_mode,
     join: eff.join,
     // `colormap` used to survive only inside the `...node.attrs` spread, so

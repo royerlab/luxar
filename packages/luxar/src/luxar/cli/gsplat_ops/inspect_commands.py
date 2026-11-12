@@ -7,6 +7,7 @@ the shared ``app_gsplat`` Typer.
 from __future__ import annotations
 
 import shutil
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -15,7 +16,12 @@ from arbol import aprint, asection
 
 from .._traceback import exit_with_error, report_error
 from ..common_options import CorsOriginOption, HostOption, make_port_option
-from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size, store_size
+from ..utils import (
+    _DEFAULT_CORS_ORIGIN,
+    format_memory_size,
+    local_input_path,
+    store_size,
+)
 
 if TYPE_CHECKING:
     import numpy as np
@@ -41,6 +47,7 @@ _IMPORTANT_FITTING_KEYS = (
     "foreground_psnr_db",
     "foreground_threshold",
     "foreground_fraction",
+    "ssim_robust",
     "ssim",
     "mse",
     # Amplitudes are background-relative, so these normalization stamps are
@@ -50,6 +57,7 @@ _IMPORTANT_FITTING_KEYS = (
     "image_max",
     "intensity_range",
     "voxel_size",
+    "intensity_scale",
     "convergence_time",
     "culled",
     "culling_method",
@@ -86,6 +94,9 @@ def _part_provenance_count(records: list[Any]) -> int:
 def _print_fitting_value(
     key: str, value: Any, *, show_full_provenance: bool = False
 ) -> None:
+    if key in {"fit_provenance", "batch_provenance"} and not show_full_provenance:
+        aprint(f"  {key}: recorded (use --provenance for a summary)")
+        return
     if (
         key == "part_provenance"
         and isinstance(value, list)
@@ -106,6 +117,122 @@ def _print_fitting_value(
         aprint(f"  {key}: {value:.6f}")
     else:
         aprint(f"  {key}: {value}")
+
+
+def _fit_leaves(
+    fitting: dict[str, Any], label: str = "fit"
+) -> list[tuple[str, dict[str, Any]]]:
+    """Walk component records without treating a merged score as a leaf fit."""
+    parts = fitting.get("part_provenance")
+    if not isinstance(parts, list):
+        return [(label, fitting)]
+    leaves: list[tuple[str, dict[str, Any]]] = []
+    for part in parts:
+        if not isinstance(part, dict) or not isinstance(part.get("fitting"), dict):
+            continue
+        name = part.get("slot_id", part.get("coordinate", "?"))
+        leaves.extend(_fit_leaves(part["fitting"], f"{label}/{name}"))
+    return leaves
+
+
+def _provenance_stages(record: Any) -> dict[str, float]:
+    import math
+
+    timings = record.get("timings", {}) if isinstance(record, dict) else {}
+    return {
+        stage: float(value)
+        for stage, value in timings.items()
+        if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0
+    }
+
+
+def _provenance_quality(outcome: dict[str, Any]) -> float | None:
+    import math
+
+    score = outcome.get("foreground_psnr_db", outcome.get("psnr_db"))
+    if isinstance(score, (int, float)) and math.isfinite(score):
+        return float(score)
+    return None
+
+
+def _maybe_print_provenance(fitting: dict[str, Any], enabled: bool) -> None:
+    if enabled:
+        _print_provenance_summary(fitting)
+
+
+def _print_batch_stages(batch: Any) -> None:
+    if isinstance(batch, dict):
+        for stage, seconds in batch.get("timings", {}).items():
+            aprint(f"  batch {stage}: {float(seconds):.2f} s")
+
+
+def _print_provenance_summary(fitting: dict[str, Any]) -> None:
+    """Readable timings and outcome spread from old or versioned fit records."""
+    import statistics
+
+    leaves = _fit_leaves(fitting)
+    if not leaves:
+        aprint("\nFit provenance: no fitted parts")
+        return
+    stage_totals: dict[str, float] = {}
+    durations: list[tuple[float, str]] = []
+    stop_reasons: Counter[str] = Counter()
+    cull_total = 0
+    prune_total = 0
+    quality: list[float] = []
+    for label, leaf in leaves:
+        record = leaf.get("fit_provenance", {})
+        recorded_outcome = record.get("outcome") if isinstance(record, dict) else None
+        outcome = {
+            **leaf,
+            **(recorded_outcome if isinstance(recorded_outcome, dict) else {}),
+        }
+        timings = _provenance_stages(record)
+        duration = sum(
+            timings.get(stage, 0.0)
+            for stage in ("preprocessing", "seeding", "optimization", "finalization")
+        )
+        for stage, value in timings.items():
+            stage_totals[stage] = stage_totals.get(stage, 0.0) + value
+        if any(
+            stage in timings
+            for stage in ("preprocessing", "seeding", "optimization", "finalization")
+        ):
+            durations.append((duration, label))
+        reason = outcome.get("early_stop_reason", "unrecorded")
+        stop_reasons[str(reason or "iteration limit")] += 1
+        cull_total += int(outcome.get("n_culled") or 0)
+        prune_total += int(outcome.get("min_extent_removed") or 0)
+        score = _provenance_quality(outcome)
+        if score is not None:
+            quality.append(score)
+    aprint(f"\nFit provenance: {len(leaves)} fit(s)")
+    aprint(f"  Fit stages (sum): {sum(d for d, _ in durations):.2f} s")
+    for stage, seconds in sorted(stage_totals.items()):
+        aprint(f"  {stage}: {seconds:.2f} s")
+    if isinstance(fitting.get("save_seconds"), (int, float)):
+        aprint(f"  saving: {float(fitting['save_seconds']):.2f} s")
+    _print_batch_stages(fitting.get("batch_provenance"))
+    if len(durations) > 1:
+        aprint(
+            "  Slowest: "
+            + ", ".join(
+                f"{label} {seconds:.2f}s"
+                for seconds, label in sorted(durations, reverse=True)[:5]
+            )
+        )
+    aprint(
+        "  Stop reasons: "
+        + ", ".join(
+            f"{reason} {count}" for reason, count in sorted(stop_reasons.items())
+        )
+    )
+    aprint(f"  Culled: {cull_total}; min-extent pruned: {prune_total}")
+    if quality:
+        aprint(
+            "  Quality dB (min/median/max): "
+            f"{min(quality):.2f}/{statistics.median(quality):.2f}/{max(quality):.2f}"
+        )
 
 
 def _is_short_numeric_list(value: Any) -> bool:
@@ -337,7 +464,7 @@ def _report_image_volume(path: Path, reason: str) -> None:
 
 
 def _load_info_data(
-    path: Path, *, full_provenance: bool
+    path: Path, *, full_provenance: bool, provenance: bool = False
 ) -> tuple["Optional[GSplatData]", bool]:
     """Load a flat dataset, or print a valid tree summary or load failure."""
     from luxar.gsplats.gsplat_data import GSplatData
@@ -384,6 +511,7 @@ def _load_info_data(
                     _print_gsplat_tree_summary(
                         zarr_path,
                         show_full_provenance=full_provenance,
+                        show_provenance=provenance,
                         source_path=path,
                     )
                 except ValueError as summary_exc:
@@ -442,6 +570,7 @@ def _info_report(
     show_histograms: bool,
     bins: int,
     full_provenance: bool,
+    provenance: bool = False,
 ) -> bool:
     """Print a Gaussian splat dataset report and return whether it succeeded."""
     try:
@@ -449,7 +578,9 @@ def _info_report(
 
         from luxar.gsplats.utils.alpha import effective_amplitudes
 
-        data, report_succeeded = _load_info_data(path, full_provenance=full_provenance)
+        data, report_succeeded = _load_info_data(
+            path, full_provenance=full_provenance, provenance=provenance
+        )
         if data is None:
             return report_succeeded
         n_splats = len(data.amplitudes)
@@ -556,6 +687,7 @@ def _info_report(
                 source_grid_keys,
                 show_full_provenance=full_provenance,
             )
+            _maybe_print_provenance(data.stats, provenance)
 
         # ================================================================
         # Summary
@@ -594,7 +726,9 @@ def _info_report(
 
 def info_dataset(
     path: Path = typer.Argument(
-        ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
+        ...,
+        callback=local_input_path,
+        help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)",
     ),
     show_histograms: bool = typer.Option(
         True, "--histograms/--no-histograms", help="Show ASCII histograms"
@@ -606,6 +740,9 @@ def info_dataset(
         False,
         "--full-provenance",
         help="Print the complete nested fitting/part_provenance record",
+    ),
+    provenance: bool = typer.Option(
+        False, "--provenance", help="Summarize fit stages, slow tiles, and outcomes"
     ),
 ) -> None:
     """Show detailed information about a Gaussian splat dataset.
@@ -643,6 +780,7 @@ def info_dataset(
         show_histograms=show_histograms,
         bins=bins,
         full_provenance=full_provenance,
+        provenance=provenance,
     ):
         raise typer.Exit(1)
 
@@ -763,6 +901,34 @@ def _resolve_view_target(path: Path) -> tuple[Path, Optional[Path]]:
     return resolve_store_path(path)
 
 
+def _build_view_scene(store: Path, opts: Any) -> tuple[Path, Path]:
+    """Build ``gsplat convert``'s scene for ``store`` in a fresh temp directory.
+
+    Returns ``(temp_dir, scene_path)``; the caller removes ``temp_dir``. The
+    directory is created BEFORE the build, so a build that fails part-way still
+    leaves the caller something to clean up — hence the cleanup here on error.
+    """
+    import tempfile
+    import time
+
+    from .scene_build import build_gsplat_scene
+
+    scene_dir = Path(tempfile.mkdtemp(prefix="luxar_gsplat_view_"))
+    scene_path = scene_dir / f"{store.name.split('.')[0] or 'gsplats'}.luxar.zarr"
+    start = time.perf_counter()
+    try:
+        with asection("Building a temporary scene (as `gsplat convert` would)"):
+            build_gsplat_scene(store, scene_path, opts)
+    except BaseException:
+        shutil.rmtree(scene_dir, ignore_errors=True)
+        raise
+    aprint(
+        f"Built a temporary scene in {time.perf_counter() - start:.1f}s "
+        f"(removed on exit; --raw serves the node tree as is)"
+    )
+    return scene_dir, scene_path
+
+
 def quick_view(
     path: Path = typer.Argument(
         ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
@@ -776,15 +942,54 @@ def quick_view(
         help="Open a browser (default: yes, where one can be seen).",
     ),
     cors_origin: CorsOriginOption = _DEFAULT_CORS_ORIGIN,
+    raw: bool = typer.Option(
+        False,
+        "--raw",
+        help="Serve the .gsplats.zarr node tree as is (no temporary scene: no "
+        "image orientation, no auto exposure, no display gain and no unit "
+        "labels; amplitudes as stored).",
+    ),
+    auto_exposure: bool = typer.Option(
+        True,
+        "--auto-exposure/--no-auto-exposure",
+        help="As for `gsplat convert`: dim splat brightness so the opening view "
+        "is not saturated (side views and other timepoints capped at 4x the "
+        "target).",
+    ),
+    target_brightness: Optional[float] = typer.Option(
+        None,
+        "--target-brightness",
+        min=1e-6,
+        help="Auto-exposure target for the predicted projected p99.9 "
+        "(default 2.0, the ACES value).",
+    ),
+    dim_order: Optional[str] = typer.Option(
+        None,
+        "--dim-order",
+        help="Name each center column (e.g. 'z,y,x'), as for `gsplat convert`.",
+    ),
+    view: Optional[str] = typer.Option(
+        None, "--view", help="Opening view: xy (default for image fits), xz, or yz."
+    ),
+    colormap: Optional[str] = typer.Option(
+        None, "--colormap", help="Colormap for scalar amplitudes (default gray)."
+    ),
 ) -> None:
     """Quick view of a Gaussian splat dataset in the Luxar web viewer.
 
-    The standalone ``.gsplats.zarr`` is a v3.4 node subtree — exactly what the
-    viewer renders inside a scene — so it is served **directly** (``?src=``) and
-    opened with no scene-compile round-trip. This works for every tree shape:
-    a single leaf, an additive ladder, a ``kind=lod`` substitutive hierarchy, a
-    ``kind=partition`` split, and arbitrary nestings. The viewer frames the
-    camera on the file's ``position_bounds``, so no centroid mutation is needed.
+    By default the store is turned into a TEMPORARY scene through exactly the
+    ``gsplat convert`` code path — image-convention orientation and opening
+    camera, auto exposure, the same appearance defaults — written to a temp
+    directory that is removed on exit, and that scene is served. So the first
+    look matches what ``convert`` would publish. The build re-writes the splats
+    (a partition / nested tree is grafted node for node, which still copies its
+    arrays), so it costs a few seconds on a large store.
+
+    ``--raw`` keeps the old behaviour: the standalone ``.gsplats.zarr`` is a v3.4
+    node subtree the viewer renders directly (``?src=``), with no scene-compile
+    round-trip — every tree shape works, framed on the file's
+    ``position_bounds`` — but amplitudes are the stored (raw) ones and the axes
+    are positional.
 
     Compressed archives (``.gsplats.zarr.zip`` / ``.gsplats.zarr.tar.gz``) are
     extracted to a temporary directory before serving.
@@ -800,11 +1005,27 @@ def quick_view(
         viewer_port: Port for viewer
         open_browser: Whether to open browser automatically
         cors_origin: Allowed CORS origin for both servers (default "local").
+        raw: Serve the node tree directly instead of a temporary scene.
+        auto_exposure: Auto exposure for the temporary scene.
+        target_brightness: Auto-exposure target.
+        dim_order: Column names, as for ``gsplat convert``.
+        view: Opening view preset, as for ``gsplat convert``.
+        colormap: Colormap for scalar amplitudes.
     """
     # Bound before the `try` so the `finally` below can test it: the store
     # resolver answers None for a directory store, and `rmtree(None)` raises —
     # turning a real error into an unrelated one.
     temp_dir: Optional[Path] = None
+    scene_dir: Optional[Path] = None
+    # SIGTERM / SIGHUP (a harness timeout, `luxar stop`, a closed terminal —
+    # also mid-build) unwind through the `finally` below instead of killing the
+    # process, so the temp scene and any extraction are always removed.
+    from contextlib import ExitStack
+
+    from luxar.cli.demo_runs import exit_on_termination_signals
+
+    signals = ExitStack()
+    signals.enter_context(exit_on_termination_signals())
     try:
         import threading
 
@@ -830,8 +1051,21 @@ def quick_view(
             # round-trip — the viewer consumes the node tree directly, which is
             # the only path that supports partition/nested roots.
             serve_target, temp_dir = _resolve_view_target(path)
+            if raw:
+                aprint(f"Serving node tree directly: {serve_target.name}")
+            else:
+                from .scene_build import SceneBuildOptions
 
-            aprint(f"Serving node tree directly: {serve_target.name}")
+                scene_dir, serve_target = _build_view_scene(
+                    serve_target,
+                    SceneBuildOptions(
+                        auto_exposure=auto_exposure,
+                        target_brightness=target_brightness,
+                        dim_order=dim_order,
+                        view=view,
+                        colormap=colormap,
+                    ),
+                )
 
             # Find available ports
             actual_port = pick_port(port, host, label="data")
@@ -893,16 +1127,22 @@ def quick_view(
         # `typer.Exit` a failed `pick_port` raises AFTER the archive has been
         # extracted, both left a full uncompressed copy of the dataset behind
         # in /tmp.
-        if temp_dir is not None:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        for scratch in (temp_dir, scene_dir):
+            if scratch is not None:
+                shutil.rmtree(scratch, ignore_errors=True)
+        signals.close()
 
 
 def compare_quality(
     gsplats_path: Path = typer.Argument(
-        ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
+        ...,
+        callback=local_input_path,
+        help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)",
     ),
     reference_path: Path = typer.Argument(
-        ..., exists=True, help="Reference volume (.npy, .tiff, .zarr, etc.)"
+        ...,
+        callback=local_input_path,
+        help="Reference volume (.npy, .tiff, .zarr, etc.)",
     ),
     shape: Optional[str] = typer.Option(
         None,
@@ -942,6 +1182,15 @@ def compare_quality(
         help="Score a --downscale fit on the grid it was fitted on: the reference "
         "is decimated the same way (anti-aliased, strided) and the splats mapped "
         "onto that grid. Default: score at the source resolution.",
+    ),
+    whole_volume: bool = typer.Option(
+        False,
+        "--whole-volume",
+        help="Score a --region crop fit over the WHOLE reference. By default a "
+        "crop fit compared against its full source volume is scored on the "
+        "region it fitted (fitting/source_region), so the foreground mask "
+        "matches the one the fit stamped; outside the region every structure "
+        "counts as error.",
     ),
     mask: Optional[Path] = typer.Option(
         None,
@@ -992,13 +1241,17 @@ def compare_quality(
 
     Renders the gsplats back onto the reference's voxel grid and computes PSNR,
     SSIM, MSE, relative L2 error and maximum absolute error, globally and over
-    the foreground. The headline PSNR uses a robust peak (reference p99.99 minus
-    the fit's floor), which one hot pixel cannot move; the classical full-range
-    PSNR is reported beside it. A physical-output fit is mapped back to voxels
+    the foreground. The headline PSNR and SSIM use a robust peak (reference
+    p99.99 minus the fit's floor), which one hot pixel cannot move; the
+    classical full-range figures are reported beside them. A physical-output fit is mapped back to voxels
     with its stored voxel_size. Partition and nested stores are scored over
     their default-rendered selection: all parts and each LOD group's finest
     level. The compression ratio covers the whole store, including coarse
-    levels that are not scored.
+    levels that are not scored. A --region crop fit is scored on the region it
+    fitted (--whole-volume for all of the reference). Beside the foreground
+    PSNR it prints the PSNR a noise-free model would score against this noisy
+    reference (from the noise sigma measured in the foreground) and a verdict
+    on the gap: an estimate that fine real texture can fool, not a pass mark.
 
     Examples:
         luxar gsplat compare fitted.gsplats.zarr original.tiff
@@ -1025,6 +1278,7 @@ def compare_quality(
             fg_threshold=fg_threshold,
             voxel_size=voxel_size,
             at_fit_resolution=at_fit_resolution,
+            whole_volume=whole_volume,
             output_json=output_json,
             quiet=quiet,
         )
@@ -1056,6 +1310,7 @@ def _print_gsplat_tree_summary(
     path: Path,
     *,
     show_full_provenance: bool = False,
+    show_provenance: bool = False,
     source_path: Optional[Path] = None,
 ) -> None:
     """Report the node-tree shape of a partition / nested .gsplats.zarr.
@@ -1124,6 +1379,7 @@ def _print_gsplat_tree_summary(
                     fitting[key],
                     show_full_provenance=show_full_provenance,
                 )
+            _maybe_print_provenance(fitting, show_provenance)
         _print_normalization_block(root)
     finally:
         if tmp is not None and tmp.exists():
@@ -1284,6 +1540,7 @@ def _print_doctor_info(
             show_histograms=histograms,
             bins=bins,
             full_provenance=full_provenance,
+            provenance=False,
         )
     elif store_kind == "scene":
         aprint("ℹ️ The gsplat info report does not apply to a Luxar scene.")

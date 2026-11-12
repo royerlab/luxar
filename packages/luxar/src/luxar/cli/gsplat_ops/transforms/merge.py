@@ -182,6 +182,81 @@ def merged_dimension_attrs(
     return {"dimension_metadata": [{"name": name} for name in merged]}
 
 
+_TREE_KINDS = ("lod", "partition")
+
+
+def _is_matrix_shaped_store(path: Path) -> bool:
+    """Whether a store is flat (matrix-shaped), from its group attrs alone.
+
+    Mirrors :func:`luxar.gsplats.tree.is_matrix_shaped` on the on-disk layout —
+    a bare leaf, or a ``kind=lod`` group whose children are all leaves — so the
+    decision reads metadata documents only, never array data.
+    """
+    import shutil
+
+    from luxar._zarr_compat import open_group as zc_open_group
+    from luxar.gsplats.io._archive import resolve_store_path
+
+    zarr_path, temp_dir = resolve_store_path(path, flat_zip_in_place=True)
+    try:
+        root = zc_open_group(str(zarr_path), mode="r")
+        kind = root.attrs.get("kind")
+        if kind == "partition":
+            return False
+        if kind != "lod":
+            return True
+        children = [name for name in root if str(name).startswith("child_")]
+        return all(root[name].attrs.get("kind") not in _TREE_KINDS for name in children)
+    finally:
+        if temp_dir is not None and temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _load_merge_input(path: Path, index: int, output_path: Path) -> "GSplatData":
+    """Load one merge input as flat data, flattening a node tree first.
+
+    A partition / nested-LOD input (what a tiled ``fit`` writes by default) is
+    collapsed by the same streaming code ``luxar gsplat flatten`` runs, into a
+    temporary store (beside the output when its directory exists, else in the
+    system temp directory), and the flat result is loaded from there. The merge
+    holds every input in memory anyway; the staging costs one uncompressed flat
+    copy of that input on disk while it is read.
+    """
+    import tempfile
+
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
+    from luxar.gsplats.tree import is_matrix_shaped
+
+    from .partition_flatten import run_flatten_dataset
+
+    if _is_matrix_shaped_store(path):
+        node, stats = load_gsplat_node(path, include_stats=True)
+        # The attrs read is a fast path, not the authority: a layout it does not
+        # know (a legacy store the loader migrates) is judged on the loaded tree.
+        if is_matrix_shaped(node):
+            return GSplatData.from_tree(node, stats=stats)
+        del node, stats
+    aprint(
+        f"{path.name} is a partition/LOD tree; flattening it to one leaf first "
+        f"(as 'luxar gsplat flatten' does)"
+    )
+    staging_parent = output_path.parent if output_path.parent.is_dir() else None
+    with tempfile.TemporaryDirectory(
+        prefix=".luxar-merge-flatten-", dir=staging_parent
+    ) as staging:
+        flat_path = Path(staging) / f"input_{index}.gsplats.zarr"
+        run_flatten_dataset(
+            input_path=path,
+            output_path=flat_path,
+            encoding_mode="precision",
+            compress=None,
+            overwrite=False,
+        )
+        flat_node, flat_stats = load_gsplat_node(flat_path, include_stats=True)
+        return GSplatData.from_tree(flat_node, stats=flat_stats)
+
+
 def run_merge_datasets(
     *,
     inputs: list[Path],
@@ -197,7 +272,6 @@ def run_merge_datasets(
     """Run merge command implementation."""
     try:
         from luxar.cli.gsplat_config import parse_hex_color
-        from luxar.cli.gsplat_ops.loading import load_matrix_gsplats
         from luxar.gsplats.gsplat_data import GSplatData
 
         if len(inputs) < 2:
@@ -211,13 +285,9 @@ def run_merge_datasets(
         with asection(f"Merging {len(inputs)} datasets"):
             datasets: list[GSplatData] = []
             total_splats = 0
-            for inp in inputs:
+            for index, inp in enumerate(inputs):
                 with asection(f"Loading {inp.name}"):
-                    ds = load_matrix_gsplats(
-                        inp,
-                        include_stats=True,
-                        command="merge",
-                    )
+                    ds = _load_merge_input(inp, index, output_path)
                     aprint(f"{ds.n_splats:,} splats ({ds.ndim}D)")
                     datasets.append(ds)
                     total_splats += ds.n_splats

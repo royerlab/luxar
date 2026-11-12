@@ -24,8 +24,8 @@ function makeStubs() {
     setSSAAEnabled: vi.fn(),
     setSSAAMultiplier: vi.fn(),
     setFXAAEnabled: vi.fn(),
-    setMSAAEnabled: vi.fn(),
-    setMSAASamples: vi.fn(),
+    setMSAAEnabled: vi.fn((enabled: boolean) => enabled),
+    setMSAASamples: vi.fn((samples: number) => samples),
     setToneMapping: vi.fn(),
     setDetectorNoiseEnabled: vi.fn(),
     setVignetteEnabled: vi.fn(),
@@ -94,6 +94,17 @@ describe('applyRenderingSettings — global EOG', () => {
 });
 
 describe('applyRenderingSettings — anti-aliasing', () => {
+  it('stores the count and enabled state actually accepted by the manager', () => {
+    stubs.settings.msaaSamples = 2;
+    stubs.settings.msaaEnabled = true;
+    stubs.postProcessing.setMSAASamples.mockReturnValue(4);
+    run();
+    expect(stubs.postProcessing.setMSAASamples).toHaveBeenCalledWith(2);
+    expect(stubs.postProcessing.setMSAAEnabled).toHaveBeenCalledWith(true);
+    expect(stubs.settings.msaaSamples).toBe(4);
+    expect(stubs.settings.msaaEnabled).toBe(true);
+  });
+
   it('applies SSAA / FXAA / MSAA in order', () => {
     stubs.settings.ssaaEnabled = true;
     stubs.settings.ssaaMultiplier = 2;

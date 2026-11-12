@@ -144,6 +144,8 @@ function commentBlockAbove(lines: string[], line: number): string[] {
  * the comment block directly above the call.
  */
 export function findGeometrySubsetEaches(source: string, fileName = 'x.ts'): SubsetFinding[] {
+  // Most test files have no `.each` call; skip their costly TypeScript parse.
+  if (!/\.(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*\n)*each\b/.test(source)) return [];
   const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
   const consts = constInitializers(file);
   const lines = source.split('\n');

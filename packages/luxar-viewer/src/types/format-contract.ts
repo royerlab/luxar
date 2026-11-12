@@ -262,6 +262,10 @@ export const RENDER_ATTR_KEYS: readonly RenderAttrKey[] = [
   'link',
   'link_target',
   'join',
+  'display_gain',
+  'amplitude_unit',
+  'amplitude_offset',
+  'source_data_range',
   'alpha_cutoff',
   'ambient',
   'material',
@@ -304,6 +308,10 @@ export type RenderAttrKey =
   | 'link'
   | 'link_target'
   | 'join'
+  | 'display_gain'
+  | 'amplitude_unit'
+  | 'amplitude_offset'
+  | 'source_data_range'
   | 'alpha_cutoff'
   | 'ambient'
   | 'material'

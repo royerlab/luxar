@@ -48,7 +48,10 @@ from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 
-from luxar.gsplats.fit_basis import reference_on_fit_basis
+from luxar.gsplats.fit_basis import (
+    reference_in_amplitude_units,
+    reference_on_fit_basis,
+)
 from luxar.gsplats.gsplat_data import GSplatData
 
 __all__ = ["VolumeRefitConfig", "volume_refine_splats"]
@@ -97,6 +100,13 @@ class VolumeRefitConfig:
     #: which is why it went unnoticed (#1177). Supplying the level lets the
     #: re-fit run on the ladder's own basis instead of guessing a new one.
     image_min: Optional[float] = None
+    #: The INPUT store's cumulative ``transform --scale-intensity`` factor
+    #: (``stats["intensity_scale"]``). The seed's amplitudes carry it and the
+    #: raw volume does not, so the volume is multiplied by it before the re-fit:
+    #: otherwise the re-fitted level lands back in source units, one brightness
+    #: step away from its siblings, and the MSE guard scores the seed against a
+    #: volume in the wrong units.
+    intensity_scale: float = 1.0
 
 
 def _render(data: GSplatData, volume: np.ndarray, device: Optional[str]) -> np.ndarray:
@@ -255,6 +265,13 @@ def volume_refine_splats(
         inner_floor: "str | float" = "none"
     else:
         inner_floor = "auto"
+    # In place only on the shifted copy: otherwise `volume` may be a view of
+    # the caller's source.
+    volume = reference_in_amplitude_units(
+        volume,
+        config.intensity_scale,
+        in_place=bool(config.image_min),
+    )
 
     refit = fit_gaussian_splats(
         volume,

@@ -10,6 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from luxar.cli import app
+from luxar.cli.tests._testing import assert_mappings_close
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
@@ -97,7 +98,7 @@ def test_partition_metrics_match_the_same_flat_splats(tmp_path: Path) -> None:
     # order. CPU renderer SSIM varied by about 2e-8 across 200 permutations on
     # Linux; the absolute floor gives that near-zero metric platform margin,
     # while the relative arm remains binding for order-one metrics.
-    assert partition_metrics == pytest.approx(flat_metrics, rel=1e-5, abs=1e-6)
+    assert_mappings_close(partition_metrics, flat_metrics, rel=1e-5, abs=1e-6)
 
 
 def test_nested_lod_selection_and_whole_store_ratio_are_reported(
@@ -166,4 +167,4 @@ def test_a_physical_partition_scores_like_its_voxel_flat_twin(tmp_path: Path) ->
     part = json.loads(partition_json.read_text())
     assert part["voxel_size"] == pytest.approx(vs.tolist())
     part = {k: v for k, v in part.items() if k not in skip}
-    assert part == pytest.approx(flat, rel=1e-4, abs=1e-6)
+    assert_mappings_close(part, flat, rel=1e-4, abs=1e-6)

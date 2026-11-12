@@ -126,7 +126,7 @@ class TestKneeDisplayIdx:
         labels = [line.get_label() for line in ax.lines]
         assert "train" in labels
         assert len(ax.collections) == 1
-        assert any("noise floor" in text.get_text() for text in ax.texts)
+        assert any("noise ceiling" in text.get_text() for text in ax.texts)
         plt.close(fig)
 
     def test_weighted_curve_omits_minmax_overlays(self):
@@ -144,7 +144,7 @@ class TestKneeDisplayIdx:
         labels = [line.get_label() for line in ax.lines]
         assert "train" not in labels
         assert len(ax.collections) == 0
-        assert not any("noise floor" in text.get_text() for text in ax.texts)
+        assert not any("noise ceiling" in text.get_text() for text in ax.texts)
         plt.close(fig)
 
     def test_legacy_zero_knee_is_suppressed(self):
@@ -268,3 +268,116 @@ class TestRenderReport:
         out = tmp_path / "report.pdf"
         render_calibration_report(res, np.zeros((32, 32, 32), dtype=np.float32), out)
         assert out.exists() and out.stat().st_size > 0
+
+
+class TestRobustSSIMField:
+    """``full_ssim_robust``: persisted, and old files fall back to ``full_ssim``."""
+
+    def test_round_trips_through_json_and_old_files_load(self, tmp_path) -> None:
+        import json
+
+        res = _make_result([1, 2, 4], [20.0, 21.0, 22.0])
+        res.full_ssim_robust = [0.4, 0.5, 0.6]
+        path = tmp_path / "cal.json"
+        res.to_json(path)
+        assert CalibrationResult.from_json(path).full_ssim_robust == [0.4, 0.5, 0.6]
+        raw = json.loads(path.read_text())
+        del raw["full_ssim_robust"]
+        path.write_text(json.dumps(raw))
+        assert CalibrationResult.from_json(path).full_ssim_robust == []
+
+    @pytest.mark.parametrize("robust", [True, False])
+    def test_cal_table_uses_robust_ssim_or_says_it_fell_back(
+        self, robust: bool, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from luxar.cli.gsplat_ops.fitting.calibrate import _print_cal_table
+
+        res = _make_result([1, 2, 4], [20.0, 21.0, 22.0])
+        res.full_ssim = [0.981, 0.982, 0.983]
+        if robust:
+            res.full_ssim_robust = [0.311, 0.312, 0.313]
+        _print_cal_table(res)
+        out = capsys.readouterr().out
+        if robust:
+            assert "0.311" in out and "0.981" not in out
+            assert "PSNR and SSIM on the robust peak" in out
+        else:
+            assert "0.981" in out
+            assert "PSNR (SSIM on the full range) on the robust peak" in out
+
+    @pytest.mark.parametrize(
+        ("robust", "label"), [(True, "SSIM (robust peak)"), (False, "SSIM")]
+    )
+    def test_pdf_ssim_panel_label(self, robust: bool, label: str) -> None:
+        import matplotlib.pyplot as plt
+
+        from luxar.gsplats.calibration_report import _plot_rate_distortion
+
+        res = _make_result([1, 2, 4], [20.0, 21.0, 22.0])
+        if robust:
+            res.full_ssim_robust = [0.4, 0.5, 0.6]
+        fig, axes = plt.subplots(2, 2)
+        try:
+            _plot_rate_distortion(fig, *axes.ravel(), res)
+            assert axes.ravel()[1].get_ylabel() == label
+        finally:
+            plt.close(fig)
+
+
+class TestPsnrBasis:
+    """The report plots PSNR on the robust peak the terminal table quotes."""
+
+    def _robust_result(self) -> CalibrationResult:
+        res = _make_result([10, 20, 40], [40.0, 42.0, 41.0])
+        res.data_range, res.robust_data_range = 100.0, 50.0  # -6.02 dB
+        res.noise_sigma_rms = 0.5
+        res.psnr_ceiling_robust_db = 40.0
+        return res
+
+    def test_curves_shift_to_the_robust_peak_and_the_axis_says_so(self):
+        import matplotlib.pyplot as plt
+
+        res = self._robust_result()
+        fig, axes = plt.subplots(2, 2)
+        calibration_report._plot_rate_distortion(
+            fig, axes[0, 0], axes[0, 1], axes[1, 0], axes[1, 1], res
+        )
+        ax = axes[0, 0]
+        assert "robust peak" in ax.get_ylabel()
+        held = ax.get_lines()[0].get_ydata()
+        assert held == pytest.approx([40.0 - 6.0206, 42.0 - 6.0206, 41.0 - 6.0206])
+        # The ceiling line is the RMS-noise ceiling, already on the robust basis.
+        assert any("noise ceiling ≈ 40.0 dB" in t.get_text() for t in ax.texts)
+        # The train/held-out gap is a difference: unshifted.
+        gap = axes[1, 1].get_lines()[0].get_ydata()
+        assert gap == pytest.approx([1.0, 1.0, 1.0])
+        plt.close(fig)
+
+    def test_blind_spot_page_uses_the_same_basis(self):
+        import matplotlib.pyplot as plt
+
+        res = self._robust_result()
+        fig, ax = plt.subplots()
+        _plot_blind_spot(fig, ax, res)
+        assert "robust peak" in ax.get_ylabel()
+        held = [line for line in ax.get_lines() if line.get_marker() == "o"][0]
+        assert held.get_ydata()[1] == pytest.approx(42.0 - 6.0206)
+        plt.close(fig)
+
+    def test_legacy_result_stays_full_range_and_labelled(self):
+        res = _make_result([10, 20, 40], [40.0, 42.0, 41.0])
+        off, label = calibration_report._psnr_basis(res)
+        assert off == 0.0 and "full range" in label
+        # Legacy ceiling falls back to the median-voxel ensemble value.
+        assert calibration_report._plot_ceiling_db(res) == pytest.approx(45.0)
+        assert "median-voxel" in calibration_report._noise_annotation(res)
+
+    def test_montage_target_is_floor_subtracted(self):
+        res = _make_result([10, 20, 40], [40.0, 42.0, 41.0])
+        res.fit_config = {"floor_subtracted": 100.0}
+        V = np.full((32, 32, 32), 90.0, np.float32)
+        V[0, 0, 0] = 400.0
+        target = calibration_report._montage_target(V, res)
+        assert target.min() == 0.0 and target.max() == pytest.approx(300.0)
+        res.fit_config = {}
+        assert calibration_report._montage_target(V, res).max() == 400.0

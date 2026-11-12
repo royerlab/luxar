@@ -129,16 +129,28 @@ def parse_str_arg(name: str, argv: Optional[list[str]] = None) -> Optional[str]:
 def add_serve_arguments(parser: Any) -> None:
     """Declare the serving flags :func:`launch_viewer` reads, on an argparse parser.
 
-    ``launch_viewer`` forwards ``--host`` and ``--no-open`` straight from
-    ``sys.argv`` for every demo, but a demo that parses its argv with argparse
-    would reject them as unrecognised before that ever happens. Declaring them
-    here keeps ``luxar demo run <key> -- --host 0.0.0.0`` working there too and
-    lists them in the demo's own ``--help``.
+    ``launch_viewer`` forwards ``--host``, ``--port``, ``--viewer-port`` and
+    ``--no-open`` straight from ``sys.argv`` for every demo, but a demo that
+    parses its argv with argparse would reject them as unrecognised before that
+    ever happens. Declaring them here keeps ``luxar demo run <key> -- --host
+    0.0.0.0`` working there too and lists them in the demo's own ``--help``.
     """
     parser.add_argument(
         "--host",
         default=None,
         help="Bind the data/viewer servers to HOST (default 127.0.0.1).",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Serve the data on port N (default: a stable per-demo port).",
+    )
+    parser.add_argument(
+        "--viewer-port",
+        type=int,
+        default=None,
+        help="Serve the viewer on port N (default: a stable per-demo port).",
     )
     parser.add_argument(
         "--no-open",

@@ -79,6 +79,7 @@ import {
   projectionSizeScaleTSL,
   sanitizeAlpha,
   sanitizeNonNegative,
+  loadTexel,
   type TSLNode,
   sortedIndexNode,
   densityDroppedNode,
@@ -317,13 +318,14 @@ export function lineWebGPUFactory(
   // body (the TSL pattern for Fn-traced vertex stages).
   // Per-segment-constant values use `flat` interpolation so the
   // rasterizer skips the perspective divide — matches the GLSL3 `flat`
-  // qualifier on the same fields.
+  // qualifier on the same fields. `either` is exact for these per-segment values
+  // and permits compatibility-mode WebGPU to build the pipeline.
   const vColor: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
   const vSharpness: TSLNode = varying(float(0.0));
   const vClipZW: TSLNode = clipDepthVarying();
   const vPerpNorm: TSLNode = varying(float(0.0));
   const vT: TSLNode = varying(float(0.0));
-  const vSegmentLength: TSLNode = varying(float(0.0)).setInterpolation('flat');
+  const vSegmentLength: TSLNode = varying(float(0.0)).setInterpolation('flat', 'either');
   const vWidthAtT: TSLNode = varying(float(0.0));
   const vPixelWidth: TSLNode = varying(float(0.0));
   const vWidthFade: TSLNode = varying(float(0.0));
@@ -339,8 +341,8 @@ export function lineWebGPUFactory(
   const vViewZ: TSLNode | null = fixedOrtho === true ? null : varying(float(0.0));
   // Continuous [0, 1] cap-suppression scalars, one per endpoint —
   // per-instance, same across all 4 quad verts.
-  const vCapSuppressStart: TSLNode = varying(float(0.0)).setInterpolation('flat');
-  const vCapSuppressEnd: TSLNode = varying(float(0.0)).setInterpolation('flat');
+  const vCapSuppressStart: TSLNode = varying(float(0.0)).setInterpolation('flat', 'either');
+  const vCapSuppressEnd: TSLNode = varying(float(0.0)).setInterpolation('flat', 'either');
   // Per-endpoint opacity, interpolated along the segment (deliberately
   // NON-flat: the start/end alphas differ, matching the GLSL twin's
   // smooth `out float vAlpha`).
@@ -380,12 +382,12 @@ export function lineWebGPUFactory(
     ).toVar();
     const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
     const texelY: TSLNode = lineBase.div(lineTexW).toVar();
-    const lineT0: TSLNode = uLineTex.load(ivec2(texelX, texelY)).toVar();
-    const lineT1: TSLNode = uLineTex.load(ivec2(texelX.add(int(1)), texelY)).toVar();
-    const lineT2: TSLNode = uLineTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
-    const lineT3: TSLNode = uLineTex.load(ivec2(texelX.add(int(3)), texelY)).toVar();
-    const lineT4: TSLNode = uLineTex.load(ivec2(texelX.add(int(4)), texelY)).toVar();
-    const lineT5: TSLNode = uLineTex.load(ivec2(texelX.add(int(5)), texelY)).toVar();
+    const lineT0: TSLNode = loadTexel(uLineTex, ivec2(texelX, texelY)).toVar();
+    const lineT1: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(1)), texelY)).toVar();
+    const lineT2: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(2)), texelY)).toVar();
+    const lineT3: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(3)), texelY)).toVar();
+    const lineT4: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(4)), texelY)).toVar();
+    const lineT5: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(5)), texelY)).toVar();
     const aStartPos: TSLNode = vec3(lineT0).toVar();
     const aStartWidth: TSLNode = lineT0.w.toVar();
     const aEndPos: TSLNode = vec3(lineT1).toVar();

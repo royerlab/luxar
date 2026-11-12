@@ -61,6 +61,71 @@ test.describe('Post-Processing Pipeline', () => {
     expect(settingsCheck!.exposureType).toBe('number');
   });
 
+  test('releases render targets after DPR steps and a return to the original size', async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+
+    const counts = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      const renderer = debug.renderer;
+      const postProcessing = debug.postProcessing;
+      const sceneManager = debug.app.sceneManager;
+      const initialDpr = renderer.getPixelRatio();
+      const reducedDpr = initialDpr * 0.75;
+
+      // Exercise the multisampled HDR, LDR/FXAA and bloom targets through the resize path.
+      postProcessing.setBloomEnabled(true);
+      postProcessing.setFXAAEnabled(true);
+      postProcessing.setMSAAEnabled(true);
+      const sample = () => ({
+        dpr: renderer.getPixelRatio() as number,
+        samples: postProcessing.hdrTarget.samples as number,
+        textures: renderer.info.memory.textures as number,
+        targets: (renderer.info.memory.renderTargets as number | undefined) ?? null,
+      });
+      postProcessing.render();
+      const initial = sample();
+      const afterSteps: ReturnType<typeof sample>[] = [];
+      for (let step = 0; step < 3; step++) {
+        sceneManager.setAdaptivePixelRatio(reducedDpr);
+        postProcessing.render();
+        afterSteps.push(sample());
+        sceneManager.setAdaptivePixelRatio(initialDpr);
+        postProcessing.render();
+        afterSteps.push(sample());
+      }
+      return {
+        initial,
+        afterSteps,
+        initialDpr,
+        reducedDpr,
+        backend: renderer.backend?.constructor.name as string | undefined,
+      };
+    });
+
+    if (test.info().project.name === 'chromium-webgpu') {
+      expect(counts.backend).toBe('WebGPUBackend');
+      expect(counts.initial.targets).toBeGreaterThan(0);
+    }
+    expect(counts.reducedDpr).toBeLessThan(counts.initialDpr);
+    expect(counts.initial.dpr).toBe(counts.initialDpr);
+    expect(counts.initial.samples).toBeGreaterThan(0);
+    expect(counts.initial.textures).toBeGreaterThan(0);
+    const reducedCount = counts.afterSteps[0];
+    expect(reducedCount.dpr).toBeCloseTo(counts.reducedDpr, 2);
+    expect(reducedCount.samples).toBeGreaterThan(0);
+    expect(reducedCount.textures).toBeGreaterThan(0);
+    expect(counts.afterSteps).toEqual([
+      reducedCount,
+      counts.initial,
+      reducedCount,
+      counts.initial,
+      reducedCount,
+      counts.initial,
+    ]);
+  });
+
   test('should toggle cinematic mode with C key', async ({ page }) => {
     // Get initial cinematic state
     const initialState = await page.evaluate(() => {

@@ -17,6 +17,15 @@
  * `WebGPURenderer({ forceWebGL: true })` only initialises inside a
  * browser.
  *
+ * Two TSL arms, chosen by the Playwright project. In the default `chromium`
+ * project the TSL side runs on `WebGPURenderer({ forceWebGL: true })`, so the
+ * comparison is GLSL vs TSL-compiled-to-GLSL. In the opt-in `chromium-webgpu`
+ * project (`pnpm test:e2e:webgpu`) the same cases run the TSL side as WGSL on
+ * the real WebGPU backend (`native: true`), so every assertion here becomes a
+ * GLSL ↔ native-WGSL parity check; the harness fails closed if no hardware
+ * adapter came up. Tolerances are shared — a case that only holds on the
+ * fallback is a finding, not a reason to widen them per project.
+ *
  * Captured GLSL-string snapshot diffs are deferred — the path through
  * Three.js's internal `_objects` ChainMap that holds compiled shader
  * source isn't reconstructible from the harness yet. A follow-up will
@@ -30,6 +39,7 @@ import { test, expect, type Page } from '@playwright/test';
 import type { GeometryTypeName } from '../../types/format-contract';
 import type { PrimitiveVariant } from '../helpers/geometry-materials';
 import { PICK_VISIBILITY_RULES } from '../_conformance/pick-visibility-rules';
+import { isWebGPUProject } from './webgpu-project';
 
 const HARNESS_URL = '/tsl-harness.html';
 
@@ -37,6 +47,7 @@ type TSLResult = {
   pixels: number[];
   vertexShader: string;
   fragmentShader: string;
+  meshPickMembershipOnly: boolean;
 };
 
 type BloomChainResult = {
@@ -45,7 +56,10 @@ type BloomChainResult = {
 };
 
 async function bootHarness(page: Page): Promise<string[]> {
-  await page.goto(HARNESS_URL);
+  // The native arm refuses a software (SwiftShader) adapter unless the run
+  // opted in, mirroring `waitForLuxarReady`'s gate for the viewer.
+  const allowFallback = process.env.LUXAR_E2E_WEBGPU_ALLOW_FALLBACK === '1';
+  await page.goto(allowFallback ? `${HARNESS_URL}?allowFallbackAdapter` : HARNESS_URL);
   await page.waitForFunction(() => Boolean(window.__tslHarness));
   await page.evaluate(() => window.__tslHarness!.ready);
   return page.evaluate(() => window.__tslHarness!.listShaders());
@@ -67,17 +81,34 @@ async function runTSL(
   shaderName: string,
   uniforms?: Record<string, number>
 ): Promise<TSLResult> {
-  return page.evaluate(
-    async ([name, overrides]) => {
-      const result = await window.__tslHarness!.renderTSL(name, { uniforms: overrides });
+  const result = await page.evaluate(
+    async ([name, overrides, native]) => {
+      const result = await window.__tslHarness!.renderTSL(name, { native, uniforms: overrides });
       return {
         pixels: Array.from(result.pixels),
         vertexShader: result.vertexShader,
         fragmentShader: result.fragmentShader,
+        meshPickMembershipOnly: result.meshPickMembershipOnly,
       };
     },
-    [shaderName, uniforms] as const
+    [shaderName, uniforms, isWebGPUProject()] as const
   );
+  return result;
+}
+
+/** Core WebGPU compares the exact ID; other native modes permit any face corner. */
+function comparableMeshPickPixels(glsl: number[], tsl: TSLResult): [number[], number[]] {
+  if (!tsl.meshPickMembershipOnly) return [glsl, tsl.pixels];
+  // This harness uses RGBA8: vertex 0 encodes as 0, and vertices 1–3
+  // saturate to 255. Reject intermediate ID bytes before excluding that
+  // channel; exact face-corner membership is not observable at 8 bits.
+  for (let i = 1; i < tsl.pixels.length; i += 4) {
+    expect([0, 255], `mesh pick at pixel ${(i - 1) / 4} has an intermediate ID byte`).toContain(
+      tsl.pixels[i]
+    );
+  }
+  const withoutId = (pixels: number[]) => pixels.map((value, i) => (i % 4 === 1 ? 0 : value));
+  return [withoutId(glsl), withoutId(tsl.pixels)];
 }
 
 async function runBloomChain(
@@ -86,14 +117,16 @@ async function runBloomChain(
   fixture: 'radial' | 'ramp-y'
 ): Promise<BloomChainResult> {
   return page.evaluate(
-    async ([selectedBackend, selectedFixture]) => {
+    async ([selectedBackend, selectedFixture, native]) => {
       const result =
         selectedBackend === 'glsl'
           ? await window.__tslHarness!.renderBloomChainGLSL(selectedFixture as 'radial' | 'ramp-y')
-          : await window.__tslHarness!.renderBloomChainTSL(selectedFixture as 'radial' | 'ramp-y');
+          : await window.__tslHarness!.renderBloomChainTSL(selectedFixture as 'radial' | 'ramp-y', {
+              native,
+            });
       return { pixels: Array.from(result.pixels), mipCount: result.mipCount };
     },
-    [backend, fixture] as const
+    [backend, fixture, isWebGPUProject()] as const
   );
 }
 
@@ -1560,6 +1593,25 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(3.0);
   });
 
+  test('gsplat-display-gain: a gain of 0.37 dims both backends alike', async ({ page }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'gsplat-display-gain');
+    const tslResult = await runTSL(page, 'gsplat-display-gain');
+    assertBothRendered(glslPixels, tslResult.pixels, 'gsplat-display-gain');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'gsplat-display-gain: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+    expect(meanAbsDiff(glslPixels, tslResult.pixels)).toBeLessThan(3.0);
+
+    // The gain really reached the emission: dimmer than the identical
+    // ungained `gsplat-colormap` draw on the same backend.
+    const ungained = await runGLSL(page, 'gsplat-colormap');
+    const sum = (px: number[]) => px.reduce((a, v, i) => (i % 4 === 3 ? a : a + v), 0);
+    expect(sum(glslPixels)).toBeLessThan(0.8 * sum(ungained));
+  });
+
   test('gsplat-gamma-one: LUXAR_GAMMA_ONE fast path matches the slow pow() path', async ({
     page,
   }) => {
@@ -2577,11 +2629,12 @@ test.describe('TSL ↔ GLSL shader parity', () => {
   // bottom-up, WGSL's is top-down) and therefore FORCED viewer-facing in both
   // shaders rather than assumed.
   //
-  // Note the limit of this harness: it drives `WebGPURenderer({ forceWebGL: true })`,
-  // so the TSL side is compiled to GLSL. That catches graph-shape and math
-  // divergence — the whole point — but NOT a WGSL-only convention difference. The
-  // sign forcing above is what makes that untested axis safe by construction rather
-  // than by luck.
+  // Note the limit of this harness in the default project: it drives
+  // `WebGPURenderer({ forceWebGL: true })`, so the TSL side is compiled to GLSL.
+  // That catches graph-shape and math divergence — the whole point — but NOT a
+  // WGSL-only convention difference; the `chromium-webgpu` project's native arm
+  // does. The sign forcing above is what keeps that axis safe by construction
+  // wherever only the default project runs.
   for (const variant of [
     'mesh',
     'mesh-additive',
@@ -2607,9 +2660,18 @@ test.describe('TSL ↔ GLSL shader parity', () => {
 
       const glslPixels = await runGLSL(page, variant);
       const tslResult = await runTSL(page, variant);
+      const [comparableGLSL, comparableTSL] = variant.startsWith('mesh-pick')
+        ? comparableMeshPickPixels(glslPixels, tslResult)
+        : [glslPixels, tslResult.pixels];
 
-      assertBothRendered(glslPixels, tslResult.pixels, variant);
-      const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+      // NOT `assertBothRendered`: this fixture's quad fills the frame, so pixel 0
+      // is a SHADED corner, not background, and an exact match there is the
+      // bit-exactness demand that helper's own comment rules out. GLSL against
+      // TSL-on-the-WebGL-backend happens to agree to the bit; against native
+      // WGSL `mesh-texture` lands 1 LSB apart (red 186 vs 187), well inside the
+      // mean-diff bound below.
+      assertNeitherFrameEmpty(comparableGLSL, comparableTSL, variant);
+      const diff = meanAbsDiff(comparableGLSL, comparableTSL);
       const samplePx = (px: number[], x: number, y: number) =>
         `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;
       const samples = [
@@ -2828,9 +2890,20 @@ test.describe('TSL ↔ GLSL shader parity', () => {
 
     const glslPixels = await runGLSL(page, 'mesh-pick');
     const tslResult = await runTSL(page, 'mesh-pick');
+    const [comparableGLSL, comparableTSL] = comparableMeshPickPixels(glslPixels, tslResult);
 
-    assertBothRendered(glslPixels, tslResult.pixels, 'mesh-pick');
-    expect(meanAbsDiff(glslPixels, tslResult.pixels), 'mesh-pick: parity').toBeLessThan(2.0);
+    assertBothRendered(comparableGLSL, comparableTSL, 'mesh-pick');
+    expect(meanAbsDiff(comparableGLSL, comparableTSL), 'mesh-pick: parity').toBeLessThan(2.0);
+    const centreIdByte = (32 * 64 + 32) * 4 + 1;
+    expect(glslPixels[centreIdByte], 'WebGL must report the original first corner').toBe(0);
+    if (isWebGPUProject()) {
+      expect(/@interpolate\(\s*flat,\s*first\s*\)/.test(tslResult.vertexShader)).toBe(
+        !tslResult.meshPickMembershipOnly
+      );
+    }
+    if (!tslResult.meshPickMembershipOnly) {
+      expect(tslResult.pixels[centreIdByte], 'core WebGPU must report first').toBe(0);
+    }
   });
 
   test('mesh-pick: the cutout is REAL — turning it off recovers the discarded corner', async ({
@@ -3080,7 +3153,10 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
 
     const glslPick = await runGLSL(page, 'mesh-pick-near-fade');
-    const tslPick = (await runTSL(page, 'mesh-pick-near-fade')).pixels;
+    const [comparableGLSLPick, comparableTSLPick] = comparableMeshPickPixels(
+      glslPick,
+      await runTSL(page, 'mesh-pick-near-fade')
+    );
     // `assertBothRendered` is deliberately NOT used on this one. Its "did anything
     // render?" proxy is "some pixel differs from pixel 0", and this frame is a single
     // RGBA value repeated 4096 times — legitimately, by construction: the quad
@@ -3101,10 +3177,10 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     // 70° and the same corner interpolates to 0.475, the cutout starts discarding
     // there, and this assertion fails for a reason that has nothing to do with the
     // near fade. If `buildBehindCamera` ever has to change, re-derive it here first.
-    const expectedPick = [...pixelAt(glslPick, ...CENTRE)];
+    const expectedPick = [...pixelAt(comparableGLSLPick, ...CENTRE)];
     for (const [name, buf] of [
-      ['glsl', glslPick],
-      ['tsl', tslPick],
+      ['glsl', comparableGLSLPick],
+      ['tsl', comparableTSLPick],
     ] as const) {
       let off = 0;
       for (let i = 0; i < buf.length; i += 4) {

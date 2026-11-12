@@ -116,7 +116,9 @@ For GPU-accelerated rendering, see the backend-specific subpackages:
 - **CUDA** (`cuda/`): NVIDIA GPU acceleration (2D-8D), substantial speedup (often orders of magnitude, GPU-dependent)
 - **Metal** (`metal/`): Apple Silicon acceleration for 3D MPS volumes using splat-centric Metal kernels. The 3D custom path renders from post-activation Cholesky tensors (`current_params()`) and returns their gradients, letting PyTorch autograd handle the raw-parameter reparameterization VJP; other supported MPS dimensions use PyTorch rendering. Speedup is chip- and workload-dependent.
 
-Both backends provide model classes (`GaussianSplatModelCUDA`, `GaussianSplatModelMetal`) with matching parameter-management APIs. CUDA provides custom kernels for 2D-8D; Metal accepts 2D-8D MPS models but only dispatches to custom splat-centric Metal kernels for 3D float32 tensors.
+- **Native CPU** (`cpu/`): fused numba kernels for 3D CPU fits (splat-centric forward + analytic backward, JIT-compiled at runtime from the `numba` wheel in the `gsplats` extra; no C++ toolchain). Numerically the PyTorch 3D renderer, voxel for voxel; other dimensionalities use PyTorch rendering. Selected automatically on CPU; `LUXAR_CPU_BACKEND=auto|native|torch`, `LUXAR_CPU_THREADS`.
+
+All three provide model classes (`GaussianSplatModelCUDA`, `GaussianSplatModelMetal`, `GaussianSplatModelCPUNative`) with matching parameter-management APIs. CUDA provides custom kernels for 2D-8D; Metal accepts 2D-8D MPS models but only dispatches to custom splat-centric Metal kernels for 3D float32 tensors; the CPU model likewise dispatches only 3D to its kernels.
 
 ## File Structure
 
@@ -127,6 +129,7 @@ gsplats/
 ├── rendering_core.py        # Core rendering engine (2D/3D fast paths, nD generic)
 ├── rendering_wrappers.py    # NumPy/PyTorch wrappers
 ├── README.md                # This file
+├── cpu/                     # Native CPU backend (numba kernels)
 ├── cuda/                    # CUDA backend (NVIDIA GPUs)
 ├── metal/                   # Metal backend (Apple Silicon)
 └── tests/

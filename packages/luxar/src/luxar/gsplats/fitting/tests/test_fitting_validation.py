@@ -117,6 +117,12 @@ VALIDATION_PRECEDENCE = (
         "early_stop_patience must be >= 1 if specified",
     ),
     ValidationCase(
+        "early_stop_rel_tol",
+        {"early_stop_rel_tol": -1e-4},
+        ValueError,
+        "early_stop_rel_tol must be in [0, 1) if specified",
+    ),
+    ValidationCase(
         "scheduler_type",
         {"scheduler_type": "invalid"},
         ValueError,
@@ -769,3 +775,9 @@ class TestSigmaMaxDiagFraction:
 
         config = prepare_fit_config(fitter, V)
         assert config.rel_l2_target is None
+
+
+def test_early_stop_rel_tol_given_as_text_says_how_to_write_it() -> None:
+    """YAML 1.1 reads `1e-3` as text; the error must say so, not raise TypeError."""
+    with pytest.raises(ValueError, match="early_stop_rel_tol must be a number"):
+        _validate_with_defaults({"early_stop_rel_tol": "1e-3"})

@@ -7,6 +7,8 @@ which is what the affected call sites were silently getting wrong.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import numpy as np
 import pytest
 
@@ -14,6 +16,8 @@ from luxar.gsplats.fit_basis import (
     MISSING_BASIS_HINT,
     fit_image_min,
     reference_on_fit_basis,
+    rescale_intensity_basis,
+    source_intensity_span,
 )
 
 
@@ -67,6 +71,27 @@ class TestFitImageMin:
         what the reader should distrust."""
         assert "image_min" in MISSING_BASIS_HINT
         assert "RAW" in MISSING_BASIS_HINT
+
+
+def test_repeated_intensity_scaling_preserves_raw_levels() -> None:
+    stats = {"image_min": 112.0, "image_max": 4012.0, "intensity_range": 3900.0}
+    rescale_intensity_basis(stats, 0.5)
+    rescale_intensity_basis(stats, 0.5)
+    assert stats == {
+        "image_min": 112.0,
+        "image_max": 4012.0,
+        "intensity_range": 975.0,
+        "intensity_scale": 0.25,
+    }
+    rescale_intensity_basis(stats, 4.0)
+    assert stats == {"image_min": 112.0, "image_max": 4012.0, "intensity_range": 3900.0}
+
+
+def test_scaled_span_never_falls_back_to_raw_bounds() -> None:
+    stats = {"image_min": 112.0, "image_max": 4012.0, "intensity_scale": 0.5}
+    assert source_intensity_span(stats) is None
+    stats["intensity_range"] = 1950.0
+    assert source_intensity_span(stats) == 1950.0
 
 
 class TestReferenceOnFitBasis:
@@ -157,3 +182,72 @@ class TestReferenceOnFitBasis:
 
         assert mse_basis == 0.0
         assert mse_raw == pytest.approx(level**2)
+
+
+class TestIntensityEditsKeepTheBasisHonest:
+    """The Python ``GSplatData`` intensity edits rebase the basis like the CLI."""
+
+    BASIS: ClassVar[dict[str, float]] = {
+        "image_min": 100.0,
+        "image_max": 4100.0,
+        "intensity_range": 4000.0,
+    }
+
+    def _data(self):
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(1)
+        n = 40
+        return GSplatData(
+            centers=rng.uniform(0, 10, (n, 3)).astype(np.float32),
+            amplitudes=rng.uniform(10, 1000, n).astype(np.float32),
+            cholesky_factors=np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (n, 1)),
+            stats=dict(self.BASIS),
+        )
+
+    def test_scale_scales_the_range_and_records_the_scale(self) -> None:
+        data = self._data()
+        out = data.scale_intensity(0.5)
+        assert out.stats["intensity_range"] == 2000.0
+        assert out.stats["intensity_scale"] == 0.5
+        assert out.stats["image_min"] == 100.0
+        assert data.stats == self.BASIS  # the source is untouched
+
+    def test_scale_by_one_is_a_no_op(self) -> None:
+        assert self._data().scale_intensity(1.0).stats == self.BASIS
+
+    def test_affine_without_offset_is_a_scale(self) -> None:
+        assert self._data().affine_intensity(2.0).stats["intensity_range"] == 8000.0
+
+    def test_normalize_is_one_global_factor_and_records_it(self) -> None:
+        """A normalise to a target is still one exact multiplier, so scorers can
+        take it back out exactly like ``--scale-intensity``."""
+        data = self._data()
+        factor = 1.0 / float(data.amplitudes.max())
+        out = data.normalize_intensity(1.0)
+        assert out.stats["intensity_scale"] == pytest.approx(factor)
+        assert out.stats["intensity_range"] == pytest.approx(4000.0 * factor)
+        assert out.stats["image_min"] == 100.0
+        assert out.stats["image_max"] == 4100.0
+
+    def test_a_round_trip_back_to_one_drops_the_scale(self) -> None:
+        """x49 then x1/49 is 0.9999999999999999 in floats: that residue must not
+        label a no-op store as edited (convert would say ``a.u.``)."""
+        out = self._data().scale_intensity(49.0).scale_intensity(1.0 / 49.0)
+        assert "intensity_scale" not in out.stats
+
+    @pytest.mark.parametrize(
+        "edit",
+        [
+            lambda d: d.affine_intensity(1.0, 5.0),
+            lambda d: d.clamp_intensity(max=500.0),
+            lambda d: d.reweight_amplitude(np.linspace(0.5, 1.0, d.n_splats)),
+            lambda d: d.soft_scale_filter(highpass=0.5),
+        ],
+    )
+    def test_non_global_edits_drop_the_amplitude_basis(self, edit) -> None:
+        out = edit(self._data())
+        assert "intensity_range" not in out.stats
+        assert "image_max" not in out.stats
+        assert "intensity_scale" not in out.stats
+        assert out.stats["image_min"] == 100.0

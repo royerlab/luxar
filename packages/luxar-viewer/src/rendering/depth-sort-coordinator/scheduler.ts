@@ -174,8 +174,7 @@ export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: stri
         // the mesh signal and it is set by the SAME commit whose generation
         // just matched, so the two can never describe different face sets.
         const triangleSource = current.triangleSource;
-        const applicable =
-          triangleSource !== undefined || !!geometry?.getAttribute?.('aSortedIndex');
+        const applicable = !!(triangleSource ?? geometry?.getAttribute?.('aSortedIndex'));
         if (applicable) {
           // Ordering upload: 4 bytes/splat through the attribute
           // update-range machinery (the architecture's headline number) on
@@ -265,7 +264,8 @@ export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: stri
                 geometry,
                 result.ordering,
                 result.ordering.length,
-                applyCallbacks
+                applyCallbacks,
+                { adoptOrdering: true }
               );
           if (staged > 0) {
             // Handed off BEFORE the throwing `requestRender()` below, so a

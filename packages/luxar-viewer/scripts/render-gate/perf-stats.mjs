@@ -75,6 +75,68 @@ export function noiseFloor(baseA, baseB, minFloor = 0.01) {
 }
 
 /**
+ * Standard normal quantile (inverse CDF), Acklam's rational approximation
+ * (relative error below 1.2e-9 over (0, 1)).
+ *
+ * @param {number} p Probability in (0, 1).
+ * @returns {number} z with Phi(z) = p.
+ */
+export function normalQuantile(p) {
+  const a = [
+    -39.69683028665376, 220.9460984245205, -275.928510446969, 138.357751867269, -30.66479806614716,
+    2.506628277459239,
+  ];
+  const b = [
+    -54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972,
+    -13.28068155288572,
+  ];
+  const c = [
+    -0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734,
+    4.374664141464968, 2.938163982698783,
+  ];
+  const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
+  const lo = 0.02425;
+  if (p < lo) {
+    const q = Math.sqrt(-2 * Math.log(p));
+    return (
+      (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+      ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+    );
+  }
+  if (p > 1 - lo) return -normalQuantile(1 - p);
+  const q = p - 0.5;
+  const r = q * q;
+  return (
+    ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) /
+    (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1)
+  );
+}
+
+/**
+ * Widen one comparison's A/A floor for a run that makes `tests` of them.
+ *
+ * `noiseFloor` is a 95% band for ONE comparison, so a no-change run that
+ * judges 150 metrics fails about one of them by chance, and any single fail
+ * fails the run: measured on obsidian, identical builds failed 0.7% of
+ * timing comparisons, which is most runs. The family-wise fix is Bonferroni:
+ * keep the run's chance of a false fail at `alpha` by testing each metric at
+ * `alpha / tests`. The floor is a log-symmetric band whose half-width is
+ * 1.96 standard errors, so it is rescaled in log space by
+ * `z(1 - alpha / (2 * tests)) / z(0.975)`: about x1.5 for 15 judgements and
+ * x1.8 for 150. A single judgement (`tests <= 1`) keeps the floor as is.
+ *
+ * @param {number} floor One comparison's floor (a fraction, see `noiseFloor`).
+ * @param {number} tests Judgements the run makes on the same footing.
+ * @param {number} [alpha=0.05] Family-wise false-fail rate.
+ * @returns {number} The widened floor (a fraction).
+ */
+export function familyFloor(floor, tests, alpha = 0.05) {
+  if (!(tests > 1)) return floor;
+  const k = normalQuantile(1 - alpha / (2 * tests)) / normalQuantile(1 - 0.05 / 2);
+  return Math.exp(k * Math.log1p(floor)) - 1;
+}
+
+/**
  * Perf verdict for one metric.
  *
  * The test is on the POINT ratio of medians: `floor` is the band a
@@ -181,3 +243,45 @@ export const ROTATIONS = [
   ['cand', 'base2', 'base'],
   ['base2', 'base', 'cand'],
 ];
+
+/**
+ * Host load (1-minute load average per logical CPU) above which a report
+ * warns that its timings shared the machine. The gate's own Chrome keeps two
+ * or three threads runnable; half the cores busy is other work.
+ */
+export const HIGH_LOAD_PER_CPU = 0.5;
+
+/**
+ * Summarize the host load each arm ran under, from the `load1` every measured
+ * sample records (`row.samples[arm][i].load1`). Rows without samples (exact
+ * rows, error rows) are skipped.
+ *
+ * @param {Array<{ samples?: Record<string, Array<{ load1?: number }>> }>} rows
+ * @param {number} cpus Logical CPUs of the host.
+ * @returns {{ cpus: number, arms: Record<string, { median: number, max: number }>,
+ *   medianPerCpu: number, maxPerCpu: number, high: boolean } | null} Null when
+ *   no arm was sampled. `high` is judged on the median, so one busy minute
+ *   does not flag a long run.
+ */
+export function loadSummary(rows, cpus) {
+  const arms = {};
+  let all = [];
+  for (const arm of ['base', 'base2', 'cand']) {
+    const xs = rows
+      .flatMap((r) => (r.samples?.[arm] ?? []).map((x) => x?.load1))
+      .filter((v) => Number.isFinite(v));
+    if (xs.length === 0) continue;
+    arms[arm] = { median: median(xs), max: Math.max(...xs) };
+    all = all.concat(xs);
+  }
+  if (all.length === 0) return null;
+  const n = Math.max(1, cpus);
+  const medianPerCpu = median(all) / n;
+  return {
+    cpus,
+    arms,
+    medianPerCpu,
+    maxPerCpu: Math.max(...all) / n,
+    high: medianPerCpu > HIGH_LOAD_PER_CPU,
+  };
+}

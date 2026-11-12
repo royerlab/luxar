@@ -1,9 +1,9 @@
 # Luxar Viewer User Guide
 
 The Luxar viewer is a browser-based application for exploring nD scientific scenes
-containing points, lines, Gaussian splats, and triangle meshes. It renders with WebGL
-by default and has an opt-in WebGPU path (see the `renderer` URL parameter below), and
-it loads data from Zarr stores served over HTTP.
+containing points, lines, Gaussian splats, and triangle meshes. Its platform policy
+selects WebGPU on measured platforms and WebGL elsewhere; the `renderer` URL parameter
+overrides that choice. The viewer loads data from Zarr stores served over HTTP.
 
 ![Luxar viewer interface overview](../../images/docs/viewer-ui-overview.png)
 
@@ -137,7 +137,8 @@ default). It is subject to the same CORS rules as the scenes it lists.
 
 If you would rather not host anything, `luxar export scene.luxar.zarr -o out/`
 writes a self-contained folder with the viewer and a stdlib-only `serve.py`; the
-recipient runs `python serve.py` (`file://` cannot open the viewer directly).
+recipient runs `python3 serve.py` (`file://` cannot open the viewer directly;
+stock Ubuntu has no `python` command, only `python3`).
 
 See [Distributing scenes](../../tutorials/distributing_scenes.rst) for the wider
 picture on sharing scenes, and
@@ -225,12 +226,12 @@ Append parameters to the viewer URL to control startup behavior.
 | `depthSort` | `0` \| `false` \| `off` | Disable gsplat depth sorting (on by default); `normal`-mode splats then keep storage order, which pins deterministic output for visual runs. |
 | `noDensityGuard` | flag | Disable the projected-density guard (per-node thinning + refinement rung cap on over-drawn nodes; on by default). |
 | `densityCap` | positive number | Session-only override of the density guard's blendable cap, in elements per drawing-buffer pixel (configured default 4). |
-| `noBlendWarmup` | flag | Disable the WebGL blend-variant program warm-up (on by default): the first Layers-panel blend switch then pays the shader link cost on the click. |
+| `noBlendWarmup` | flag | Disable the blend-variant warm-up (on by default, WebGL programs and WebGPU pipelines): the first Layers-panel blend switch then pays the shader compile cost on the click. |
 | `noLinks` | flag | Disable element-authored navigation and the link items of the right-click menu; `Copy` and the `element-click` / `element-contextmenu` events still work. The switch for embedding scenes you did not author. |
 | `bakeEnv` | flag | Capture the scene-derived environment cube map once the load settles and download it (driven by `luxar env bake`). |
 | `probe` | `auto` \| `node:<path>` \| `x,y,z` | Probe position for `bakeEnv`; defaults to the scene's configured probe or `auto`. |
 | `envResolution` | integer 16-1024 | Cube face size for `bakeEnv`; defaults to the scene's configured resolution or 128. |
-| `renderer` | `webgl` \| `webgpu` | Select the default GLSL WebGLRenderer path or opt into the WebGPURenderer + TSL path. |
+| `renderer` | `webgl` \| `webgpu` | Override the platform policy with the GLSL WebGLRenderer or WebGPURenderer + TSL path. |
 | `hdr` | `off` or number | PROTOTYPE, `renderer=webgpu` only: extended-range HDR canvas output is on by default in WebGPU sessions on an HDR display (SDR otherwise). `hdr=off` (or `0` / `false`) forces SDR for this page load (the Settings › Advanced › HDR Output preference applies otherwise); a positive number pins the headroom (multiple of SDR white, clamped to 1-16; a pin of 1 means SDR); any other value, or a bare `hdr`, forces auto. Unpinned, the headroom is resolved per display and adjustable in the HDR folder. |
 | `webgpuForceWebgl` | flag | Diagnostic flag for `renderer=webgpu`: keep WebGPURenderer + TSL materials but force Three.js's internal WebGL2 backend. |
 | `perfTimestamp` | flag | Opt into GPU timestamp queries (WebGPU only, `timestamp-query` feature). Small runtime cost; intended for the perf bench. |
@@ -454,6 +455,21 @@ scene.
 
 Displays a list of all data nodes in the scene with toggles for visibility
 and opacity control.
+
+For a Gaussian-splat layer converted with `luxar gsplat convert`, the window is
+labelled **Splat amplitude** and is in the data's own units. Hover the label for
+the unit (e.g. "counts above background"), the data's own range with its floor
+(e.g. "Data range: 0 – 1,597 (floor 405)"; RGB / multichannel layers show it in
+the Colour range tooltip) and why the window sits below it: each value is one
+Gaussian's PEAK amplitude, overlapping splats sum to the data value, and the view
+additionally sums along each ray. How bright the layer renders is the
+separate **Brightness** control (the node's `display_gain`, on a logarithmic
+track). It reads RELATIVE to the brightness the scene opened with — ×1 is the
+opening exposure, double-click returns to it, and the tooltip gives the absolute
+gain — and it changes neither the window nor the colormap. With several layers
+selected, a window or Brightness change applies to each as the same fraction of
+its own range or authored gain. See `docs/guides/user/LUXAR_ZARR_FORMAT.md`
+§ "Amplitude units and display gain".
 
 ### Overlays (U)
 

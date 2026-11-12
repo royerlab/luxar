@@ -11,6 +11,7 @@ import { UIComponent } from './overlay-widgets/ui-component';
 import type { LayerStateManager, LayerInfo } from './layers/layer-state';
 import { BUILTIN_COLORMAPS } from '../rendering/colormap-data';
 import { isValidCustomLut } from '../rendering/colormap-textures';
+import { formatDataValue } from './layers/brightness-range';
 
 /**
  * Construction options for {@link ColormapLegend}.
@@ -139,10 +140,15 @@ export class ColormapLegend extends UIComponent<ColormapLegendConfig> {
     const labelsEl = document.createElement('div');
     labelsEl.className = `${this.getClassName()}__labels`;
 
+    // A data-unit layer reads in the panel's own formatter and names its unit;
+    // every other layer keeps the historical legend text.
+    const unit = layer.amplitudeUnit;
+    const fmt = unit ? formatDataValue : formatRange;
     const minEl = document.createElement('span');
-    minEl.textContent = formatRange(layer.displayMin);
+    minEl.textContent = fmt(layer.displayMin);
     const maxEl = document.createElement('span');
-    maxEl.textContent = formatRange(layer.displayMax);
+    maxEl.textContent = unit ? `${fmt(layer.displayMax)} ${unit}` : fmt(layer.displayMax);
+    if (unit) maxEl.title = `${fmt(layer.displayMax)} ${unit}`;
 
     labelsEl.appendChild(minEl);
     labelsEl.appendChild(maxEl);

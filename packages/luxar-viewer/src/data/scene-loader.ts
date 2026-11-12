@@ -180,7 +180,10 @@ import {
 } from '../rendering/depth-sort-coordinator';
 import { runWithMaterialManager, type MaterialManager } from '../rendering/material-manager';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
-import { createEmptyMeshGeometry } from '../rendering/mesh-geometry';
+import {
+  createEmptyMeshGeometry,
+  enableFirstVertexMeshPickFallback,
+} from '../rendering/mesh-geometry';
 import { invalidateRenderObjectFor } from './scene-loader/commit/invalidate-render-object';
 import { getGpuByteBudget } from '../rendering/gpu-byte-budget';
 import { NodeFactory } from '../rendering/node-factory';
@@ -2222,6 +2225,7 @@ export class SceneLoader {
           // Mesh is depthSortable (#1347); demotion must drop coordinator
           // state and worker-side centroids along with its geometry.
           releaseDepthSortNode(level);
+          const rotatePickIndices = level.geometry.userData.meshPickRotateIndices === true;
           level.geometry.dispose();
           // The geometry owns the uploaded texture's disposal hook. Forget its
           // cached identity so the next commit creates a live texture again.
@@ -2230,6 +2234,7 @@ export class SceneLoader {
           delete level.userData.meshTexture;
           delete level.userData.meshTextureSource;
           level.geometry = createEmptyMeshGeometry(level.userData.attrs as MeshMetadata);
+          if (rotatePickIndices) enableFirstVertexMeshPickFallback(level.geometry);
           invalidateRenderObjectFor(level);
         }
       },

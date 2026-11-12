@@ -48,6 +48,7 @@ function mockCaps(
 ): RendererCapabilities {
   return {
     apiSurface,
+    backendKind: apiSurface === 'webgl2' ? 'webgl' : 'webgpu-native',
     framebufferYDown: apiSurface === 'webgpu',
     readbackYDown: false,
     hdr: {
@@ -462,6 +463,47 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     mgr.dispose();
   });
 
+  it('releases every resized target on a DPR-size round trip', () => {
+    const mgr = makeManager({ width: 64, height: 64 });
+    mgr.setBloomEnabled(true);
+    mgr.setMSAAEnabled(true);
+    expect(peek(mgr).hdrTarget.samples).toBe(4);
+    const targets = () => {
+      const resources = mgr as unknown as {
+        hdrTarget: THREE.WebGLRenderTarget;
+        ldrTarget: THREE.WebGLRenderTarget;
+        bloomChain: { mips: { target: THREE.WebGLRenderTarget }[] };
+        refractionSplit: {
+          copyTarget: THREE.WebGLRenderTarget;
+          glassDepthTarget: THREE.WebGLRenderTarget;
+        };
+      };
+      return [
+        resources.hdrTarget,
+        resources.ldrTarget,
+        ...resources.bloomChain.mips.map((mip) => mip.target),
+        resources.refractionSplit.copyTarget,
+        resources.refractionSplit.glassDepthTarget,
+      ];
+    };
+
+    for (const [width, height] of [
+      [128, 96],
+      [64, 64],
+    ]) {
+      const disposed = targets().map((target) => {
+        const onDispose = vi.fn();
+        target.addEventListener('dispose', onDispose);
+        return onDispose;
+      });
+      mgr.resize(width, height);
+      expect(peek(mgr).hdrTarget.samples).toBe(4);
+      for (const onDispose of disposed) expect(onDispose).toHaveBeenCalledTimes(1);
+    }
+
+    mgr.dispose();
+  });
+
   it('reuses the same ldrTarget via setSize (single handle for the session)', () => {
     // ldrTarget reuses the target with setSize() rather than allocating
     // anew — this matches WebGLRenderTarget's contract (setSize disposes
@@ -680,6 +722,74 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     mgr.setSSAAEnabled(false);
     expect(peek(mgr).hdrTarget.samples).toBe(4);
 
+    mgr.dispose();
+  });
+
+  it('allocates 4 samples for a native WebGPU 2x request and reports that count', async () => {
+    await loadTslMaterials();
+    const capabilities = mockCaps('webgpu');
+    materialManager.setCaps(capabilities);
+    const mgr = new PostProcessingManager(
+      makeMockRenderer(),
+      capabilities,
+      new THREE.Scene(),
+      new THREE.PerspectiveCamera(),
+      { width: 64, height: 64 }
+    );
+    expect(mgr.setMSAASamples(2)).toBe(4);
+    expect(mgr.setMSAAEnabled(true)).toBe(true);
+    expect(peek(mgr).hdrTarget.samples).toBe(4);
+    mgr.dispose();
+  });
+
+  it('retains bridge sample counts on a WebGPU surface', async () => {
+    await loadTslMaterials();
+    const capabilities = mockCaps('webgpu', { backendKind: 'webgpu-gl', maxMSAASamples: 8 });
+    materialManager.setCaps(capabilities);
+    const renderer = makeMockRenderer() as Renderer & {
+      backend: { isWebGLBackend: boolean };
+    };
+    renderer.backend = { isWebGLBackend: true };
+    const mgr = new PostProcessingManager(
+      renderer,
+      capabilities,
+      new THREE.Scene(),
+      new THREE.PerspectiveCamera(),
+      { width: 64, height: 64 }
+    );
+    expect(mgr.getSupportedMSAASamples()).toEqual([0, 2, 4, 8]);
+    expect(mgr.setMSAASamples(2)).toBe(2);
+    expect(mgr.setMSAAEnabled(true)).toBe(true);
+    expect(peek(mgr).hdrTarget.samples).toBe(2);
+    mgr.dispose();
+  });
+
+  it('treats zero samples as MSAA off even after an enabled target existed', () => {
+    const mgr = makeManager();
+    mgr.setMSAAEnabled(true);
+    expect(peek(mgr).hdrTarget.samples).toBe(4);
+    expect(mgr.setMSAASamples(0)).toBe(0);
+    expect(peek(mgr).hdrTarget.samples).toBe(0);
+    expect(mgr.setMSAAEnabled(true)).toBe(false);
+    expect(peek(mgr).hdrTarget.samples).toBe(0);
+    mgr.dispose();
+  });
+
+  it('adoptRenderer moves the pipeline to a NEW renderer and keeps user state', () => {
+    const mgr = makeManager();
+    mgr.updateExposure(1.7);
+    const next = makeMockRenderer();
+    (next as { outputColorSpace: string }).outputColorSpace = THREE.SRGBColorSpace;
+    const rebuild = vi.spyOn(mgr, 'rebuildAfterContextRestore');
+
+    mgr.adoptRenderer(next, mockCaps('webgl2'));
+
+    expect(rebuild).toHaveBeenCalledTimes(1);
+    expect(peek(mgr).renderer).toBe(next);
+    // The new renderer gets the same output pinning the constructor applies.
+    expect(next.outputColorSpace).toBe(THREE.LinearSRGBColorSpace);
+    expect(next.toneMapping).toBe(THREE.NoToneMapping);
+    expect(mgr.getExposure()).toBeCloseTo(1.7);
     mgr.dispose();
   });
 

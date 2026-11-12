@@ -57,6 +57,7 @@ import { texture, uniform } from 'three/tsl';
 import { NodeMaterial, NodeUpdateType } from 'three/webgpu';
 import { SOFT_DISPOSE_FLAG } from '../../material-manager/soft-dispose-flag';
 import type { TSLNode } from './tsl-helpers';
+import { bindTSLNodeOverride } from './tsl-node-override';
 
 /** A material's leaf set: name → TSL leaf (`uniform()` or `texture()`), or absent. */
 export type TSLLeafSet = object;
@@ -258,6 +259,19 @@ export function applySharedTSLGraph<T extends TSLLeafSet>(
   material.vertexNode = graph.vertexNode;
   material.colorNode = graph.colorNode;
   material.depthNode = graph.depthNode;
+  return graph;
+}
+
+/** Bind a visual material's shared graph and reapply its opt-in output override. */
+export function applySharedVisualTSLGraph<T extends TSLLeafSet>(
+  material: NodeMaterial,
+  family: string,
+  key: unknown,
+  leaves: T,
+  build: (inputs: T, scratch: NodeMaterial) => void
+): SharedTSLGraph {
+  const graph = applySharedTSLGraph(material, family, key, leaves, build);
+  bindTSLNodeOverride(material, graph);
   return graph;
 }
 

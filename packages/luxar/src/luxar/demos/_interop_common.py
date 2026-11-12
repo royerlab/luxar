@@ -139,7 +139,10 @@ def build_interop_scene(
             )
             scene.attrs["title"] = title
             attrs: dict[str, object] = dict(
-                blending_mode="normal", intensity=intensity, layer=True
+                blending_mode="normal",
+                intensity=intensity,
+                layer=True,
+                fitted_defaults=False,
             )
             if colormap is not None:
                 attrs["colormap"] = colormap

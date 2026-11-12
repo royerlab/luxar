@@ -57,6 +57,7 @@ import {
   sanitizeAlpha,
   tslLineJointCapSuppression,
   type TSLNode,
+  loadTexel,
   sortedIndexNode,
   densityDroppedNode,
 } from '../../materials/_shared/tsl-helpers';
@@ -94,9 +95,10 @@ export function capsuleLinePickWebGPUFactory(
   const vLocal: TSLNode = varying(vec2(0.0, 0.0));
   // PACKED joint state — mirrors the visual TSL twin exactly (normals
   // full precision per #1502; halves for packets/radii/invLen/flags).
-  const vCutN: TSLNode = varying(vec4(-1.0, 0.0, 1.0, 0.0)).setInterpolation('flat');
-  const vPack: TSLNode = varying(uvec4(0, 0, 0, 0)).setInterpolation('flat');
-  const vAbLen: TSLNode = varying(float(1.0)).setInterpolation('flat');
+  // Every corner gets the same packed state, so `either` is exact.
+  const vCutN: TSLNode = varying(vec4(-1.0, 0.0, 1.0, 0.0)).setInterpolation('flat', 'either');
+  const vPack: TSLNode = varying(uvec4(0, 0, 0, 0)).setInterpolation('flat', 'either');
+  const vAbLen: TSLNode = varying(float(1.0)).setInterpolation('flat', 'either');
   // The packed packet lanes carry the partner's radius gradient (px/px,
   // either sign) + its projected length, which doubles as packet validity
   // (0 = hard cut) — the gate opens for every deficit source (#1495).
@@ -106,7 +108,7 @@ export function capsuleLinePickWebGPUFactory(
   const vSharp: TSLNode = varying(float(0.5));
   // Per-element alpha along the span (texel5.zw), sanitized as the visual twin.
   const vAlpha: TSLNode = varying(float(1.0));
-  const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat');
+  const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat', 'either');
   // Storage index split into two 16-bit halves — see the screen-space
   // pick factory (`pick.tsl.ts`) for the float32-mantissa rationale.
   const elementIdInt: TSLNode = int(aSortedIndex);
@@ -114,7 +116,7 @@ export function capsuleLinePickWebGPUFactory(
   const elementIdLo: TSLNode = elementIdInt.sub(elementIdHi.mul(int(65536)));
   const vElementId: TSLNode = varying(
     vec2(float(elementIdLo), float(elementIdHi))
-  ).setInterpolation('flat');
+  ).setInterpolation('flat', 'either');
 
   const nearCull: TSLNode = max(uNearCull, float(1e-20));
 
@@ -133,12 +135,12 @@ export function capsuleLinePickWebGPUFactory(
     ).toVar();
     const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
     const texelY: TSLNode = lineBase.div(lineTexW).toVar();
-    const lineT0: TSLNode = uLineTex.load(ivec2(texelX, texelY)).toVar();
-    const lineT1: TSLNode = uLineTex.load(ivec2(texelX.add(int(1)), texelY)).toVar();
-    const lineT2: TSLNode = uLineTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
-    const lineT3: TSLNode = uLineTex.load(ivec2(texelX.add(int(3)), texelY)).toVar();
-    const lineT4: TSLNode = uLineTex.load(ivec2(texelX.add(int(4)), texelY)).toVar();
-    const lineT5: TSLNode = uLineTex.load(ivec2(texelX.add(int(5)), texelY)).toVar();
+    const lineT0: TSLNode = loadTexel(uLineTex, ivec2(texelX, texelY)).toVar();
+    const lineT1: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(1)), texelY)).toVar();
+    const lineT2: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(2)), texelY)).toVar();
+    const lineT3: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(3)), texelY)).toVar();
+    const lineT4: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(4)), texelY)).toVar();
+    const lineT5: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(5)), texelY)).toVar();
 
     const mvStart: TSLNode = modelViewMatrix.mul(vec4(lineT0.xyz, 1.0)).toVar();
     const mvEnd: TSLNode = modelViewMatrix.mul(vec4(lineT1.xyz, 1.0)).toVar();
@@ -252,8 +254,8 @@ export function capsuleLinePickWebGPUFactory(
         .toVar();
       const pBase: TSLNode = slot.mul(int(6)).toVar();
       const pt0: TSLNode = ivec2(pBase.mod(lineTexW), pBase.div(lineTexW)).toVar();
-      const pStart: TSLNode = uLineTex.load(pt0).toVar();
-      const pEnd: TSLNode = uLineTex.load(ivec2(pt0.x.add(int(1)), pt0.y)).toVar();
+      const pStart: TSLNode = loadTexel(uLineTex, pt0).toVar();
+      const pEnd: TSLNode = loadTexel(uLineTex, ivec2(pt0.x.add(int(1)), pt0.y)).toVar();
       const farTexel: TSLNode = code.greaterThan(0.0).select(pEnd, pStart).toVar();
       const farObj: TSLNode = farTexel.xyz.toVar();
       pFarWidth.assign(sanitizeNonNegative(farTexel.w, 0.0));

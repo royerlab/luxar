@@ -123,6 +123,40 @@ class TestServeFlagForwarding:
         assert cmd.count("--host") == 1
         assert cmd[cmd.index("--host") + 1] == "10.0.0.5"
 
+    def test_ports_are_forwarded_from_the_demo_argv(self) -> None:
+        """`-- --port N --viewer-port M` replaces the derived pair, once each."""
+        from luxar.demos._support.runtime.viewer import _serve_command
+
+        for argv in (
+            ["demo", "--port", "9100", "--viewer-port", "9200"],
+            ["demo", "--port=9100", "--viewer-port=9200"],
+        ):
+            cmd = _serve_command("x.luxar.zarr", False, None, argv=argv)
+            assert cmd.count("--port") == 1 and cmd.count("--viewer-port") == 1
+            assert cmd[cmd.index("--port") + 1] == "9100"
+            assert cmd[cmd.index("--viewer-port") + 1] == "9200"
+
+    def test_only_the_pinned_port_moves(self) -> None:
+        from luxar.demos._support.runtime.viewer import _serve_command, demo_ports
+
+        data, viewer = demo_ports("x.luxar.zarr")
+        cmd = _serve_command("x.luxar.zarr", False, None, argv=["d", "--port", "9"])
+        assert cmd[cmd.index("--port") + 1] == "9"
+        assert cmd[cmd.index("--viewer-port") + 1] == str(viewer)
+        cmd = _serve_command(
+            "x.luxar.zarr", False, None, argv=["d", "--viewer-port", "7"]
+        )
+        assert cmd[cmd.index("--port") + 1] == str(data)
+        assert cmd[cmd.index("--viewer-port") + 1] == "7"
+
+    def test_a_port_already_in_serve_args_wins(self) -> None:
+        from luxar.demos._support.runtime.viewer import _serve_command
+
+        cmd = _serve_command(
+            "x.luxar.zarr", False, ["-p", "1234"], argv=["d", "--port", "9"]
+        )
+        assert "--port" not in cmd and cmd[cmd.index("-p") + 1] == "1234"
+
     def test_launch_viewer_reads_sys_argv(self, monkeypatch) -> None:
         """The ~130 `launch_viewer(path)` call sites inherit it with no edits."""
         from luxar.demos._support.runtime import viewer

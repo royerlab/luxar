@@ -337,6 +337,8 @@ export function sortedIndexUsage(): THREE.Usage {
 interface ChunkedOrderingApply {
   /** The full new ordering (retained until completion/cancel). */
   ordering: Uint32Array;
+  /** The SortWorker transferred this array; the caller will not mutate it. */
+  adoptOrdering: boolean;
   /** Total entries to write (pre-clamped against ordering + attribute). */
   count: number;
   /** Next unwritten index — `[0, cursor)` already holds the new ordering. */
@@ -358,6 +360,7 @@ interface ChunkedOrderingApply {
    */
   pending: {
     ordering: Uint32Array;
+    adoptOrdering: boolean;
     count: number;
     callbacks: SortedIndexApplyCallbacks | null;
   } | null;
@@ -626,7 +629,26 @@ function applyNextSortedIndexChunk(
   const sliceEnd = chunkedApplyEnabled ? start + sortedIndexChunkElements : state.count;
   const end = Math.min(state.count, sliceEnd, arr.length);
   clearIdentityPrefix(attr);
-  arr.set(state.ordering.subarray(start, end), start);
+  // Both WebGPURenderer backends upload from attribute.array at update time.
+  // The worker's live ordering is a view of its capacity-sized buffer; adopt
+  // that buffer when it exactly matches the attribute's cached GPU buffer.
+  // Partial-capacity and borrowed orderings keep the copy path.
+  if (
+    !chunkedApplyEnabled &&
+    state.adoptOrdering &&
+    start === 0 &&
+    end === state.count &&
+    state.ordering.length === state.count &&
+    state.ordering.byteOffset === 0 &&
+    state.ordering.buffer.byteLength === arr.byteLength
+  ) {
+    attr.array =
+      state.ordering.length === arr.length
+        ? state.ordering
+        : new Uint32Array(state.ordering.buffer);
+  } else {
+    arr.set(state.ordering.subarray(start, end), start);
+  }
   state.cursor = end;
 
   let rangeStart = start;
@@ -704,6 +726,7 @@ function applyNextSortedIndexChunk(
     // starting the newest always converges and always shows a complete
     // order.
     state.ordering = state.pending.ordering;
+    state.adoptOrdering = state.pending.adoptOrdering;
     state.count = state.pending.count;
     state.callbacks = state.pending.callbacks;
     state.cursor = 0;
@@ -1373,12 +1396,16 @@ function repairPermutationInPlace(arr: Uint32Array, readEnd: number, n: number):
  * flips in) or `onAbandoned` (dropped before that draw). A rejected write
  * (returns 0) fires
  * neither, leaving lifecycle ownership with the caller.
+ * `adoptOrdering` is only for a freshly transferred, caller-discarded array.
+ * On WebGPU, an array backed by the attribute's full capacity becomes its
+ * inactive backing store, avoiding one full CPU copy before the GPU upload.
  */
 export function writeSortedIndexOrdering(
   geometry: THREE.InstancedBufferGeometry,
   ordering: Uint32Array,
   count: number,
-  callbacks?: SortedIndexApplyCallbacks
+  callbacks?: SortedIndexApplyCallbacks,
+  options?: { adoptOrdering?: boolean }
 ): number {
   const active = getActiveSortedIndexAttribute(geometry);
   if (!active) return 0;
@@ -1422,13 +1449,19 @@ export function writeSortedIndexOrdering(
     // remove-before-fire discipline of the cancel paths, so a re-entrant
     // hook can never observe (or act on) the stale pending.
     const superseded = inFlight.pending;
-    inFlight.pending = { ordering, count: n, callbacks: callbacks ?? null };
+    inFlight.pending = {
+      ordering,
+      adoptOrdering: options?.adoptOrdering === true,
+      count: n,
+      callbacks: callbacks ?? null,
+    };
     superseded?.callbacks?.onAbandoned?.();
     return n;
   }
 
   const state: ChunkedOrderingApply = {
     ordering,
+    adoptOrdering: options?.adoptOrdering === true,
     count: n,
     cursor: 0,
     callbacks: callbacks ?? null,

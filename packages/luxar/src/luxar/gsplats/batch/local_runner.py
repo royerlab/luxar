@@ -26,7 +26,12 @@ from typing import Any, Callable, List, Optional, Tuple
 from arbol import aprint, asection
 
 from luxar.gsplats.batch.fit_command import build_task_fit_argv
-from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, save_manifest
+from luxar.gsplats.batch.manifest import (
+    BatchJob,
+    BatchManifest,
+    load_manifest,
+    save_manifest,
+)
 from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
 from luxar.gsplats.batch.task_pool import TaskResult, run_task_pool
 from luxar.gsplats.merged_quality import (
@@ -113,10 +118,14 @@ def _worker_env(gpu: int, workers: dict[int, int], host_workers: int) -> dict[st
     quality_workers = str(max(1, workers.get(gpu, 1)))
     quality_host_workers = str(max(1, host_workers))
     if gpu < 0:
+        from luxar.gsplats.utils.device import cpu_worker_threads_env
+
+        # CPU workers share the cores for native kernels and CLI torch setup.
         return {
             "CUDA_VISIBLE_DEVICES": "",
             QUALITY_WORKERS_PER_DEVICE_ENV: quality_workers,
             QUALITY_WORKERS_PER_HOST_ENV: quality_host_workers,
+            **cpu_worker_threads_env(max(1, host_workers)),
         }
     parent_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
     parent_tokens = parent_visible.split(",") if parent_visible else []
@@ -294,6 +303,48 @@ def _finalize_output(
     return False, False
 
 
+def _promote_result(
+    res: TaskResult, out: Path, staging: Path, *, overwrite: bool
+) -> Optional[str]:
+    """Promote one finished task's staging store; the failure text, or ``None``."""
+    if res.returncode != 0:
+        return "\n".join(res.output.strip().splitlines()[-20:])
+    try:
+        ok, _empty = _finalize_output(out, staging, overwrite=overwrite)
+    except OSError as exc:
+        # Raised from inside the pool's completion loop it would stall every
+        # queued task until the pool drained, so it is recorded instead.
+        return f"worker exited 0 but promoting its output raised {exc!r}"
+    if not ok:
+        return (
+            "worker exited 0 but its output could not be promoted "
+            "(staging missing, or the rename to the final path failed)"
+        )
+    return None
+
+
+def _progress_line(
+    res: TaskResult, job: BatchJob, done: int, total: int, failure: Optional[str]
+) -> str:
+    """One ``[done/total]`` line for a finished, skipped or failed task."""
+    tag = f"(T={job.timepoint} C={job.channel} K={job.tile_index})"
+    if res.skipped:
+        return f"[{done}/{total}] skip {tag} (exists)"
+    if failure is None:
+        return f"[{done}/{total}] done {tag}"
+    if res.returncode == 0:
+        return f"[{done}/{total}] FAILED {tag} (promotion)"
+    return f"[{done}/{total}] FAILED {tag} (exit {res.returncode})"
+
+
+def _preserve_prior_attempts(
+    manifest: BatchManifest, output_dir: Path, resume: bool
+) -> None:
+    if resume and (output_dir / "manifest.json").exists():
+        previous = load_manifest(output_dir)
+        manifest.task_attempts.update(previous.task_attempts)
+
+
 def run_batch_local(
     manifest: BatchManifest,
     output_dir: Path,
@@ -335,6 +386,7 @@ def run_batch_local(
 
     # Persist the manifest so `batch-fit status` / `validate` (which load_manifest)
     # work against a local run's output, exactly as for a Slurm submit.
+    _preserve_prior_attempts(manifest, output_dir, resume)
     save_manifest(manifest, output_dir)
 
     gpu_indices = resolve_gpu_selection(gpus)
@@ -366,6 +418,7 @@ def run_batch_local(
     n_run = sum(0 if _skip(task_id) else 1 for task_id in task_ids)
     active_host_workers = _active_host_workers(active_workers, n_run)
     global_workers = max(1, min(sum(workers.values()), n_run))
+    manifest.worker_count = global_workers
 
     def _argv(task_id: int) -> list[str]:
         job = job_by_id[task_id]
@@ -401,19 +454,37 @@ def run_batch_local(
         if verbose and n_run < len(task_ids):
             aprint(f"Resuming: {len(task_ids) - n_run} task(s) already complete")
 
-        def _on_done(res: TaskResult, done: int, total: int) -> None:
-            if not verbose:
-                return
-            job = job_by_id[res.key]
-            tag = f"(T={job.timepoint} C={job.channel} K={job.tile_index})"
-            if res.skipped:
-                aprint(f"[{done}/{total}] skip {tag} (exists)")
-            elif res.returncode == 0:
-                aprint(f"[{done}/{total}] done {tag}")
-            else:
-                aprint(f"[{done}/{total}] FAILED {tag} (exit {res.returncode})")
+        # Promote each tile the moment its worker finishes, so finished tiles
+        # are on disk under their final names while the rest still run:
+        # `batch-fit status` counts them, and an interrupted run resumes from
+        # them instead of refitting everything. Failures are curated like the
+        # parallel tiled path (name the failing (t,c,k) + stderr tail, keep the
+        # staging store on disk for inspection).
+        failures: list[tuple[int, str]] = []
 
-        results = run_task_pool(
+        def _on_done(res: TaskResult, done: int, total: int) -> None:
+            job = job_by_id[res.key]
+            failure = None
+            if not res.skipped:
+                out = _out_path(job)
+                failure = _promote_result(
+                    res, out, _staging_path(out, staging_token), overwrite=not resume
+                )
+                if failure is not None:
+                    failures.append((res.key, failure))
+                label = "box" if manifest.mode == "content" else "tile"
+                key = f"t{job.timepoint}/c{job.channel}/{label}_{job.tile_index}"
+                manifest.task_attempts.setdefault(key, []).append(
+                    {
+                        "status": "failed" if failure is not None else "completed",
+                        "elapsed_seconds": res.elapsed_seconds,
+                        "returncode": res.returncode,
+                    }
+                )
+            if verbose:
+                aprint(_progress_line(res, job, done, total, failure))
+
+        run_task_pool(
             task_ids,
             max_workers=global_workers,
             argv_builder=_argv,
@@ -422,31 +493,7 @@ def run_batch_local(
             on_done=_on_done,
             verbose=verbose,
         )
-
-    # Promote each successful per-attempt staging store; collect failures
-    # (curated like the parallel tiled path — name failing (t,c,k) + stderr
-    # tails, keep the staging store on disk for inspection).
-    failures: list[tuple[int, str]] = []
-    for res in results:
-        if res.skipped:
-            continue
-        job = job_by_id[res.key]
-        out = _out_path(job)
-        if res.returncode != 0:
-            tail = "\n".join(res.output.strip().splitlines()[-20:])
-            failures.append((res.key, tail))
-            continue
-        ok, _empty = _finalize_output(
-            out, _staging_path(out, staging_token), overwrite=not resume
-        )
-        if not ok:
-            failures.append(
-                (
-                    res.key,
-                    "worker exited 0 but its output could not be promoted "
-                    "(staging missing, or the rename to the final path failed)",
-                )
-            )
+        save_manifest(manifest, output_dir)
 
     if failures:
 

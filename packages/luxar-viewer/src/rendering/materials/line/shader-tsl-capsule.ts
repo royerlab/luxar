@@ -78,6 +78,7 @@ import {
   sanitizeAlpha,
   sanitizeNonNegative,
   tslLineJointCapSuppression,
+  loadTexel,
   type TSLNode,
   sortedIndexNode,
   densityDroppedNode,
@@ -153,11 +154,12 @@ export function capsuleLineWebGPUFactory(
   // PACKED joint state — the exact mirror of the GLSL twin's layout (see
   // shader-glsl-capsule.ts: register pressure is the measured cost; cut
   // normals stay FULL precision per #1502).
+  // `either` is exact: every corner of an instance gets the same joint state.
   // vCutN = (nAx, nAy, nBx, nBy); vPack halves = (gradA,qlA) (gradB,qlB)
   // (rA,rB) (1/abLen, capFlags); vAbLen = full-precision length.
-  const vCutN: TSLNode = varying(vec4(-1.0, 0.0, 1.0, 0.0)).setInterpolation('flat');
-  const vPack: TSLNode = varying(uvec4(0, 0, 0, 0)).setInterpolation('flat');
-  const vAbLen: TSLNode = varying(float(1.0)).setInterpolation('flat');
+  const vCutN: TSLNode = varying(vec4(-1.0, 0.0, 1.0, 0.0)).setInterpolation('flat', 'either');
+  const vPack: TSLNode = varying(uvec4(0, 0, 0, 0)).setInterpolation('flat', 'either');
+  const vAbLen: TSLNode = varying(float(1.0)).setInterpolation('flat', 'either');
   // The packed packet lanes carry the partner's radius gradient (px/px,
   // either sign) + its projected length, which doubles as packet validity
   // (0 = hard cut) — the gate opens for every deficit source (#1495).
@@ -183,12 +185,12 @@ export function capsuleLineWebGPUFactory(
     ).toVar();
     const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
     const texelY: TSLNode = lineBase.div(lineTexW).toVar();
-    const lineT0: TSLNode = uLineTex.load(ivec2(texelX, texelY)).toVar();
-    const lineT1: TSLNode = uLineTex.load(ivec2(texelX.add(int(1)), texelY)).toVar();
-    const lineT2: TSLNode = uLineTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
-    const lineT3: TSLNode = uLineTex.load(ivec2(texelX.add(int(3)), texelY)).toVar();
-    const lineT4: TSLNode = uLineTex.load(ivec2(texelX.add(int(4)), texelY)).toVar();
-    const lineT5: TSLNode = uLineTex.load(ivec2(texelX.add(int(5)), texelY)).toVar();
+    const lineT0: TSLNode = loadTexel(uLineTex, ivec2(texelX, texelY)).toVar();
+    const lineT1: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(1)), texelY)).toVar();
+    const lineT2: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(2)), texelY)).toVar();
+    const lineT3: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(3)), texelY)).toVar();
+    const lineT4: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(4)), texelY)).toVar();
+    const lineT5: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(5)), texelY)).toVar();
 
     const mvStart: TSLNode = modelViewMatrix.mul(vec4(lineT0.xyz, 1.0)).toVar();
     const mvEnd: TSLNode = modelViewMatrix.mul(vec4(lineT1.xyz, 1.0)).toVar();
@@ -311,8 +313,8 @@ export function capsuleLineWebGPUFactory(
         .toVar();
       const pBase: TSLNode = slot.mul(int(6)).toVar();
       const pt0: TSLNode = ivec2(pBase.mod(lineTexW), pBase.div(lineTexW)).toVar();
-      const pStart: TSLNode = uLineTex.load(pt0).toVar();
-      const pEnd: TSLNode = uLineTex.load(ivec2(pt0.x.add(int(1)), pt0.y)).toVar();
+      const pStart: TSLNode = loadTexel(uLineTex, pt0).toVar();
+      const pEnd: TSLNode = loadTexel(uLineTex, ivec2(pt0.x.add(int(1)), pt0.y)).toVar();
       const farTexel: TSLNode = code.greaterThan(0.0).select(pEnd, pStart).toVar();
       const farObj: TSLNode = farTexel.xyz.toVar();
       pFarWidth.assign(sanitizeNonNegative(farTexel.w, 0.0));

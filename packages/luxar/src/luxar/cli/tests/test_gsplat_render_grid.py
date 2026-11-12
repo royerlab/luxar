@@ -272,3 +272,36 @@ def test_sub_unit_spacing_without_a_stamp_warns(tmp_path: Path) -> None:
         app, ["gsplat", "compare", str(store), str(ref), "--device", "cpu"]
     )
     assert "crammed into a corner" in cmp.output
+
+
+def test_render_prints_the_floor_it_leaves_out(tmp_path: Path) -> None:
+    """The render is background-relative; the level to add back is printed."""
+    data = _model(offset=2.0)
+    data.stats.update({"source_shape": [16, 18, 20], "image_min": 79.3})
+    store = tmp_path / "floored.gsplats.zarr"
+    data.save(store, encoding_mode=EncodingMode.PRECISION, include_fitting_info=True)
+
+    result, _ = _render(store, tmp_path / "out.npy")
+    assert "background-relative" in result.output
+    assert "image_min=79.3" in result.output
+
+
+def test_render_says_when_the_floor_is_not_recorded(tmp_path: Path) -> None:
+    store = tmp_path / "bare.gsplats.zarr"
+    _model(offset=2.0).save(store, encoding_mode=EncodingMode.PRECISION)
+
+    result, _ = _render(store, tmp_path / "out.npy")
+    assert "background-relative" in result.output
+    assert "does not record it" in result.output
+
+
+def test_render_reports_a_negative_recorded_floor(tmp_path: Path) -> None:
+    """A signed-data fit records a negative level; it is recorded, not missing."""
+    data = _model(offset=2.0)
+    data.stats.update({"source_shape": [16, 18, 20], "image_min": -12.5})
+    store = tmp_path / "signed.gsplats.zarr"
+    data.save(store, encoding_mode=EncodingMode.PRECISION, include_fitting_info=True)
+
+    result, _ = _render(store, tmp_path / "out.npy")
+    assert "image_min=-12.5" in result.output
+    assert "does not record it" not in result.output

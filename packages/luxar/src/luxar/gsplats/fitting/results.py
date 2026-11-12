@@ -4,13 +4,14 @@ Result finalization for Gaussian splat fitting.
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 if TYPE_CHECKING:
     import torch
 
 import numpy as np
-from arbol import aprint, asection
+from arbol import Arbol, aprint, asection
 
 from luxar.gsplats.fit_basis import reference_on_fit_basis
 from luxar.gsplats.fitting.config import (
@@ -109,8 +110,9 @@ def _print_amplitude_histogram(
             # Bar with color gradient
             bar_len = round(bar_width * count / max_count) if max_count > 0 else 0
             cidx = min(i * len(_GRADIENT_CODES) // n_bins, len(_GRADIENT_CODES) - 1)
-            color = f"\033[38;5;{_GRADIENT_CODES[cidx]}m"
-            bar = color + "█" * bar_len + _RESET
+            bar = "█" * bar_len
+            if Arbol.colorful:  # off under NO_COLOR / in a redirected log
+                bar = f"\033[38;5;{_GRADIENT_CODES[cidx]}m{bar}{_RESET}"
             pad = " " * (bar_width - bar_len)
 
             aprint(f"  {lo:9.6f} ┤{bar}{pad} {count:>{count_width}} ({pct:5.1f}%)")
@@ -585,6 +587,23 @@ def _source_grid_stats(
     return out
 
 
+def _frame_stats(config: FitConfig) -> dict[str, Any]:
+    """The spacing a fit used and whether its output is in physical units.
+
+    Absent for a plain voxel-space fit (no ``voxel_size``). ``voxel_size`` is
+    recorded even with ``output_space="voxel"``: it still shaped the fit (the
+    anisotropic initial sigma, the physical-space sigma bounds), and the stored
+    coordinates are then voxel indices, which ``physical_coordinates: false``
+    says. The CLI adds the unit and where the spacing came from.
+    """
+    if config.voxel_size is None:
+        return {}
+    return {
+        "voxel_size": [float(v) for v in np.atleast_1d(config.voxel_size)],
+        "physical_coordinates": config.output_space == "real",
+    }
+
+
 def finalize_results(
     optimization_results: OptimizationResults,
     config: FitConfig,
@@ -713,8 +732,12 @@ def finalize_results(
         "final_loss": optimization_results.best_loss,
         "final_max_abs_error": optimization_results.best_max_abs_error,
         "final_rel_l2": optimization_results.best_rel_l2,
+        "loss_curve": optimization_results.loss_curve,
+        "relocation_curve": optimization_results.relocation_curve,
         "converged": optimization_results.converged_early,
         "early_stopped": optimization_results.early_stopped,
+        "early_stop_reason": optimization_results.early_stop_reason,
+        "early_stop_rel_tol": optimization_results.early_stop_rel_tol,
         "n_splats": len(amps_np),
         # Normalization metadata (recorded for inspection/reproducibility).
         # `floor` is the background level subtracted before fitting (None if
@@ -737,6 +760,7 @@ def finalize_results(
         # purpose -- `source_*` is the array handed to the fitter, `fitted_*` is
         # what it actually optimised against after any downscaling.
         **_source_grid_stats(config, preprocessed_data, len(amps_np)),
+        **_frame_stats(config),
     }
 
     # Store movie frames in stats for later display (don't show here to avoid timing issues)
@@ -777,6 +801,7 @@ def finalize_results(
             cholesky_factors=voxel_space_arrays[1].astype(np.float32),
             truncation_radius=config.truncate,
         )
+    quality_started = time.perf_counter()
     try:
         import torch
 
@@ -818,6 +843,7 @@ def finalize_results(
         stats["psnr_db"] = quality["psnr_db"]
         stats["psnr_robust_db"] = quality["psnr_robust_db"]
         stats["ssim"] = quality["ssim"]
+        stats["ssim_robust"] = quality["ssim_robust"]
         # Foreground PSNR is the honest score on sparse volumes, where the
         # global figure is mostly a report on reconstructed emptiness.
         stats["foreground_psnr_db"] = quality["foreground_psnr_db"]
@@ -827,13 +853,15 @@ def finalize_results(
         if config.verbose:
             # Headline = robust peak (reference p99.99 - floor), which one hot
             # pixel cannot move; the classical full-range figure rides along.
+            # SSIM follows the same peak (its constants scale with the range).
             aprint(
                 f"Quality (fitted, before post-fit pruning/cull): "
                 f"PSNR={quality['psnr_robust_db']:.1f} dB robust peak "
                 f"({quality['psnr_db']:.1f} dB full range), foreground PSNR="
                 f"{quality['foreground_psnr_robust_db']:.1f} dB "
                 f"(over {quality['foreground_fraction'] * 100:.2f}% of voxels), "
-                f"SSIM={quality['ssim']:.4f}, MSE={quality['mse']:.2e}"
+                f"SSIM={quality['ssim_robust']:.4f} robust peak "
+                f"({quality['ssim']:.4f} full range), MSE={quality['mse']:.2e}"
             )
     except Exception as exc:  # scoring must never fail a fit
         # Always say so: a store without PSNR is a silent hole in the record
@@ -842,5 +870,7 @@ def finalize_results(
         reason = f"{type(exc).__name__}: {exc}"
         stats["quality_error"] = reason
         aprint(f"Warning: post-fit quality metrics skipped ({reason})")
+
+    stats["quality_seconds"] = time.perf_counter() - quality_started
 
     return result

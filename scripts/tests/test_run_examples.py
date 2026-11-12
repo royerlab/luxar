@@ -766,6 +766,7 @@ def test_make_e2e_targets_require_fresh_example_fixtures() -> None:
     for target in (
         "test-e2e",
         "test-e2e-browsers",
+        "test-e2e-webgpu",
         "test-e2e-mobile",
         "test-e2e-smoke",
         "test-e2e-smoke-strict",

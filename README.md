@@ -39,7 +39,7 @@ Three ideas carry most of the design:
   Gaussians and shipped as geometry rather than voxels: a 3.6 GB light-sheet
   stack becomes 2 MB, a 400-timepoint time-lapse 81 MB.
 
-**[demos.luxarviewer.dev](https://demos.luxarviewer.dev)** hosts 88 live demos
+**[demos.luxarviewer.dev](https://demos.luxarviewer.dev)** hosts 90 live demos
 with nothing to install. Already have a scene? Open it in the hosted viewer at
 `https://luxarviewer.dev/?src=<url>`. To build your own, start at
 [Quick start](#quick-start); if your data is an image volume, start at
@@ -75,7 +75,7 @@ by the size or format of the file.
 | **Appearance** | HDR 16-bit float color, bloom and tone mapping, matplotlib and colorcet colormaps, six blending modes from additive to physically based [emission and absorption](#emission-and-absorption-not-just-glow) |
 | **Fitting pipeline** | `cal → fit → lod` with cross-validated splat budgets, optional CUDA or Apple MPS, whole-time-lapse fitting across many GPUs or a Slurm cluster |
 | **Interoperable** | Reads classical 3D-Gaussian-splatting captures (INRIA, `.splat`, `.spz`, SuperSplat, PlayCanvas SOG); writes INRIA PLY |
-| **[Shareable](#sharing-and-hosting-a-scene)** | Any static host serves a scene; `luxar export` writes an offline folder or a native macOS or Linux app that opens with no install |
+| **[Shareable](#sharing-and-hosting-a-scene)** | Any static host serves a scene; `luxar export` writes an offline folder that opens with no install, or, from a source checkout (`make build-launchers` first), a native macOS or Linux app |
 
 | Requirement | Notes |
 |---|---|
@@ -100,13 +100,68 @@ change is in the [changelog](CHANGELOG.md).
 ## Quick start
 
 ```bash
-pip install luxar       # viewer, compiler and CLI; add "luxar[gsplats]" to fit volumes
-luxar demo              # Browse the 90 bundled demos
+python3 -m venv luxar-env && source luxar-env/bin/activate   # needs Python 3.12+
+pip install luxar       # viewer, compiler and CLI
+luxar demo              # Browse the 92 bundled demos
 luxar demo run cloud    # Run one: generates the data and opens the viewer
 ```
 
-Some demos need extra packages; `luxar demo deps --install` fetches what a demo
-reports missing. To work on Luxar itself, or to run from a source checkout:
+To fit your own image volumes, install the fitting and image-reading extras:
+`pip install 'luxar[gsplats,io]'` fits TIFF and OME-Zarr volumes (`[gsplats]`
+brings PyTorch; `[io]` reads TIFF, including compressed TIFF — on older releases
+also `pip install imagecodecs`). Some demos need extra packages; `luxar demo deps
+--install` fetches what a demo reports missing (it runs `python -m pip`, so the
+environment needs pip). `luxar demo run` needs 2026.10.19 or newer: the 2026.9.22 release fails with "Could not find project root" when installed from PyPI.
+
+**On a remote or headless machine** the data and viewer servers listen on
+127.0.0.1 only, so a browser on your laptop cannot reach the printed URL. Either
+tunnel both ports over SSH and open the printed URL locally:
+
+```bash
+ssh -L 8000:localhost:8000 -L 8001:localhost:8001 user@remote-box
+luxar demo run cloud --port 8000 --viewer-port 8001     # on the remote box
+```
+
+or bind every interface with `luxar demo run cloud --host 0.0.0.0` (the same
+`--host`, `--port`, `--viewer-port` work on `luxar serve`). Binding 0.0.0.0 serves
+the data and the viewer, unauthenticated, to anyone who can reach the machine on
+those ports; prefer the tunnel on a shared or untrusted network.
+
+**Getting a Python 3.12 first.** A fresh machine often lacks one:
+
+- **Ubuntu / Debian** ships Python without `venv` or `pip`:
+  `sudo apt update && sudo apt install python3-venv python3-pip`. Ubuntu 24.04's
+  `python3` is 3.12; older releases need a newer Python (for example through
+  `uv`, below).
+- **macOS** ships Python 3.9, so `pip3 install luxar` fails with "No matching
+  distribution found". Install 3.12 or newer with the
+  [python.org installer](https://www.python.org/downloads/macos/) (then run
+  *Install Certificates.command* from its `/Applications/Python 3.x` folder, or
+  dataset downloads fail with certificate errors), or `brew install python@3.12`
+  (then `python3.12 -m venv luxar-env`).
+- **Anywhere**, [`uv`](https://docs.astral.sh/uv/) fetches a Python for you:
+  `uv venv --seed --python 3.12 luxar-env && source luxar-env/bin/activate`, then
+  `uv pip install luxar`. `--seed` puts pip in the environment, which
+  `luxar demo deps --install` needs; without it, use `uv pip` for every install
+  below.
+
+**Linux with an NVIDIA GPU:** `[gsplats]` installs PyTorch's CUDA build and its
+NVIDIA libraries, about 3 GB to download and about 6 GB installed, so the first
+install takes a while on a slow link.
+
+**Linux without an NVIDIA GPU:** the default PyTorch wheel that `[gsplats]` pulls
+on Linux bundles CUDA (several GB). Install the CPU-only wheel first and pip keeps
+it:
+
+```bash
+pip install 'torch<3' --index-url https://download.pytorch.org/whl/cpu
+pip install 'luxar[gsplats,io]'
+```
+
+(In a `uv` environment: `uv pip install 'torch<3' --index-url
+https://download.pytorch.org/whl/cpu`, then `uv pip install 'luxar[gsplats,io]'`.)
+
+To work on Luxar itself, or to run from a source checkout:
 
 ```bash
 git clone https://github.com/royerlab/luxar.git
@@ -138,7 +193,7 @@ capture: `luxar gsplat import` under [Volume rendering](#photogrammetric-splats-
 geometry, what it needs, and whether you have already built it.
 
 ```
-🎬 90 Luxar demos  ·  75 built  ·  8 cached  ·  7 not generated yet
+🎬 92 Luxar demos  ·  75 built  ·  8 cached  ·  9 not generated yet
 
  ASTRONOMY ──────────────────────────────────────────────────────────── 6 demos
  ✓  2  asteroids_solar_system                  points+lines  300 MB
@@ -184,7 +239,7 @@ Kaggle credentials, or a file you supply.
 | `luxar demo list -g gsplats` | Filter by geometry: `points`, `gsplats`, `lines`, `mesh`, `points+lines`, `mixed` |
 | `luxar demo info <key\|#>` | Requirements, caches, outputs, and how to run one demo |
 | `luxar demo run <key\|#>` | Run by key (e.g. `luxar demo run lorenz`) or by the index shown in the table — keys are stable, indices shift as demos are added |
-| `luxar demo run <key> -- ARGS` | Forward arguments to the demo script, e.g. `luxar demo run gsplats_3d_tribolium_embryo -- --recompute --no-serve`. `-- --help` describes the demo without running it; `--host 0.0.0.0` serves it to other machines, `--no-open` skips the browser |
+| `luxar demo run <key> -- ARGS` | Forward arguments to the demo script, e.g. `luxar demo run gsplats_3d_tribolium_embryo -- --recompute --no-serve`. `-- --help` describes the demo without running it; `--host 0.0.0.0` serves it to other machines, `--port`/`--viewer-port` pin the ports, `--no-open` skips the browser |
 | `luxar demo stop` | Stop demos left running in other terminals (`luxar stop` also stops `luxar serve` / `viewer` / `gsplat view` servers) |
 | `luxar demo run-all` | Build every eligible demo's dataset unattended. Manual/Kaggle-data demos are always skipped; GPU-required demos, downloads over 200 MB, and already-built outputs are skipped by default (`--include-gpu`, `--max-download-mb 0`, `--force` lift these) |
 | `luxar demo cache list` | Inventory the demo caches under `~/.cache/luxar/`, with sizes and orphans |
@@ -346,8 +401,11 @@ data rather than by guesswork. Inputs can be `.zarr`, `.zarr.zip`, OME-Zarr,
 pick a slice of a larger store. `luxar gsplat compare` reports PSNR, SSIM, and
 MSE of a fit against its source.
 
-**Fitting hardware.** Fitting needs the `gsplats` extra (`pip install
-"luxar[gsplats]"`, or `pip install -e ".[gsplats]"` from a checkout). It runs on the CPU, and much faster on an NVIDIA
+**Fitting hardware.** Fitting needs the `gsplats` extra, plus `io` to read TIFF
+(`pip install "luxar[gsplats,io]"`, or `pip install -e ".[gsplats,io]"` from a
+checkout). It runs on the CPU (see
+[fitting on a CPU or a Mac](packages/luxar/src/luxar/gsplats/README.md#fitting-on-a-cpu-or-a-mac)
+for what to expect and how to keep it short), and much faster on an NVIDIA
 GPU or on Apple silicon through MPS. On Linux with an NVIDIA GPU and a CUDA build of
 torch (the default `pip install torch`), the custom CUDA kernels need no build step:
 they are compiled for your card on first use with NVRTC, the CUDA runtime compiler
@@ -362,7 +420,10 @@ Mac a developer-built Metal extension (`python setup.py build_ext --inplace
 and `LUXAR_METAL_BACKEND=auto|aot|runtime|torch` force one path on their respective
 platforms. Seeding and the optional non-local-means denoising follow the same
 device choice. If neither kernel path can run, the fit warns and continues on the
-slower PyTorch renderer. Viewing never needs any of this.
+slower PyTorch renderer. On the CPU, 3D fits run on fused kernels that numba (in
+the `gsplats` extra) compiles on first use and caches;
+`LUXAR_CPU_BACKEND=auto|native|torch` overrides the choice and `LUXAR_CPU_THREADS`
+sets their thread count. Viewing never needs any of this.
 
 Every option, with examples, is in the
 [CLI package README](packages/luxar/src/luxar/cli/README.md); the fitting model
@@ -450,8 +511,26 @@ WebGPU backend.
 
 ```bash
 luxar gsplat convert fit.gsplats.zarr scene.luxar.zarr \
-    --blending-mode volumetric --absorption 4 --colormap plasma --tone-mapping ACES
+    --blending-mode volumetric --absorption 0.25 --colormap inferno --tone-mapping ACES
 ```
+
+Choosing κ: a ray's optical depth is κ times the density summed along it (the
+splats' gained amplitudes, before any colour). That sum depends on the fit, not
+on κ: auto exposure does not run for `volumetric`, so it is whatever the
+specimen's thickness and the splats' size in scene units make it, and a value
+tuned on one dataset (or on the same fit in µm instead of voxels) does not
+carry over. `gsplat convert --blending-mode volumetric` therefore prints the
+predicted density on the brightest rays of the opening view and the κ that gives
+about one optical depth (37% transmission) there; on a 10-timepoint zebrafish
+nuclei fit that was 3.95 → κ ≈ 0.25, which is why κ = 4 renders such a fit as an
+opaque wall. Emission is that same density, so a small κ opens as saturated as
+additive: convert also prints the `--display-gain` additive auto exposure would
+use and the κ to pair with it. `--display-gain` is absolute (brightness per data
+unit), not a multiplier, so copy the printed number rather than trying a factor
+such as 0.1. Start near the printed values and adjust by eye. Any background haze
+left in the fit absorbs too, so use a colormap that starts at black (`inferno`,
+`magma`, `gray`): the dim foot of `plasma` or `viridis` is a saturated blue or
+purple, and haze renders as coloured fog instead of disappearing.
 
 The other modes cover the classical spectrum: `additive` and `luminous` (pure
 emission; `additive` is the default), `max` (maximum-intensity projection), and
@@ -516,9 +595,31 @@ scene.add_lines(
 ### Gaussian splats
 
 Oriented Gaussian functions, Luxar's volume-rendering primitive. Fit them with
-the pipeline above and add the result with `scene.add_gsplats_from_data(name,
-result)` or `scene.add_gsplats_from_file(name, "fit.gsplats.zarr")`; embedding an
-existing fit needs no extra dependency.
+the pipeline above, then either run `luxar gsplat convert fit.gsplats.zarr
+scene.luxar.zarr` or add the fit in Python; embedding an existing fit needs no
+extra dependency.
+
+```python
+from luxar import Dimensions, LuxarZarrCompiler
+
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+    scene.add_gsplats_from_file("embryo", "fit.gsplats.zarr", colormap="plasma")
+```
+
+For a fitted store (one that records its axis names or fitting provenance) the
+adder applies what `convert` does: it auto-exposes a `display_gain` with the
+amplitudes kept in data units, lists the node in the Layers panel, and uses
+8-bit amplitudes for a uint8 source. On a fresh scene (`Dimensions.default_3d()`,
+explicit or not, with no camera and no other geometry) it also maps the
+`z, y, x` columns onto `x, y, z` dimensions and opens the camera on the XY plane
+with y pointing down (Fiji/napari). On a scene you laid out yourself the scene
+and the column mapping are left alone (a log line names the `dim_order` to pass),
+and `luxar.core.scene_defaults.fitted_scene_defaults(path)`
+gives convert's `dimensions` / `viewer_config` to pass to `create_scene`. The
+result matches `luxar gsplat convert --no-center`; convert also centers the data
+on its centroid by default. An explicit argument always wins, and
+`fitted_defaults=False` gives the plain adder.
 
 ### Mesh
 
@@ -809,7 +910,7 @@ about 64 KB, writes the nD
 spatial index and the LOD ladders, and emits Zarr format 3 (reading both 2 and
 3); `encoding/` decides how each attribute is quantized and compressed. `cli/`
 exposes all of it, `control/` drives a running viewer from Python, and `demos/`
-holds the 90 bundled demos, whose hosted data is pinned by digest and fetched on demand.
+holds the 92 bundled demos, whose hosted data is pinned by digest and fetched on demand.
 
 **The archive.** A directory of small chunk files, or a single zip read by byte
 range. It carries its own metadata (dimensions, node tree, chunk bounds, ladder
@@ -908,7 +1009,7 @@ committed under [`.agents/skills/`](.agents/skills/) and symlinked into
 
 | Skill | What it teaches |
 |-------|-----------------|
-| [`luxar-install`](.agents/skills/luxar-install/SKILL.md) | Install Luxar on a machine — user-install vs full dev setup, per profile: modest laptop (CPU/MPS), NVIDIA-GPU desktop (CUDA extension), and Slurm/HPC cluster (no-sudo bootstrap, `build-cuda SLURM=1`). |
+| [`luxar-install`](.agents/skills/luxar-install/SKILL.md) | Install Luxar on a machine — `pip install` into a venv first (Python 3.12 per OS, extras, CPU-only torch, runtime Metal, NVRTC CUDA and numba CPU kernels), then the source-checkout dev route: the optional ahead-of-time CUDA extension and Slurm/HPC cluster (no-sudo bootstrap, `build-cuda SLURM=1`). |
 | [`luxar-visualization`](.agents/skills/luxar-visualization/SKILL.md) | Build a `.luxar.zarr` scene from a dataset — Points/Lines/GSplats, Dimensions, transforms, hierarchy, serve/export — grounded in the demos and examples. |
 | [`luxar-gsplat-pipeline`](.agents/skills/luxar-gsplat-pipeline/SKILL.md) | Fit Gaussian splats to an nD image: the `cal → fit → lod` pipeline, the full CLI option surface, tiling, the Python fitting API, and adding a gsplat node to a scene. |
 | [`luxar-hpc-batch-fit`](.agents/skills/luxar-hpc-batch-fit/SKILL.md) | Fit a whole nD timelapse at scale — local multi-GPU (`batch-fit run`) or Slurm/Bruno (`batch-fit submit`), plus status/validate/merge/cancel and the GPU benchmark profile. |
@@ -923,7 +1024,7 @@ committed under [`.agents/skills/`](.agents/skills/) and symlinked into
 | Document | Description |
 |----------|-------------|
 | **[Documentation site](https://royerlab.github.io/luxar/)** | Tutorials, guides, format specs, and the generated Python + TypeScript API reference |
-| **[Live demo gallery](https://demos.luxarviewer.dev)** | 88 demos as interactive scenes in the browser |
+| **[Live demo gallery](https://demos.luxarviewer.dev)** | 90 demos as interactive scenes in the browser |
 | **[Hosted viewer](https://luxarviewer.dev)** | Open any reachable scene: `luxarviewer.dev/?src=<url>` |
 | [Demo Site Runbook](docs/guides/developer/DEMO_SITE_RUNBOOK.md) | How the two sites above are hosted and published |
 | [Python Package README](packages/luxar/README.md) | Full Python API documentation |
@@ -973,15 +1074,15 @@ is credited on the recording itself:
 
 | Record | Contents | Cite |
 |---|---|---|
-| Permissively licensed (CC-BY, CC0, public domain) | 46 files, 1.2 GiB | [10.5281/zenodo.21912279](https://doi.org/10.5281/zenodo.21912279) |
+| Permissively licensed (CC-BY, CC0, public domain) | 51 files, 1.4 GiB | [10.5281/zenodo.21912279](https://doi.org/10.5281/zenodo.21912279) |
 | ShareAlike (CC BY-SA 4.0) | 3 files, 20 MiB | [10.5281/zenodo.21912281](https://doi.org/10.5281/zenodo.21912281) |
 | Zebrafish histone timelapse (253 + 51 timepoints) | 2 files, 6.5 GiB | [10.5281/zenodo.21912283](https://doi.org/10.5281/zenodo.21912283) |
 | *Drosophila* embryogenesis (500 timepoints) | 1 file, 1.1 GiB | [10.5281/zenodo.22118694](https://doi.org/10.5281/zenodo.22118694) |
 
-These records cover 25 of the 31 demo datasets. Those 31 are the datasets tracked
+These records cover 27 of the 33 demo datasets. Those 33 are the datasets tracked
 by the data manifest; the other six (Gaia, IllustrisTNG, Acto3D, Tribolium, FlyLight
-MCFO, Dip-C) are built locally because redistribution is not permitted or not yet
-arranged, or because regeneration is cheap. The remaining demos fetch their
+MCFO, Dip-C) are built locally because redistribution is
+not permitted or not yet arranged, or because regeneration is cheap. The remaining demos fetch their
 catalogs straight from the upstream providers credited in [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).
 
 `luxar demo run <name>` resolves only what that demo needs, caches it under

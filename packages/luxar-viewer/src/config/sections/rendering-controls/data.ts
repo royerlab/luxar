@@ -24,7 +24,7 @@ export const renderingControlsConfig: RenderingControlsConfig = {
     globalGamma: 1.0, // Global gamma correction (1.0 = linear)
     fxaaEnabled: false, // FXAA disabled by default
     msaaEnabled: false, // MSAA disabled by default (enable for fast hardware-accelerated AA)
-    msaaSamples: 4, // MSAA sample count (2, 4, 8)
+    msaaSamples: 4, // Default; supported counts depend on the active backend
     ssaaEnabled: false, // SSAA disabled by default (highest quality, heavy performance cost)
     ssaaMultiplier: 2.0, // SSAA resolution multiplier (1.5x, 2x, 4x)
     // Tone mapping (ACES gives the most consistent, pleasing HDR look).

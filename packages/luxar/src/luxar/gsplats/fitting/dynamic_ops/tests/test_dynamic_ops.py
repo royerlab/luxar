@@ -204,7 +204,7 @@ def _reference_peaks_in_tile(
     idx = torch.nonzero((tile >= pooled) & (tile > 0), as_tuple=False)
     if len(idx) == 0:
         return []
-    order = torch.argsort(tile[tuple(idx.T)], descending=True)
+    order = torch.sort(tile[tuple(idx.T)], descending=True, stable=True)[1]
     return [tuple(p.tolist()) for p in idx[order[:k_max]]]
 
 
@@ -221,7 +221,11 @@ def _reference_tiled_peaks(
     nms_radius_vox: float,
     seed: int | None,
 ) -> torch.Tensor:
-    """The pre-batching per-tile loop, kept verbatim as the equivalence oracle."""
+    """The pre-batching per-tile loop, kept as the equivalence oracle.
+
+    Its sorts are stable (ties by lowest index), the contract the production
+    search now honours so that peak order is platform-independent.
+    """
     import itertools
     import random
 
@@ -252,15 +256,15 @@ def _reference_tiled_peaks(
     if not found:
         return torch.zeros((0, d), dtype=torch.long)
     peaks = torch.tensor(found, dtype=torch.long)
-    return peaks[torch.argsort(pos[tuple(peaks.T)], descending=True)]
+    return peaks[torch.sort(pos[tuple(peaks.T)], descending=True, stable=True)[1]]
 
 
 class TestBatchedTiledPeaksMatchPerTileLoop:
     """The batched tile search must select what the per-tile loop selected.
 
-    Continuous random residuals have no exact ties, so the selections compare
-    as identical ordered tensors; only exactly tied values may legitimately be
-    picked/ordered differently (``topk`` vs ``argsort``, both unstable).
+    Both break exact ties by lowest index (float32 ``randn`` does repeat
+    values at this size), so the selections compare as identical ordered
+    tensors, ties included.
     """
 
     @pytest.mark.parametrize(

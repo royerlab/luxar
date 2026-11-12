@@ -356,6 +356,7 @@ def test_doctor_passes_every_info_report_option(
     assert bound.arguments["show_histograms"] is True
     assert bound.arguments["bins"] == 17
     assert bound.arguments["full_provenance"] is False
+    assert bound.arguments["provenance"] is False
 
 
 def test_doctor_writes_a_json_report() -> None:

@@ -45,7 +45,7 @@ camera, resize or teardown reaches another:
 | `SceneDimsManager`, resolved from the layer's own root | a host scene holding two layers handed the second the first's dims                                                   |
 | `MaterialManager`                                      | materials take the layer's renderer capabilities and only its camera broadcast; its dispose frees only its materials |
 | `DepthSortCoordinator`                                 | its nodes sort against the host camera and wake only `requestRender`                                                 |
-| `WebGLBlendWarmupManager` (registered)                 | commits in the host scene warm against the host renderer, not the app's                                              |
+| `BlendWarmupManager` (registered)                      | commits in the host scene warm against the host renderer, not the app's                                              |
 
 The LuxarApp's instances are the module singletons
 (`SceneLoaderManager.getInstance()`, `sceneDimsManager`, `materialManager` outside
@@ -217,6 +217,14 @@ blending when exposure should produce smooth surface transparency.
   commits outside a user interaction — progressive refinement, lazy LOD loads,
   retries — will not repaint, and a LOD cross-fade freezes after its first
   step. Hosts that render continuously can omit it.
+- **`getWarmupRenderTarget`** if scene draws use a host-owned target on WebGL
+  or WebGPU. The callback must return the current target (including after resize
+  or MSAA changes). Without it, blend warm-up compiles against the renderer's
+  current target when each compile starts. WebGL includes the output colour space
+  in its program key, so a canvas host should return `null` if other passes may
+  leave a target bound; a host rendering through a target should return it.
+  Canvas output gets program-link warm-up only; ordinary render-target output
+  also gets a tiny draw for non-transmissive materials to prime first-use draw state.
 - **Draw order for the host's own geometry.** `renderOrder` defaults to 10 and is
   stamped onto every Group in the Luxar subtree, including groups that stream in
   later. Three.js compares that Group key before per-mesh `renderOrder`, so host

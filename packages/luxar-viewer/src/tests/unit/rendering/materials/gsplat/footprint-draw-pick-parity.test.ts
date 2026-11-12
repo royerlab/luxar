@@ -178,13 +178,16 @@ describe('TSL codegen: every draw variant and the pick shader emit one reach blo
   function reachBlock(file: string): ReachBlock {
     const source = readFileSync(path.join(CODEGEN_DIR, file), 'utf8');
     const lines = source.split('\n');
-    const start = lines.findIndex((l) => /^\tnodeVar\d+ = \(.* \* 1\.05 \);$/.test(l));
+    // Draw variants nest the block inside the vertex early-out (#3140) and the
+    // pick shader does not, so match it at any depth and compare it dedented.
+    const start = lines.findIndex((l) => /^\t+nodeVar\d+ = \(.* \* 1\.05 \);$/.test(l));
     expect(start, `${file}: no reach-radius block`).toBeGreaterThanOrEqual(0);
-    const peak = /^\tnodeVar\d+ = \( (.*) \* 1\.05 \);$/.exec(lines[start])![1];
-    const end = lines.findIndex((l, i) => i > start && /^\tnodeVar\d+ = nodeVar\d+;$/.test(l));
-    const block = lines.slice(start, end + 1);
-    const radiusVar = /^\t(nodeVar\d+) = /.exec(lines[end])![1];
-    const body = ['\tPEAK_MARGIN', ...block.slice(1)].join('\n');
+    const [, indent, peak] = /^(\t+)nodeVar\d+ = \( (.*) \* 1\.05 \);$/.exec(lines[start])!;
+    const endLine = new RegExp(`^${indent}nodeVar\\d+ = nodeVar\\d+;$`);
+    const end = lines.findIndex((l, i) => i > start && endLine.test(l));
+    const block = lines.slice(start, end + 1).map((l) => l.slice(indent.length));
+    const radiusVar = /^(nodeVar\d+) = /.exec(block[block.length - 1])![1];
+    const body = ['PEAK_MARGIN', ...block.slice(1)].join('\n');
     return { peak, normalized: normalize(body), radiusVar, source };
   }
 

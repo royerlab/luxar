@@ -9,7 +9,7 @@
  */
 
 import { test, expect } from './fixtures';
-import { waitForLuxarReady, getLuxarState, waitForPointsLoaded } from './helpers';
+import { waitForLuxarReady, getLuxarState, waitForPointsLoaded, getWebGLErrors } from './helpers';
 
 // Dataset paths (served from Python HTTP server on port 9000)
 const DATASETS = {
@@ -295,23 +295,7 @@ test.describe('Real Dataset Loading', () => {
     expect(state2.totalPoints).toBeGreaterThanOrEqual(0);
 
     // Check for WebGL errors accumulated during switch
-    const webglErrors = await page.evaluate(() => {
-      const canvas = document.querySelector('canvas');
-      if (!canvas) return [];
-      const gl =
-        (canvas as HTMLCanvasElement).getContext('webgl2') ||
-        (canvas as HTMLCanvasElement).getContext('webgl');
-      if (!gl) return [];
-
-      const errors: string[] = [];
-      let error;
-      let count = 0;
-      while ((error = gl.getError()) !== gl.NO_ERROR && count < 100) {
-        errors.push(`GL Error: 0x${error.toString(16)}`);
-        count++;
-      }
-      return errors;
-    });
+    const webglErrors = await getWebGLErrors(page);
 
     expect(webglErrors.length).toBe(0);
   });

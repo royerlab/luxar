@@ -52,23 +52,36 @@ def _resolve_named(name: str) -> NDArray[np.uint8]:
         return get_builtin_lut(name)
 
     # 2. Try matplotlib
+    missing: list[str] = []
     try:
         return _from_matplotlib(name)
-    except (ImportError, ValueError):
+    except ImportError:
+        missing.append("matplotlib")
+    except ValueError:
         pass
 
     # 3. Try colorcet
     try:
         return _from_colorcet(name)
-    except (ImportError, KeyError):
+    except ImportError:
+        missing.append("colorcet")
+    except KeyError:
         pass
 
-    # All sources exhausted
+    # All sources exhausted. Name the sources that were never consulted because
+    # they are not installed — on a fresh `pip install luxar[gsplats]` neither
+    # is, so a common name like 'magma' fails here for want of matplotlib.
     builtin_list = ", ".join(f"'{n}'" for n in BUILTIN_COLORMAP_NAMES)
+    if missing:
+        hint = (
+            f"{' and '.join(missing)} {'is' if len(missing) == 1 else 'are'} not "
+            f"installed, so those colormaps were not searched: "
+            f"`pip install {' '.join(missing)}` adds them."
+        )
+    else:
+        hint = "Not found in matplotlib or colorcet either."
     raise ValueError(
-        f"Unknown colormap '{name}'. "
-        f"Built-in colormaps: [{builtin_list}]. "
-        f"Install matplotlib or colorcet for additional colormaps."
+        f"Unknown colormap '{name}'. Built-in colormaps: [{builtin_list}]. {hint}"
     )
 
 

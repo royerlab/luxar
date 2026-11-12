@@ -50,8 +50,8 @@ export function applyRenderingSettings(context: ApplySettingsContext): void {
   postProcessing.setSSAAEnabled(settings.ssaaEnabled);
   postProcessing.setSSAAMultiplier(settings.ssaaMultiplier);
   postProcessing.setFXAAEnabled(settings.fxaaEnabled);
-  postProcessing.setMSAAEnabled(settings.msaaEnabled);
-  postProcessing.setMSAASamples(settings.msaaSamples);
+  settings.msaaSamples = postProcessing.setMSAASamples(settings.msaaSamples);
+  settings.msaaEnabled = postProcessing.setMSAAEnabled(settings.msaaEnabled);
 
   postProcessing.setToneMapping(toneMappingFromName(settings.toneMapping));
 

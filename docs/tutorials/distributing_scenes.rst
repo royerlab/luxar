@@ -57,7 +57,7 @@ The recipient runs:
 .. code-block:: bash
 
    cd my_export/
-   python serve.py
+   python3 serve.py   # "python serve.py" on Windows
 
 That starts a local server on a free port and opens the viewer in their
 default browser. The only dependency is **any Python 3** — no

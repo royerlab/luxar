@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import os
 import socket
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -123,6 +124,11 @@ class FitPipelineCtx:
     voxel_size: "Optional[tuple[float, ...]]" = None
     denoise_effective_h: Optional[float] = None
     denoise_norm_range: "Optional[tuple[float, float]]" = None
+    #: Output frame (spacing stamps + ``--region`` offset) applied at save time;
+    #: a :class:`~luxar.cli.gsplat_ops.voxel_frame.FitFrame`.
+    fit_frame: "Any" = None
+    #: The ``--region`` spec verbatim, forwarded to ``-j N`` tile workers.
+    region: Optional[str] = None
     dimension_metadata: "Optional[list[dict[str, str]]]" = None
     min_extent: Optional[float] = None
     reseed_sigma: Optional[float] = None
@@ -175,24 +181,98 @@ def warn_ignored_density_flags(ctx: FitPipelineCtx) -> None:
             )
 
 
-# Whole-volume voxel budget for ``--tiling auto``: below this a volume fits
-# whole (no tiling), avoiding spurious tile seams on small/medium stacks. ~4x a
-# 256^3 tile — a 28M-voxel neuromast stack fits whole; gigavoxel volumes tile.
+# Whole-volume voxel budget for ``--tiling auto``: below it a volume fits whole
+# (no tiling, so no tile seams). A device-blind FLOOR: what an 8 GB GPU holds
+# (a 28M-voxel neuromast stack fits whole; gigavoxel volumes tile).
 _AUTO_WHOLE_VOLUME_VOXELS = 64_000_000
+
+# Device-aware raise of that floor. Measured peak of a whole-volume `standard`
+# fit (seeds ~4.5 per 1000 voxels): CUDA (GB10, torch max_memory_reserved) 3.9 GB
+# at 67 Mvoxel, 7.9 GB at 134 Mvoxel, 7.5 GB at 268 Mvoxel (200 iterations);
+# MPS (M4 Max, driver allocation) 2.3 / 3.6 / 4.9 GB at 34 / 67 / 134 Mvoxel.
+# ~60 B/voxel is the steepest slope seen, so a whole fit is allowed while
+# 64 B/voxel + 0.5 GB fits in HALF the device's free memory, never above the
+# ceiling.
+# Whole was also the FASTER fit at equal --seeds (measured on a GB10 only): 340 s vs 563 s for the
+# default uniform tiles at 67 Mvoxel, 692 s vs 1420 s at 134 Mvoxel (foreground
+# PSNR within 0.4 dB; the tiled stores held ~23% more splats). The ceiling
+# bounds a single fit's wall-clock; past it uniform tiles parallelise with `-j`.
+_WHOLE_FIT_BYTES_PER_VOXEL = 64
+_WHOLE_FIT_BASE_BYTES = 512 * 1024**2
+_WHOLE_FIT_MEMORY_SHARE = 0.5
+_AUTO_WHOLE_VOLUME_MAX_VOXELS = 256_000_000
+
+
+def _device_memory_bytes(device: "Optional[str]") -> "Optional[int]":
+    """Memory the fit can use on its device, else None.
+
+    CUDA: the card's FREE memory (``mem_get_info``), so a card shared with
+    another job is not budgeted as if it were empty; MPS: the recommended
+    working set. CPU / unknown: ``None``.
+    """
+    if device is None:
+        return None
+    try:
+        import torch
+
+        if device.startswith("cuda") and torch.cuda.is_available():
+            index = torch.device(device).index or 0
+            try:
+                return int(torch.cuda.mem_get_info(index)[0])
+            except RuntimeError:
+                return int(torch.cuda.get_device_properties(index).total_memory)
+        if device.startswith("mps"):
+            return int(torch.mps.recommended_max_memory())
+    except (AttributeError, RuntimeError, ValueError):
+        return None
+    return None
+
+
+def auto_whole_volume_voxels(device: "Optional[str]" = None) -> int:
+    """Largest volume ``--tiling auto`` fits whole on ``device`` (voxels).
+
+    :data:`_AUTO_WHOLE_VOLUME_VOXELS` on the CPU or an unknown device; on a GPU
+    the voxel count whose estimated whole-fit peak
+    (``_WHOLE_FIT_BYTES_PER_VOXEL`` per voxel + ``_WHOLE_FIT_BASE_BYTES``) fits in
+    ``_WHOLE_FIT_MEMORY_SHARE`` of its usable memory (free memory on CUDA), clamped to
+    ``[_AUTO_WHOLE_VOLUME_VOXELS, _AUTO_WHOLE_VOLUME_MAX_VOXELS]``. An 8 GB card
+    stays at the floor; a 16 GB Mac (MPS working set ~2/3 of RAM) reaches about
+    76 M; an idle 24 GB card ~190 M; 48 GB free and up the ceiling. The
+    result therefore depends on the machine (and, on CUDA, on what else is
+    running): the same command can fit whole on one box and tile on another.
+    """
+    memory = _device_memory_bytes(device)
+    if memory is None:
+        return _AUTO_WHOLE_VOLUME_VOXELS
+    budget = _WHOLE_FIT_MEMORY_SHARE * memory - _WHOLE_FIT_BASE_BYTES
+    fits = int(budget // _WHOLE_FIT_BYTES_PER_VOXEL)
+    return min(max(fits, _AUTO_WHOLE_VOLUME_VOXELS), _AUTO_WHOLE_VOLUME_MAX_VOXELS)
 
 
 def resolve_tiling(
-    tiling: str, shape: "tuple[int, ...]", tile_size: int, has_density: bool
+    tiling: str,
+    shape: "tuple[int, ...]",
+    tile_size: int,
+    has_density: bool,
+    device: "Optional[str]" = None,
+    wants_tiles: bool = False,
 ) -> str:
     """Resolve ``--tiling`` to a concrete strategy: ``none | uniform | content``.
 
     ``auto`` fits the whole volume unless it is genuinely large — i.e. some
     dimension exceeds ``tile_size`` AND the total voxel count exceeds
-    :data:`_AUTO_WHOLE_VOLUME_VOXELS`. A single dim over ``tile_size`` is not
-    enough on its own (that needlessly tiled small stacks and produced visible
-    background seams). When tiling IS selected, ``content`` is used when a
-    transferable density (``--cal`` / ``--k-star-ref`` / ``--plan``) is
+    :func:`auto_whole_volume_voxels` for the fit ``device`` (64 M on the CPU,
+    more on a GPU with the memory for it). A single dim over ``tile_size`` is
+    not enough on its own (that needlessly tiled small stacks and produced
+    visible background seams). When tiling IS selected, ``content`` is used
+    when a transferable density (``--cal`` / ``--k-star-ref`` / ``--plan``) is
     available, else ``uniform``.
+
+    ``wants_tiles`` (``--recipe`` or ``-j`` > 1, both of which need a tiled
+    fit) keeps a volume over the device-blind 64 M floor tiled even where the
+    device-aware budget would fit it whole, saying so in one line: before the
+    budget became device-aware such a run tiled, and a whole fit would turn the
+    recipe into an error and ``-j`` into a single fit.
     """
     t = tiling.lower()
     if t not in ("auto", "none", "uniform", "content"):
@@ -205,10 +285,17 @@ def resolve_tiling(
     for s in shape:
         n_voxels *= int(s)
     exceeds_dim = any(int(s) > int(tile_size) for s in shape)
-    large = exceeds_dim and n_voxels > _AUTO_WHOLE_VOLUME_VOXELS
-    if not large:
-        return "none"
-    return "content" if has_density else "uniform"
+    large = exceeds_dim and n_voxels > auto_whole_volume_voxels(device)
+    tiled = "content" if has_density else "uniform"
+    if large:
+        return tiled
+    if wants_tiles and exceeds_dim and n_voxels > _AUTO_WHOLE_VOLUME_VOXELS:
+        aprint(
+            f"--tiling auto: {n_voxels / 1e6:.0f} Mvoxel fits whole on {device}, "
+            f"but --recipe / --jobs need tiles: using --tiling {tiled}."
+        )
+        return tiled
+    return "none"
 
 
 def validate_and_build_recipe(
@@ -364,6 +451,52 @@ def maybe_denoise_full_volume(
     return volume
 
 
+def announce_denoised_quality_basis(ctx: FitPipelineCtx, is_tiled: bool) -> None:
+    """Say which reference the quality lines above were scored against.
+
+    The fit scores itself against the volume it was handed. Under ``--denoise``
+    that is the DENOISED volume (whole, or per tile on the tiled paths), so its
+    PSNR/SSIM say how well the splats reproduce the filtered data, which can
+    read several dB better while the fit is worse against the raw data. A no-op
+    without ``--denoise``.
+    """
+    if ctx.denoise_effective_h is None:
+        return
+    h = f"NLM h={ctx.denoise_effective_h:.4g}"
+    if is_tiled:
+        aprint(
+            f"Note: --denoise ({h}) ran per tile, so a tile's own quality line is "
+            "scored vs its denoised tile; if a merged (whole-volume) quality line "
+            "is printed, it is scored vs the raw input."
+        )
+        return
+    aprint(
+        f"Note: the quality above is scored vs the denoised input ({h}), not the "
+        "raw volume. To score against the raw data, run `luxar gsplat compare "
+        "<output> <input>` with the same --axes/--channel/--timepoint."
+    )
+
+
+def seeds_line(
+    parsed_seeds: "int | float | None", *, progressive: bool, tile: Optional[str]
+) -> str:
+    """The ``Seeds:`` line; warns about ``auto`` once, where it is the heuristic.
+
+    Progressive ``auto`` is a fixed 50,000 budget, and a ``--tile k/M`` worker's
+    parent already warned for the whole fit, so neither repeats the warning.
+    """
+    if parsed_seeds is not None:
+        return f"Seeds: {parsed_seeds}"
+    if progressive or tile is not None:
+        return "Seeds: auto"
+    return (
+        "Seeds: auto. ⚠ auto sizes the budget from the volume's linear "
+        "extent, not its content (100 to 10,000 seeds per fit or tile), "
+        "which badly under-seeds anything past a small test volume; pass "
+        "--seeds K from `luxar gsplat cal`, or a ratio."
+    )
+
+
 def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any, Any]":
     """Build the merged fit config and parse the seed / downscale options.
 
@@ -435,10 +568,7 @@ def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any
 
     # 4. Parse seeds
     parsed_seeds = parse_seeds(ctx.seeds)
-    if parsed_seeds is not None:
-        aprint(f"Seeds: {parsed_seeds}")
-    else:
-        aprint("Seeds: auto")
+    aprint(seeds_line(parsed_seeds, progressive=ctx.progressive, tile=ctx.tile))
 
     # 4b. Inject per-tile denoise params for tiled fitting
     if ctx.denoise and ctx.denoise_effective_h is not None and is_tiled:
@@ -804,6 +934,8 @@ def dispatch_parallel_tiled(
     if not (tiled and ctx.tile is None and ctx.jobs != "1"):
         return False
 
+    import time
+
     import numpy as np
 
     from luxar.gsplats.fit_tiled_parallel import (
@@ -816,6 +948,7 @@ def dispatch_parallel_tiled(
     from luxar.gsplats.fitting.downscale import downscale_volume, normalize_downscale
     from luxar.gsplats.tiling import compute_tile_specs, resolve_grid_scale
 
+    started = time.perf_counter()
     # Compute the tile grid on the POST-downscale shape without materializing
     # the decimated reference yet, so a one-job fallback does not downscale the
     # volume twice. Decimation is volume[::f], so shape math is exact here.
@@ -939,6 +1072,11 @@ def dispatch_parallel_tiled(
                 denoise_search_distance=ctx.denoise_search_distance,
                 denoise_backend=ctx.denoise_backend,
                 denoise_2d=ctx.denoise_2d,
+                # Workers re-read the input: they need the same crop and the same
+                # spacing (a CLI --voxel-size or --physical lives on this
+                # command line, not in a --config they could re-read).
+                voxel_size=ctx.voxel_size,
+                region=ctx.region,
                 min_extent=ctx.min_extent,
                 reseed_sigma=ctx.reseed_sigma,
                 # Empty (windowed-to-zero) tiles must not crash the
@@ -1008,10 +1146,11 @@ def dispatch_parallel_tiled(
                 ctx.output_path,
                 compress=ctx.compress,
                 verbose=ctx.verbose,
+                frame=ctx.fit_frame,
                 dimension_metadata=ctx.dimension_metadata,
             )
 
-        aprint(f"\nDone: {n_splats:,} splats")
+        aprint(f"\nDone: {n_splats:,} splats in {time.perf_counter() - started:.1f}s")
         return True
 
     aprint("--jobs resolved to 1 worker; using sequential tiled fitting")
@@ -1759,6 +1898,7 @@ def rescale_and_save(
     from luxar.gsplats.gsplat_data import GSplatData
 
     is_leaf = isinstance(result, GSplatData)
+    save_started = time.perf_counter()
     with asection(f"Saving to {ctx.output_path.name}"):
         if (
             is_leaf
@@ -1781,9 +1921,29 @@ def rescale_and_save(
                 ctx.output_path,
                 compress=ctx.compress,
                 verbose=ctx.verbose,
+                frame=ctx.fit_frame,
                 dimension_metadata=ctx.dimension_metadata,
             )
+            if ctx.output_path.is_dir():
+                _stamp_save_timing(ctx.output_path, time.perf_counter() - save_started)
     return result, n_splats, is_leaf
+
+
+def _stamp_save_timing(path: Path, elapsed: float) -> None:
+    """Finish directory-store timing after the writer returns, then rehash attrs."""
+    from luxar._zarr_compat import consolidate, open_group
+    from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+    root = open_group(str(path), mode="r+")
+    fitting = root.require_group("fitting")
+    record = fitting.attrs.get("fit_provenance")
+    if isinstance(record, dict):
+        record["timings"]["saving"] = elapsed
+        fitting.attrs["fit_provenance"] = record
+    else:
+        fitting.attrs["save_seconds"] = elapsed
+    _stamp_content_hash(root)
+    consolidate(root)
 
 
 def build_fit_recipe_params(
@@ -1826,14 +1986,21 @@ def save_fit_output(
     *,
     compress: "Optional[Literal['zip', 'tar.gz']]",
     verbose: bool,
+    frame: "Any" = None,
     dimension_metadata: "Optional[list[dict[str, str]]]" = None,
 ) -> int:
     """Save a flat ``GSplatData`` leaf or a ``kind=partition`` tree node.
 
+    ``frame`` (a :class:`~luxar.cli.gsplat_ops.voxel_frame.FitFrame`) moves a
+    ``--region`` crop's splats into full-volume coordinates and stamps the
+    spacing/region provenance into ``fitting/`` first.
+
     Returns the splat count for the summary line.
     """
+    from luxar.cli.gsplat_ops.voxel_frame import apply_fit_frame
     from luxar.gsplats.gsplat_data import GSplatData
 
+    result = apply_fit_frame(result, frame)
     root_attrs = (
         {"dimension_metadata": dimension_metadata}
         if dimension_metadata is not None

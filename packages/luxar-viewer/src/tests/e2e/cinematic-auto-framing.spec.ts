@@ -1,6 +1,7 @@
 import type { Browser } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { waitForDataLoaded, waitForLuxarReady } from './helpers';
+import { isWebGPUProject, withWebGPURenderer } from './webgpu-project';
 import { StorageKeys } from '../../utils/storage-keys';
 
 const DATASET =
@@ -22,7 +23,8 @@ const loadAndMeasure = async (
   browser: Browser,
   { cinematic, authoredPosition, storedFov, storedContentHash }: LoadOptions
 ) => {
-  const context = await browser.newContext();
+  const baseURL = test.info().project.use.baseURL;
+  const context = await browser.newContext({ baseURL });
   if (storedFov !== undefined) {
     // Read the stamped hash before the page route rewrites only viewer_config.
     const response = await context.request.get(ROOT_METADATA);
@@ -75,7 +77,8 @@ const loadAndMeasure = async (
     await route.fulfill({ response, json: metadata });
   });
 
-  await page.goto(`/?debug&src=${encodeURIComponent(DATASET)}`);
+  const url = `/?debug&src=${encodeURIComponent(DATASET)}`;
+  await page.goto(isWebGPUProject() ? withWebGPURenderer(url, baseURL) : url);
   await waitForLuxarReady(page);
   await waitForDataLoaded(page);
   const measurement = await page.evaluate(() => {

@@ -230,13 +230,27 @@ positional extent when the positions are not scene-aligned.
 
 `auto` is the default. It resolves (via `resolve_additive_method`) to `greedy`
 for `N ≤ _AUTO_ADDITIVE_MAX_N` (= 5000) and to `self_energy` above it. Rationale:
-`greedy`/`spectral` need a sparse Gram, whose construction (`_build_sparse_gram`,
-a pure-Python per-pair loop) is `O(nnz)` and scales with *overlap density* (avg
-neighbours per splat), not `N` alone — so it becomes the bottleneck on large or
-dense fits (the lazy-greedy heap pass itself is cheap). Empirically (`additive_lod`
-Experiment C) `self_energy` trails greedy by only 2–10% AUC on real Luxar datasets
-and is the right `O(N log N)` choice above the threshold. Pass an explicit method
-to override `auto`; `greedy` remains the quality reference at small `N`.
+`greedy`/`spectral` need a sparse Gram (`_build_sparse_gram`) whose size is
+`O(nnz)` and scales with *overlap density* (avg neighbours per splat), not `N`
+alone — so it becomes the bottleneck on large or dense fits (the lazy-greedy heap
+pass itself is cheap). Empirically (`additive_lod` Experiment C) `self_energy`
+trails greedy by only 2–10% AUC on real Luxar datasets and is the right
+`O(N log N)` choice above the threshold. Pass an explicit method to override
+`auto`; `greedy` remains the quality reference at small `N`.
+
+The Gram's pairs are scored in vectorized batches. Measured on an Apple-silicon
+CPU (Gram build + greedy), contiguous subsets of a real nuclei fit (`cells3d_nuc`),
+and the same subsets with every covariance doubled in scale for a denser overlap:
+
+| N | ~nnz/N | seconds | ~nnz/N (2x scale) | seconds |
+|---|---|---|---|---|
+| 1,000 | 115 | 0.2 | 450 | 0.2 |
+| 5,000 | 100 | 0.6 | 440 | 1.3 |
+| 10,000 | 130 | 1.5 | 610 | 3.6 |
+
+So greedy stays at seconds up to the threshold even on dense fits; above it,
+`self_energy` trades the 2–10% AUC for skipping the Gram altogether. Raising the
+threshold is a quality-vs-time call that has not been measured on enough data.
 
 ### `slice_dims` — the slice-even interleave
 

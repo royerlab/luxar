@@ -10,7 +10,7 @@ from typing import Optional, Union
 from arbol import aprint
 
 from ...._process import run_child_process
-from .flags import parse_str_arg
+from .flags import parse_int_arg, parse_str_arg
 
 # Derived demo port ranges. Deliberately DISJOINT from the bare `luxar serve`
 # defaults (8000 data / 5173 viewer): a demo must never contend with a manually
@@ -63,12 +63,14 @@ def _serve_command(
     the respective option, so a demo passing an explicit ``--port`` /
     ``--viewer-port`` keeps full control.
 
-    Two of the demo's OWN command-line flags (``argv``, default ``sys.argv``)
+    Four of the demo's OWN command-line flags (``argv``, default ``sys.argv``)
     are forwarded here, once, for every demo that serves through
     :func:`launch_viewer`: ``--host HOST`` (bind address — without it no demo
     could be viewed from another machine, e.g. ``luxar demo run lorenz --
-    --host 0.0.0.0`` on a remote box) and ``--no-open`` (never ask
-    ``luxar serve`` to open a browser). A ``--host`` the demo already put in
+    --host 0.0.0.0`` on a remote box), ``--port N`` / ``--viewer-port N``
+    (pin the data / viewer port instead of the derived pair — what a port
+    forward or a firewall rule needs) and ``--no-open`` (never ask
+    ``luxar serve`` to open a browser). A value the demo already put in
     ``serve_args`` (``control_serve_args``) wins.
     """
     args = list(serve_args or [])
@@ -93,9 +95,12 @@ def _serve_command(
         for a in args
     )
     if not data_pinned:
-        cmd.extend(["--port", str(data_port)])
+        port = parse_int_arg("port", None, demo_argv)
+        cmd.extend(["--port", str(port if port is not None else data_port)])
     if not any(a == "--viewer-port" or a.startswith("--viewer-port=") for a in args):
-        cmd.extend(["--viewer-port", str(viewer_port)])
+        pinned_viewer = parse_int_arg("viewer-port", None, demo_argv)
+        chosen = pinned_viewer if pinned_viewer is not None else viewer_port
+        cmd.extend(["--viewer-port", str(chosen)])
     if open_browser:
         # Not `--open`: that is an instruction `serve` always obeys. A demo's
         # browser is a convenience, skipped where no one could see it.
@@ -124,8 +129,9 @@ def launch_viewer(
             demo drive server-side behaviour (bandwidth throttling, latency,
             packet loss) that ``serve`` already supports. An explicit
             ``--port`` / ``--viewer-port`` here overrides the derived pair.
-            The demo's own ``--host`` / ``--no-open`` flags are forwarded
-            automatically (see :func:`_serve_command`).
+            The demo's own ``--host`` / ``--port`` / ``--viewer-port`` /
+            ``--no-open`` flags are forwarded automatically (see
+            :func:`_serve_command`).
 
     Raises:
         SystemExit: If the viewer fails to launch

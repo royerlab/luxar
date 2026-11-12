@@ -43,7 +43,8 @@ import {
   type GSplatTSLNodes,
 } from './shader-tsl';
 import { copyRuntimeUniforms, GSPLAT_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
-import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
+import { applySharedVisualTSLGraph } from '../_shared/shared-graph-tsl';
+import { copyTSLNodeOverride } from '../_shared/tsl-node-override';
 import type { GSplatMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
@@ -109,6 +110,7 @@ export class GSplatTSLMaterial
     uInvGamma: TSLNode;
     uIntensity: TSLNode;
     uOffset: TSLNode;
+    uDisplayGain: TSLNode;
     uSortedIndexSlot: TSLNode;
     uDensityDrop: TSLNode;
     uDensityAlphaExp: TSLNode;
@@ -176,6 +178,7 @@ export class GSplatTSLMaterial
       uInvGamma: uniform(1.0 / gammaValue),
       uIntensity: uniform(materialConfig.intensity ?? 1.0),
       uOffset: uniform(materialConfig.offset ?? 0.0),
+      uDisplayGain: uniform(materialConfig.displayGain ?? 1.0),
       uSortedIndexSlot: uniform(0),
       uDensityDrop: uniform(0),
       uDensityAlphaExp: uniform(1),
@@ -282,6 +285,7 @@ export class GSplatTSLMaterial
       uInvGamma: proxyIUniform(this.tslNodes.uInvGamma),
       uIntensity: proxyIUniform(this.tslNodes.uIntensity),
       uOffset: proxyIUniform(this.tslNodes.uOffset),
+      uDisplayGain: proxyIUniform(this.tslNodes.uDisplayGain),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
       uDensityAlphaExp: proxyIUniform(this.tslNodes.uDensityAlphaExp),
@@ -342,7 +346,7 @@ export class GSplatTSLMaterial
     // ONE graph per configuration, shared by every gsplat material of it
     // (see shared-graph-tsl.ts): the build cache keys on node ids, so a
     // private graph per material cost a full NodeBuilder build per part.
-    applySharedTSLGraph(this, 'gsplat', config, this.tslNodes, (inputs, scratch) => {
+    applySharedVisualTSLGraph(this, 'gsplat', config, this.tslNodes, (inputs, scratch) => {
       gsplatWebGPUFactory(inputs as GSplatTSLNodes, config, scratch);
     });
     applyGSplatMaterialState(
@@ -393,6 +397,20 @@ export class GSplatTSLMaterial
   /** Current absorption coefficient κ. */
   getAbsorption(): number {
     return this.uniforms.uAbsorption.value as number;
+  }
+
+  /**
+   * Update the display gain (`display_gain`): a plain uniform write, no
+   * rebuild. Scales every amplitude-linear term, never the colormap lookup
+   * (GLSL twin: `GSplatMaterial.updateDisplayGain`).
+   */
+  updateDisplayGain(gain: number): void {
+    this.uniforms.uDisplayGain.value = gain;
+  }
+
+  /** Current display gain. */
+  getDisplayGain(): number {
+    return this.uniforms.uDisplayGain.value as number;
   }
 
   /**
@@ -542,7 +560,7 @@ export class GSplatTSLMaterial
     const state: CompleteBlendingState = isNormalMode(mode)
       ? getGSplatNormalBlendingState()
       : getCompleteBlendingState(mode, opacity);
-    const stateChanged = applyBlendingStateToMaterial(this, state);
+    applyBlendingStateToMaterial(this, state);
 
     if (this.uniforms.uProjectionMode) {
       // Decorative (graph JS-branches on the mode); kept for clone/telemetry
@@ -589,8 +607,6 @@ export class GSplatTSLMaterial
       isVolumetricMode(previousMode) !== isVolumetricMode(mode);
     if (projectionChanged || outputBranchChanged) {
       this.rebuildGraph();
-    } else if (previousMode !== mode && stateChanged) {
-      this.needsUpdate = true;
     }
   }
 
@@ -604,6 +620,7 @@ export class GSplatTSLMaterial
       gamma: this.userData.gamma ?? 1.0,
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
+      displayGain: this.uniforms.uDisplayGain.value,
       truncationRadius: this.uniforms.uTruncate.value,
       blendingMode: this.userData.blendingMode ?? 'additive',
       transparent: this.transparent,
@@ -632,6 +649,8 @@ export class GSplatTSLMaterial
       this.uniforms.uLabelColorMode.value === 1,
       this.uniforms.uLabelFilterIndex.value
     );
+
+    copyTSLNodeOverride(this, cloned);
 
     return cloned as this;
   }

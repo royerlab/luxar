@@ -373,6 +373,7 @@ def create_luxar_scene(level_paths: list[Path], output_path: Path) -> Path:
                     scene.add_gsplats_from_file(
                         name=f"detail_{i}",
                         path=str(path),
+                        fitted_defaults=False,
                         # The data is 3D and the scene is 4D: `dim_order` names
                         # which scene dimensions the three center columns are,
                         # and `fill` pins this level's coordinate on the

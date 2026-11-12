@@ -38,6 +38,7 @@ luxar demo run-all          # generate demo datasets (--no-serve; skips GPU/larg
 luxar demo run lorenz -- --help             # describe a demo without running it
 luxar demo run lorenz -- --host 0.0.0.0     # serve on the LAN (any serving demo)
 luxar demo run lorenz -- --no-open          # don't open a browser
+luxar demo run lorenz --port 8001 --viewer-port 5200  # fixed ports (port forward / firewall)
 luxar demo stop             # stop demos left running (frees their ports); --dry-run to list
 luxar demo cache list       # inventory demo caches under ~/.cache/luxar/
 luxar demo deps                    # which optional dependencies are missing?
@@ -131,15 +132,19 @@ poses preserve camera clearance instead. `pull_in()` scales about the target,
 so an off-origin camera keeps its aim. The guard rejects both a mixed-lens FOV
 pin and a bare authored position whose FOV assumption nobody can read.
 
+`_scene_size.py` lets a demo's caption state the served scene's own on-disk size, which is only known once the caption is written: build into a hidden scratch sibling with an estimate, measure it (`dir_size_bytes`), rewrite the two text attrs (`replace_scene_texts`, optionally restamping the content hash), repeat until the stated figure stops changing (`converge_stated_size`), then rename onto the served path (`promote_scene`). The size wording itself is `_caption.py`'s `compression_caption` / `compression_note`. Used by the EASI-FISH and budding-organoid demos. Both sides of a stated ratio are on-disk bytes, and the raw side is named: the source as stored or as the demo read it (the raw CZI; the extracted frames plus lineage), never computed voxel bytes or an acquisition the demo never saw.
+
 `_audio_synth.py` is the build-time synthesis + AAC encoding helper behind the sound layer's effects: numpy PCM → 16-bit WAV → `afconvert` (macOS) or `ffmpeg`, a loop-clean `synthesise_hum(frequency_hz, seconds, cache_dir)`, equal-power loop-point blending (`loop_crossfade`), first-order ambisonic encoding (`encode_foa`, `foa_from_stereo`, AmbiX ACN/SN3D) and `synthesise_foa_from_clip(src, cache_dir)` which decodes an existing MP3/AAC and re-encodes it as a 4-channel field. Clips are cached by a hash of the synthesis parameters; `LUXAR_AUDIO_ENCODER=afconvert|ffmpeg|none` overrides the detection (`none` keeps a CI build silent). Without an encoder the demo builds without the effect and warns once.
 
 `_narration.py` is the build-time text-to-speech helper behind the sound layer's narration (`synthesise(text, voice, cache_dir)`): the macOS system voice (`say` → `afconvert` to AAC) is auto-detected for free local synthesis; OpenAI TTS over plain HTTPS requires `LUXAR_NARRATION_ENGINE=openai` (with `OPENAI_API_KEY` only authenticating the explicitly selected paid engine); otherwise it emits a `UserWarning` and no clip. Clips are cached by a hash of `(engine, model, voice, text)` under the calling demo's cache dir, so unchanged text never re-synthesises; `LUXAR_NARRATION_ENGINE=say|none` can also force the local or silent path (`none` keeps a CI build offline).
 
-Four demos pin scientific-fidelity exceptions. The two quantitative ortho demos
+Five demos pin scientific-fidelity exceptions. The two quantitative ortho demos
 suppress bloom, vignette, lens distortion and detector noise so their
 projection-derived scale bars and measured intensities remain meaningful. The
 biodiversity globe and nD transform bench suppress lens distortion and detector
-noise because their categorical or exact RGB hues carry data.
+noise because their categorical or exact RGB hues carry data. The EASI-FISH demo
+suppresses lens distortion only, because a single mRNA molecule is a punctum and
+the lens smears and colour-fringes puncta away from the frame centre.
 
 The three network demos (`caida_as_topology`, `huri_interactome`,
 `ppi_flow_field`) share `_graph_common.py`, but not all of it. All three use the
@@ -942,6 +947,21 @@ Two-channel confocal z-stack of endogenously tagged MAP4 (microtubule-associated
 
 ---
 
+#### demo_gsplats_3d_easifish_hypothalamus.py - 3D Spatial Transcriptomics (EASI-FISH, Mouse Lateral Hypothalamus)
+Four-channel EASI-FISH of a slab of mouse lateral hypothalamus (about 124 x 217 x 417 µm of tissue, imaged after 2x linear expansion and shown in biological µm) (Wang et al., *Cell* 2021; Tillberg and Sternson labs, HHMI Janelia): DAPI nuclei plus the single mRNA molecules of *Slc17a6* (magenta), *Gpr83* (green) and *Bdnf* (yellow). At the opening view the cells expressing each gene stand out by colour against grey nuclei; zoom in on one and its colour resolves into individual transcripts.
+
+**Run**: `luxar demo run gsplats_3d_easifish_hypothalamus`
+
+**Requires**: by default nothing beyond an 83.2 MB download. The demo takes the four finished per-channel fits from the first source that has them: locally finished archives from an earlier build (all four complete, no network), then the Luxar cc-by Zenodo record (`easifish_{dapi,slc17a6,gpr83,bdnf}.gsplats.zarr.zip`, sha256-verified against the data manifest and cached under `~/.cache/luxar/gsplats_easifish_lha/`, so a rerun does not download them again). From finished fits it builds and packs the scene with no GPU (7.5 min measured on an Apple-silicon Mac).
+
+When the hosted fits are unavailable, the recipe resumes only if the stitched OME-Zarr is already cached or `--czi PATH` supplies a local CZI. Otherwise the demo stops with instructions to retry or pass `-- --recompute` to download the 34.9 GB raw CZI from figshare (DOI 10.25378/janelia.13622819, CC BY 4.0; resumable and sha256-verified). `-- --recompute --czi PATH` forces a rebuild from a local copy; `--czi` alone is ignored, with a warning, when finished fits are used. Rebuilding needs a CUDA GPU, >= 32 GB of RAM and about 40 GB of disk. It stitches the two tiles (~20 GB of RAM) and fits the four channels (about 2.5 h on an NVIDIA GB10; each mRNA fit runs a ~13 GB parent plus up to three ~6.5 GB workers). Every step caches under `~/.cache/luxar/gsplats_easifish_lha/local/`, so a later run only rebuilds the scene, and only when the demo's code or a fit changed (or it switches between hosted and local fits). Needs `czifile` (in the `demos` extra). The fit quality quoted for this demo assumes the pedestal-seeding fix of PR #3226.
+
+After a `--recompute` build the 34.9 GB CZI stays in that cache, since a refit needs it. To reclaim the space once the scene is built, delete `~/.cache/luxar/gsplats_easifish_lha/local/LHA3_R3_medium.czi` (the fits and the scene do not need it), or remove the whole demo cache with `luxar demo cache clear gsplats_3d_easifish_hypothalamus` (which also deletes the local fits and the downloaded hosted ones, so the next run fetches them again).
+
+**Demonstrates**: stitching a raw two-tile Zeiss CZI from its stage positions refined by NCC, per-channel `batch-fit run` (content tiling for the punctate mRNA channels, uniform tiles for DAPI) with a per-part `levels` LOD built by the streaming merge and re-laddered with equal-energy rungs (`gsplat additive -b equi-energy:4`) so first paint is a small, visually heavy subset, rescaling to biological µm by the 2x expansion factor, `--min-extent 0` to keep every punctum, background floors resolved per channel, hand-authored per-layer brightness and colormap windows so four additive channels do not wash out, and `luxar optimize --pack` to cut the opening view's request count.
+
+---
+
 #### demo_gsplats_3d_tribolium_embryo.py - 3D Tribolium Embryo (Cell Tracking Challenge)
 Large isotropic 3D light-sheet volume of a developing beetle (*Tribolium castaneum*) embryo using Gaussian splatting. Near-isotropic at 0.381 um per voxel.
 
@@ -1105,6 +1125,19 @@ Five hours of zebrafish gastrulation (Zenodo 1211599, confocal, 151 timepoints t
 **Requires**: Internet access (downloads ~26.1 GB from Zenodo), GPU recommended.
 
 **Demonstrates**: Combined GSplats + Lines in 4D, cell lineage tracking as 4D polylines (X, Y, Z, Time), `extend_to_all` for persistent trajectory visibility, StarryNite tracking data, volume rendering + track overlay.
+
+---
+
+#### demo_gsplats_4d_organoid_budding.py - 4D Budding Intestinal Organoid with its Lineage
+A mouse intestinal organoid growing from **one cell** into a budding mini-gut over about 110 hours of live light-sheet imaging (LSTree, Liberali lab; Zenodo 6828906, recording `002-P21-25X-Budding`, LS1-Live, 10 min per frame). Two Gaussian-splat layers show the two markers, membranes (mem9-GFP, `bop_orange`) and nuclei (H2B-mCherry, `bop_blue`), over 167 frames, every fourth of the 667 (the empty T0245 shows T0244 in its slot). The founder cell's lineage, from the authors' partial semi-automatic Mastodon tracking (24,018 positions and 286 divisions in one tree, up to 115 tracked cells at once), is drawn over the splats as fading comet trails (Lines) and one marker per tracked cell (Points). A mother cell's hue interval is split between her daughters at each division, so sister clones share neighbouring hues. The record carries no raw stacks: the fitted frames are the authors' own deconvolved two-channel export (`rgb_grid`), cropped to the organoid and stored as 8-bit RGB voxels at 2.0 x 0.26 x 0.26 um. That export is a **max** composite (LSTree's `make_composite(..., mode='max')`): green is the nuclei, and red is the brighter of membranes and nuclei, so the membranes are taken as red where it exceeds green (0 elsewhere) before fitting; fitting red as it is drew every nucleus twice. That target has hard holes where nuclei hide the membrane, so the membranes' headline foreground PSNR (median 35.9 dB) is capped by the hole edges; outside a 2-voxel band around them the fits match within about ±3 dB of the earlier red-minus-green fits against their own target, so the lower number is a harder target, not a worse fit. The authors also scaled each frame and channel to its own percentiles when exporting, so intensity is not comparable across frames; every frame is fitted on the fixed 8-bit range (`norm_range=(0, 255)`, `floor="none"`), which avoids normalizing it a second time, and placed at its own crop origin in acquisition microns. The Time slider is in **minutes** on an exact 40-minute grid. The caption states the scene's on-disk size against the 462 MB of source it was built from (the 167 extracted VTI frames plus the lineage XML), about 5x smaller: modest, because those frames are already deconvolved, cropped, 8-bit and zlib-compressed. The ~700 GB raw acquisition, available only on request, is not the baseline.
+
+**Run**: `luxar demo run gsplats_4d_organoid_budding`
+
+**Requires**: by default about 100 MB of download and no GPU. The per-frame fits come from a complete local fit cache if an earlier refit left one (no network), else from the Luxar cc-by Zenodo record as one bundle (`organoid_budding_frames.gsplats.zarr.zip`, 99.7 MB, 334 per-frame stores, sha256-verified against the data manifest and cached, so a rerun does not download it again). The 0.9 MB lineage XML comes from Zenodo 6828906. A run from the hosted fits takes about a minute.
+
+With `-- --recompute`, or when neither is available (offline with nothing cached), the demo instead fetches its source from Zenodo 6828906 by HTTP range requests into the 12 GB archive (about 345 MB: 167 frames plus the lineage XML, SHA-256 pinned as a set) and refits every frame and channel. A CUDA GPU is strongly recommended (about an hour of fitting on an 8 GB RTX 3070, minutes per late frame on a CPU); the fits are cached per frame under `~/.cache/luxar/gsplats_4d_organoid_budding/local/`.
+
+**Demonstrates**: `download_zip_members` (many members out of one multi-GB remote zip with a single central-directory read), decoding VTK XML ImageData with the standard library, unmixing a max-composite RGB export (membranes = red where it exceeds green) before fitting, per-frame crops with moving origins placed in one acquisition frame, an occupancy-proportional splat budget, `combine_as_new_dimension` for a stacked time axis with a slice-aware ladder (`additive_lod=dict(slice_dims=[3], recompute=True)`), a MaMuT lineage oriented by frame and coloured by clone, and all three of Points, Lines and GSplats animating together on one discrete time axis. Options: `--recompute`, `--no-serve`, `--serve-only`.
 
 ---
 
@@ -1596,6 +1629,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichan
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichannel_layers.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_acto3d_heart.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_opencell_map4.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_easifish_hypothalamus.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_tribolium_embryo.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_lod_tribolium.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_lod_embryo_line.py
@@ -1605,6 +1639,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_recipes_tribolium.p
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_zebrafish_timelapse.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_neuromast_2ch.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_celegans_tracking.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_organoid_budding.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_nexrad_supercell.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_cell_tracking_challenge.py
 ```

@@ -480,10 +480,9 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // one quad have DIFFERENT provoking vertices (indices [0,1,2, 2,1,3]
       // provoke v2=start and v3=end under WebGL's last-vertex rule). Writing
       // the cap only at the corner it belongs to therefore split the quad
-      // diagonally wherever the refined value differed from the default — and
-      // WGSL's "@interpolate(flat)" provokes from the FIRST vertex, so the two
-      // backends disagreed as well. Evaluating both ends everywhere makes the
-      // two caps segment-constant, which is what "flat" requires.
+      // diagonally wherever the refined value differed from the default.
+      // WebGPU's "flat, either" may use any corner, so evaluating both ends
+      // everywhere makes both caps segment-constant on either backend.
       //
       // Per-END widths, not this vertex's: the gate inside luxarLineJoin must be
       // segment-constant or the "flat" cap varyings below resolve from whichever

@@ -299,26 +299,15 @@ private async shouldShowBrowser(src: string): Promise<boolean> {
     return true;
   }
 
-  // Check for Zarr dataset markers (v2 .zgroup/.zattrs or v3 zarr.json)
-  // Short-circuits as soon as any probe confirms zarr metadata exists
-  const zarrChecks = [
-    fetch(src + '/.zgroup', { method: 'HEAD' }),
-    fetch(src + '/.zattrs', { method: 'HEAD' }),
-    fetch(src + '/zarr.json', { method: 'HEAD' }),
-  ];
-
-  try {
-    await Promise.any(
-      zarrChecks.map((p) =>
-        p.then((r) => {
-          if (!r.ok) throw new Error('not ok');
-          return r;
-        })
-      )
-    );
-    return false; // At least one zarr metadata file exists
-  } catch {
-    // All probes failed — likely a directory, show browser
+  // `.zarr`-suffixed and `.zip` URLs load directly without any probe.
+  // Otherwise HEAD-probe the store markers ONE AT A TIME, format 3 first —
+  // zarr.json, then .zgroup, then .zattrs — stopping at the first 2xx. Each
+  // miss is a console 404, so a format-3 store (what Luxar writes) costs none.
+  // Each probe has its own 5 s budget; a probe that times out ends the search.
+  for (const marker of STORE_MARKERS) {
+    const verdict = await probeMarker(`${src}/${marker}`);
+    if (verdict === 'found') return false;
+    if (verdict === 'timeout') break;
   }
 
   return true;

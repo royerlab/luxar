@@ -52,6 +52,7 @@
 
 import type * as THREE from 'three';
 import type { SortedIndexApplyCallbacks } from '../element-storage';
+import { rotateMeshIndexTriples } from '../mesh-geometry';
 
 /**
  * Orderings written into an index buffer but not yet drawn.
@@ -166,6 +167,7 @@ export function writeSortedTriangleOrdering(
     dst[d + 1] = source[s + 1];
     dst[d + 2] = source[s + 2];
   }
+  if (geometry.userData.meshPickRotateIndices) rotateMeshIndexTriples(dst, entries);
 
   // ONE range covering the whole prefix — see the module note on atomicity. The
   // pending set is cleared first because the commit that produced this ordering

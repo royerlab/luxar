@@ -38,7 +38,8 @@ import {
   type PointTSLNodes,
 } from './shader-tsl';
 import { copyRuntimeUniforms, POINT_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
-import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
+import { applySharedVisualTSLGraph } from '../_shared/shared-graph-tsl';
+import { copyTSLNodeOverride } from '../_shared/tsl-node-override';
 import type { PointMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
@@ -329,7 +330,7 @@ export class PointTSLMaterial
     };
     // ONE graph per configuration, shared by every point material of it
     // (see shared-graph-tsl.ts): the build cache keys on node ids.
-    applySharedTSLGraph(this, 'point', config, this.tslNodes, (inputs, scratch) => {
+    applySharedVisualTSLGraph(this, 'point', config, this.tslNodes, (inputs, scratch) => {
       pointWebGPUFactory(inputs as PointTSLNodes, config, scratch);
     });
     applyPointMaterialState(
@@ -500,6 +501,7 @@ export class PointTSLMaterial
   }
 
   applyBlendingMode(mode: BlendingMode): void {
+    const wasNormal = this.userData.blendingMode === 'normal';
     // A runtime mode switch takes FULL ownership of the blending state:
     // clear the constructor's explicit depthTest/transparent overrides
     // so the mode-derived state below (and every later rebuild) wins.
@@ -516,7 +518,6 @@ export class PointTSLMaterial
       this.defines = {};
     }
 
-    const previousMode = this.userData.blendingMode as BlendingMode | undefined;
     const wantsContrib = state.shaderOutputMode === 'rgb-contribution';
     const hasContrib = 'LUXAR_MAX_RGB_CONTRIBUTION' in this.defines;
     const wantsOpaqueContrib = mode === 'opaque';
@@ -528,7 +529,7 @@ export class PointTSLMaterial
     // must not strand the branch.
     const wantsVolumetric = isVolumetricMode(mode);
     const hasVolumetric = 'LUXAR_VOLUMETRIC' in this.defines;
-    const stateChanged = applyBlendingStateToMaterial(this, state);
+    applyBlendingStateToMaterial(this, state);
     let definesChanged = false;
     if (wantsContrib && !hasContrib) {
       this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
@@ -555,15 +556,14 @@ export class PointTSLMaterial
     this.userData.depthTest = state.depthTest;
 
     // The TSL factory reads `blendingMode` to decide the shader-output
-    // shape (`max`, `opaque`, and `volumetric` are build-time branches).
+    // shape (`max`, `opaque`, `volumetric`, and the normal-only density
+    // alpha compensation are build-time branches).
     // Crossing any of them changes the graph; rebuild so the colorNode
     // reflects the new branch. userData.blendingMode
     // is already the new mode, so the rebuild's factory config picks
     // up the right branch.
-    if (definesChanged) {
+    if (definesChanged || wasNormal !== (mode === 'normal')) {
       this.rebuildGraph();
-    } else if (previousMode !== mode && stateChanged) {
-      this.needsUpdate = true;
     }
   }
 
@@ -606,6 +606,8 @@ export class PointTSLMaterial
 
     // Runtime state a fresh clone would reset (POINT_RUNTIME_UNIFORMS, ../_shared/runtime-uniforms.ts).
     copyRuntimeUniforms(this, cloned, POINT_RUNTIME_UNIFORMS);
+
+    copyTSLNodeOverride(this, cloned);
 
     return cloned as this;
   }

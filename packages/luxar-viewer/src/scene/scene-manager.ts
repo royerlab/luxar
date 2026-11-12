@@ -24,6 +24,7 @@ import { materialManager } from '../rendering';
 import { resolveMaterialBackend } from '../rendering/material-manager/factories';
 import {
   createSceneEnvironment,
+  sceneEnvironmentRendererDeps,
   type SceneEnvironment,
 } from '../rendering/environment/scene-environment';
 import type { BakedEnvironment } from '../types/environment';
@@ -33,7 +34,8 @@ import {
   clearBlendModeProgramWarmup,
   configureBlendModeProgramWarmup,
   warmSceneBlendModePrograms,
-} from '../rendering/webgl-blend-warmup';
+  type WarmupRenderer,
+} from '../rendering/blend-warmup';
 import {
   type Renderer,
   type RendererCapabilities,
@@ -85,13 +87,22 @@ import {
 import { sceneDimsManager } from './scene-dims-manager';
 import { resolveViewAxisPose } from './scene-manager/camera/view-axis';
 import type { ViewAxis } from '../types/view-axis';
-import { WebGLContextRecovery } from './scene-manager/render-pipeline/webgl-context-recovery';
+import {
+  WebGLContextRecovery,
+  markSceneResourcesDirtyForContextRestore,
+} from './scene-manager/render-pipeline/webgl-context-recovery';
+import {
+  WebGPUDeviceRecovery,
+  type GpuDeviceLike,
+} from './scene-manager/render-pipeline/webgpu-device-recovery';
 import { reduceGpuByteBudgetForContextLoss } from '../rendering/gpu-byte-budget';
 import {
   createWebGLRenderer,
   createWebGPURenderer,
   selectBackend,
+  type WebGPUDeviceRequest,
 } from './scene-manager/render-pipeline/renderer-setup';
+import type { WebGPUPlatformRule } from './scene-manager/render-pipeline/backend-policy';
 import { createPostProcessing } from './scene-manager/render-pipeline/post-processing-setup';
 import { ResizeOrchestrator } from './scene-manager/viewport/resize-orchestrator';
 import {
@@ -150,24 +161,33 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   'webgl-context-restored': {};
   /**
-   * Fired when the WebGPU device.lost Promise resolves. Treated as
-   * **unrecoverable** in this release — Luxar does not rebuild GPU
-   * resources after WebGPU device loss; the host application is
-   * expected to prompt for a reload. See
-   * `setupContextLossHandling` for the rationale.
+   * Fired when the WebGPU device is lost (its `device.lost` Promise resolved
+   * with any reason but `'destroyed'`). Recovery starts right after: a new
+   * renderer on a fresh device, announced by `webgpu-device-restored`, or,
+   * when every attempt fails, `webgpu-device-unrecoverable`.
    *
    * Payload carries the diagnostic reason / message returned by the
    * browser's `GPUDevice.lost` info struct (both may be undefined
    * when the browser doesn't supply them).
    */
   'webgpu-device-lost': { reason?: string; message?: string };
+  /**
+   * A new WebGPU renderer replaced the lost one, and post-processing, the
+   * environment and the scene's GPU resources were rewired to it. Subscribers
+   * re-register their per-renderer state (`NodeFactory.rebuildAfterContextRestore`
+   * with the new renderer).
+   */
+  'webgpu-device-restored': {};
+  /** Every recovery attempt after a WebGPU device loss failed: reload required. */
+  'webgpu-device-unrecoverable': { reason?: string; message?: string };
 }> {
   /**
    * The graphics-API renderer. Holds the `Renderer` union honestly:
-   * a `THREE.WebGLRenderer` on the default path, or a `WebGPURenderer`
-   * when opted in via `?renderer=webgpu` / `VITE_LUXAR_USE_WEBGPU=1`
-   * (which itself may dispatch to a real WebGPU adapter or transparently
-   * fall back to its internal WebGL2 backend depending on browser support).
+   * a `THREE.WebGLRenderer` or a `WebGPURenderer` according to the
+   * renderer override, build-time env vars, and platform policy.
+   * Without a native device, the explicit URL selection may use three's
+   * internal WebGL2 backend; the environment selection falls back to
+   * `THREE.WebGLRenderer`.
    *
    * Every method called on this field across the codebase
    * (`PostProcessingManager`, `picking-system`, `BloomChain`,
@@ -253,6 +273,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * flag — SceneManager just forwards events through it.
    */
   private contextRecovery: WebGLContextRecovery | null = null;
+  private deviceRecovery: WebGPUDeviceRecovery | null = null;
 
   /**
    * When true, resize events are suppressed (used during recording to
@@ -442,6 +463,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * `?renderer=webgl|webgpu` URL parameter through `LuxarAppOptions`.
    */
   private rendererOverride: 'webgl' | 'webgpu' | undefined;
+  private preRequestedWebGPUDevice?: Promise<WebGPUDeviceRequest>;
   /**
    * Diagnostic WebGPURenderer mode. When true and the selected renderer is
    * WebGPURenderer, pass `{ forceWebGL: true }` so Three.js uses its
@@ -457,7 +479,7 @@ export class SceneManager extends THREE.EventDispatcher<{
   /** HDR output requested (`?hdr`) and its optional pinned headroom; WebGPU only. */
   private hdr = false;
   private hdrHeadroom: number | undefined;
-  /** WebGL-only blend-variant warm-up (`?noBlendWarmup` disables). */
+  /** Blend-variant warm-up, both renderers (`?noBlendWarmup` disables). */
   private blendWarmup = true;
 
   /**
@@ -475,10 +497,12 @@ export class SceneManager extends THREE.EventDispatcher<{
     /**
      * Optional backend override. When provided, wins over the
      * `VITE_LUXAR_USE_WEBGPU` / `VITE_LUXAR_USE_LEGACY_WEBGL` env vars
-     * and the WebGL default. Threaded from `LuxarAppOptions.renderer`,
+     * and the platform policy. Threaded from `LuxarAppOptions.renderer`,
      * ultimately from the `?renderer=webgl|webgpu` URL parameter.
      */
     renderer?: 'webgl' | 'webgpu';
+    /** One-shot device request from standalone bootstrap. */
+    preRequestedWebGPUDevice?: Promise<WebGPUDeviceRequest>;
     /**
      * Diagnostic flag for `WebGPURenderer({ forceWebGL: true })`.
      * Threaded from `LuxarAppOptions.webgpuForceWebGL`, ultimately from
@@ -495,11 +519,10 @@ export class SceneManager extends THREE.EventDispatcher<{
     hdr?: boolean;
     hdrHeadroom?: number;
     /**
-     * WebGL-only blend warm-up. When true, classic `THREE.WebGLRenderer`
-     * sessions pre-compile each DISTINCT blend-mode program variant a
-     * material can reach, one compile per post-frame idle opportunity, so the first
-     * Layers-panel blend switch does not pay SwiftShader's synchronous
-     * link cost on the click path.
+     * Blend warm-up. When true, sessions pre-compile each DISTINCT blend-mode
+     * program variant (WebGL) or render pipeline (WebGPU) a material can
+     * reach, one compile per post-frame idle opportunity, so the first
+     * Layers-panel blend switch does not pay the compile on the click path.
      */
     blendWarmup?: boolean;
     /**
@@ -513,6 +536,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.viewAxisOverride = options.viewAxis ?? null;
     this.debug = options.debug ?? false;
     this.rendererOverride = options.renderer;
+    this.preRequestedWebGPUDevice = options.preRequestedWebGPUDevice;
     this.webgpuForceWebGL = options.webgpuForceWebGL ?? false;
     this.perfTimestamp = options.perfTimestamp ?? false;
     this.hdr = options.hdr ?? false;
@@ -544,17 +568,22 @@ export class SceneManager extends THREE.EventDispatcher<{
    * - Fullscreen immersive experience
    */
   private async setupRenderer(): Promise<void> {
-    const { backend, source } = selectBackend(this.rendererOverride);
+    const { backend, source, requireNativeAdapter, platformRules } = selectBackend(
+      this.rendererOverride
+    );
+    // The diagnostic WebGL2 bridge is only for an explicit or env-selected
+    // WebGPURenderer; it must not bypass the platform policy's vendor check.
+    const useWebGL = backend === 'webgl' || (source === 'platform-policy' && this.webgpuForceWebGL);
     log.info(
       Modules.RENDERER,
-      `Backend selection: ${backend === 'webgl' ? 'WebGLRenderer (GLSL)' : 'WebGPURenderer (TSL)'} ` +
-        `[source: ${source}${backend === 'webgpu' && this.webgpuForceWebGL ? ', forceWebGL backend' : ''}]`
+      `Backend selection: ${useWebGL ? 'WebGLRenderer (GLSL)' : 'WebGPURenderer (TSL)'} ` +
+        `[source: ${source}${!useWebGL && this.webgpuForceWebGL ? ', forceWebGL backend' : ''}]`
     );
-    if (backend === 'webgl') {
+    if (useWebGL) {
       await this.setupWebGLRenderer();
       return;
     }
-    await this.setupWebGPURenderer();
+    await this.setupWebGPURenderer(requireNativeAdapter, platformRules);
   }
 
   private async setupWebGLRenderer(): Promise<void> {
@@ -584,19 +613,27 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Opt-in renderer setup — selected via `?renderer=webgpu` URL flag
-   * or `VITE_LUXAR_USE_WEBGPU=1`. Constructs a `WebGPURenderer` and
+   * WebGPU renderer setup — selected via `?renderer=webgpu`,
+   * `VITE_LUXAR_USE_WEBGPU=1`, or the platform policy (`platformRules`,
+   * see `backend-policy.ts`). Constructs a `WebGPURenderer` and
    * runs its async `init()`. On browsers with WebGPU support, the
    * renderer acquires a WebGPU adapter and dispatches TSL graphs
-   * to WGSL. On browsers without WebGPU (Firefox today, older
-   * Safari), Three's WebGPURenderer transparently falls back to a
-   * WebGL2 backend — the TSL graphs target both from one source.
+   * to WGSL. On browsers without a native WebGPU adapter (Firefox
+   * outside Windows, older Safari, most Linux setups) the session drops
+   * to `WebGLRenderer` when `requireNativeAdapter` is set (every selection
+   * but an explicit `?renderer=webgpu`); otherwise three runs the same TSL
+   * graphs on its internal WebGL2 backend.
    *
-   * NOTE: WebGL is the **production default**; this method is
-   * reached only when the user explicitly opts into WebGPU.
-   * See `BROWSER_SUPPORT_POLICY.md` for the policy.
+   * WebGL stays the default wherever the platform policy has no row;
+   * an adapter that fails the policy's vendor check also drops to
+   * `WebGLRenderer`. See `BROWSER_SUPPORT_POLICY.md` for the policy.
    */
-  private async setupWebGPURenderer(): Promise<void> {
+  private async setupWebGPURenderer(
+    requireNativeAdapter: boolean,
+    platformRules?: readonly WebGPUPlatformRule[]
+  ): Promise<void> {
+    const preRequestedWebGPUDevice = this.preRequestedWebGPUDevice;
+    this.preRequestedWebGPUDevice = undefined;
     const result = await createWebGPURenderer(this.canvasElement, {
       debug: this.debug,
       webgpuForceWebGL: this.webgpuForceWebGL,
@@ -604,10 +641,14 @@ export class SceneManager extends THREE.EventDispatcher<{
       hdr: this.hdr,
       hdrHeadroom: this.hdrHeadroom,
       rendererOverride: this.rendererOverride,
+      preRequestedWebGPUDevice,
+      requireNativeAdapter,
+      platformRules,
     });
     if (result.fallback) {
-      // Adapter below the WebGPU spec minimum (< 8 vertex buffers)
-      // and the user didn't force the path; drop to WebGL.
+      // No native device where one was required, or an adapter below the
+      // WebGPU spec minimum (< 8 vertex buffers) the user didn't force: drop
+      // to WebGL. `createWebGPURenderer` logged which.
       await this.setupWebGLRenderer();
       return;
     }
@@ -615,9 +656,9 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.capabilities = result.capabilities;
 
     // Fetch the TSL/WebGPU material cone before anything can ask for a
-    // material. This is the ONLY place it is loaded on the production path, and
-    // the reason the default WebGL session never downloads the ~182 kB gzipped
-    // `three-webgpu` chunk (issue #1679).
+    // material. The bootstrap prefetch may already have started this load;
+    // only WebGPU sessions request the ~182 kB gzipped `three-webgpu` chunk
+    // (issue #1679).
     //
     // Ordering is load-bearing and already guaranteed: `init()` awaits
     // `setupRenderer()` (this) before `setupPostProcessing()`, which builds the
@@ -649,16 +690,12 @@ export class SceneManager extends THREE.EventDispatcher<{
    * `webglcontextrestored` canvas events fire only on WebGL
    * contexts.
    *
-   * **WebGPU path.** Three's `WebGPURenderer` recreates its own
-   * GPU device internally when `device.lost` resolves, but it does
-   * **not** rebuild Luxar-owned resources (post-processing render
-   * targets, picking buffers, material caches, interleaved geometry
-   * buffers). A full rebuild path mirroring WebGL2 is non-trivial
-   * and untested in CI today, so for now we treat WebGPU device
-   * loss as **unrecoverable**: log it loudly and dispatch a
-   * `webgpu-device-lost` event so the host application can prompt
-   * for a reload. The event payload carries the device-loss reason
-   * for diagnostics.
+   * **WebGPU path.** Three's `WebGPURenderer` does NOT recreate a lost
+   * device: it only latches `_isDeviceLost`, after which every render
+   * returns early. `WebGPUDeviceRecovery` observes `device.lost`, ignores
+   * explicit `'destroyed'` device losses, and rebuilds the renderer on a fresh
+   * device (`recreateWebGPURenderer`), dispatching `webgpu-device-lost`,
+   * then `webgpu-device-restored` or `webgpu-device-unrecoverable`.
    */
   private setupContextLossHandling(): void {
     if (this.capabilities.apiSurface === 'webgl2') {
@@ -690,33 +727,89 @@ export class SceneManager extends THREE.EventDispatcher<{
       return;
     }
 
-    // WebGPU: attach a best-effort device.lost observer. The
-    // backend's `device` is created during `gpuRenderer.init()`,
-    // so by the time `setupContextLossHandling` runs the device is
-    // either present or we accept "device.lost reporting unavailable
-    // on this Three.js build" silently. Structural typing avoids the
-    // @webgpu/types dependency on consumers that don't enable WebGPU
-    // in TypeScript's lib.
-    type DeviceLostInfo = { reason?: string; message?: string };
-    type GpuDeviceLike = { lost: Promise<DeviceLostInfo> };
-    const backend = (this.renderer as { backend?: { device?: GpuDeviceLike } }).backend;
-    const device = backend?.device;
-    if (!device || typeof device.lost !== 'object') {
-      return;
-    }
-    void device.lost.then((info: DeviceLostInfo) => {
-      log.error(
-        Modules.RENDERER,
-        `WebGPU device lost (reason=${info.reason ?? 'unknown'}). ` +
-          'Luxar does not auto-recover WebGPU device loss in this release — ' +
-          `please reload the page. Message: ${info.message ?? '(none)'}`
-      );
-      this.dispatchEvent({
-        type: 'webgpu-device-lost',
-        reason: info.reason,
-        message: info.message,
-      });
+    // WebGPU: three latches a lost device and renders nothing from then on,
+    // so recovery rebuilds the renderer (see webgpu-device-recovery.ts). The
+    // WebGL2 bridge (`webgpu-gl`) has no device to observe.
+    this.deviceRecovery = new WebGPUDeviceRecovery({
+      getDevice: () => (this.renderer as { backend?: { device?: GpuDeviceLike } }).backend?.device,
+      recreateRenderer: () => this.recreateWebGPURenderer(),
+      onLost: (info) => {
+        clearBlendModeProgramWarmup();
+        reduceGpuByteBudgetForContextLoss();
+        this.dispatchEvent({ type: 'webgpu-device-lost', ...info });
+      },
+      onRestored: () => {
+        // The keepers pinned pipelines of the lost renderer: warm the new one.
+        this.configureBlendWarmup();
+        void this.warmBlendModePrograms();
+        this.dispatchEvent({ type: 'webgpu-device-restored' });
+        this.dispatchEvent({ type: 'change' });
+      },
+      onUnrecoverable: (info) =>
+        this.dispatchEvent({ type: 'webgpu-device-unrecoverable', ...info }),
     });
+    if (!this.deviceRecovery.attach()) this.deviceRecovery = null;
+  }
+
+  /**
+   * Replace a WebGPU renderer whose device was lost with one on a fresh device,
+   * on the same canvas, and rewire what renders through it. Resolves false when
+   * no native device can be obtained (the caller retries, then gives up).
+   *
+   * Dispose the old renderer first to release its GPU resources before
+   * replacing it on the same canvas.
+   */
+  private async recreateWebGPURenderer(): Promise<boolean> {
+    try {
+      this.renderer.dispose();
+    } catch (error) {
+      log.warning(Modules.RENDERER, 'Disposing the lost WebGPU renderer failed', error);
+    }
+    const result = await createWebGPURenderer(this.canvasElement, {
+      debug: this.debug,
+      perfTimestamp: this.perfTimestamp,
+      hdr: this.hdr,
+      hdrHeadroom: this.hdrHeadroom,
+      rendererOverride: this.rendererOverride,
+      requireNativeAdapter: true,
+    });
+    if (result.fallback) return false;
+    if (!this.deviceRecovery) {
+      result.renderer.dispose();
+      return false;
+    }
+    this.renderer = result.renderer;
+    this.capabilities = result.capabilities;
+    materialManager.setCaps(this.capabilities);
+    this.postProcessing?.adoptRenderer(this.renderer, this.capabilities);
+    this.environment?.rebindRenderer(
+      sceneEnvironmentRendererDeps(this.renderer, resolveMaterialBackend(this.capabilities))
+    );
+    markSceneResourcesDirtyForContextRestore(this.scene);
+    this.resizeToCanvas();
+    this.renderer.setClearColor(config.scene.backgroundColor);
+    return true;
+  }
+
+  /**
+   * Whether the GPU context is lost right now: a lost WebGL context, or a lost
+   * WebGPU device whose renderer has not been rebuilt (yet).
+   */
+  public isGpuContextLost(): boolean {
+    return this.isWebGLContextLost() || (this.deviceRecovery?.isLost() ?? false);
+  }
+
+  /**
+   * Run the WebGPU device-loss recovery as if the device had just been lost
+   * (debug and E2E use; a real `device.destroy()` reports `'destroyed'`, which
+   * is ignored as an explicit device destroy). Resolves when recovery has finished;
+   * false when this session has no WebGPU device to recover.
+   */
+  public async simulateWebGPUDeviceLoss(): Promise<boolean> {
+    const recovery = this.deviceRecovery;
+    if (!recovery) return false;
+    await recovery.simulateLoss();
+    return this.deviceRecovery === recovery && !recovery.isLost();
   }
 
   /**
@@ -729,12 +822,14 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   private configureBlendWarmup(): void {
-    const renderer = isWebGLRenderer(this.renderer) ? this.renderer : null;
     configureBlendModeProgramWarmup({
-      enabled: this.blendWarmup && this.capabilities.apiSurface === 'webgl2' && renderer !== null,
-      renderer,
+      enabled: this.blendWarmup,
+      renderer: this.renderer as WarmupRenderer,
       camera: this.camera,
       targetScene: this.scene,
+      getRenderTarget: () => this.postProcessing?.sceneRenderTarget ?? null,
+      // WebGPU keys its pipelines on the blend state too (see blend-warmup.ts).
+      pipelineVariants: !isWebGLRenderer(this.renderer),
     });
   }
 
@@ -1083,7 +1178,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     });
   }
 
-  /** Arm WebGL blend warm-up after all scene-dependent dataset setup completes. */
+  /** Arm blend warm-up after all scene-dependent dataset setup completes. */
   public warmBlendModePrograms(): Promise<void> {
     return warmSceneBlendModePrograms(this.scene);
   }
@@ -1591,6 +1686,9 @@ export class SceneManager extends THREE.EventDispatcher<{
       this.contextRecovery.dispose();
       this.contextRecovery = null;
     }
+    // Disarm the device observer before releasing renderer resources.
+    this.deviceRecovery?.dispose();
+    this.deviceRecovery = null;
 
     // Dispose post-processing resources first
     // This includes HDR render targets, effect composer, and all passes

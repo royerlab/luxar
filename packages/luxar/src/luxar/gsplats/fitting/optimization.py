@@ -278,6 +278,70 @@ class _PlateauFeeder:
             self.scheduler.step(value)
 
 
+class _EarlyStopRule:
+    """Patience-based early stop, optionally on RELATIVE progress.
+
+    The plain rule (``rel_tol=None``) stops once the best loss has not
+    improved at all for ``patience`` iterations. With ``rel_tol`` set it also
+    stops once the best loss improved by less than ``rel_tol`` (a fraction of
+    the best loss ``patience`` iterations ago) over that window, so a fit
+    creeping down by 1e-6 per eval does not run out its whole budget. Both are
+    checked only on eval iterations, from the host-side best loss the loop
+    already syncs there.
+    """
+
+    def __init__(self, patience: Optional[int], rel_tol: Optional[float]) -> None:
+        """Remember the window and tolerance; no history yet."""
+        self.patience = patience
+        self.rel_tol = rel_tol
+        self.history: list[tuple[int, float]] = []
+
+    def should_stop(
+        self, it: int, best_loss: float, iterations_since_improvement: int
+    ) -> Optional[str]:
+        """Record ``(it, best_loss)``; return which rule fired, or None.
+
+        ``"plain"``: no new best loss for a whole window. ``"relative"``: the
+        best loss improved, but by at most ``rel_tol`` of its value one window
+        earlier.
+        """
+        if self.patience is None:
+            return None
+        if iterations_since_improvement >= self.patience:
+            return "plain"
+        if self.rel_tol is None:
+            return None
+        self.history.append((it, best_loss))
+        # Best loss at the latest eval at or before the window start.
+        start = it - self.patience
+        while len(self.history) > 1 and self.history[1][0] <= start:
+            self.history.pop(0)
+        then_it, then_loss = self.history[0]
+        if then_it > start or not np.isfinite(then_loss):
+            return None
+        gain = then_loss - best_loss
+        return "relative" if gain <= self.rel_tol * abs(then_loss) else None
+
+    def announce(self, reason: str, it: int, iterations_since_improvement: int) -> None:
+        """Print which rule stopped the fit at iteration ``it``."""
+        aprint(f"⏹ EARLY STOPPING at iteration {it}")
+        if reason == "relative":
+            aprint(
+                f"  Best loss improved by <= {self.rel_tol:g} (relative) over the "
+                f"last {self.patience} iterations"
+            )
+        else:
+            aprint(
+                f"  No improvement for {iterations_since_improvement} iterations "
+                f"(patience: {self.patience})"
+            )
+
+
+def _stop_reason(converged: bool, rule_reason: Optional[str]) -> Optional[str]:
+    """``early_stop_reason`` for the stats: converged / plain / relative / None."""
+    return "converged" if converged else rule_reason
+
+
 def _rank_final_iterate(
     tracker: _DeviceBestState,
     model: Any,
@@ -313,6 +377,19 @@ def _rank_final_iterate(
             tracker.update(
                 actual_iters, final_loss, candidate, current_metrics, final_step=True
             )
+
+
+def _append_bounded_sample(curve: list[list[float]], sample: list[float]) -> None:
+    """Keep endpoints and a sparse history without growing with iteration count."""
+    curve.append(sample)
+    if len(curve) > 256:
+        curve[:] = [*curve[::2][:-1], curve[-1]]
+
+
+def _record_relocations(curve: list[list[float]], tracker: Any, iteration: int) -> None:
+    total = tracker.total_relocations
+    if total and (not curve or total > curve[-1][1]):
+        _append_bounded_sample(curve, [float(iteration), float(total)])
 
 
 def run_optimization_loop(
@@ -377,6 +454,8 @@ def run_optimization_loop(
     best_rel_l2 = float("inf")
     best_iteration = 0
     iterations_since_improvement = 0  # Track patience for early stopping
+    rule_reason: Optional[str] = None
+    stop_rule = _EarlyStopRule(config.early_stop_patience, config.early_stop_rel_tol)
     last_max_abs_error = float("inf")
 
     # Track initial splat count (used for dynamic ops logging)
@@ -422,6 +501,8 @@ def run_optimization_loop(
     # eval iterations (see _DeviceBestState). No per-iteration host sync.
     tracker = _DeviceBestState(V_t.device)
     current_metrics_t = tracker.metrics.clone()
+    loss_curve: list[list[float]] = []
+    relocation_curve: list[list[float]] = []
     # Determine scheduler type once (avoid repeated string checks)
     _is_plateau_scheduler = (
         scheduler is not None and "Plateau" in type(scheduler).__name__
@@ -503,6 +584,9 @@ def run_optimization_loop(
                 current_metrics_t = torch.tensor(
                     [current_max_abs_error, current_rel_l2], device=V_t.device
                 )
+                _append_bounded_sample(
+                    loss_curve, [float(it), best_loss, current_rel_l2]
+                )
 
                 # Update best_state metrics if this is at or near the best iteration
                 if best_iteration > 0 and it - best_iteration < _EVAL_INTERVAL:
@@ -532,20 +616,18 @@ def run_optimization_loop(
                 break
 
             # Early stopping (patience-based, checked on eval iterations)
-            if config.early_stop_patience is not None:
-                if iterations_since_improvement >= config.early_stop_patience:
-                    early_stopped = True
-                    if config.verbose:
-                        aprint(f"⏹ EARLY STOPPING at iteration {it}")
-                        aprint(
-                            f"  No improvement for {iterations_since_improvement} iterations "
-                            f"(patience: {config.early_stop_patience})"
-                        )
-                        aprint(
-                            f"  Best state from iteration {best_iteration}: "
-                            f"loss={best_loss:.6f}  max_abs_error={best_max_abs_error:.6f}"
-                        )
-                    break
+            rule_reason = stop_rule.should_stop(
+                it, best_loss, iterations_since_improvement
+            )
+            if rule_reason is not None:
+                early_stopped = True
+                if config.verbose:
+                    stop_rule.announce(rule_reason, it, iterations_since_improvement)
+                    aprint(
+                        f"  Best state from iteration {best_iteration}: "
+                        f"loss={best_loss:.6f}  max_abs_error={best_max_abs_error:.6f}"
+                    )
+                break
 
             # Dynamic operations (splat relocation)
             if need_dynamic:
@@ -561,6 +643,7 @@ def run_optimization_loop(
                 )
                 if relocation_tracker is not None:
                     relocation_tracker.advance_step()
+                    _record_relocations(relocation_curve, relocation_tracker, it)
 
         # Movie frame recording (runs on its own schedule, outside eval gate)
         if (
@@ -644,8 +727,7 @@ def run_optimization_loop(
         if converged_early:
             aprint("✓ Optimization terminated: CONVERGENCE ACHIEVED")
         elif early_stopped:
-            aprint("⏹ Optimization terminated: EARLY STOPPING (no improvement)")
-            aprint(f"  No improvement for {config.early_stop_patience} iterations")
+            aprint(f"⏹ Optimization terminated: EARLY STOPPING ({rule_reason} rule)")
             aprint(
                 f"  Best state from iteration {best_iteration}: "
                 f"loss={best_loss:.6f}  max_abs_error={best_max_abs_error:.6f}"
@@ -731,6 +813,10 @@ def run_optimization_loop(
         amps=amps,
         converged_early=converged_early,
         early_stopped=early_stopped,
+        early_stop_reason=_stop_reason(converged_early, rule_reason),
+        early_stop_rel_tol=config.early_stop_rel_tol,
+        loss_curve=loss_curve,
+        relocation_curve=relocation_curve,
         actual_iters=actual_iters,
         best_iteration=best_iteration,
         best_from_final_step=best_from_final_step,

@@ -1,5 +1,9 @@
 # Gaussian Splatting Package for Luxar
 
+> **Start here.** From the command line, the three-command recipe in the
+> [CLI README](../cli/README.md#quick-start) takes a volume to the viewer; from
+> Python, see [Quick Start](#quick-start) below. The rest of this page is reference.
+
 High-performance n-dimensional oriented Gaussian splatting with automatic optimization for efficient image and volume reconstruction.
 
 ## Overview
@@ -39,11 +43,80 @@ pip install "luxar[gsplats]"
 > (the NVRTC path then takes over). The `torch>=2.2.0,<3.0` pin in
 > `pyproject.toml` exists to prevent a silent major-version jump.
 
+## Fitting on a CPU or a Mac
+
+Fast fitting runs on fused splatting kernels: CUDA on an NVIDIA GPU (compiled on
+first use by NVRTC from a plain pip install on Linux, or the `make build-cuda`
+extension), Metal on Apple Silicon (compiled at runtime from a plain pip install
+with torch >= 2.7; see [metal/README.md](models/gsplats/metal/README.md)), and,
+for 3D fits on the CPU, numba kernels from the `gsplats` extra (compiled on first
+use, then cached; see [cpu/README.md](models/gsplats/cpu/README.md)). The fitter
+falls back to PyTorch reference ops for 2D and 4D+ CPU fits, for a CPU fit without
+numba (or with `LUXAR_CPU_BACKEND=torch`), on a Mac whose fit logs `Metal
+splatting kernels: none, using PyTorch`, and on a CUDA GPU where neither kernel
+path can run (the fit warns with the reason). That path works, but plan for
+roughly **a third of a second per iteration per million voxels** on the CPU
+(≈ 2.8 s at 8.4 Mvoxel in the table below). A fit prints which
+path it took near the start: `Model class: GaussianSplatModelCPUNative (numba, N
+threads, ...)` is the native CPU path, `Model class: GaussianSplatModel (PyTorch,
+device=cpu)` the reference one.
+
+What to expect on the CPU (median fit iteration, Apple M4 Max, 8 threads, from
+[cpu/README.md](models/gsplats/cpu/README.md)):
+
+| volume | splats | PyTorch reference | numba kernels |
+| --- | --- | --- | --- |
+| 64×128×128 (1 Mvoxel) | 2,000 | ≈ 0.33 s / iteration | ≈ 0.010 s / iteration |
+| 128×256×256 (8.4 Mvoxel) | 4,000 | ≈ 2.8 s / iteration | ≈ 0.077 s / iteration |
+
+A GPU is still faster, and seeding, the
+final full-resolution render and the final SSIM add fixed costs. On noisy data
+most of the gain arrives in the first few hundred iterations, so a short run is
+often nearly as good as a long one: time a short run on your own data first,
+then decide.
+
+A CPU recipe:
+
+```bash
+export PYTHONUNBUFFERED=1                    # progress shows up in a redirected log
+luxar gsplat fit vol.tiff quick.gsplats.zarr --device cpu --seeds 4000 --iters 200
+luxar gsplat fit vol.tiff small.gsplats.zarr --device cpu --downscale 2 --preset draft
+```
+
+- **Threads are set automatically.** The numba kernels use the physical cores
+  available to the process. `luxar gsplat fit` and `cal` also raise torch's own
+  intra-op count (the loss and the optimizer step stay on torch) to
+  `min(physical cores, 8)` when torch is still on one thread, as it is under the
+  `hatch run` pin, and print `CPU: using N threads`. `fit --tile` / `--plan-box`
+  workers skip automatic widening, but a parent-provided `LUXAR_CPU_THREADS`
+  share sets torch's count there too. `LUXAR_CPU_THREADS=N` sets both counts.
+  Calling `fit_gaussian_splats` from Python leaves torch's count
+  alone: set `OMP_NUM_THREADS` and `MKL_NUM_THREADS` before launching Python (or
+  call `torch.set_num_threads(N)`); this matters mainly under the `hatch run` pin.
+- **`--downscale` cuts the cost per iteration roughly by the voxel factor.**
+  `--downscale 2` (8x fewer voxels) took the 128×256×256, 4,000-splat fit on the
+  PyTorch reference path from 4.6 to 0.53 s per iteration on one thread.
+  Seeding, the final full-resolution render and the final SSIM still run at full resolution, and the splats are
+  rescaled back to the original voxel grid. Per-axis factors work too (`1,2,2`
+  keeps z on an anisotropic stack).
+- **Seeds.** Expect iteration time to grow with the seed count; start at a few
+  thousand.
+- **Calibration.** `cal`'s default (the `n2s` preset, up to 20,000 iterations,
+  at each of 10 grid points) is long on a CPU even on the numba kernels: at the
+  4,000-splat, 8.4-Mvoxel rate above, 20,000 iterations would be roughly 25
+  minutes per grid point (an estimate; higher-K grid points cost more). If
+  you need it, crop or downsample the volume yourself (`cal` has no `--downscale`), and pass a short
+  grid such as `--k-grid 1000,4000,16000`. A lower `--preset` speeds it up but,
+  as `cal --help` warns, undertrains at high K and biases K\* upward.
+- **A Mac with Apple Silicon** should normally not be on this path at all: with
+  torch >= 2.7 the runtime Metal kernels are picked automatically (`--device
+  mps`).
+
 ## Key Features
 
 - **N-dimensional Support**: Works seamlessly with 2D images, 3D volumes, and 4D+ hypercubes (validated to 4D) with automatic gradient dilution compensation
 - **Efficient Cholesky Parameterization**: Covariance matrices via Cholesky decomposition with batched triangular solve
-- **Device Optimized**: Automatic device selection (CUDA → MPS → CPU); custom CUDA kernels on NVIDIA and an optional Metal backend on Apple Silicon
+- **Device Optimized**: Automatic device selection (CUDA → MPS → CPU); custom CUDA kernels on NVIDIA, a Metal backend on Apple Silicon, and numba kernels for 3D CPU fits
 - **Oriented Gaussians**: Full covariance matrices via Cholesky decomposition for arbitrary orientations
 - **Convergence-Driven Dynamic Operations**: Fixed-pool splat relocation based on convergence criteria (constant splat count — weak splats move to high-residual regions)
 - **Asymmetric Loss Functions**: Configurable penalty for over-prediction (applies to all three losses: L1, MSE, Poisson) addresses additive model constraints
@@ -181,6 +254,40 @@ reconstruction = render_gaussians_numpy(image.shape, result, truncate=3.0)
 
 The result can be directly passed to `render_gaussians_numpy()` or `render_gaussians_pytorch()` for rendering, or added to a Scene (see below).
 
+### Anisotropic Stacks in Physical Units
+
+From the command line, an anisotropic OME-Zarr or OME-TIFF/ImageJ stack becomes a
+physically scaled, correctly oriented scene in two commands:
+
+```bash
+luxar gsplat fit stack.ome.tif stack.gsplats.zarr --physical   # spacing from the file
+luxar gsplat convert stack.gsplats.zarr stack.luxar.zarr --tone-mapping ACES
+```
+
+`--physical` reads the recorded voxel size (NGFF scale, OME-TIFF `PhysicalSize*`,
+calibrated ImageJ spacing); `--voxel-size Z,Y,X` (µm, array order) states it
+explicitly and wins. `--region z0:z1,y0:y1,x0:x1` fits a crop whose splats keep
+their full-volume position. See the CLI README (`luxar gsplat fit`) for the
+precedence rules. From Python, pass the spacing yourself:
+
+```python
+result = fit_gaussian_splats(volume, voxel_size=(0.29, 0.108, 0.108))
+# centers / cholesky_factors are in µm (output_space="real", the default);
+# result.stats["voxel_size"] and result.stats["physical_coordinates"] record it.
+```
+
+A fit with a `voxel_size` records `voxel_size` and `physical_coordinates` in its
+stats (saved under `fitting/`); the CLI adds `voxel_unit`, `voxel_size_source`
+and, for a crop, `source_region`. A physical fit's `dimension_metadata` names the
+axes with their unit, which `gsplat convert` turns into µm scene dimensions.
+
+Two cases where the recorded spacing is not the answer as it stands. Expansion
+microscopy records the EXPANDED gel's voxel size: divide by the linear expansion
+factor (EASI-FISH: 2) for biological µm, after fitting on the expanded grid. And
+when z is much coarser than xy (EASI-FISH: 0.42 vs 0.23 µm), halving xy gives
+near-isotropic voxels at a quarter of the voxels and fit cost, losing lateral
+detail below the z step. Measured cases: [fitting real data](../../../../../.agents/skills/luxar-gsplat-pipeline/references/fitting-real-data-lessons.md).
+
 ### Tiled Fitting for Large Volumes
 
 For volumes that exceed GPU memory, tiled fitting splits the data into overlapping tiles with cosine (Hann) apodization and fits each tile independently:
@@ -287,7 +394,7 @@ result = fit_gaussian_splats(image, seeds=custom_seeds)
 
 - **Edges + grid by default**: `method="auto"` combines edge detection and grid coverage; multiscale decomposition is excluded by default for speed
 - **Decomposition scales**: `[1, 2, 4, 8, 16, 32, 64]` span fine details to large structures (used only when decomposition is requested explicitly)
-- **Volume-proportional density**: the auto seed budget is `max(100, int(total_voxels ** (1 / ndim) / 2))`, capped at 10,000
+- **Volume-proportional density**: the auto seed budget is `max(100, int(total_voxels ** (1 / ndim) / 2))`, capped at 10,000. It ignores content (128 seeds for a 256³ tile, 225 for a 92 Mvoxel EASI-FISH volume), so give real data an explicit count from `cal` or a per-voxel budget
 - **Dimension-agnostic**: Works seamlessly with 2D images, 3D volumes, and 4D+ hypercubes (validated to 4D)
 
 ### Outlier-Robust Normalization
@@ -309,6 +416,34 @@ result = fit_gaussian_splats(image, norm_percentile=5.0)
 - **norm_percentile=0.0**: Clean data without outliers (maximum sensitivity)
 - **norm_percentile=1.0**: Typical datasets with occasional outliers
 - **norm_percentile=5.0**: Noisy data or datasets with many outliers
+
+### Fitting a Time-Lapse Frame by Frame
+
+`batch-fit` resolves one floor and one intensity range for a whole time-lapse.
+A Python loop over frames must do it by hand, or brightness flickers between
+frames: pass every frame the same `norm_range` so the fitter does not
+renormalize each one (the budding-organoid demo uses `(0.0, 255.0)` on an 8-bit
+export the authors had already scaled per frame, which avoids a second
+per-frame normalization) and, on deconvolved exports that are already
+zero outside the specimen, `floor="none"`. Budget seeds per occupied voxel with
+a floor for small frames and a cap sized on each channel's largest frame, and
+key any per-frame cache on the whole recipe. Measured budgets:
+[fitting real data](../../../../../.agents/skills/luxar-gsplat-pipeline/references/fitting-real-data-lessons.md).
+
+### Check an Export's Channels Before Fitting
+
+A multichannel RGB export can blend its channels, and the unmixing must invert
+the actual blend. The LSTree organoid export is a MAX composite: red =
+max(membranes, nuclei), green = blue = nuclei. The data show it (red is never
+below green; where red exceeds green, red stays flat as green rises while
+red − green falls with slope ≈ −1) and the authors' code says so
+(`make_composite(..., mode='max')`). Fitted as membranes, red draws every
+nucleus twice, and no display setting removes that afterwards. Invert a max with
+`np.where(red > green, red, 0)`; subtracting green, the inverse of an additive
+blend, under-read the membranes there (0.68-0.93 of their mass kept). The same
+export was also rescaled per frame and channel to its own percentiles, so read an
+export's provenance for its intensity scaling too. Measured detail:
+[fitting real data](../../../../../.agents/skills/luxar-gsplat-pipeline/references/fitting-real-data-lessons.md).
 
 ### Important Limitations
 
@@ -601,10 +736,12 @@ from luxar.gsplats.metrics import compute_quality_metrics, compute_psnr, compute
 
 # Compute all metrics at once
 metrics = compute_quality_metrics(pred_tensor, target_tensor)
-print(f"PSNR: {metrics['psnr_db']:.2f} dB")
-print(f"PSNR (foreground): {metrics['foreground_psnr_db']:.2f} dB "
+print(f"PSNR: {metrics['psnr_robust_db']:.2f} dB (robust peak; "
+      f"full range {metrics['psnr_db']:.2f} dB)")
+print(f"PSNR (foreground): {metrics['foreground_psnr_robust_db']:.2f} dB "
       f"over {metrics['foreground_fraction'] * 100:.2f}% of voxels")
-print(f"SSIM: {metrics['ssim']:.4f}")
+print(f"SSIM: {metrics['ssim_robust']:.4f} (robust peak; "
+      f"full range {metrics['ssim']:.4f})")
 print(f"MSE:  {metrics['mse']:.6e}")
 print(f"Relative L2: {metrics['rel_l2']:.4f}")
 print(f"Max absolute error: {metrics['max_abs_error']:.4f}")
@@ -623,8 +760,12 @@ foreground**. Quote both --
 the global figure alone is close to a report on how well the emptiness was
 reproduced.
 
-Foreground is `target > otsu(target)`, defined on the *target* so a fit that
-hallucinates structure is still scored where the signal actually is. The error
+Foreground is `default_foreground(target)`: one light tent blur of the target,
+then Otsu over a histogram capped at the target's 99.99th percentile (uncapped,
+one hot pixel pushes every real structure below the threshold). It is defined on
+the *target* so a fit that hallucinates structure is still scored where the
+signal actually is. The fit summary and `gsplat compare` share it; the blurred
+field is the smoothed-Otsu field calibration scores with. The error
 is averaged over foreground voxels only, but `data_range` comes from the whole
 volume, matching `calibration.metrics.held_out_psnr_foreground` so the two are
 comparable; using the foreground's own (narrower) range would silently inflate
@@ -634,17 +775,19 @@ the result. `foreground_fraction` is reported alongside because a PSNR over
 ### Functions
 
 - `compute_psnr(pred, target, data_range=None)` -- Peak Signal-to-Noise Ratio in dB. Returns `float('inf')` when MSE is zero.
-- `compute_foreground_psnr(pred, target, data_range=None, threshold=None)` -- PSNR over foreground voxels only. Returns `(psnr_db, threshold, fraction)`; `psnr_db` is `nan` when the foreground is empty.
-- `otsu_threshold(target, bins=256)` -- Otsu's threshold. Reimplemented rather than delegating to scikit-image (a `demos` extra) so the foreground definition does not depend on which extras are installed; pinned to match `skimage.filters.threshold_otsu` exactly. The min/max run on the input device; the histogram is counted with `bincount` on the CPU over at most 5 M fixed-seed uniform random samples (bin edges still from the full range; random, not strided, because a stride sharing a factor with the fastest axis aliases onto a few columns), because MPS `torch.histc` allocates ~numel x bins x 4 B and fails above ~16 Mvox.
+- `compute_foreground_psnr(pred, target, data_range=None, threshold=None)` -- PSNR over foreground voxels only. With `threshold=None` it uses plain Otsu on the unblurred target, not `default_foreground`; use `compute_quality_metrics` for the shared definition. Returns `(psnr_db, threshold, fraction)`; `psnr_db` is `nan` when the foreground is empty.
+- `otsu_threshold(target, bins=256, upper=None)` -- Otsu's threshold (`upper` caps the histogram range). Reimplemented rather than delegating to scikit-image (a `demos` extra) so the foreground definition does not depend on which extras are installed; pinned to match `skimage.filters.threshold_otsu` exactly. The min/max run on the input device; the histogram is counted with `bincount` on the CPU over at most 5 M fixed-seed uniform random samples (bin edges still from the full range; random, not strided, because a stride sharing a factor with the fastest axis aliases onto a few columns), because MPS `torch.histc` allocates ~numel x bins x 4 B and fails above ~16 Mvox.
 - `compute_ssim(pred, target, window_size=11, data_range=None)` -- Structural Similarity Index using nD Gaussian-weighted convolution. Supports 2D, 3D, and higher (averages over 3D sub-volumes for >3D).
-- `compute_quality_metrics(pred, target, data_range=None, ssim_window_size=11)` -- Computes all metrics in one call. Returns a dict with keys: `mse`, `psnr_db`, `ssim`, `rel_l2`, `max_abs_error`, `foreground_psnr_db`, `foreground_threshold`, `foreground_fraction`.
+- `robust_peak(target, quantile=0.9999)` -- The exact 99.99th-percentile value, streamed (the robust PSNR peak is this minus the target minimum).
+- `compute_quality_metrics(pred, target, data_range=None, ssim_window_size=11, *, foreground_field=None, foreground_threshold=None, robust_quantile=ROBUST_PEAK_QUANTILE)` -- Computes all metrics in one call. Returns a dict with keys: `mse`, `psnr_db` (full range `max - min`), `psnr_robust_db` (the headline: robust peak), `ssim` (full range), `ssim_robust` (headline), `foreground_ssim` (full range), `foreground_ssim_robust` (headline), `rel_l2`, `max_abs_error`, `foreground_psnr_db`, `foreground_psnr_robust_db`, `foreground_threshold`, `foreground_fraction`, `data_range`, `robust_data_range`.
 
 ### Quality Metrics in GSplatData.stats
 
 When fitting completes, quality metrics may be stored in the `stats` dict of the returned `GSplatData`:
 
-- `stats['psnr_db']` -- PSNR of the reconstruction vs. original volume (dB)
-- `stats['ssim']` -- SSIM of the reconstruction vs. original volume
+- `stats['psnr_db']` -- full-range PSNR of the reconstruction vs. original volume (dB)
+- `stats['psnr_robust_db']`, `stats['foreground_psnr_robust_db']` -- the robust-peak (headline) PSNRs
+- `stats['ssim']`, `stats['ssim_robust']` -- SSIM of the reconstruction vs. original volume on the full range and on the robust peak (the headline: SSIM's constants scale with the range, so a hot pixel inflates the full-range figure)
 - `stats['mse']` -- Mean squared error of the reconstruction
 
 These fields are populated automatically when metrics are computed during or after fitting, enabling easy comparison across fitting runs.
@@ -688,8 +831,8 @@ print(f"Recommended K* = {result.held_out_peak.k_star:,}")
 print(
     f"Curve type     = {result.held_out_peak.type}"
 )  # peak | plateau | signal_limited | low_k_optimal
-print(f"Noise floor σ̂ = {result.noise_floor.sigma_hat:.4f}")
-print(f"PSNR ceiling   = {result.noise_floor.psnr_max_db:.1f} dB")
+print(f"RMS noise σ    = {result.noise_sigma_rms:.4g}")  # intensity units
+print(f"PSNR ceiling   = {result.psnr_ceiling_robust_db:.1f} dB")  # RMS noise, robust peak
 
 # Persist or re-load the sweep curves
 result.to_json(Path("cal.json"))
@@ -698,14 +841,18 @@ result.to_json(Path("cal.json"))
 ### CLI
 
 ```bash
-luxar gsplat cal volume.tiff cal.json                            # default 10-point sweep
+luxar gsplat cal volume.tiff cal.json                            # 10 points, bounds from the foreground, early stop
 luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000  # faster
 luxar gsplat cal volume.zarr cal.json --k-grid '1000,4000,16000,64000,256000'
 luxar gsplat cal volume.tiff cal.json --pdf cal.pdf              # multi-page report
 luxar gsplat cal volume.tiff cal.json --pdf cal.pdf --keep-fits fits/  # + slice montage
 ```
 
-After calibration, re-fit at the recommended budget: `luxar gsplat fit volume.zarr out.zarr --seeds <K*>`.
+After calibration, re-fit at the recommended budget: `luxar gsplat fit volume.zarr out.zarr --seeds <K*>`
+(a `--region`/`--auto-region` K* is a crop budget: use the whole-volume `--seeds` it prints).
+The CLI's sweep defaults (data-derived bounds, early stop, one extension below a
+bottom-edge K*, foreground K*-metric, per-point `cal.json` checkpoints) are in
+`calibration/README.md`.
 
 ### Functions
 
@@ -715,17 +862,18 @@ After calibration, re-fit at the recommended budget: `luxar gsplat fit volume.za
 - `estimate_noise_floor(V) -> NoiseFloor` — ensemble of Laplacian MAD (Immerkaer 1996), Haar HH-subband MAD (Donoho & Johnstone 1994), and background-region MAD; the median across estimators is robust to one outlier on the low side (typical when the dark tail is quantised).
 - `build_k_grid(explicit=None, n_points=10, k_min=1_000, k_max=512_000, progression="exp", power=2)` — exponential (geometric/log-spaced) or polynomial K grid; `explicit` takes precedence when given.
 - `find_k_star(k_values, held_out_psnr_values) -> HeldOutPeak` — hybrid peak-detection rule from `splat_count_vs_quality §4.2`: returns the argmax when both flanks are ≥ 0.1 dB below; the smallest K within 0.3 dB of the max for a plateau; the largest K when the curve is monotone-rising in range (signal-limited).
-- `calibrate(V, k_grid, *, fit_kwargs=None, mask_seed=42, mask_fraction=0.05, donut_radius=1, keep_fits=None, progress_callback=None) -> CalibrationResult` — top-level driver.
+- `calibrate(V, k_grid, *, fit_kwargs=None, mask_seed=42, mask_fraction=0.05, donut_radius=1, keep_fits=None, progress_callback=None, sweep_control=None, checkpoint=None) -> CalibrationResult` — top-level driver (`sweep_control` enables early stop / the low-edge extension; `checkpoint` receives a partial result after every point; Ctrl-C raises `CalibrationInterrupted` carrying the measured points).
 
 ### Result Container
 
 `CalibrationResult` carries the full sweep:
 
-- `k_values_requested`, `k_values_effective` — splat counts before and after the post-fit cull.
+- `k_values_requested`, `k_values_effective` — the seeding budgets and the counts after the post-fit cull; `k_values_stored` / `k_star_stored` — what `fit --seeds K` stores after its default speck pruning + cull.
 - `held_out_psnr_db`, `train_psnr_db`, `held_out_mse` — at each K, against the original volume.
 - `full_psnr_db`, `full_ssim` — over the whole volume against the original (cross-run comparable).
 - `held_out_peak` (`HeldOutPeak`) — recommended `k_star`, curve `type`, `confidence_db`.
-- `noise_floor` (`NoiseFloor`) — `sigma_hat`, the three component estimators, `psnr_max_db`.
+- `noise_floor` (`NoiseFloor`) — `sigma_hat`, the three component estimators, `psnr_max_db` (a median-voxel, full-range estimate).
+- `noise_sigma_rms`, `noise_scale_ratio`, `psnr_ceiling_robust_db` — the RMS noise a held-out MSE averages and the held-out PSNR ceiling on the robust peak (what `gsplat cal` prints and the PDF draws).
 - `fit_times_seconds`, `splat_paths` (when `keep_fits` is set), `mask_seed`, `mask_fraction`, `donut_radius`, `fit_config`, `volume_shape`, `timestamp`.
 - `to_json(path)` / `CalibrationResult.from_json(path)` — round-trip serialisation; non-finite floats become `null`.
 
@@ -733,9 +881,9 @@ After calibration, re-fit at the recommended budget: `luxar gsplat fit volume.za
 
 `luxar.gsplats.calibration_report.render_calibration_report(result, volume, output_path, splat_paths=None)` produces a 3-page matplotlib PDF mirroring the manuscript's per-dataset figures:
 
-1. **Rate-distortion** — PSNR (train / held-out / full) vs K, SSIM vs K, fit-time vs K, train-vs-held-out gap, with K\* annotated and the noise-floor PSNR ceiling overlaid.
+1. **Rate-distortion** — PSNR (train / held-out / full) vs K, SSIM vs K, fit-time vs K, train-vs-held-out gap, with K\* annotated and the noise ceiling overlaid, all on the robust peak (p99.99 - floor) the terminal table uses.
 2. **Blind-spot cross-validation** — train + held-out PSNR with the overfitting region shaded.
-3. **Reconstruction slice montages** — target / K_min / K\* / K_max + per-pixel error map. Requires the per-K fits to have been persisted via `--keep-fits`; otherwise the page degrades to a placeholder.
+3. **Reconstruction slice montages** — target / K_min / K\* / K_max + per-pixel error map. Needs the per-K fits: `gsplat cal --pdf` keeps them in a temporary directory for this page unless `--keep-fits DIR` keeps them for good; a Python caller passing no `splat_paths` gets a placeholder page.
 
 The report module imports matplotlib lazily so it does not inflate cold-start cost when `--pdf` is not set.
 
@@ -934,6 +1082,28 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     print(f"Loaded {gsplats.n_splats} splats")
 ```
 
+> **The scene `gsplat convert` builds.** For a FITTED store (a root
+> `dimension_metadata` or fitting provenance), `add_gsplats_from_file` applies
+> convert's defaults itself (`fitted_defaults=None`): auto exposure,
+> `layer=True`, the 8-bit tier for a uint8 source, and on a fresh
+> `default_3d()` scene the dims, `dim_order` and y-down XY camera, all resolved by
+> `luxar.core.scene_defaults.resolve_fitted_scene`, the function convert
+> uses. `fitted_scene_defaults(path, colormap=..., tone_mapping=...)` returns the
+> same scene as values (`dimensions`, `viewer_config`, `amplitude_bits`,
+> `attrs`) for a scene laid out by hand.
+>
+> **Exposure.** Outside that default the adders normalise each splat (p99.9 amplitude → 1.0) but do
+> not dim for how many splats sum along a ray, so a dense fit under `additive`
+> blending opens white — `luxar gsplat convert` auto-exposes, the adders do
+> not. `luxar.core.scene_exposure.auto_exposure_attrs(path, dim_order=...,
+> colormap=...)` returns convert's exposure (computed by convert's own resolver;
+> pass `dimensions=` / `camera=` for your scene, or none for convert's layout) as adder kwargs
+> (`normalize_amplitudes=False`, `display_gain`, unit labels):
+> `scene.add_gsplats_from_file("nuclei", path, dim_order=zyx, colormap="bop_blue",
+> **auto_exposure_attrs(path, dim_order=zyx, colormap="bop_blue"))`. Call it per
+> node in a multichannel scene, with the store PATH: an in-memory `GSplatData` /
+> node gives the same gain but not the store's unit labels (pass `stats=`).
+
 **Benefits:**
 - Seamless integration with Luxar's scene graph system
 - Preserves all splat data (centers, amplitudes, covariance, colors)
@@ -1007,6 +1177,7 @@ Main fitting function with automatic optimizations.
 - `sigma_min_diag`: Minimum Gaussian size per axis
 - `sigma_max_diag`: Maximum Gaussian size per axis
 - `early_stop_patience`: Iterations without improvement before stopping (default: 300)
+- `early_stop_rel_tol`: Also stop once the best loss improved by less than this fraction over the `early_stop_patience` window (default: `None`, off; every CLI preset sets `0.001`)
 - `min_extent`: After the fit, drop sub-voxel "specks" whose geometric-mean spatial sigma is below this many fitted voxels (default: 0.6; `0` disables). The removed count and brightness share land in `stats["min_extent_removed"]` / `stats["min_extent_removed_mass_share"]`, and the stored quality is re-scored on the pruned set. Measured on nine fits: 8-70% fewer splats, held-out PSNR within -0.07 dB (+0.40 dB on a Tribolium light-sheet stack) — table in [`fitting/README.md`](fitting/README.md#splat_hygienepy---closing-speck-pruning). Pruning is skipped (with a note, `min_extent_skipped`) when it would remove more than `min_extent_max_mass_share` (default 0.02) of the brightness
 - `relocation_reseed_sigma_vox`: Sigma (voxels) a relocated splat is reseeded at (default `None` = 0.5; opt-in)
 - `device`: PyTorch device (auto-detect if `None` or `"auto"`)
@@ -1110,7 +1281,7 @@ The implementation supports multiple PyTorch devices with performance-aware auto
 |--------|---------------|-------------|-------|
 | **CUDA** (NVIDIA) | ✓ (when available) | Significant speedup | Best performance, custom kernels |
 | **MPS** (Apple Silicon) | ✓ (when available, no CUDA) | GPU-accelerated | Metal backend for 3D volumes; PyTorch renderer otherwise |
-| **CPU** | ✓ (fallback) | Baseline | Reliable; fitting warns it can be orders of magnitude slower than GPU |
+| **CPU** | ✓ (fallback) | Native numba kernels for 3D | 3D fits use fused numba kernels (below); other shapes use the PyTorch renderer, which fitting warns can be orders of magnitude slower than GPU |
 
 ### Device Selection Logic:
 ```python
@@ -1122,6 +1293,10 @@ fitter = GaussianSplatFitter(device="mps")  # Force MPS
 fitter = GaussianSplatFitter(device="cuda")  # Force CUDA
 fitter = GaussianSplatFitter(device="cpu")  # Force CPU
 ```
+
+### CPU threads:
+
+On CPU, `luxar gsplat fit` and `luxar gsplat cal` raise torch to `min(physical cores, 8)` threads for the command when torch still has one thread (the hatch env pins one; scaling stops near 8). An OMP/MKL export that already raised torch's count is left alone; `LUXAR_CPU_THREADS=N` overrides it and also sets native kernel threads. `LUXAR_CPU_THREADS=0` leaves torch alone while the kernels use physical cores. Library calls from Python never change torch's setting (`utils/cpu_threads.py`). Multi-worker fits set a per-worker share for both unless a nonzero value was supplied.
 
 ### Apple Silicon Performance Notes:
 
@@ -1169,6 +1344,10 @@ forces one; a forced backend that cannot run raises, in fitting too.
 
 See [metal/README.md](models/gsplats/metal/README.md) for detailed installation and troubleshooting.
 
+### Native CPU Backend
+
+On the CPU, 3D fits run on fused numba kernels (`GaussianSplatModelCPUNative`): the same numbers as the PyTorch renderer, many times faster (see [cpu/README.md](models/gsplats/cpu/README.md) for measurements). `numba` ships in the `gsplats` extra and compiles the kernels on first use (cached afterwards); without it, CPU fits use the PyTorch renderer. `LUXAR_CPU_BACKEND=auto|native|torch` forces a choice. The kernels use physical cores by default; `LUXAR_CPU_THREADS=N` sets both their width and CLI torch's width as described above.
+
 ## Package Structure
 
 ```
@@ -1202,6 +1381,14 @@ gsplats/
 ├── calibration_report.py          # Optional matplotlib PDF report for `luxar gsplat cal --pdf`
 ├── gpu_profile.py                 # GPU benchmark profile management
 ├── spatial_hash.py                # Online and batched nD proximity-query grids
+├── exposure.py                    # Opening-view brightness: predict_projected_sum (additive
+│                                  #   per-pixel sum down the view axis) + plan_projected_exposure
+│                                  #   (the dimming factor `gsplat convert` folds into display_gain)
+│                                  #   + data_unit_display_attrs / amplitude_unit_attrs (the attrs
+│                                  #   an add_gsplats_* call passes with normalize_amplitudes=False
+│                                  #   to keep data units, as convert does); the scene-level
+│                                  #   resolvers (convert's layout + auto exposure) live in
+│                                  #   luxar.core.scene_orientation / scene_exposure / scene_defaults
 │
 ├── lod/                            # Level-of-Detail post-processing (additive + substitutive)
 │   ├── additive.py                 # compute_additive_order, make_additive_lod
@@ -1247,6 +1434,7 @@ gsplats/
 │   │   ├── gsplat_model.py        # PyTorch model definition
 │   │   ├── rendering_core.py      # Core rendering kernels
 │   │   ├── rendering_wrappers.py  # NumPy/PyTorch rendering convenience wrappers
+│   │   ├── cpu/                   # Native numba kernels for 3D CPU fitting
 │   │   ├── cuda/                  # CUDA kernels for GPU-accelerated splatting
 │   │   └── metal/                 # Metal compute shaders for Apple Silicon
 │   └── utils/
@@ -1447,6 +1635,7 @@ hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_tiled_fitting.py -v
 - Simple images may converge late
 - Try reducing `early_stop_patience` for more aggressive stopping
 - Note that early stopping is on by default (controlled by `early_stop_patience`, default 300)
+- `early_stop_rel_tol=1e-3` (the CLI presets' value) also ends a fit whose loss is still creeping down by tiny amounts
 
 **Out of Memory**
 - Reduce `peaks_per_scale` in candidate generation

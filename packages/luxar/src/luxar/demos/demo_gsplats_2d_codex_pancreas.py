@@ -426,6 +426,9 @@ def fit_channel_tiled(
         # A global amplitude cull discards both weak halves of the Hann
         # overlap, leaving a dark grid at tile boundaries in this slide.
         cull_retention=None,
+        # Normalized channels contain many fitted splats at ~1e-6 of the
+        # normalization span; discard them before the merge.
+        tile_amplitude_floor=1e-5,
     )
 
     n_splats = len(result.amplitudes)
@@ -613,6 +616,7 @@ Controls:
                     scene.add_gsplats_from_file(
                         name=f"gsplats_{ch_name.lower().replace(' ', '_').replace('(', '').replace(')', '')}",
                         path=str(cache_path),
+                        fitted_defaults=False,
                         # No `dim_order`: grafting a multi-part subtree refuses
                         # it. The fit already ran on the transposed plane, so
                         # the stored columns are the scene's (x, y) order.

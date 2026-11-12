@@ -369,6 +369,43 @@ function derivePhysicalKnobsFromDescendants(node: SceneNode): PhysicalKnobValues
   return knobs;
 }
 
+/**
+ * A gsplats data-unit label (`amplitude_unit` / `amplitude_offset`) read off
+ * `node`, else off its first gsplats descendant. They are not compositing attrs,
+ * so a kind=partition / kind=lod wrapper carries them on its leaves. Stops at
+ * nested `layer=true` descendants, which own their own row.
+ */
+function deriveAmplitudeAttr<T>(
+  node: SceneNode,
+  attr: 'amplitude_unit' | 'amplitude_offset' | 'source_data_range',
+  accept: (value: unknown) => value is T
+): T | undefined {
+  if (accept(node.attrs[attr])) return node.attrs[attr];
+  let found: T | undefined;
+  const visit = (candidate: SceneNode): void => {
+    if (found !== undefined || isLayerEnabled(candidate.attrs.layer)) return;
+    const value = candidate.attrs[attr];
+    if (accept(value)) {
+      found = value;
+      return;
+    }
+    candidate.children?.forEach(visit);
+  };
+  node.children?.forEach(visit);
+  return found;
+}
+
+const isNonEmptyString = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
+const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const isFiniteRange = (v: unknown): v is [number, number] =>
+  Array.isArray(v) && v.length === 2 && v.every(isFiniteNumber) && v[0] <= v[1];
+
+/** A usable authored `display_gain` (> 0, finite), else the identity. */
+function ownDisplayGain(node: SceneNode): number {
+  const gain = node.attrs.display_gain;
+  return isFiniteNumber(gain) && gain > 0 ? gain : 1.0;
+}
+
 /** The boolean twin of `deriveMeshStringAttrFromDescendants` (the `refract_data` flag). */
 function deriveMeshBoolAttrFromDescendants(node: SceneNode, attr: string): boolean | undefined {
   const read = (candidate: SceneNode): boolean | undefined =>
@@ -450,6 +487,37 @@ export interface LayerInfo {
   opacity: number;
   /** Absorption coefficient κ (≥ 0; only meaningful in volumetric mode) */
   absorption: number;
+  /**
+   * Gsplats display gain — the panel's **Brightness** (`display_gain`; > 0,
+   * identity 1). Brightness relative to the stored amplitudes, which a
+   * `luxar gsplat convert` scene keeps in source data units; multiplies every
+   * amplitude-linear term of the draw and never the colormap window. RAW (this
+   * node's own attr), like opacity: `composeEffective` multiplies the ancestry.
+   */
+  brightness: number;
+  /**
+   * The AUTHORED display gain (the node's own `display_gain` at load; 1 when
+   * absent) — the opening exposure. The Brightness control shows and edits
+   * `brightness / authoredBrightness` (×1 = as opened), double-click returns to
+   * it, and a bookmark omits a brightness that still equals it.
+   */
+  authoredBrightness: number;
+  /**
+   * The unit of the stored splat amplitudes (`amplitude_unit`, e.g.
+   * `"counts above background"`; `"a.u."` when the producer could not say), or
+   * `undefined` when the scene does not label them. Read off the node, else its
+   * first gsplats descendant (a kind=partition / kind=lod wrapper's leaves).
+   */
+  amplitudeUnit?: string;
+  /** The subtracted background level in that unit (`amplitude_offset`), display-only. */
+  amplitudeOffset?: number;
+  /**
+   * The SOURCE's intensity span above that level (`source_data_range`), listed in
+   * the window's tooltip ("Data range: 0 – 1,597 (floor 405)"). Splat amplitudes
+   * are per-Gaussian PEAKS — overlapping Gaussians sum to a voxel's value — so
+   * the amplitude window sits well below this range.
+   */
+  sourceDataRange?: [number, number];
   /**
    * Mesh shade floor (0–1) — the §6.2 wrapped-diffuse `ambient`. Only meaningful on a
    * mesh layer, where it is what keeps a silhouette readable rather than black; `1.0`
@@ -902,6 +970,12 @@ export class LayerStateManager {
           // each layer's live values per ancestry node, so a composed
           // init would multiply ancestor κ in twice.
           absorption: (node.attrs.absorption as number) ?? 1.0,
+          // RAW for the same reason: the ancestry composes in composeEffective.
+          brightness: ownDisplayGain(node),
+          authoredBrightness: ownDisplayGain(node),
+          amplitudeUnit: deriveAmplitudeAttr(node, 'amplitude_unit', isNonEmptyString),
+          amplitudeOffset: deriveAmplitudeAttr(node, 'amplitude_offset', isFiniteNumber),
+          sourceDataRange: deriveAmplitudeAttr(node, 'source_data_range', isFiniteRange),
           // RAW, and defaulted from the material's own constants rather than
           // re-spelled here: these are the values `MeshMaterial` starts at when the
           // attr is absent, so the slider must open on the same number the surface is
@@ -1015,6 +1089,8 @@ export class LayerStateManager {
       visible: node.attrs.visible !== false,
       opacity: 1,
       absorption: 1,
+      brightness: 1,
+      authoredBrightness: 1,
       ambient: MESH_DEFAULTS.ambient,
       shadeExponent: MESH_DEFAULTS.shadeExponent,
       specular: MESH_DEFAULTS.specular,
@@ -1323,6 +1399,18 @@ export class LayerStateManager {
     const sanitizedLevel = level !== undefined && Number.isSafeInteger(level) ? level : undefined;
     layer.layerOrder = sanitizedLevel ?? layer.inheritedLayerOrder;
     layer.layerOrderExplicit = sanitizedLevel !== undefined;
+    this.notify();
+  }
+
+  /**
+   * Set the gsplats display gain (Brightness) for a layer. Ignores a
+   * non-positive or non-finite value: a zero gain would hide the layer through a
+   * control that is not the eye, and NaN would blank it.
+   */
+  setBrightness(path: string, brightness: number): void {
+    const layer = this.layers.get(path);
+    if (!layer || !Number.isFinite(brightness) || brightness <= 0) return;
+    layer.brightness = brightness;
     this.notify();
   }
 

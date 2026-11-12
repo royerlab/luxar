@@ -959,7 +959,29 @@ def robust_download(
             _restore_migrated_cache()
 
     # Should never reach here
-    raise RuntimeError("Download failed after all retry attempts")
+    raise RuntimeError(RETRIES_EXHAUSTED)
+
+
+#: Message of the RuntimeError :func:`robust_download` raises if its retry loop
+#: ever ends without a response or a re-raised error.
+RETRIES_EXHAUSTED = "Download failed after all retry attempts"
+
+
+def is_download_failure(exc: BaseException) -> bool:
+    """Whether ``exc`` is the network failing, as :func:`robust_download` raises it.
+
+    Offline, a timeout, a dropped stream or an HTTP error all surface as a
+    ``requests`` exception, re-raised once the retries are spent; the loop's
+    unreachable tail raises :data:`RETRIES_EXHAUSTED`. A caller with another way
+    to obtain the data (a local build) may route around these. A checksum
+    mismatch (``ValueError``, file deleted) and local faults are NOT download
+    failures and must keep propagating.
+    """
+    import requests
+
+    if isinstance(exc, requests.exceptions.RequestException):
+        return True
+    return isinstance(exc, RuntimeError) and str(exc) == RETRIES_EXHAUSTED
 
 
 def verify_file_checksum(

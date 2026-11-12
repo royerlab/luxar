@@ -1,0 +1,1164 @@
+#!/usr/bin/env python3
+"""GSplats Demo: 4D Budding Mouse Intestinal Organoid with its Cell Lineage
+
+A mouse intestinal organoid grows from ONE cell into a budding mini-gut over
+about 110 hours of live light-sheet imaging. Two fluorescent channels are fitted
+as Gaussian splats, frame by frame, and the authors' tracked lineage of the
+founder cell is drawn over them as fading Lines trails and Points markers.
+
+================================================================================
+FROM ONE CELL TO A BUDDING ORGANOID
+================================================================================
+
+Intestinal organoids are self-organising: a single stem cell, embedded in a
+gel, divides into a hollow sphere of epithelium around a lumen, and the sphere
+then breaks symmetry and buds, which is how crypts form. This recording follows
+one organoid through the whole sequence. Scrub the Time slider from the start
+and a single cell divides into a cyst; the cyst grows and, near the end of the
+recording, pushes out a bud.
+
+The two layers are the two fluorescent markers of the recording:
+
+  - **Membranes** (mem9-GFP, 488 nm channel) - the epithelial cell outlines.
+  - **Nuclei**    (H2B-mCherry, 561 nm channel) - one blob per cell.
+
+The lineage is the founder cell's tree from the authors' partial,
+semi-automatic tracking in Mastodon (shipped as a MaMuT XML file): 24,018
+nuclear positions and 286 divisions in one tree (the file also holds one
+isolated position). It does NOT cover every cell of the late organoid: at most
+115 tracked cells are present at once. Each tracked cell
+carries a comet tail of its last three hours, coloured by lineage: the hue
+interval of a mother cell is split between her daughters at every division, so
+sister clones share neighbouring hues and the founder's progeny separate into
+up to eight colour families by the third generation.
+
+DATA SOURCE & CITATIONS:
+========================
+
+Dataset:
+--------
+Source:  Zenodo record 6828906, "Multiscale light-sheet organoid imaging
+         framework" (light-sheet_recordings.zip, 11.95 GB)
+URL:     https://zenodo.org/records/6828906
+DOI:     10.5281/zenodo.6828906
+License: CC BY 4.0
+Recording: 002-P21-25X-Budding (one of seven main-figure recordings)
+
+Only the parts this demo uses are fetched, by HTTP range requests into the
+archive: every fourth ``rgb_grid/grid-T*.vti`` frame, T0001, T0005, ..., T0665,
+except that the empty T0245 is replaced by T0244 (about 345 MB transferred,
+455 MB extracted) and the lineage ``mamut_deconv.xml`` (0.9 MB transferred,
+6.7 MB extracted). Each member is CRC-checked against the archive directory
+and, as a set, against the SHA-256 digest pinned below.
+
+What the frames are: the record does not carry the raw light-sheet stacks (the
+paper's ~700 GB of imaging is available from the authors on request). The
+``rgb_grid`` frames are the authors' own export of the DECONVOLVED two-channel
+volume, cropped to the organoid and stored as RGB voxels. Each channel of each
+frame was scaled to 8 bits on its OWN 0.2 / 99.99th percentiles, so intensity
+is not comparable between frames. Green (duplicated into blue) is the nuclei
+channel. Red is NOT the membrane channel alone: the two channels were blended
+as a MAX composite, red = max(membranes, nuclei), so every nucleus appears in
+red too. LSTree's own code says so (config ``blending_mode=max``;
+``make_composite(..., mode='max')`` in ``mesh_tasks.py``). The data agree:
+red is never below green, and where red exceeds a non-zero green, red stays
+flat as green rises while red - green falls with a slope of about -1, which an
+additive blend would not do; saturation does not explain it (red is 255 in at
+most 1.1% of voxels below green 192). Inside nuclei (green > 60) red equals
+green in 99% / 94% of voxels on T0301 / T0601, which under a max blend only
+says the nuclei are at least as bright as any membrane there. The demo therefore takes the membranes as red where it exceeds
+green, and 0 elsewhere (the membrane is unrecoverable where the nuclei are at
+least as bright), and fits both channels at their native 2.0 x 0.26 x 0.26 um
+voxel size. Subtracting green instead would under-read the membrane by the
+nuclear value at every mixed voxel: it keeps 0.93 / 0.92 / 0.68 of the
+membrane mass on T0301 / T0320 / T0601.
+The unmixed membranes have hard holes where nuclei hide them, which caps the
+membranes' headline PSNR (median 35.9 dB foreground) whatever the budget; away
+from the holes the fits match about as well as the earlier red - green fits
+matched theirs. See the notes above SPLATS_MIN.
+
+Imaging:
+--------
+Microscope:  LS1-Live dual-illumination, inverted-detection light-sheet
+             (Viventis Microscopy); recording 002 is a 25x acquisition
+Organism:    mouse intestinal organoid, H2B-mCherry / mem9-GFP
+Voxel size:  2.0 x 0.26 x 0.26 um (ZYX)
+Temporal:    667 frames, 10 min apart (experiment.json records 0.1667 h)
+Shown:       167 frames, every fourth (40 min apart). The one exception is
+             the slot of T0245, whose export is empty: it shows T0244 at
+             T0245's nominal time, so the acquisition frames actually drawn
+             step by 4 everywhere except 3 then 5 around that slot.
+
+The compression figure:
+-----------------------
+The caption and description compare two ON-DISK sizes. The raw side is what
+the demo fetches, as extracted files: the 167 shown VTI frames (T0244 standing
+in for the empty T0245, which is not counted) plus the lineage XML, which is
+source data the scene draws too; 462,102,786 bytes, pinned as SOURCE_BYTES and
+checked against the files whenever they are fetched. The scene side is the
+served scene directory, the sum of its file sizes. The ratio is modest (about
+5x) because the source is already reduced: deconvolved, cropped to the
+organoid, 8-bit and zlib-compressed inside the VTI files. The ~700 GB raw
+acquisition, available from the authors on request, is not the baseline.
+The scene's size is only known once it is written, so the build writes it into
+a scratch sibling with an estimate, rewrites the two text attrs with the
+measured size (restamping the content hash) until the figure stops moving, and
+then renames it onto the served path.
+
+How to Cite:
+------------
+de Medeiros, G., Ortiz, R., Strnad, P., Boni, A., Moos, F., Repina, N.,
+Challet Meylan, L., Maurer, F. & Liberali, P. (2022). Multiscale light-sheet
+organoid imaging framework. Nature Communications 13, 4864.
+DOI: 10.1038/s41467-022-32465-z
+
+WORKFLOW:
+=========
+
+The hosted fits replace steps 1-4 (see the end of USAGE); this is how they
+were made, and what --recompute runs:
+
+1. **Fetch**   the 167 frames + lineage by range requests (cached, checksummed)
+2. **Decode**  each VTK ImageData frame (zlib + base64, stdlib only)
+3. **Fit**     each frame and channel (membranes unmixed as red where red > green) as 3D
+               Gaussian splats on the shared 8-bit
+               intensity scale, with a splat budget proportional to the
+               organoid's occupied voxels (cached per frame)
+4. **Place**   every frame at its crop origin, in acquisition microns
+5. **Stack**   each channel into one 4D node (time = last centre column) with
+               a slice-aware progressive ladder
+6. **Lineage** fading trails (Lines) + current positions (Points) per frame
+7. **View**    scrub or play Time; press L for the Layers panel
+
+USAGE:
+======
+    python demo_gsplats_4d_organoid_budding.py [options]
+
+Options:
+    --recompute:   Refit every frame (a verified source cache is reused; delete
+                   ~/.cache/luxar/gsplats_4d_organoid_budding/source to re-fetch).
+                   CUDA GPU strongly recommended: about an hour of fitting on
+                   an 8 GB RTX 3070, plus ~15 min to fetch on a cold cache;
+                   on CPU the late frames take minutes each.
+    --no-serve:    Generate the scene without launching the viewer
+    --serve-only:  Just serve a previously generated scene
+
+Where the per-frame fits come from, in order:
+
+1. a complete local fit cache (``~/.cache/luxar/gsplats_4d_organoid_budding/
+   local/``, written by an earlier refit), used without the network;
+2. the Luxar cc-by Zenodo record (``organoid_budding_frames.gsplats.zarr.zip``,
+   99.7 MB, sha256-pinned in the data manifest), so no GPU is needed;
+3. a refit from the Zenodo 6828906 source, when neither is available (offline
+   with nothing cached, say) or with --recompute, which skips 1 and 2.
+
+The 0.9 MB lineage XML always comes from Zenodo 6828906. Every download is
+cached and verified by hash, so a later run with a cached bundle or local fits
+(and the lineage) does not touch the network.
+
+Output:
+    - Scene saved to:  datasets/demos/gsplats_4d_organoid_budding.luxar.zarr
+    - Automatically opens in browser
+"""
+
+DEMO_META = {
+    "key": "gsplats_4d_organoid_budding",
+    "title": "4D Budding Intestinal Organoid (lineage)",
+    "description": "A mouse intestinal organoid growing from one cell to a budding mini-gut: two light-sheet channels as 4D splats, with the founder cell's lineage as trails.",
+    "category": "microscopy",
+    "geometry": "mixed",
+    "requirements": {
+        # The hosted per-frame fit bundle (99.7 MB) plus the lineage XML
+        # (0.9 MB, still range-fetched from Zenodo 6828906). The fallback refit
+        # instead fetches ~345 MB of source frames.
+        "download_mb": 100,
+        # The hosted fits only need stacking; a refit (--recompute, or the
+        # bundle unavailable) is heavy.
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": None,
+    },
+    "caches": ["gsplats_4d_organoid_budding"],
+    "outputs": ["gsplats_4d_organoid_budding"],
+    "citation": {
+        "short": "de Medeiros et al., Nat Commun 2022 (Liberali lab)",
+        "ref": "de Medeiros et al. 2022",
+        "doi": "10.1038/s41467-022-32465-z",
+        "license": "CC BY 4.0",
+        "url": "https://zenodo.org/records/6828906",
+    },
+}
+
+import base64
+import hashlib
+import struct
+import xml.etree.ElementTree as ET
+import zlib
+from pathlib import Path
+from typing import Optional
+
+import numpy as np
+from arbol import aprint, asection
+
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import CameraConfig, DimensionsConfig, ViewerConfig
+from luxar.demos import (
+    BundleMemberNotFound,
+    DatasetUnavailable,
+    add_demo_caption,
+    detect_device,
+    download_zip_members,
+    hsv_to_rgb,
+    is_download_failure,
+    launch_viewer,
+    load_dataset_bundle,
+    local_fit_path,
+    parse_demo_flags,
+    print_data_provenance,
+    stamp_input_digests,
+    warn_if_no_cuda_gpu,
+    window_attrs,
+)
+from luxar.demos._caption import compression_caption, compression_note, format_bytes
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+from luxar.demos._lod_policy import save_with_lod
+from luxar.demos._scene_size import (
+    converge_stated_size,
+    promote_scene,
+    remove_scene,
+    replace_scene_texts,
+    report_scene_size,
+    scratch_paths,
+)
+from luxar.encoding import EncodingMode
+from luxar.gsplats.gsplat_data import GSplatData
+from luxar.gsplats.merged_quality import collect_part_provenance
+from luxar.utils.paths import get_demos_output_dir
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+#: Manifest key (and cache directory) for the per-frame fits, hosted on the
+#: cc-by Zenodo record (v2.1.0 onwards).
+DATASET_NAME = "gsplats_4d_organoid_budding"
+#: Hosted bundle of every per-frame fit, a flat STORED zip whose 334 members
+#: are named exactly as `_frame_cache_name` (CHANNELS x FRAMES); resolved by
+#: `hosted_fits` through `load_dataset_bundle`.
+BUNDLE_NAME = "organoid_budding_frames.gsplats.zarr.zip"
+#: SHA-256 of newline-joined, sorted top-level member names in the published
+#: bundle. Checked against CHANNELS x FRAMES so a recipe change cannot silently
+#: miss all hosted fits.
+BUNDLE_MEMBERS_SHA256 = (
+    "2f42eebf7f413d1256a6ed5bea734e32e7c7924504a45510f87541cefee449b4"
+)
+CACHE_DIR = Path.home() / ".cache" / "luxar" / DATASET_NAME
+
+SOURCE_URL = (
+    "https://zenodo.org/api/records/6828906/files/light-sheet_recordings.zip/content"
+)
+SOURCE_RECORD_URL = "https://zenodo.org/records/6828906"
+RECORDING = "002-P21-25X-Budding"
+LINEAGE_MEMBER = f"{RECORDING}/mamut_deconv.xml"
+
+#: Acquisition frames in the recording (T0001..T0667, 10 min apart).
+N_SOURCE_FRAMES = 667
+#: Every FRAME_STEP-th frame slot is shown: 167 slots, 40 min apart.
+FRAME_STEP = 4
+#: Zero-based acquisition frame SLOTS shown (T0001, T0005, ..., T0665). Each
+#: slot keeps its nominal time; the frame actually drawn in it is
+#: `source_frame(slot)`, which differs only where FRAME_STAND_INS says so, so
+#: the drawn frames step by 4 except 3 then 5 around T0245's slot.
+FRAMES = tuple(range(0, N_SOURCE_FRAMES, FRAME_STEP))
+#: Shown frames whose export is empty in the record, mapped to the acquisition
+#: frame drawn in their place. T0245 is a 2 x 15 x 15 crop of zeros in both
+#: channels; without a stand-in, playback blinks to an empty scene there. T0244,
+#: 10 min earlier, supplies the splats AND the lineage overlay for that slot,
+#: which keeps its nominal time (2440 min).
+FRAME_STAND_INS = {244: 243}
+#: Nominal frame interval. experiment.json records 0.1667 h, i.e. 10 min
+#: rounded to four places; the axis uses the round value so every slider stop,
+#: including the last, sits exactly on k * step.
+FRAME_INTERVAL_MIN = 10.0
+TIME_STEP_MIN = FRAME_STEP * FRAME_INTERVAL_MIN
+
+#: SHA-256 over the per-member SHA-256 lines of everything fetched (the 167
+#: frames, then the lineage XML), as computed by `_source_set_digest`. Pins the
+#: source: the archive's own CRC32 only proves the bytes match its directory.
+SOURCE_SET_SHA256 = "a2b5cb751a489f092cd57f99064114582b416c9ff44a17a5cd5922537775bad9"
+#: SHA-256 of the lineage XML on its own: it is the one member a run with every
+#: fit already cached (or a hosted bundle) still needs.
+LINEAGE_SHA256 = "9e10c8bc7c5eb66459a158258390f6654314c5881483fe2996b5f5b52d022bd9"
+#: Extracted on-disk sizes of the pinned members: the 167 fetched VTI frames
+#: (T0244 in place of T0245) and the lineage XML. They follow from the digest
+#: above, are checked against the files by `fetch_source`, and let a run built
+#: from cached fits state the source size without the source on disk.
+SOURCE_FRAME_BYTES = 455_390_806
+LINEAGE_BYTES = 6_711_980
+#: The raw side of the caption's compression figure.
+SOURCE_BYTES = SOURCE_FRAME_BYTES + LINEAGE_BYTES
+#: How the caption names what SOURCE_BYTES measures.
+RAW_LABEL = "source frames and lineage"
+#: First guess at the served scene's size (the reference build); the build
+#: measures the real one and restates it if the caption would change.
+SCENE_BYTES_ESTIMATE = 89_086_907
+
+#: Voxel size of every rgb_grid frame, (z, y, x) in microns.
+VOXEL_SIZE_ZYX = (2.0, 0.26, 0.26)
+
+#: The export is a max composite: green and blue both carry the nuclei n, and
+#: red = max(m, n) for the membranes m. So the membranes are unmixed as red where
+#: red > green, else 0; see `channel_volume`.
+#: ``voxels_per_seed`` / ``splats_max`` set each channel's splat budget.
+CHANNELS = (
+    {
+        "name": "membranes",
+        "unmix": "red-where-gt-green",
+        "voxels_per_seed": 12.0,
+        # Thin sheets need more splats than nuclei: see the budget note below.
+        "splats_max": 120_000,
+        "marker": "mem9-GFP, 488 nm (membranes)",
+        "colormap": "bop_orange",
+        "window": (0.0, 1.0),
+        "gamma": 1.0,
+        "opacity": 0.15,
+        "layer_order": 10,
+    },
+    {
+        "name": "nuclei",
+        "unmix": "green",
+        "voxels_per_seed": 12.0,
+        "splats_max": 60_000,
+        "marker": "H2B-mCherry, 561 nm (nuclei)",
+        "colormap": "bop_blue",
+        "window": (0.0, 1.0),
+        "gamma": 1.0,
+        "opacity": 0.15,
+        "layer_order": 20,
+    },
+)
+
+# ---- Fit recipe ---------------------------------------------------------------
+#: A voxel counts as occupied above this 8-bit value (it sets the budget only).
+OCCUPIED_THRESHOLD = 16
+#: Splat budget = occupied voxels / the channel's ``voxels_per_seed``, clipped
+#: to [SPLATS_MIN, the channel's ``splats_max``]. The cap bounds the REQUESTED
+#: seeds; the stored count is lower after the prune and cull. The export is
+#: deconvolved, so there is no noise peak to calibrate K* against; budgets were
+#: set on foreground PSNR against the frame (1000 iterations, RTX 3070). The
+#: membrane rows below were scored against the earlier red - green target:
+#:
+#:   nuclei, frame 332:    4k / 8k / 16k seeds   39.8 / 44.0 / 47.0 dB
+#:   membranes, frame 320: 1 per 24 / 12 / 6 voxels   38.4 / 40.5 / 42.9 dB
+#:   membranes, frame 480: 33k / 60k / 67k / 120k     41.3 / 44.0 / 46.4 / 46.5
+#:   membranes, frame 600: 60k / 82k / 120k / 165k    38.6 / 40.4 / 44.3 / 44.7
+#:
+#: One seed per 12 voxels held ~40-46 dB on both channels. A 60k cap cost the
+#: large late membrane frames ~6 dB (frame 600), so membranes cap at 120k:
+#: about 1.9x the bytes on those frames (0.57 -> 1.06 MB) for +5.7 dB. Raising
+#: it further bought 0.4 dB.
+#:
+#: The max-composite target (red where red > green, else 0) has hard holes
+#: where a nucleus hides the membrane: it steps from the membrane value straight
+#: to 0 there; on the frames with nucleus occlusion (4 of 5 measured), 57-94% of
+#: a fit's foreground error sits within 2 voxels of those edges, which caps
+#: the headline PSNR whatever the budget. The median
+#: membrane foreground PSNR is 35.9 dB against this target (42.6 dB for the old
+#: fits against theirs: different targets, not a quality loss). On 5 frames,
+#: outside a 2-voxel xy band around the holes, the new fits match their target
+#: within about +-3 dB of the old fits' scores against the old target. Probe
+#: against the new target (headline / outside the band): T0321 at 1 seed per
+#: 12 / 6 / 3 voxels 35.7 / 36.1 / 35.2 dB and 42.7 / 45.2 / 46.2 dB; T0601 at
+#: 1 per 12 uncapped (203,858 seeds) 35.5 / 44.2 dB. More voxels clear
+#: OCCUPIED_THRESHOLD under this target (+6% T0301, +8% T0321, +24% T0601), so
+#: the late frames request more seeds than the cap (T0601: 203,858 against
+#: 164,639 before; both clipped to 120,000, at most 93,949 stored). Raising
+#: the membrane cap to ~200k buys about +1 dB headline (+3 dB outside the
+#: band) on late frames for ~1.6x the splats; the cap stays at 120k.
+#: SPLATS_MIN: the founder-cell frames are small enough that the per-voxel rule
+#: gives a few hundred seeds; frame 24's membranes scored 21-22 dB at 500 and
+#: 1,000 seeds and 48 dB at 2,000 (old target). The min-extent cull still
+#: removes up to two thirds of those seeds on the smallest frames, so early
+#: membrane frames stay uneven (25.4-48.1 dB foreground against the hole
+#: target; frame 64 keeps 631 splats).
+SPLATS_MIN = 2000
+N_ITERS = 1000
+
+# ---- Lineage overlay --------------------------------------------------------
+#: Comet-tail length in acquisition frames (10 min each): the last 3 hours.
+TRAIL_HISTORY = 18
+TRAIL_MIN_FADE = 0.15
+TRAIL_LINE_WIDTH = 0.25  # um
+TRAIL_OPACITY = 0.45
+#: Trail vertices are averaged over this many frames either side along the
+#: cell's own path (never across a division). The tracked positions jitter by
+#: about a micron from frame to frame, comparable to the real motion, so raw
+#: trails zigzag. Markers stay at the raw positions, on the nuclei.
+TRAIL_SMOOTH_FRAMES = 2
+POINT_RADIUS = 1.0  # um, well under a ~6 um nucleus
+POINT_OPACITY = 0.8
+#: Lineage colours stop splitting at this generation (2**3 = 8 families).
+COLOUR_GENERATIONS = 3
+
+# ---- Appearance --------------------------------------------------------------
+#: Additive light grows with the organoid's thickness, so the exposure is set
+#: for the late, budding frames (SwiftShader and RTX 3070 renders): at 0 or -1
+#: stops they wash out to white, at -2.5 the bud and the lineage both read and
+#: the single founder cell is still visible.
+EXPOSURE_STOPS = -2.5
+#: Both layers additive. In review renders, volumetric nuclei over additive
+#: membranes came out nearly black with the membranes gone, and both layers
+#: volumetric (absorption 1) gave an opaque blue mass hiding the membranes.
+BLENDING_MODE = "additive"
+#: Volumetric absorption (used only when BLENDING_MODE is "volumetric").
+ABSORPTION = 1.0
+#: Opening frame (zero-based acquisition frame, must be one of FRAMES): 6000
+#: min, when the bud is clear and before the lumen fills the core with light.
+OPENING_FRAME = 600
+CAMERA_FRAME_FILL = 0.7
+
+FLAGS = parse_demo_flags()
+NO_SERVE = FLAGS["no_serve"]
+SERVE_ONLY = FLAGS["serve_only"]
+RECOMPUTE = FLAGS["recompute"]
+
+SCENE_NAME = "gsplats_4d_organoid_budding.luxar.zarr"
+
+DEVICE: Optional[str] = None
+
+
+# =============================================================================
+# Source data
+# =============================================================================
+
+
+def source_frame(frame: int) -> int:
+    """The acquisition frame drawn for a shown frame (see FRAME_STAND_INS)."""
+    return FRAME_STAND_INS.get(frame, frame)
+
+
+def frame_member(frame: int) -> str:
+    """Archive member of one zero-based acquisition frame (T is one-based)."""
+    return f"{RECORDING}/rgb_grid/grid-T{frame + 1:04d}.vti"
+
+
+def _source_path(member: str) -> Path:
+    return CACHE_DIR / "source" / member
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _source_set_digest(members: list[str]) -> str:
+    """One SHA-256 over ``"<member> <sha256>"`` lines, in the given order."""
+    lines = "".join(f"{m} {_sha256(_source_path(m))}\n" for m in members)
+    return hashlib.sha256(lines.encode()).hexdigest()
+
+
+def check_source_bytes(members: list[str]) -> int:
+    """The members' extracted sizes summed; must equal the pinned SOURCE_BYTES.
+
+    The digest already pins the bytes, so a mismatch means the two pins were
+    updated out of step.
+    """
+    total = sum(_source_path(m).stat().st_size for m in members)
+    if total != SOURCE_BYTES:
+        raise ValueError(
+            f"Source members total {total:,} bytes, pinned SOURCE_BYTES is "
+            f"{SOURCE_BYTES:,}: update the size pins with the digest."
+        )
+    return total
+
+
+def _source_is_cached(members: list[str]) -> bool:
+    return all(_source_path(m).exists() for m in members) and (
+        _source_set_digest(members) == SOURCE_SET_SHA256
+    )
+
+
+def fetch_lineage() -> Path:
+    """The lineage XML, fetched only when missing; verified against its pin."""
+    path = _source_path(LINEAGE_MEMBER)
+    if not (path.exists() and _sha256(path) == LINEAGE_SHA256):
+        path.unlink(missing_ok=True)  # a same-size corrupt copy would be skipped
+        download_zip_members(SOURCE_URL, {LINEAGE_MEMBER: path})
+    digest = _sha256(path)
+    if digest != LINEAGE_SHA256:
+        raise ValueError(
+            f"Lineage digest mismatch: got {digest}, pinned {LINEAGE_SHA256}. "
+            f"Delete {path} to re-fetch, or update the pin deliberately."
+        )
+    return path
+
+
+def fetch_source() -> tuple[list[Path], Path]:
+    """Fetch the shown frames and the lineage XML; verify the pinned digest.
+
+    A complete, verified cache is used as it is, without touching the network.
+    """
+    members = [frame_member(source_frame(f)) for f in FRAMES] + [LINEAGE_MEMBER]
+    if _source_is_cached(members):
+        aprint(f"Using the cached source ({len(members)} members, digest verified)")
+        check_source_bytes(members)
+        return [_source_path(m) for m in members[:-1]], _source_path(LINEAGE_MEMBER)
+    print_data_provenance(
+        title=f"LSTree light-sheet recordings, {RECORDING}",
+        source=SOURCE_RECORD_URL,
+        license="CC BY 4.0 (de Medeiros et al., Nat Commun 2022)",
+        url=SOURCE_URL,
+        note=f"{len(FRAMES)} frames + lineage, ~345 MB by range requests",
+    )
+    download_zip_members(SOURCE_URL, {m: _source_path(m) for m in members})
+    digest = _source_set_digest(members)
+    if digest != SOURCE_SET_SHA256:
+        raise ValueError(
+            f"Source digest mismatch for {RECORDING}: got {digest}, pinned "
+            f"{SOURCE_SET_SHA256}. The archive at {SOURCE_RECORD_URL} no longer "
+            f"holds the bytes this demo was built from; delete "
+            f"{CACHE_DIR / 'source'} to re-fetch, or update the pin deliberately."
+        )
+    check_source_bytes(members)
+    return [_source_path(m) for m in members[:-1]], _source_path(LINEAGE_MEMBER)
+
+
+def read_rgb_grid(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Decode one LSTree ``rgb_grid`` frame (VTK XML ImageData, zlib, base64).
+
+    Returns:
+        ``(voxels, origin_zyx)``: uint8 ``(Z, Y, X, 3)`` RGB voxels and the crop
+        origin in microns, in the recording's acquisition frame.
+    """
+    root = ET.parse(path).getroot()
+    if root.get("type") != "ImageData" or root.get("byte_order") != "LittleEndian":
+        raise ValueError(f"{path.name}: not little-endian VTK ImageData")
+    if root.get("compressor") != "vtkZLibDataCompressor":
+        raise ValueError(f"{path.name}: unexpected compressor {root.get('compressor')}")
+    image = root.find("ImageData")
+    array = root.find(".//PointData/DataArray")
+    if image is None or array is None or array.text is None:
+        raise ValueError(f"{path.name}: no ImageData point array")
+    spacing = tuple(float(v) for v in image.get("Spacing", "").split())
+    if spacing[::-1] != VOXEL_SIZE_ZYX:
+        raise ValueError(f"{path.name}: spacing {spacing}, want {VOXEL_SIZE_ZYX[::-1]}")
+    if image.get("Direction", "1 0 0 0 1 0 0 0 1").split() != list("100010001"):
+        raise ValueError(f"{path.name}: rotated grids are not supported")
+    if array.get("type") != "UInt8" or array.get("NumberOfComponents") != "3":
+        raise ValueError(f"{path.name}: expected 3-component UInt8 voxels")
+    x0, x1, y0, y1, z0, z1 = (int(v) for v in image.get("WholeExtent", "").split())
+    shape = (z1 - z0 + 1, y1 - y0 + 1, x1 - x0 + 1, 3)
+
+    # VTK's compressed inline binary: a base64 header of UInt32
+    # (n_blocks, block_size, last_block_size, compressed sizes...), then the
+    # base64 of the concatenated zlib blocks.
+    data = "".join(array.text.split()).encode("ascii")
+    n_blocks = struct.unpack("<I", base64.b64decode(data[:8])[:4])[0]
+    header_b64 = 4 * -(-(3 + n_blocks) * 4 // 3)
+    header = struct.unpack(f"<{3 + n_blocks}I", base64.b64decode(data[:header_b64]))
+    payload = base64.b64decode(data[header_b64:])
+    blocks, offset = [], 0
+    for size in header[3:]:
+        blocks.append(zlib.decompress(payload[offset : offset + size]))
+        offset += size
+    raw = b"".join(blocks)
+    if len(raw) != int(np.prod(shape)):
+        raise ValueError(f"{path.name}: {len(raw)} bytes for shape {shape}")
+    voxels = np.frombuffer(raw, dtype=np.uint8).reshape(shape)
+    origin_xyz = np.array([float(v) for v in image.get("Origin", "").split()])
+    # Extent offsets shift the origin by whole voxels (always 0 in this export).
+    origin_xyz += np.array([x0, y0, z0]) * np.array(spacing)
+    return voxels, origin_xyz[::-1].copy()
+
+
+# =============================================================================
+# Fitting
+# =============================================================================
+
+
+def _channel(name: str) -> dict:
+    return next(ch for ch in CHANNELS if ch["name"] == name)
+
+
+def channel_volume(voxels: np.ndarray, name: str) -> np.ndarray:
+    """One channel's uint8 volume out of the export's RGB voxels.
+
+    Green is the nuclei. Red is the max of membranes and nuclei, so where red
+    exceeds green it IS the membrane value, and where it does not the membrane
+    is hidden under a nucleus at least as bright and is set to 0. Subtracting
+    green instead would under-read every membrane voxel that borders a nucleus
+    by the nuclear value.
+    """
+    unmix = _channel(name)["unmix"]
+    red = voxels[..., 0]
+    green = voxels[..., 1]
+    if unmix == "green":
+        return green.copy()
+    if unmix == "red-where-gt-green":
+        return np.where(red > green, red, 0).astype(np.uint8)
+    raise ValueError(f"unknown unmix {unmix!r}")
+
+
+def splat_budget(volume: np.ndarray, name: str) -> int:
+    """Splats for one frame/channel: proportional to the occupied voxels."""
+    ch = _channel(name)
+    occupied = int((volume > OCCUPIED_THRESHOLD).sum())
+    seeds = round(occupied / ch["voxels_per_seed"])
+    return int(np.clip(seeds, SPLATS_MIN, ch["splats_max"]))
+
+
+def _frame_cache_name(channel: str, frame: int) -> str:
+    """Per-frame fit cache name, keyed by the acquisition frame actually fitted
+    and by everything that changes the fit; the hosted bundle's members carry
+    these names."""
+    ch = _channel(channel)
+    return (
+        f"organoid_{channel}_{ch['unmix']}_vps{ch['voxels_per_seed']:g}"
+        f"_min{SPLATS_MIN}_max{ch['splats_max']}_it{N_ITERS}"
+        f"_t{source_frame(frame) + 1:04d}.gsplats.zarr.zip"
+    )
+
+
+def fit_frame(
+    volume: np.ndarray, origin_zyx: np.ndarray, cache_file: Path, channel: str
+) -> GSplatData:
+    """Fit one frame/channel in acquisition microns, cached."""
+    global DEVICE
+    if cache_file.exists() and not RECOMPUTE:
+        return GSplatData.load(cache_file, include_stats=True)
+    if DEVICE is None:
+        DEVICE = detect_device()
+
+    from luxar.gsplats import fit_gaussian_splats
+
+    seeds = splat_budget(volume, channel)
+    aprint(f"  {cache_file.name}: {volume.shape} voxels -> {seeds:,} seeds")
+    result = fit_gaussian_splats(
+        volume.astype(np.float32),
+        seeds=seeds,
+        n_iters=N_ITERS,
+        # The export is already background-free outside the organoid (zeros),
+        # and a frame-dependent floor would make a timelapse flicker.
+        floor="none",
+        # A fixed scale, not a per-frame one: the authors already rescaled each
+        # frame and channel to its own percentiles when exporting to 8 bits, so
+        # (0, 255) fits each frame as exported instead of normalizing it a
+        # SECOND time. Brightness is therefore not comparable across frames.
+        norm_range=(0.0, 255.0),
+        voxel_size=VOXEL_SIZE_ZYX,
+        source_dtype="uint8",
+        device=DEVICE,
+        verbose=False,
+    ).translate(origin_zyx)
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    save_with_lod(
+        result,
+        cache_file,
+        recipe="stream",
+        encoding_mode=EncodingMode.MEMORY,
+        include_fitting_info=True,
+        compress="zip",
+        zip_deflate=True,
+    )
+    # Return what was STORED: the cache is written under a lossy encoding, so a
+    # cold run and a warm run must both read it back to build the same scene.
+    return GSplatData.load(cache_file, include_stats=True)
+
+
+def _fit_cache(channel: str, frame: int) -> Path:
+    return local_fit_path(DATASET_NAME, _frame_cache_name(channel, frame))
+
+
+def cached_fits() -> Optional[dict[str, list[GSplatData]]]:
+    """Every frame's fits from the local cache, or ``None`` if any is missing.
+
+    A fully cached run then needs neither the source frames nor the network.
+    """
+    if RECOMPUTE or not all(
+        _fit_cache(ch["name"], f).exists() for ch in CHANNELS for f in FRAMES
+    ):
+        return None
+    with asection(f"Loading {len(FRAMES)} cached frames x {len(CHANNELS)} channels"):
+        return {
+            ch["name"]: [
+                GSplatData.load(_fit_cache(ch["name"], f), include_stats=True)
+                for f in FRAMES
+            ]
+            for ch in CHANNELS
+        }
+
+
+def hosted_fits() -> Optional[dict[str, list[GSplatData]]]:
+    """Every frame's fits from the hosted bundle, or ``None`` to build locally.
+
+    ``None`` when ``--recompute`` is set, and when the bundle is not obtainable:
+    not cached and the download fails (offline, timeout, HTTP error), or member
+    names a changed fit recipe no longer matches. A checksum that will not verify
+    (``ValueError``) and every other fault still raise. Once the bundle is cached
+    (and verified by hash) and extracted, a rerun reads it without the network.
+    Stats are loaded so the per-part fit provenance matches the local path.
+    """
+    names = [_frame_cache_name(ch["name"], f) for ch in CHANNELS for f in FRAMES]
+    try:
+        loaded = load_dataset_bundle(
+            DATASET_NAME,
+            BUNDLE_NAME,
+            names,
+            recompute=RECOMPUTE,
+            include_stats=True,
+        )
+    except (DatasetUnavailable, BundleMemberNotFound, OSError, RuntimeError) as exc:
+        # OSError covers `requests` errors; DatasetUnavailable is one too, but
+        # other FileNotFoundErrors (a bad in-repo copy) are faults.
+        routable = isinstance(exc, (DatasetUnavailable, BundleMemberNotFound))
+        if not (routable or is_download_failure(exc)):
+            raise
+        aprint(f"Hosted fits unavailable ({exc}); building them locally.")
+        return None
+    if loaded is None:
+        return None
+    n = len(FRAMES)
+    return {ch["name"]: loaded[i * n : (i + 1) * n] for i, ch in enumerate(CHANNELS)}
+
+
+def fit_all_frames(frame_paths: list[Path]) -> dict[str, list[GSplatData]]:
+    """Fit every shown frame for both channels, in FRAMES order."""
+    fits: dict[str, list[GSplatData]] = {ch["name"]: [] for ch in CHANNELS}
+    with asection(f"Fitting {len(frame_paths)} frames x {len(CHANNELS)} channels"):
+        for frame, path in zip(FRAMES, frame_paths, strict=True):
+            voxels, origin = read_rgb_grid(path)
+            for ch in CHANNELS:
+                name = ch["name"]
+                volume = channel_volume(voxels, name)
+                fits[name].append(
+                    fit_frame(volume, origin, _fit_cache(name, frame), name)
+                )
+    return fits
+
+
+def stack_channel(frames: list[GSplatData]) -> GSplatData:
+    """Stack one channel's frames into a 4D dataset, time (minutes) last."""
+    values = [frame * FRAME_INTERVAL_MIN for frame in FRAMES]
+    part_provenance = collect_part_provenance(
+        frames,
+        values=values,
+        fit_reference={
+            "kind": "preprocessed",
+            "note": (
+                "LSTree rgb_grid export: deconvolved, cropped to the organoid "
+                "and scaled to 8 bits by the authors"
+            ),
+        },
+    )
+    return GSplatData.combine_as_new_dimension(
+        frames, values=values, sigma=0.0, part_provenance=part_provenance
+    )
+
+
+# =============================================================================
+# Lineage
+# =============================================================================
+
+
+def load_lineage(
+    path: Path,
+) -> tuple[dict[int, tuple[int, np.ndarray]], dict[int, int]]:
+    """Read the MaMuT lineage: spots and each spot's parent.
+
+    Returns:
+        ``(spots, parent)``: spot id -> (zero-based frame, (z, y, x) microns),
+        and child id -> parent id. MaMuT stores some links later-to-earlier, so
+        every edge is oriented by frame; a link within one frame is dropped.
+    """
+    root = ET.parse(path).getroot()
+    spots: dict[int, tuple[int, np.ndarray]] = {}
+    for spot in root.iter("Spot"):
+        spots[int(spot.get("ID", -1))] = (
+            int(spot.get("FRAME", -1)),
+            np.array(
+                [float(spot.get(f"POSITION_{axis}", "nan")) for axis in "ZYX"],
+                dtype=np.float32,
+            ),
+        )
+    parent: dict[int, int] = {}
+    for edge in root.iter("Edge"):
+        a, b = int(edge.get("SPOT_SOURCE_ID", -1)), int(edge.get("SPOT_TARGET_ID", -1))
+        if spots[a][0] == spots[b][0]:
+            continue
+        early, late = (a, b) if spots[a][0] < spots[b][0] else (b, a)
+        # A spot with two incoming links keeps the lower id, deterministically.
+        parent[late] = min(early, parent.get(late, early))
+    return spots, parent
+
+
+def lineage_hues(spots: dict, parent: dict[int, int]) -> dict[int, float]:
+    """Hue per spot: each division splits the mother's hue interval.
+
+    The root owns [0, 1); at every division the daughters split their mother's
+    interval equally (ordered by spot id), until COLOUR_GENERATIONS divisions.
+    A spot's hue is the midpoint of its interval, so sisters stay close in hue.
+    """
+    children: dict[int, list[int]] = {}
+    for child, mother in parent.items():
+        children.setdefault(mother, []).append(child)
+    hues: dict[int, float] = {}
+    roots = sorted(s for s in spots if s not in parent)
+    stack = [(r, i / len(roots), (i + 1) / len(roots), 0) for i, r in enumerate(roots)]
+    while stack:
+        spot, lo, hi, gen = stack.pop()
+        hues[spot] = 0.5 * (lo + hi)
+        kids = sorted(children.get(spot, []))
+        split = len(kids) > 1 and gen < COLOUR_GENERATIONS
+        for k, kid in enumerate(kids):
+            if split:
+                width = (hi - lo) / len(kids)
+                stack.append((kid, lo + k * width, lo + (k + 1) * width, gen + 1))
+            else:
+                stack.append((kid, lo, hi, gen + (len(kids) > 1)))
+    return hues
+
+
+def _trail_links(
+    current: list[int], spots: dict, parent: dict[int, int], frame: int
+) -> list[tuple[int, int]]:
+    """(mother, child) links of the trails ending at ``frame``: each current
+    cell's ancestry back to TRAIL_HISTORY frames, shared stretches once."""
+    links: list[tuple[int, int]] = []
+    seen: set[int] = set()
+    for sid in sorted(current):
+        child = sid
+        while child in parent and child not in seen:
+            seen.add(child)
+            mother = parent[child]
+            if frame - spots[mother][0] > TRAIL_HISTORY:
+                break
+            links.append((mother, child))
+            child = mother
+    return links
+
+
+def smoothed_positions(spots: dict, parent: dict[int, int]) -> dict[int, np.ndarray]:
+    """Each spot's position averaged with up to TRAIL_SMOOTH_FRAMES neighbours
+    on either side of its own path; the walk stops at a division or a gap."""
+    children: dict[int, list[int]] = {}
+    for child, mother in parent.items():
+        children.setdefault(mother, []).append(child)
+    smoothed = {}
+    for sid, (_, position) in spots.items():
+        window = [position]
+        back = sid
+        for _ in range(TRAIL_SMOOTH_FRAMES):
+            back = parent.get(back, -1)
+            if back < 0 or len(children.get(back, [])) != 1:
+                break
+            window.append(spots[back][1])
+        ahead = sid
+        for _ in range(TRAIL_SMOOTH_FRAMES):
+            kids = children.get(ahead, [])
+            if len(kids) != 1:
+                break
+            ahead = kids[0]
+            window.append(spots[ahead][1])
+        smoothed[sid] = np.mean(window, axis=0).astype(np.float32)
+    return smoothed
+
+
+def lineage_geometry(spots: dict, parent: dict[int, int]) -> dict[str, np.ndarray]:
+    """Per shown frame: fading trails back through each cell's ancestry, and
+    one marker per tracked cell. Vertices are (z, y, x, time_min)."""
+    hues = lineage_hues(spots, parent)
+    smooth = smoothed_positions(spots, parent)
+    by_frame: dict[int, list[int]] = {}
+    for sid, (frame, _) in spots.items():
+        by_frame.setdefault(frame, []).append(sid)
+
+    verts, colors, edges, pts, pt_colors = [], [], [], [], []
+    for shown in FRAMES:
+        t = shown * FRAME_INTERVAL_MIN
+        frame = source_frame(shown)
+        current = by_frame.get(frame, [])
+        links = _trail_links(current, spots, parent, frame)
+        # Each joint is authored ONCE per frame so consecutive links share it
+        # (an indexed line reads as one trail, not a chain of beads).
+        index: dict[int, int] = {}
+        for sid in dict.fromkeys(s for link in links for s in link):
+            age = frame - spots[sid][0]
+            fade = 1.0 - (1.0 - TRAIL_MIN_FADE) * age / TRAIL_HISTORY
+            index[sid] = len(verts)
+            # The newest vertex sits on its marker; older ones are smoothed.
+            verts.append([*(spots[sid][1] if age == 0 else smooth[sid]), t])
+            colors.append(np.asarray(hsv_to_rgb(hues[sid], 0.8, 1.0)) * fade)
+        edges.extend((index[a], index[b]) for a, b in links)
+        for sid in sorted(current):
+            pts.append([*spots[sid][1], t])
+            pt_colors.append(hsv_to_rgb(hues[sid], 0.8, 1.0))
+    return {
+        "trail_vertices": np.asarray(verts, dtype=np.float32),
+        "trail_colors": np.asarray(colors, dtype=np.float32),
+        "trail_edges": np.asarray(edges, dtype=np.uint32).reshape(-1, 2),
+        "points": np.asarray(pts, dtype=np.float32),
+        "point_colors": np.asarray(pt_colors, dtype=np.float32),
+    }
+
+
+# =============================================================================
+# Scene
+# =============================================================================
+
+
+def opening_camera(stacks: dict[str, GSplatData]) -> CameraConfig:
+    """Frame the opening frame's organoid, looking down the stack axis."""
+    t_open = OPENING_FRAME * FRAME_INTERVAL_MIN
+    centers, weights = [], []
+    for data in stacks.values():
+        keep = np.abs(data.centers[:, 3] - t_open) < 0.5 * TIME_STEP_MIN
+        centers.append(data.centers[keep, :3])
+        weights.append(data.amplitudes[keep])
+    c, w = np.concatenate(centers), np.concatenate(weights).astype(np.float64)
+    target_zyx = np.average(c, axis=0, weights=w)
+    radius = float(np.percentile(np.linalg.norm((c - target_zyx)[:, 1:], axis=1), 98))
+    distance = radius / CAMERA_FRAME_FILL / np.tan(np.radians(CINEMATIC_FOV_DEG / 2))
+    target = (float(target_zyx[2]), float(target_zyx[1]), float(target_zyx[0]))
+    # Mostly along -z (the microscope's view), tilted to show the depth. With
+    # up = -y the image reads as it does on the microscope: x right, y down.
+    tilt = np.radians(25.0)
+    eye = np.array(target) + distance * np.array([0.0, np.sin(tilt), -np.cos(tilt)])
+    return CameraConfig(
+        position=tuple(float(v) for v in eye), target=target, up=(0.0, -1.0, 0.0)
+    )
+
+
+def _size_texts(scene_bytes: int) -> tuple[str, str]:
+    """The (description, caption) phrases that state ``scene_bytes``."""
+    return (
+        compression_note(SOURCE_BYTES, scene_bytes, RAW_LABEL),
+        compression_caption(SOURCE_BYTES, scene_bytes, RAW_LABEL),
+    )
+
+
+def create_luxar_scene(
+    stacks: dict[str, GSplatData],
+    lineage: dict[str, np.ndarray],
+    output_path: Path,
+    scene_bytes: int,
+) -> Path:
+    """Write the 4D scene: two gsplat layers + lineage trails and markers.
+
+    ``scene_bytes`` is the on-disk size the text states for the scene;
+    :func:`build_scene` measures it and restates it if it was off.
+    """
+    t_max = FRAMES[-1] * FRAME_INTERVAL_MIN
+    with asection("Creating 4D organoid scene"):
+        dims = Dimensions(
+            [
+                Dimension("x", unit="um", display=True),
+                Dimension("y", unit="um", display=True),
+                Dimension("z", unit="um", display=True),
+                Dimension(
+                    "time",
+                    unit="min",
+                    display=False,
+                    discrete=True,
+                    range=(0.0, t_max),
+                    step=TIME_STEP_MIN,
+                ),
+            ]
+        )
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(
+                dimensions=dims,
+                citation=DEMO_META["citation"],
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True,
+                    tone_mapping="ACES",
+                    exposure=EXPOSURE_STOPS,
+                    camera=opening_camera(stacks),
+                    dimensions=DimensionsConfig(
+                        current_step=[0.0, 0.0, 0.0, OPENING_FRAME * FRAME_INTERVAL_MIN]
+                    ),
+                ),
+            )
+            stamp_input_digests(scene)
+            scene.attrs["title"] = "GSplats: Budding Intestinal Organoid + Lineage"
+            scene.attrs["description"] = (
+                f"Mouse intestinal organoid ({RECORDING}, Zenodo 6828906), live "
+                f"light-sheet, {len(FRAMES)} frames 40 min apart: from one cell to "
+                "a budding mini-gut. Membranes (bop_orange) and nuclei (bop_blue) "
+                "as Gaussian splats; the founder cell's tracked lineage as fading "
+                "trails and markers coloured by lineage. Data: "
+                "doi:10.5281/zenodo.6828906, CC BY 4.0 "
+                "(https://creativecommons.org/licenses/by/4.0/); changed by "
+                "unmixing the membrane channel (red where it exceeds green), "
+                "showing every fourth frame (T0244 standing in for the empty "
+                "T0245), Gaussian-splat fitting and overlaying the published lineage as "
+                "smoothed trails. Scene size: "
+                f"{compression_note(SOURCE_BYTES, scene_bytes, RAW_LABEL)}."
+            )
+
+            for ch in CHANNELS:
+                with asection(f"Adding {ch['name']} layer ({ch['marker']})"):
+                    # Centre columns are (z, y, x, time); `slice_dims=[3]` is the
+                    # time column, so every rung carries an equal budget PER
+                    # FRAME instead of a share of the whole stack (the late
+                    # frames hold most of the splats). `recompute=True` is
+                    # required: the stacked per-frame ladders would otherwise be
+                    # merged as they are and the spec ignored.
+                    scene.add_gsplats_from_data(
+                        name=ch["name"],
+                        result=stacks[ch["name"]],
+                        dim_order=["z", "y", "x", "time"],
+                        extend_to_all=[],
+                        additive_lod=dict(n_lods=4, slice_dims=[3], recompute=True),
+                        blending_mode=BLENDING_MODE,
+                        layer_order=ch["layer_order"],
+                        **(
+                            {"absorption": ABSORPTION}
+                            if BLENDING_MODE == "volumetric"
+                            else {}
+                        ),
+                        colormap=ch["colormap"],
+                        gamma=ch["gamma"],
+                        opacity=ch["opacity"],
+                        layer=True,
+                        **window_attrs(ch["window"]),
+                    )
+
+            scene.add_lines(
+                name="lineage_trails",
+                vertices=lineage["trail_vertices"],
+                widths=TRAIL_LINE_WIDTH,
+                colors=lineage["trail_colors"],
+                indices=lineage["trail_edges"],
+                line_type="indexed",
+                dim_order=["z", "y", "x", "time"],
+                extend_to_all=[],
+                opacity=TRAIL_OPACITY,
+                layer=True,
+            )
+            scene.add_points(
+                name="tracked_cells",
+                positions=lineage["points"],
+                colors=lineage["point_colors"],
+                radii=POINT_RADIUS,
+                dim_order=["z", "y", "x", "time"],
+                extend_to_all=[],
+                opacity=POINT_OPACITY,
+                layer=True,
+            )
+
+            scene.add_text(
+                "Budding intestinal organoid",
+                position=(0.02, 0.02),
+                font_size=0.05,
+                anchor="top-left",
+                color="rgba(255,255,255,0.6)",
+                blend_mode="difference",
+            )
+            add_demo_caption(
+                scene,
+                "Light-sheet • membranes + nuclei • lineage • "
+                f"{compression_caption(SOURCE_BYTES, scene_bytes, RAW_LABEL)}",
+                DEMO_META.get("citation"),
+            )
+    aprint(f"Scene saved: {output_path}")
+    return output_path
+
+
+def restate_scene_size(scene: Path, stated: int, measured: int) -> None:
+    """Rewrite the size figures in the scene's description and caption.
+
+    The scene is the one that will be served, so the content hash is restamped.
+    """
+    swaps = list(zip(_size_texts(stated), _size_texts(measured), strict=True))
+    replace_scene_texts(scene, swaps, expected=2, restamp_hash=True)
+
+
+def build_scene(
+    stacks: dict[str, GSplatData], lineage: dict[str, np.ndarray], output_path: Path
+) -> int:
+    """Write the scene so its text states its own on-disk size; returns it.
+
+    The scene is written into a hidden scratch sibling of ``output_path``
+    stating :data:`SCENE_BYTES_ESTIMATE`, measured, and restated in place until
+    the stated figure stops changing; only then is it renamed onto
+    ``output_path``, so an interrupted build never leaves a scene stating a
+    wrong size.
+    """
+    scratch, retired = scratch_paths(output_path, "building", keep_extension=True)
+    for stale in (scratch, retired):  # leftovers of an interrupted run
+        remove_scene(stale)
+    aprint(
+        f"source on disk: {format_bytes(SOURCE_BYTES)} ({SOURCE_BYTES:,} bytes: "
+        f"{len(FRAMES)} VTI frames {SOURCE_FRAME_BYTES:,} + lineage "
+        f"{LINEAGE_BYTES:,})"
+    )
+    create_luxar_scene(stacks, lineage, scratch, SCENE_BYTES_ESTIMATE)
+    stated, measured, converged = converge_stated_size(
+        SCENE_BYTES_ESTIMATE,
+        _size_texts,
+        lambda: None,  # the restate edits the measured store itself
+        scratch,
+        lambda old, new: restate_scene_size(scratch, old, new),
+    )
+    promote_scene(scratch, output_path, retired)
+    report_scene_size(SOURCE_BYTES, RAW_LABEL, stated, measured, converged)
+    return measured
+
+
+# =============================================================================
+# Main
+# =============================================================================
+
+
+def main() -> None:
+    """Resolve the fits and the lineage, build the scene, optionally serve it."""
+    aprint("=" * 70)
+    aprint("GSplats Demo: 4D Budding Intestinal Organoid + Lineage")
+    aprint("=" * 70)
+    output_path = get_demos_output_dir() / SCENE_NAME
+
+    if SERVE_ONLY:
+        if output_path.exists():
+            launch_viewer(output_path)
+        else:
+            aprint(f"No scene at {output_path}. Run without --serve-only first.")
+        return
+
+    # A complete local fit cache first (no source, no network); then the hosted
+    # bundle; otherwise refit from the Zenodo source. --recompute skips both.
+    fits = cached_fits()
+    if fits is None:
+        fits = hosted_fits()
+    if fits is None:
+        warn_if_no_cuda_gpu()
+        frame_paths, lineage_path = fetch_source()
+        fits = fit_all_frames(frame_paths)
+    else:
+        # Fits carry the splats only; the lineage comes from the original
+        # record (0.9 MB), fetched once and pinned.
+        lineage_path = fetch_lineage()
+
+    with asection("Stacking frames"):
+        stacks = {name: stack_channel(frames) for name, frames in fits.items()}
+        for name, data in stacks.items():
+            aprint(f"{name}: {data.n_splats:,} splats over {len(FRAMES)} frames")
+    with asection("Lineage"):
+        spots, parent = load_lineage(lineage_path)
+        lineage = lineage_geometry(spots, parent)
+        aprint(
+            f"{len(spots):,} tracked positions; {len(lineage['trail_edges']):,} "
+            f"trail segments and {len(lineage['points']):,} markers over "
+            f"{len(FRAMES)} frames"
+        )
+
+    build_scene(stacks, lineage, output_path)
+    if not NO_SERVE:
+        launch_viewer(output_path)
+    aprint("\nDone!")
+
+
+if __name__ == "__main__":
+    main()

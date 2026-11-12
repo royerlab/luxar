@@ -77,12 +77,25 @@ environment: expect 10-25 minutes and ~8 GB on a cold cache (progress streams).
 
 ### Daily Development Workflow
 ```bash
-make test-fast PYTEST_ARGS='<path or -k expr>'   # inner loop, scoped (not a gate)
-make test-fast     # whole fast suite, ~6-7 min (no slow tests, no coverage)
+make test-fast PYTEST_ARGS='<path or -k expr>'   # inner loop, Python only, scoped (not a gate)
+make test-fast TS_ARGS='src/rendering'           # inner loop, vitest only, scoped
+make test-fast     # whole fast suite: Python (not slow) + all TS units, no coverage
 make test-all      # before pushing: everything, incl. slow + Rust/WASM + Go
 make check-all     # before pushing: static checks (reformats the tree)
 make check-docs    # when you touched docs/ (required CI gate)
 ```
+
+The unscoped `make test-fast` is not a quick check: on a fresh 20-core machine a
+tester measured ~22.5 minutes for the Python half alone (~20k tests), and the
+TypeScript half then runs ~18k more vitest tests on top. Scope it while
+iterating. Scoping one half skips the other (a `PYTEST_ARGS` run does not also
+run the whole vitest suite); pass both `PYTEST_ARGS` and `TS_ARGS` to run both,
+scoped. `TS_ARGS` paths are relative to `packages/luxar-viewer/`.
+
+`LUXAR_PYTEST_JOBS` sets the pytest-xdist worker count (default 6) for both
+`make test-fast` and `hatch run test`, e.g. `make test-fast LUXAR_PYTEST_JOBS=12`.
+More workers help less than the core count suggests: with `slow` deselected the
+suite is I/O-bound on small zarr file writes.
 
 ### Troubleshooting Setup Issues
 ```bash
@@ -179,8 +192,8 @@ def test_new_feature(tmp_path):
 
 ### Running Tests
 ```bash
-make test-fast PYTEST_ARGS='-k test_scene'  # Inner loop: specific tests, parallel
-make test-fast              # Python (not slow) + TypeScript units, no coverage
+make test-fast PYTEST_ARGS='-k test_scene'  # Inner loop: specific Python tests, parallel
+make test-fast              # Python (not slow) + TypeScript units, no coverage (Python half alone ~22.5 min)
 make test-all               # Before pushing: every suite, incl. slow tests
 hatch run test-cov          # Python with coverage report (what CI gates)
 ```
@@ -275,7 +288,7 @@ voice:
   and pass it through `luxar.cli.utils.deprecated_option(...)`, which prints
   the notice to stderr.
 - Viewer URL parameter: add the old key to `URL_PARAM_ALIASES` in
-  `packages/luxar-viewer/src/config/url-params.ts`.
+  `packages/luxar-viewer/src/config/url-param-access.ts`.
 
 Use the release date you are targeting for `since` and the date six months
 later for `remove_after` (the two-releases half of the rule is checked when the

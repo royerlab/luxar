@@ -156,6 +156,10 @@ describe('installDebugInterface', () => {
       expect(dbg.scene).toBe((ports.sceneManager as unknown as { scene: THREE.Scene }).scene);
       expect(dbg.camera).toBe((ports.sceneManager as unknown as { camera: THREE.Camera }).camera);
       expect(dbg.renderer).toEqual({ id: 'renderer' });
+      (ports.sceneManager as unknown as { renderer: { id: string } }).renderer = {
+        id: 'replacement',
+      };
+      expect(dbg.renderer).toEqual({ id: 'replacement' });
       expect(dbg.controls).toEqual({ id: 'controls' });
       expect(dbg.postProcessing).toEqual({ id: 'pp' });
     });

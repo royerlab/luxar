@@ -48,6 +48,7 @@ import { isWorkerInfrastructureError } from '../../../workers/worker-pool/errors
 import { projectGSplatsInProcess } from '../../../workers/data-worker/projection/in-process';
 import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-dims';
 import { isStandardGSplats3D } from '../../../workers/data-worker/projection/gsplats';
+import { MIN_AMPLITUDE } from '../../../workers/data-worker/projection/constants';
 import { projectGSplatLabelIndices } from '../../gsplats/label-channel';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 import type { UpdateSession } from '../../../profiling/update-profiler';
@@ -113,7 +114,8 @@ export type StagedGSplatsCommit = StagedGSplatsGeometryCommit | StagedNoopCommit
 function buildGSplatsParams(
   data: LoadedGSplatsData,
   viewState: GSplatsViewState,
-  truncate: number
+  truncate: number,
+  minAmplitude?: number
 ): Parameters<typeof projectGSplatsInProcess>[0] {
   const discreteDims: number[] = [];
   const discreteSteps: Record<number, number> = {};
@@ -160,6 +162,9 @@ function buildGSplatsParams(
     discreteSteps,
     extendToAllDims,
     truncate,
+    // Only present for a gained node (see `readMinAmplitude`): an absent key
+    // keeps the stage-cache signature of every other scene unchanged.
+    ...(minAmplitude !== undefined ? { minAmplitude } : {}),
     // Ask the kernel to record which source splat each emitted slot came from
     // (issue #1423) only when there is a map to build AND the projection will
     // actually compact. The standard-3D fast path emits every splat in order,
@@ -223,6 +228,32 @@ function readTruncate(mesh: THREE.Mesh): number {
   );
 }
 
+/** The per-node projection inputs read off the mesh material. */
+export interface GSplatsProjectionGate {
+  /** Truncation radius in sigmas (`uTruncate`). */
+  truncate: number;
+  /** Visibility threshold on the stored amplitude (see `readMinAmplitude`). */
+  minAmplitude?: number;
+}
+
+/**
+ * The visibility gate for a node drawn with a `display_gain` other than 1.
+ *
+ * The kernel compacts out splats whose ATTENUATED amplitude falls below
+ * `MIN_AMPLITUDE`, a threshold on what the shader emits. With a display gain
+ * the shader emits `amplitude × gain`, and the stored amplitude is in data
+ * units — 1e-6 of a float volume in [0, 1e-5] is a visible fraction of it — so
+ * the gate is re-stated on the stored values: `MIN_AMPLITUDE / gain`. That keeps
+ * exactly the splats the pre-scaled (normalised) scene kept. Reads the node's
+ * LIVE gain; `undefined` at the identity (and for a non-gsplat material).
+ */
+function readMinAmplitude(mesh: THREE.Mesh): number | undefined {
+  const gain = (mesh.material as { uniforms?: { uDisplayGain?: { value: number } } })?.uniforms
+    ?.uDisplayGain?.value;
+  if (gain === undefined || gain === 1 || !Number.isFinite(gain) || gain <= 0) return undefined;
+  return MIN_AMPLITUDE / gain;
+}
+
 /**
  * Project GSplats to 3D on a worker thread. Only when the pool has no worker
  * for the call (`WorkerUnavailableError`: none at all, or none left after its
@@ -237,7 +268,9 @@ function readTruncate(mesh: THREE.Mesh): number {
  * re-run in-process blocks the frame at least as long again, and the pool has
  * already evicted the wedged worker, so a retry gets a fresh one.
  *
- * `updateVersion` gates the first-update info logs.
+ * `gate` is the truncation radius, or a {@link GSplatsProjectionGate} that also
+ * carries a gained node's visibility threshold. `updateVersion` gates the
+ * first-update info logs.
  *
  * `signal` is the per-update abort signal: a superseded pass rejects promptly
  * with a WorkerAbortError instead of holding the update lock through a whole
@@ -247,11 +280,12 @@ function readTruncate(mesh: THREE.Mesh): number {
 export async function projectGSplatsTo3DUsingWorker(
   data: LoadedGSplatsData,
   viewState: GSplatsViewState,
-  truncate: number,
+  gate: number | GSplatsProjectionGate,
   updateVersion: number,
   signal?: AbortSignal
 ): Promise<ProcessedGSplatsData> {
-  const params = buildGSplatsParams(data, viewState, truncate);
+  const { truncate, minAmplitude } = typeof gate === 'number' ? { truncate: gate } : gate;
+  const params = buildGSplatsParams(data, viewState, truncate, minAmplitude);
   try {
     if (updateVersion <= 1) {
       log.info(
@@ -408,13 +442,14 @@ export async function processGSplatsData(
     data.splatCount > (data.ndim > 3 ? WORKER_MIN_SPLATS_ND : WORKER_MIN_SPLATS_3D);
 
   const truncate = readTruncate(mesh);
+  const minAmplitude = readMinAmplitude(mesh);
 
   // Post-projection stage cache (#2944 B2): a slice restored from the S-cache
   // with unchanged projection params reuses the projection stored on its
   // entry. The signature is built from the very params the kernel receives
   // (see projection-stage-cache.ts), so it cannot miss a projection input.
   const stageSig = getSliceCacheOrigin(data)
-    ? projectionStageSig('gsplats', buildGSplatsParams(data, viewState, truncate))
+    ? projectionStageSig('gsplats', buildGSplatsParams(data, viewState, truncate, minAmplitude))
     : null;
   const cached = stageSig !== null ? lookupGSplatsStage(data, stageSig) : undefined;
 
@@ -423,13 +458,19 @@ export async function processGSplatsData(
   const project = async () => {
     if (cached) return cached;
     if (useWorkerProjection) {
-      return projectGSplatsTo3DUsingWorker(data, viewState, truncate, updateVersion, signal);
+      return projectGSplatsTo3DUsingWorker(
+        data,
+        viewState,
+        { truncate, minAmplitude },
+        updateVersion,
+        signal
+      );
     }
     // Non-worker path (useWebWorkers off, small, or 3D-only data): run
     // the same dispatcher in-process. The standard-3D fast path inside
     // the dispatcher handles the ndim===3 case efficiently.
     return toProcessed(
-      await projectGSplatsInProcess(buildGSplatsParams(data, viewState, truncate)),
+      await projectGSplatsInProcess(buildGSplatsParams(data, viewState, truncate, minAmplitude)),
       data,
       data.ranges
     );

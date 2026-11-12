@@ -1,6 +1,7 @@
 import type { LoaderConfig } from '../../data/data-loader-types';
 import type { AppFactories } from './factories';
 import type { ViewAxis } from '../../types/view-axis';
+import type { WebGPUDeviceRequest } from '../../scene/scene-manager/render-pipeline/renderer-setup';
 
 /**
  * Init-time options for {@link LuxarApp.init}.
@@ -104,15 +105,15 @@ export interface LuxarAppOptions {
    * bootstrap reads `?renderer=webgl|webgpu` and threads it here
    * so per-load A/B testing doesn't need a dev-server restart.
    *
-   * - `'webgl'`: `THREE.WebGLRenderer` + GLSL `ShaderMaterial` (the
-   *   production default).
+   * - `'webgl'`: `THREE.WebGLRenderer` + GLSL `ShaderMaterial`.
    * - `'webgpu'`: `WebGPURenderer` + TSL `NodeMaterial`. Internally
    *   falls back to WebGL2 when no WebGPU adapter.
-   * - Undefined: fall back to `VITE_LUXAR_USE_WEBGPU` (opt-in to
-   *   WebGPU) / `VITE_LUXAR_USE_LEGACY_WEBGL` (no-op, matches default)
-   *   env vars, then the WebGL default.
+   * - Undefined: use the build-time renderer env vars, then the platform
+   *   policy (WebGPU on measured platforms, WebGL elsewhere).
    */
   renderer?: 'webgl' | 'webgpu';
+  /** One-shot standalone startup request; omitted by embedders and on recovery. */
+  preRequestedWebGPUDevice?: Promise<WebGPUDeviceRequest>;
 
   /**
    * Diagnostic mode for `renderer: 'webgpu'`: construct
@@ -220,8 +221,9 @@ export interface LuxarAppOptions {
   bakeEnvironment?: { probe?: string; resolution?: number };
 
   /**
-   * WebGL-only blend warm-up (pre-compile each DISTINCT reachable
-   * blend-mode program variant, one compile per macrotask). Default:
+   * Blend warm-up (pre-compile each DISTINCT reachable blend-mode program
+   * variant on WebGL, or each mode's render pipeline on WebGPU, one compile
+   * per macrotask). Default:
    * true on laptops/desktops and false on phones/tablets. Mirrors
    * `UrlParams.blendWarmup` (`?noBlendWarmup` disables) — the
    * standalone bootstrap threads it here; embedders can disable it directly.

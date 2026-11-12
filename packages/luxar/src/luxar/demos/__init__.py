@@ -66,11 +66,12 @@ from ._support.downloads.download import (
     download_with_checksum,
     find_quarantined_files,
     format_quarantine_notice,
+    is_download_failure,
     quarantine_file,
     robust_download,
     warn_if_quarantined,
 )
-from ._support.downloads.remote_zip import download_zip_member
+from ._support.downloads.remote_zip import download_zip_member, download_zip_members
 from ._support.runtime.cli import run_luxar_cli
 from ._support.runtime.device import detect_device, warn_if_no_cuda_gpu
 from ._support.runtime.environment import bake_scene_environment
@@ -129,6 +130,7 @@ __all__ = [
     "detect_device",
     "download_with_checksum",
     "download_zip_member",
+    "download_zip_members",
     "ensure_dataset",
     "extras_for",
     "find_quarantined_files",
@@ -136,6 +138,7 @@ __all__ = [
     "format_quarantine_notice",
     "hsv_to_rgb",
     "is_installed",
+    "is_download_failure",
     "is_lfs_pointer",
     "control_serve_args",
     "bake_scene_environment",

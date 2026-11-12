@@ -18,6 +18,8 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import math
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
@@ -1705,44 +1707,39 @@ def _physical_voxel_size(
     axes_list: Optional[List[str]],
     ndim: int,
 ) -> "Tuple[Optional[List[float]], bool]":
-    """Resolve ``--physical`` spacing and whether workers need an override."""
+    """Resolve ``--physical`` spacing and whether workers need an override.
+
+    The same precedence and NGFF reading as ``gsplat fit --physical``
+    (:mod:`luxar.cli.gsplat_ops.voxel_frame`): a config ``voxel_size`` wins over
+    the store's scale. Unlike ``fit``, a batch run refuses to proceed without a
+    spacing — it would otherwise plan a whole timelapse in the wrong frame.
+    """
     if not fit.physical:
         return None, False
 
     from luxar.cli.gsplat_config import load_fit_config
-    from luxar.gsplats.tiling import resolve_grid_scale
+    from luxar.cli.gsplat_ops.voxel_frame import (
+        ngff_spatial_spacing,
+        require_real_output_space,
+        validated_spacing,
+    )
 
     config = load_fit_config(preset=fit.preset, config_path=fit.config)
-    if config.get("output_space", "real") != "real":
-        raise typer.BadParameter(
-            "--physical requires output_space: real; remove the config override "
-            "or omit --physical to keep voxel coordinates."
-        )
+    require_real_output_space(config)
 
     configured = config.get("voxel_size")
-    discovered = ome_info.voxel_size
-    if discovered is not None and axes_list is None:
-        discovered = tuple(
-            spacing
-            for size, spacing in zip(ome_info.spatial_shape, discovered, strict=True)
-            if size != 1
-        )
-    selected = configured if configured is not None else discovered
+    selected = (
+        configured
+        if configured is not None
+        else ngff_spatial_spacing(ome_info, axes_list)
+    )
     if selected is None:
         raise typer.BadParameter(
             "--physical requested physical coordinates, but the selected OME-Zarr "
             "array has no usable spatial scale in coordinateTransformations and "
             "the fit config does not define voxel_size."
         )
-    try:
-        resolve_grid_scale(ndim, voxel_size=selected, output_space="real")
-        values = (
-            [float(selected)] * ndim
-            if isinstance(selected, (int, float))
-            else [float(value) for value in selected]
-        )
-    except (TypeError, ValueError) as exc:
-        raise typer.BadParameter(f"--physical voxel size is invalid: {exc}") from exc
+    values = validated_spacing(selected, ndim, "--physical voxel size")
     return values, configured is None
 
 
@@ -1757,7 +1754,13 @@ def _configure_physical_fit_args(
     voxel_size, uses_ngff_spacing = _physical_voxel_size(fit, ome_info, axes_list, ndim)
     if uses_ngff_spacing:
         assert voxel_size is not None
+        from luxar.cli.gsplat_ops.voxel_frame import SOURCE_NGFF, _normalized_ngff_unit
+
         fit_args["voxel-size"] = ",".join(str(value) for value in voxel_size)
+        fit_args["voxel-size-source"] = SOURCE_NGFF
+        unit = _normalized_ngff_unit(ome_info.unit)
+        if unit is not None:
+            fit_args["voxel-unit"] = unit
     return voxel_size, uses_ngff_spacing
 
 
@@ -2043,12 +2046,24 @@ def _announce_seed_split(
     lower bound and leave the exact non-empty divisor to each ``--tile k/M``
     task. Task output does not reach this console: the local pool captures it
     and Slurm sends it to a log. Content plans ignore ``--seeds`` because
-    per-box budgets come from the density model.
+    per-box budgets come from the density model. An ``auto`` budget gets the
+    one-time warning the tile workers no longer print.
     """
-    if mode == "content" or not fit_args.get("seeds"):
+    if mode == "content":
         return
     from luxar.cli.gsplat_config import parse_seeds
-    from luxar.cli.gsplat_ops.fitting.fit_utils import announce_seed_split_lower_bound
+    from luxar.cli.gsplat_ops.fitting.fit_utils import (
+        announce_seed_split_lower_bound,
+        seeds_line,
+    )
+
+    seeds = fit_args.get("seeds")
+    if not seeds or str(seeds).strip().lower() == "auto":
+        # The tasks are `fit --tile k/M` workers, which stay quiet about auto:
+        # warn once here for the whole batch.
+        if "progressive" not in fit_args:
+            aprint(seeds_line(None, progressive=False, tile=None))
+        return
 
     # batch does not parse --seeds itself (it forwards the string verbatim, and
     # each task's own `fit` validates it), so guard: a malformed value must fail
@@ -2114,8 +2129,10 @@ def _batch_dimension_metadata(
             try:
                 unit = PhysicalUnit.validate(unit).value
             except ValueError:
-                pass
-            result["unit"] = unit
+                if spatial and physical_coordinates:
+                    unit = None
+            if unit:
+                result["unit"] = unit
         return result
 
     metadata = [descriptor(index, spatial=True) for index in spatial_indices]
@@ -2222,6 +2239,7 @@ def plan_batch(
     resolved_gpu
         GPU name recorded in the manifest.
     """
+    planning_started = time.perf_counter()
     from luxar.cli.gsplat_config import (
         PRESETS,
         decode_flat_channel_index,
@@ -2688,6 +2706,8 @@ def plan_batch(
             )
         )
     manifest.jobs = jobs
+    manifest.planning_seconds = time.perf_counter() - planning_started
+    manifest.command = sys.argv.copy()
 
     return PlanResult(
         manifest=manifest,

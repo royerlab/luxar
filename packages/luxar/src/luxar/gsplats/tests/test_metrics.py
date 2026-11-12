@@ -159,6 +159,8 @@ class TestQualityMetrics:
             "psnr_robust_db",
             "foreground_psnr_robust_db",
             "foreground_ssim",
+            "ssim_robust",
+            "foreground_ssim_robust",
             "data_range",
             "robust_data_range",
         }
@@ -711,6 +713,24 @@ class TestSeparableSSIM:
             sum(refs) / 3, abs=1e-6
         )
 
+    @pytest.mark.parametrize("shape", [(53, 70), (37, 45, 29)])
+    def test_tiled_ragged_edges_match_dense_kernel(
+        self, shape: tuple[int, ...]
+    ) -> None:
+        """The tiled path agrees with the dense n-D kernel at the volume edges.
+
+        Tile 16 / overlap 10 leaves a trailing strip on every axis that
+        ``_compute_tile_slices`` folds into the previous tile, so the last
+        tiles are ragged; their valid maps must still abut the interior ones
+        exactly at the border the dense VALID convolution trims.
+        """
+        g = torch.Generator().manual_seed(3)
+        a = torch.rand(shape, generator=g, dtype=torch.float64)
+        b = (a + 0.1 * torch.randn(shape, generator=g, dtype=torch.float64)).clamp(0, 1)
+        s, n = _ssim_nd_tiled(a, b, window_size=11, data_range=1.0, tile_size=16)
+        assert n == math.prod(d - 10 for d in shape)
+        assert s / n == pytest.approx(self._dense_reference(a, b, 11, 1.0), abs=1e-6)
+
     def test_no_im2col_blowup_on_cpu(self) -> None:
         """A 96^3 CPU SSIM stays near a few volumes of memory and is fast.
 
@@ -774,6 +794,64 @@ class TestRobustPeak:
         one_shot = metrics_mod.robust_peak(target, 0.999)
         monkeypatch.setattr(metrics_mod, "_STREAM_CHUNK_VOXELS", 997)
         assert metrics_mod.robust_peak(target, 0.999) == one_shot
+
+
+class TestRobustSSIM:
+    """SSIM's constants scale with the peak, so it needs the robust peak too."""
+
+    @staticmethod
+    def _noisy_fit_with_hot_pixel() -> tuple[dict, dict]:
+        target = _blobs()
+        rng = torch.Generator().manual_seed(0)
+        pred = target + torch.randn(target.shape, generator=rng) * 2.0
+        clean = compute_quality_metrics(pred, target)
+        hot_target = target.clone()
+        hot_target[0, 0, 0] = 50_000.0
+        hot_pred = pred.clone()
+        hot_pred[0, 0, 0] = 50_000.0  # reproduced exactly
+        return clean, compute_quality_metrics(hot_pred, hot_target)
+
+    def test_a_hot_pixel_inflates_full_range_ssim_but_not_the_headline(self) -> None:
+        clean, hot = self._noisy_fit_with_hot_pixel()
+        # Without the hot pixel the two peaks coincide, and so do the SSIMs.
+        assert clean["ssim_robust"] == clean["ssim"]
+        assert clean["foreground_ssim_robust"] == clean["foreground_ssim"]
+        # The headline does not move...
+        assert hot["ssim_robust"] == pytest.approx(clean["ssim_robust"], abs=1e-3)
+        assert hot["foreground_ssim_robust"] == pytest.approx(
+            clean["foreground_ssim_robust"], abs=1e-3
+        )
+        # ...while the full-range figure, still reported, is pushed to ~1 by
+        # constants sized for a peak 240x the real signal.
+        assert hot["ssim"] > 0.9999
+        assert hot["ssim"] > hot["ssim_robust"] + 0.03
+        assert hot["foreground_ssim"] > hot["foreground_ssim_robust"]
+
+    def test_a_poor_fit_is_not_hidden_by_a_hot_pixel(self) -> None:
+        """The tester's case: the full range reported a good SSIM for a bad fit."""
+        target = _blobs()
+        target[0, 0, 0] = 50_000.0
+        pred = torch.zeros_like(target)
+        pred[0, 0, 0] = 50_000.0
+        pred[target > 0] = target[target > 0] * 0.3  # loses 70% of the signal
+        m = compute_quality_metrics(pred, target)
+        assert m["foreground_ssim"] > 0.99
+        assert m["foreground_ssim_robust"] < 0.5
+
+    def test_headline_is_ssim_on_the_robust_range(self) -> None:
+        from luxar.gsplats.metrics import compute_ssim
+
+        target = _blobs() + 5.0
+        target[0, 0, 0] = 10_000.0
+        pred = target * 0.9
+        m = compute_quality_metrics(pred, target)
+        assert m["robust_data_range"] < m["data_range"]
+        assert m["ssim_robust"] == pytest.approx(
+            compute_ssim(pred, target, data_range=m["robust_data_range"]), abs=1e-6
+        )
+        assert m["ssim"] == pytest.approx(
+            compute_ssim(pred, target, data_range=m["data_range"]), abs=1e-6
+        )
 
 
 class TestRobustPSNR:

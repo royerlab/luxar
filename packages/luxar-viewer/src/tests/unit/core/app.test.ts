@@ -656,7 +656,7 @@ describe('LuxarApp', () => {
 
       // The probe path still exists for URLs that do not name themselves.
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://example.com/store/.zgroup',
+        'http://example.com/store/zarr.json',
         expect.objectContaining({ method: 'HEAD' })
       );
       expect(mockSceneManager.loadSceneData).toHaveBeenCalledWith(
@@ -1470,11 +1470,11 @@ describe('LuxarApp', () => {
       );
 
       const first = app.init({ canvas: mockCanvas, src: 'http://example.com/AAA' });
-      await vi.waitFor(() => expect(probes.has('http://example.com/AAA/.zgroup')).toBe(true));
+      await vi.waitFor(() => expect(probes.has('http://example.com/AAA/zarr.json')).toBe(true));
       app.dispose();
       const second = app.init({ canvas: mockCanvas, src: 'http://example.com/BBB' });
-      probes.get('http://example.com/AAA/.zgroup')?.({ ok: true });
-      await vi.waitFor(() => expect(probes.has('http://example.com/BBB/.zgroup')).toBe(true));
+      probes.get('http://example.com/AAA/zarr.json')?.({ ok: true });
+      await vi.waitFor(() => expect(probes.has('http://example.com/BBB/zarr.json')).toBe(true));
       for (const [url, resolve] of probes) {
         if (url.includes('BBB')) resolve({ ok: true });
       }

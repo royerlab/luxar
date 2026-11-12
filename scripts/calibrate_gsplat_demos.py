@@ -387,6 +387,13 @@ def _run_cli_cal(
         str(k_max),
         "--progression",
         progression,
+        # This script reads the min--max peak over the FULL requested grid;
+        # keep `cal` from stopping early or extending it, and keep the
+        # density (splat_density) on the same min--max K*.
+        "--k-star-metric",
+        "psnr_minmax",
+        "--no-early-stop",
+        "--no-extend-below",
         "--quiet",
     ]
     if floor is not None:

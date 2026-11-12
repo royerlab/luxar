@@ -14,11 +14,16 @@ Split by phase:
 
 - **`masking.py`** — Bernoulli mask generation (`cv_mask`) and donut-median self-supervision fill (`donut_median_fill`; held-out donors are excluded, clustered masks expand the radius, and an all-held-out volume is rejected)
 - **`metrics.py`** — Held-out reconstruction metrics (`held_out_psnr`, `held_out_gain_db`, `held_out_psnr_foreground`, `held_out_psnr_fg_weighted`, `predict_zero_baseline_mse`)
-- **`noise_floor.py`** — Ensemble noise-floor estimation (`estimate_noise_floor` → `NoiseFloor`) and DC-offset estimation (`estimate_floor`)
+- **`noise_floor.py`** — Ensemble noise-floor estimation (`estimate_noise_floor` → `NoiseFloor`), the in-mask noise sigma `gsplat compare` puts its noise ceiling on (`masked_noise_sigma`), and DC-offset estimation (`estimate_floor`)
 - **`content.py`** — Feature content estimation (local-maxima / edges / intensity counts) for splat-density prediction; Otsu and lightly smoothed foreground masks; auto region selection
 - **`curve_analysis.py`** — K-grid construction (`build_k_grid`), peak detection (`find_k_star` → `HeldOutPeak`, with `k_star_grid_warnings` flagging a K* on a grid edge or a curve flatter than 1 dB), transferable splat-density model (`SplatDensity`, `fit_saturation_exponent` → `ExponentFit`), parametric rate-distortion model (`fit_rd_model` → `RDModel`)
 - **`result.py`** — `CalibrationResult` container with JSON serialisation (non-finite floats round-trip as `null`)
-- **`driver.py`** — Top-level `calibrate` driver (wires together mask → fit → metrics → curve analysis; per-K scoring overwrites the render with its squared error and gathers only the 5 % held-out set, so peak memory stays near one volume plus SSIM's tiles) and `calibrate_saturation_exponent` (multi-scale α fit)
+- **`driver.py`** — Top-level `calibrate` driver (wires together mask → fit → metrics → curve analysis; per-K scoring overwrites the render with its squared error and gathers only the 5 % held-out set, so peak memory stays near one volume plus SSIM's tiles; assembles a `CalibrationResult` after every point for the `checkpoint` hook, and raises `CalibrationInterrupted` carrying the measured points on Ctrl-C) and `calibrate_saturation_exponent` (multi-scale α fit)
+- **`sweep.py`** — The per-K loop: `PointContext` (one fit → kept / stored counts, held-out scores on both PSNR peaks), `run_sweep` (early stop, ETA line, per-point hook), `extend_below`
+- **`sweep_control.py`** — `SweepControl` (what the sweep did; `cal.json` `sweep`), `plateau_reached`, `estimate_remaining_seconds`, `extension_below`
+- **`grid.py`** — `auto_k_bounds`: default sweep bounds sized from the foreground voxel count
+- **`spots.py`** — Report-only puncta check: `detect_spots` (local maxima of the floor-subtracted volume blurred at sigma 1, six robust sigmas up), `spot_peak_ratio` (median rendered/reference peak at those spots, recorded per K as `spot_peak_ratio`; measured in small patches around the spots, so its cost scales with the spot count) and `spot_fidelity_warning`, the `cal` warning when a larger K rendered the spots better and K* reached less than 95% of the sweep's best ratio (a noisy reference peak biases every render alike, so the share cancels it; a perfect render of a dim spot scores well under 1 on its own). Under `--region` / `--auto-region` the suggested K is restated as a whole-volume `--seeds` with K*'s own density transfer, or as `fit --tiling content` density flags. Held-out PSNR averages over every masked voxel, so on sparse puncta the background can dominate K*; this check never moves K*
+- **`whole_volume.py`** — `whole_volume_seeds`: a crop calibration's K* restated as a whole-input `--seeds` budget (the content planner's density transfer summed over crop-sized boxes)
 - **`__init__.py`** — Re-exports the public surface so `luxar.gsplats.calibration.X` resolves
 
 Supporting CLI report (lazy-imported, matplotlib-free when not used):
@@ -57,8 +62,8 @@ result = calibrate(
 print(f"Recommended K* = {result.held_out_peak.k_star:,}")
 print(f"Curve type     = {result.held_out_peak.type}")  # peak | plateau | signal_limited | low_k_optimal
 print(result.held_out_peak.warnings)  # K* on a grid edge / flat curve → extend the grid
-print(f"Noise floor σ̂ = {result.noise_floor.sigma_hat:.4f}")
-print(f"PSNR ceiling   = {result.noise_floor.psnr_max_db:.1f} dB")
+print(f"RMS noise σ    = {result.noise_sigma_rms:.4g}")  # intensity units
+print(f"PSNR ceiling   = {result.psnr_ceiling_robust_db:.1f} dB")  # robust peak
 
 # Persist or reload
 result.to_json(Path("cal.json"))
@@ -71,7 +76,9 @@ loaded = CalibrationResult.from_json(Path("cal.json"))
 - K values (requested + post-cull effective)
 - Per-K metrics: held-out PSNR/MSE, train PSNR, full PSNR/SSIM
 - `held_out_peak` (`HeldOutPeak`): recommended `k_star`, curve `type`, `confidence_db`, operating point `k_knee`, supporting metadata
-- `noise_floor` (`NoiseFloor`): ensemble `sigma_hat`, component estimators, `psnr_max_db`
+- `noise_floor` (`NoiseFloor`): ensemble `sigma_hat`, component estimators, `psnr_max_db` (a MEDIAN-voxel estimate on the full range: under shot noise it reads the quiet background)
+- `spot_count`, `spot_peak_ratio`: puncta detected on the floor-subtracted volume and, per K, the median ratio of rendered to reference peak at them (`spots.py`). On EASI-FISH level-0 crops K* reached 99% of the sweep's best on a dense FISH crop and 27%, 78% and 93% on three sparse ones, which is what the `cal` warning reports (an Allen hiPSC DNA crop reached 91%: textured nuclei can trigger it too)
+- `noise_sigma_rms`, `noise_scale_ratio`, `psnr_ceiling_robust_db`: the RMS noise a held-out MSE averages (intensity-binned Haar band of the floor-subtracted volume) and the held-out PSNR ceiling it implies on the robust peak the per-K table uses; this is the ceiling `gsplat cal` prints
 - Optional regime-robust extensions: `held_out_psnr_fg_db`, `held_out_psnr_fg_weighted_db`, `foreground_mask_fraction`, `foreground_otsu_threshold`, `fg_bg_ratio`, `held_out_gain_db`, `predict_zero_baseline_mse`, `calibration_region`, `splat_density`, `rd_model`, `exponent_fit`
 - Fitting provenance: `fit_times_seconds`, `fit_config`, `volume_shape`, `volume_dtype`, `timestamp`, optional `splat_paths` (when `--keep-fits`)
 - JSON (de)serialisation: non-finite floats round-trip as `null` → `nan`/`inf`; additive fields hydrate with defaults so old `cal.json` files keep loading
@@ -137,7 +144,38 @@ luxar gsplat cal volume.tiff cal.json --pdf cal_report.pdf
 luxar gsplat cal volume.tiff cal.json --pdf report.pdf --keep-fits fits/
 ```
 
-After calibration, re-fit at K*: `luxar gsplat fit volume.zarr out.zarr --seeds <K*>`.
+After calibration, re-fit at K*: `luxar gsplat fit volume.zarr out.zarr --seeds <K*>`
+(for a `--region`/`--auto-region` calibration, use the printed whole-volume
+`--seeds` instead).
+
+### Sweep defaults (CLI)
+
+`gsplat cal` passes a `SweepControl` (`calibrate(..., sweep_control=...)`; the
+library default `None` runs exactly the grid it is given):
+
+- **Bounds from the volume** when none are given (`auto_k_bounds`): `k_max` =
+  foreground voxels / 2, clamped to [4000, 512000]; `k_min` = `k_max` / 512.
+- **Early stop**: 2 consecutive points without a > 0.1 dB gain on the K*-metric,
+  or one point ≥ 0.2 dB below the best, end the sweep — once the measured curve
+  is decidable on its own (spans ≥ 0.3 dB, not `signal_limited`, K* not its top
+  point, and a `peak`/`low_k_optimal` or a still-flat `plateau`;
+  `sweep.should_stop`). On a creeping curve the early-stopped K* follows where it
+  stopped; `--no-early-stop` with an explicit `--k-max` shows the whole curve. The density's `saturation_cap` is then ESTIMATED
+  at the planned grid top (`saturation_cap_measured: false`), and the min-max
+  K* is flagged `sweep.minmax_curve_truncated` (`sweep.k_values_skipped`).
+- **Low-edge extension**: a K* on the smallest point that is also the curve's
+  best value fits up to 2 cheaper points below it, once
+  (`sweep.k_values_extended_below`).
+- **Foreground K*-metric**: the CLI default is `psnr_foreground`.
+
+Measured on a dense 13-point grid (GB10, `n2s`): on CTC A549 t000 (3 Mvoxel,
+3.3 % foreground) the whole-volume K* moved 250 → 2000 with the grid's lower
+end while the foreground K* was 1000 on every window, and early stop +
+extension fitted 5 points in 44 s instead of the historical grid's 924 s; on
+`cells3d` nuclei (16 % foreground) 7 points in 308 s instead of 1449 s, same K*
+(16000); on a dense 37.7 Mvoxel synthetic the foreground curve fell 0.25 dB past
+its 64000 peak at 128000 (a 63-minute fit), so the single-point decline rule
+stopped there instead of fitting 256000 and 512000. Full tables: the `luxar-gsplat-pipeline` skill's calibration-sweep reference.
 
 ## Invariants & Gotchas
 
@@ -159,7 +197,11 @@ Calibration applies `--floor` (default `"auto"`) **once** to the volume before m
 
 `held_out_gain_db` differs from `psnr_minmax` only by a constant because its predict-zero baseline does not vary with K, so it reports a useful diagnostic scale but selects the same K*.
 
-**Default K* selection**: Still uses `psnr_minmax` (additive). The alternatives are recorded in `CalibrationResult` fields (`held_out_gain_db`, `held_out_psnr_fg_db`, `held_out_psnr_fg_weighted_db`, `foreground_mask_fraction`, `foreground_otsu_threshold`, `fg_bg_ratio`, `predict_zero_baseline_mse`, `k_star_metric`, `held_out_peak_selected`) but not used by default.
+**Default K* selection**: the library `calibrate()` still defaults to `psnr_minmax` (the manuscript metric, always reported as `held_out_peak`); the `gsplat cal` CLI defaults to `psnr_foreground` (see "Sweep defaults"), stored as `held_out_peak_selected`. The alternatives are recorded in `CalibrationResult` fields (`held_out_gain_db`, `held_out_psnr_fg_db`, `held_out_psnr_fg_weighted_db`, `foreground_mask_fraction`, `foreground_otsu_threshold`, `fg_bg_ratio`, `predict_zero_baseline_mse`, `k_star_metric`, `held_out_peak_selected`).
+
+**Two PSNR peaks**: every held-out curve is computed on the full range (`data_range` = `max - min`, the historical `held_out_psnr_db`) and the robust peak `fit`/`compare` headline (`robust_data_range` = p99.99 − min, `held_out_psnr_robust_db`, `held_out_psnr_fg_robust_db`). The peak is one constant per volume, so the curves differ by `20·log10(robust/full)` and every K* rule selects the same K.
+
+**Counts**: `k_values_fitted` (before closing reductions), `k_values_effective` (after the cumulative cull — the scored model), `k_values_stored` (after the default `fit` speck pruning + cull; `k_star_stored` at K*). The cull is applied by the sweep rather than inside the fit so one fit yields all three.
 
 ### Peak Detection Hybrid Rule
 
@@ -192,6 +234,8 @@ All tests colocated in `packages/luxar/src/luxar/gsplats/tests/test_calibration.
 - Feature content: `count_features` (peaks/edges/intensity), `feature_threshold` shared scale, `select_calibration_region` (`densest`, small-volume `whole` fallback, hot-outlier robustness, unknown-strategy rejection)
 - `CalibrationResult`: JSON round-trip (non-finite floats → `null`), additive field defaults
 - Full sweep integration: Calls `fit_gaussian_splats` → `render_to_volume_tensor` → held-out/train/full metrics → noise floor → `find_k_star` → `CalibrationResult` with all metadata
+
+Sweep control (early stop, ETA, low-edge extension, auto bounds, robust-peak offset, kept/stored counts) is in `test_calibration_sweep_control.py`; the CLI side (checkpoint, Ctrl-C, stored-count line) in the CLI tests' `test_gsplat_cal_sweep.py`.
 
 Run via: `hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_calibration.py -v`
 

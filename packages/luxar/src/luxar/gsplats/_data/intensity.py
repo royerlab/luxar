@@ -8,7 +8,7 @@ ladder-preserving: a pyramid is rebuilt level by level, never collapsed.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING, Callable, Sequence, cast
+from typing import TYPE_CHECKING, Callable, Optional, Sequence, cast
 
 import numpy as np
 
@@ -36,6 +36,30 @@ def amplitudes_changed(before: np.ndarray, after: np.ndarray) -> bool:
     them.
     """
     return before.shape != after.shape or not bool(np.array_equal(before, after))
+
+
+def _with_basis(
+    source: "_GSplatDataOps", result: "GSplatData", factor: Optional[float]
+) -> "GSplatData":
+    """Keep ``result``'s intensity basis truthful after an amplitude edit.
+
+    ``factor`` is the exact multiplier the edit applied to every amplitude (the
+    basis scales with it); ``None`` means the edit was not one global factor (an
+    offset, a clamp, a per-splat reweight),
+    so the amplitude-unit basis is DROPPED and a converted scene says ``a.u.``
+    instead of claiming source counts (:func:`~luxar.gsplats.fit_basis.
+    rescale_intensity_basis`). A no-op edit keeps the stats untouched, and the
+    caller's dict is never mutated.
+    """
+    from luxar.gsplats.fit_basis import rescale_intensity_basis
+
+    src = cast("GSplatData", source)
+    if result is src or not amplitudes_changed(src.amplitudes, result.amplitudes):
+        return result
+    stats = dict(result.stats)
+    rescale_intensity_basis(stats, factor)
+    result.stats = stats
+    return result
 
 
 class IntensityMixin(_GSplatDataOps):
@@ -207,11 +231,14 @@ class IntensityMixin(_GSplatDataOps):
         Returns:
             New GSplatData with transformed amplitudes.
         """
+        factor = float(scale) if offset == 0 else None
         if self.n_substitutive > 1:
-            return self._map_amplitudes_per_level(
+            out = self._map_amplitudes_per_level(
                 lambda lvl: lvl.affine_intensity(scale, offset)
             )
-        return self._with_new_amplitudes(self.amplitudes * scale + offset)
+        else:
+            out = self._with_new_amplitudes(self.amplitudes * scale + offset)
+        return _with_basis(self, out, factor)
 
     def normalize_intensity(self, target_max: float = 1.0) -> "GSplatData":
         """Normalize amplitudes so the maximum equals target_max.
@@ -229,6 +256,9 @@ class IntensityMixin(_GSplatDataOps):
         current_max = float(self.amplitudes.max()) if self.n_splats > 0 else 0.0
         if current_max == 0:
             return self.scale_intensity(1.0)  # no-op, but preserves the pyramid
+        # One exact global factor, so the basis scales with it like any other
+        # `scale_intensity` (which records it as `intensity_scale`): scorers can
+        # still take it back out.
         return self.scale_intensity(target_max / current_max)
 
     def clamp_intensity(
@@ -246,15 +276,19 @@ class IntensityMixin(_GSplatDataOps):
             New GSplatData with clamped amplitudes.
         """
         if self.n_substitutive > 1:
-            return self._map_amplitudes_per_level(
-                lambda lvl: lvl.clamp_intensity(min, max)
+            return _with_basis(
+                self,
+                self._map_amplitudes_per_level(
+                    lambda lvl: lvl.clamp_intensity(min, max)
+                ),
+                None,
             )
         new_amps = self.amplitudes.copy()
         if min is not None:
             new_amps = np.maximum(new_amps, min)
         if max is not None:
             new_amps = np.minimum(new_amps, max)
-        return self._with_new_amplitudes(new_amps)
+        return _with_basis(self, self._with_new_amplitudes(new_amps), None)
 
     def scale_intensity(self, factor: float) -> "GSplatData":
         """Scale all splat amplitudes by a multiplicative factor.
@@ -275,10 +309,12 @@ class IntensityMixin(_GSplatDataOps):
             >>> brightened = data.scale_intensity(2.0)
         """
         if self.n_substitutive > 1:
-            return self._map_amplitudes_per_level(
+            out = self._map_amplitudes_per_level(
                 lambda lvl: lvl.scale_intensity(factor)
             )
-        return self._with_new_amplitudes(self.amplitudes * factor)
+        else:
+            out = self._with_new_amplitudes(self.amplitudes * factor)
+        return _with_basis(self, out, float(factor))
 
     def reweight_amplitude(self, multiplier: np.ndarray) -> "GSplatData":
         """Return a copy with per-splat amplitudes multiplied by ``multiplier``.
@@ -294,7 +330,9 @@ class IntensityMixin(_GSplatDataOps):
             raise ValueError(
                 f"multiplier shape {multiplier.shape} != ({self.n_splats},)"
             )
-        return self._with_new_amplitudes(self.amplitudes * multiplier)
+        return _with_basis(
+            self, self._with_new_amplitudes(self.amplitudes * multiplier), None
+        )
 
     def soft_scale_filter(
         self,
@@ -324,7 +362,7 @@ class IntensityMixin(_GSplatDataOps):
             return cast("GSplatData", self)
         if self.n_substitutive > 1:
             # Reweight each substitutive level against its OWN scale distribution.
-            return self._map_amplitudes_per_level(
+            out = self._map_amplitudes_per_level(
                 lambda lvl: lvl.soft_scale_filter(
                     highpass=highpass,
                     lowpass=lowpass,
@@ -332,6 +370,7 @@ class IntensityMixin(_GSplatDataOps):
                     spatial_dims=spatial_dims,
                 )
             )
+            return _with_basis(self, out, None)
         scl = np.clip(self.scale(axes=spatial_dims), 1e-12, None)
         w = max(float(width), 1e-6)
         mult = np.ones(self.n_splats, dtype=np.float64)

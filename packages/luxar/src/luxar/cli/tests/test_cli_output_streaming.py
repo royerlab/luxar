@@ -116,6 +116,7 @@ def test_quiet_fit_still_prints_the_backend_summary(
     from luxar.gsplats.fitting import initialization
 
     monkeypatch.setattr(initialization, "_ANNOUNCED_BACKENDS", set())
+    monkeypatch.delenv("LUXAR_CPU_BACKEND", raising=False)
     out = tmp_path / "fit.gsplats.zarr"
     result = CliRunner().invoke(
         app,
@@ -136,7 +137,15 @@ def test_quiet_fit_still_prints_the_backend_summary(
         ],
     )
     assert result.exit_code == 0, result.output
-    assert "Fitting backend: GaussianSplatModel (PyTorch renderer" in result.stdout
+    # A 3D CPU fit runs on the native numba kernels when numba imports.
+    import importlib.util
+
+    expected = (
+        "Fitting backend: GaussianSplatModelCPUNative (numba kernels, device=cpu)"
+        if importlib.util.find_spec("numba") is not None
+        else "Fitting backend: GaussianSplatModel (PyTorch renderer"
+    )
+    assert expected in result.stdout
 
 
 def _compare_inputs(tmp_path: Path) -> tuple[Path, Path]:

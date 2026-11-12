@@ -96,8 +96,12 @@ RECORDS = {
     "cc-by": {
         "title": "Luxar demo datasets: permissively licensed (CC-BY, CC0, public domain)",
         "license": "cc-by-4.0",
-        "zenodo_doi": "10.5281/zenodo.22804363",
-        "zenodo_record": "22804363",
+        # v2.1.0 (published 2026-10-21) added the budding-organoid frame bundle
+        # and the four EASI-FISH channel archives; v2.1.1 (2026-10-21) replaced
+        # only the organoid bundle with the max-composite membrane refit. Every
+        # other file carries over byte-identical, so the existing pins hold.
+        "zenodo_doi": "10.5281/zenodo.23548002",
+        "zenodo_record": "23548002",
         "zenodo_conceptdoi": "10.5281/zenodo.21912279",
         "base_url": None,
         "published": True,
@@ -490,6 +494,41 @@ DATASETS: dict[str, dict] = {
         # as superseded pins; the active pins now resolve to the cc-by v2.0.0
         # Zenodo deposition (R2 override retired 2026-09-18).
     ),
+    "gsplats_4d_organoid_budding": dict(
+        bucket="zenodo",
+        record="cc-by",
+        license="cc-by-4.0",
+        source=(
+            "LSTree light-sheet recordings, Zenodo 6828906 (recording "
+            "002-P21-25X-Budding: deconvolved rgb_grid frames + MaMuT lineage)"
+        ),
+        attribution=(
+            "de Medeiros, G., Ortiz, R., Strnad, P., Boni, A., Moos, F., Repina, "
+            "N., Challet Meylan, L., Maurer, F. & Liberali, P. Multiscale "
+            "light-sheet organoid imaging framework. Nature Communications 13, "
+            "4864 (2022). doi:10.1038/s41467-022-32465-z. Data: "
+            "doi:10.5281/zenodo.6828906 (CC BY 4.0)."
+        ),
+        acquisition=dict(
+            description=(
+                "167 of the authors' deconvolved rgb_grid frames of recording "
+                "002 (every fourth, T0244 standing in for the empty T0245): "
+                "8-bit RGB crops of the organoid, fitted per frame and channel"
+            ),
+            comparable=False,
+            reason=(
+                "the record holds only the authors' deconvolved 8-bit crops, not "
+                "the ~700 GB raw acquisition (available from the authors on "
+                "request), so no stored size describes what was imaged"
+            ),
+        ),
+        # ONE file: `organoid_budding_frames.gsplats.zarr.zip`, the demo's
+        # BUNDLE_NAME, a flat STORED zip of the 334 per-frame fit archives (167
+        # frames x 2 channels) named exactly as the demo's local caches. The
+        # lineage XML is not re-hosted; the demo still range-fetches it from
+        # Zenodo 6828906. Like every hosted-only dataset the PINS live in the
+        # committed manifest (`_files_for` returns it when nothing is on disk).
+    ),
     "gsplats_cell_tracking": dict(
         bucket="zenodo",
         record="cc-by",
@@ -697,6 +736,37 @@ DATASETS: dict[str, dict] = {
             "Range-extract one sample (~415 MB) from the 7.1 GB Zenodo "
             "archive + fit locally (GPU). The archive is never fetched whole."
         ),
+    ),
+    "gsplats_easifish_lha": dict(
+        bucket="zenodo",
+        record="cc-by",
+        license="cc-by-4.0",
+        source=(
+            "Janelia figshare 10.25378/janelia.13622819, EASI-FISH example "
+            "data round 3 (LHA3_R3_medium.czi)"
+        ),
+        attribution=(
+            "Wang Y, Eddison M, Fleishman G, et al. (Tillberg and Sternson "
+            "labs, HHMI Janelia), EASI-FISH for thick tissue defines lateral "
+            "hypothalamus spatio-molecular organization, Cell 184(26) (2021), "
+            "doi:10.1016/j.cell.2021.11.024. Data CC BY 4.0, "
+            "doi:10.25378/janelia.13622819."
+        ),
+        acquisition=dict(
+            description=(
+                "LHA3_R3_medium.czi, two unstitched tiles x 4 channels x 591 x "
+                "1920 x 1920 uint16 (34.9 GB as published); stitched, then the "
+                "mRNA channels fitted at xy/2 and DAPI at z/2, xy/4"
+            ),
+            comparable=True,
+            # The CZI as published (the demo's CZI_BYTES): the whole file every
+            # fit is derived from, the same denominator the scene caption uses.
+            stored_bytes=34_861_369_536,
+        ),
+        # FOUR files, one per channel: `easifish_{dapi,slc17a6,gpr83,bdnf}
+        # .gsplats.zarr.zip`, DEFLATED, each keeping its store directory as the
+        # internal prefix like the other hosted gsplat archives. Pins live in the
+        # committed manifest, as for every hosted-only dataset.
     ),
     # For this dataset, `redistribute=False` governs re-hosting the dataset
     # itself: the raw recording or a fitted archive derived from it. It does

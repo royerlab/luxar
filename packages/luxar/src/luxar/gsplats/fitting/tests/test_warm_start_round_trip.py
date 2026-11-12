@@ -409,3 +409,120 @@ def test_background_relative_amplitudes_are_not_capped_at_one() -> None:
     )
     _rescale_init_amps(ctx, image_min=10.0, intensity_range=100.0, verbose=False)
     np.testing.assert_allclose(ctx.init_amps, [0.0, 0.5, 1.5])
+
+
+def test_seed_scale_applies_to_the_signal_above_the_pedestal() -> None:
+    """Seeding samples ``0.9 * V``; the 0.9 must not eat into the pedestal.
+
+    On a pedestal of 400 a seed on a voxel 20 counts above it samples
+    ``0.9 * 420 = 378``, below the floor: subtracting the floor from that
+    started the seed at exactly zero (dead, then culled; F7). It must start at
+    ``0.9 * 20`` above the floor instead.
+    """
+    ctx = _InitContext(init_amps=0.9 * np.array([420.0, 400.0, 380.0, 500.0]))
+    ctx.init_amps_scale = 0.9
+    _rescale_init_amps(ctx, image_min=400.0, intensity_range=100.0, verbose=False)
+    np.testing.assert_allclose(ctx.init_amps, [0.18, 0.0, 0.0, 0.9], atol=1e-6)
+
+
+def test_unscaled_raw_amplitudes_rescale_as_before() -> None:
+    ctx = _InitContext(init_amps=np.array([420.0, 380.0, 600.0]))
+    _rescale_init_amps(ctx, image_min=400.0, intensity_range=100.0, verbose=False)
+    np.testing.assert_allclose(ctx.init_amps, [0.2, 0.0, 1.0])
+
+
+def test_generated_seeds_survive_a_pedestal() -> None:
+    """A fit on ``V + pedestal`` starts its seeds as a fit on ``V`` does."""
+    from luxar.gsplats.fitting.preprocessing import _generate_seeds
+
+    rng = np.random.default_rng(0)
+    V = np.zeros((16, 32, 32), np.float32)
+    zz, yy, xx = np.indices(V.shape)
+    for _ in range(12):
+        c = [rng.uniform(2, s - 2) for s in V.shape]
+        V += 20.0 * np.exp(
+            -((zz - c[0]) ** 2 + (yy - c[1]) ** 2 + (xx - c[2]) ** 2) / 4.0
+        ).astype(np.float32)
+    starts = []
+    for pedestal in (0.0, 400.0):
+        ctx = _InitContext()
+        _generate_seeds(V + pedestal, 200, "edges", False, init_ctx=ctx)
+        assert ctx.init_amps_scale == pytest.approx(0.9)
+        _rescale_init_amps(
+            ctx, image_min=pedestal, intensity_range=float(V.max()), verbose=False
+        )
+        starts.append(np.sort(ctx.init_amps))
+    np.testing.assert_allclose(starts[1], starts[0], atol=1e-4)
+    assert np.mean(starts[1] > 0) > 0.5
+
+
+def _pedestal_blobs() -> np.ndarray:
+    rng = np.random.default_rng(1)
+    V = np.zeros((12, 32, 32), np.float32)
+    zz, yy, xx = np.indices(V.shape)
+    for _ in range(10):
+        c = [rng.uniform(3, s - 3) for s in V.shape]
+        V += 20.0 * np.exp(
+            -((zz - c[0]) ** 2 + (yy - c[1]) ** 2 + (xx - c[2]) ** 2) / 4.0
+        ).astype(np.float32)
+    return V
+
+
+def _start_amplitudes(V: np.ndarray, seeds: Any, floor: Any, **kw: Any) -> np.ndarray:
+    """Amplitudes after one optimizer step: the seed's starting point."""
+    from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+
+    result = fit_gaussian_splats(
+        V,
+        seeds=seeds,
+        n_iters=1,
+        floor=floor,
+        device="cpu",
+        use_cuda=False,
+        use_metal=False,
+        enable_dynamic_ops=False,
+        cull_retention=None,
+        min_extent=0.0,
+        verbose=False,
+        **kw,
+    )
+    return np.sort(np.asarray(result.amplitudes, dtype=np.float64))
+
+
+def test_explicit_generate_seeds_survive_a_pedestal() -> None:
+    """``fit_gaussian_splats(V, seeds=generate_seeds(V))`` on ``V + 400``.
+
+    The documented explicit-seeding workflow hands in ``0.9 * V`` samples as a
+    raw-image GSplatData; on a pedestal the 0.9 used to push them below the
+    floor, so they started dead. They must start as on the clean volume.
+    """
+    from luxar.gsplats.seeds import generate_seeds
+
+    V = _pedestal_blobs()
+    starts = []
+    for pedestal in (0.0, 400.0):
+        seeds = generate_seeds(
+            V + pedestal, method="edges", target_seeds=150, device="cpu"
+        )
+        starts.append(_start_amplitudes(V + pedestal, seeds, floor=pedestal or "none"))
+    assert len(starts[0]) == len(starts[1])
+    assert np.mean(starts[1] > 1e-3 * starts[1].max()) > 0.5
+    np.testing.assert_allclose(starts[1], starts[0], rtol=0.05, atol=0.05)
+
+
+def test_background_relative_warm_start_keeps_its_amplitudes() -> None:
+    """A previous fit's output (background-relative) gets no seeding factor."""
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    V = _pedestal_blobs() + 400.0
+    seed = GSplatData(
+        centers=np.array([[6.0, 10.0, 10.0], [6.0, 20.0, 22.0]], np.float32),
+        cholesky_factors=np.tile(
+            np.array([1.5, 0.0, 1.5, 0.0, 0.0, 1.5], np.float32), (2, 1)
+        ),
+        amplitudes=np.array([5.0, 10.0], np.float32),
+    )
+    start = _start_amplitudes(
+        V, seed, floor=400.0, seed_amps_background_relative=True, output_space="voxel"
+    )
+    np.testing.assert_allclose(start, [5.0, 10.0], rtol=0.05)

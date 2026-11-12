@@ -104,6 +104,12 @@ def generate_seeds(
         edge_threshold_rel : float, default=0.1
             Relative edge threshold.
 
+        **Peaks Parameters** (method="peaks"):
+
+        seed : int or torch.Generator or None, optional
+            Local sampling seed or generator for peaks only. None uses PyTorch's
+            global RNG.
+
     Returns
     -------
     GSplatData
@@ -221,6 +227,7 @@ def generate_seeds(
         "n_seeds",
         "init_sigma",
         "device",
+        "seed",
     }
 
     # Passthrough params from higher-level APIs (used by fitter, not seeding)
@@ -251,7 +258,7 @@ def generate_seeds(
         if "peaks" in methods and used_by_peaks:
             peaks_kwargs[key] = value
 
-        if not (
+        if (key == "seed" and "peaks" not in methods) or not (
             used_by_decomposition
             or used_by_grid
             or used_by_edges

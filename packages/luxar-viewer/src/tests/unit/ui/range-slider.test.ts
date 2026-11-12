@@ -422,3 +422,41 @@ describe('RangeSlider — dispose', () => {
     expect(onBoundsChange).not.toHaveBeenCalled();
   });
 });
+
+describe('RangeSlider data-unit window (WP16)', () => {
+  it('adds no caption: the control takes the height of any range control', () => {
+    makeSlider({ label: 'Display range' });
+    expect(host.querySelector('.luxar-range-slider__caption')).toBeNull();
+  });
+
+  it('refines the step on a tiny DATA-UNIT track only; old scenes keep 0.001', () => {
+    const { slider } = makeSlider({ min: 0, max: 4200, valueLow: 0, valueHigh: 4200 });
+    const low = host.querySelector<HTMLInputElement>('.luxar-range-slider__input--low')!;
+    expect(low.step).toBe('0.001');
+    slider.setBounds(0, 1e-5);
+    // No unit (an old scene): the historical snapping, exactly.
+    expect(low.step).toBe('0.001');
+    slider.setDataUnits(true);
+    expect(Number(low.step)).toBeCloseTo(1e-8, 15);
+    slider.setBounds(0, 1);
+    expect(low.step).toBe('0.001');
+  });
+
+  it('formats data-unit bounds with thousands separators, editable without them', () => {
+    const { slider } = makeSlider({
+      label: 'Display range',
+      min: 0,
+      max: 24271.5,
+      valueLow: 508,
+      valueHigh: 24271,
+    });
+    const bounds = host.querySelectorAll<HTMLElement>('.luxar-range-slider__bound');
+    // Historical readout until the layer declares data units (old scenes unchanged).
+    expect(bounds[1].textContent).toBe('24271.5');
+    slider.setDataUnits(true);
+    expect(bounds[1].textContent).toBe('24,272');
+    // One formatter for header and bounds, so the same value reads the same.
+    const values = host.querySelectorAll<HTMLElement>('.luxar-range-slider__value');
+    expect(values[1].textContent).toBe('24,271');
+  });
+});

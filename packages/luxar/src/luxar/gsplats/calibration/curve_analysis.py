@@ -431,6 +431,10 @@ class SplatDensity:
     planner must scan at this same absolute level so its per-box counts are on the
     same scale as the reference (threshold-relative-to-local-max does not compose
     across regions, especially with hot outliers)."""
+    saturation_cap_measured: bool = True
+    """False when ``saturation_cap`` is an ESTIMATE: the sweep stopped early, so
+    the planned grid top was never fitted and its effective count was
+    extrapolated from the largest measured point's kept/requested ratio."""
 
     def predict_k(self, n_features: int) -> int:
         """Predict the splat budget for a region with ``n_features`` features."""

@@ -45,8 +45,10 @@ export interface KioskPorts {
   canvas?: EventTarget;
   /** Reload the page. Injected so a test never navigates. */
   reload?: () => void;
-  /** Subscribe to an unrecoverable GPU loss (WebGPU `device.lost`); returns the unsubscribe. */
+  /** Subscribe to a WebGPU device loss; returns the unsubscribe. */
   onDeviceLost?: (listener: () => void) => () => void;
+  /** Subscribe to a WebGPU device recovery; returns the unsubscribe. */
+  onDeviceRestored?: (listener: () => void) => () => void;
 }
 
 export interface KioskTeardown {
@@ -89,7 +91,8 @@ export function applyKioskMode(mode: KioskMode, ports: KioskPorts): KioskTeardow
           canvas: ports.canvas,
           graceS: mode.watchdogGraceS,
           reload: ports.reload ?? (() => window.location.reload()),
-          onUnrecoverableLoss: ports.onDeviceLost,
+          onDeviceLost: ports.onDeviceLost,
+          onDeviceRestored: ports.onDeviceRestored,
         })
       : undefined;
   return {

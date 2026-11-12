@@ -18,7 +18,7 @@ import {
   syncLineMaterialWithGeometry,
   syncPointMaterialWithGeometry,
 } from '../../../rendering/material-sync-helpers';
-import { getBlendModeProgramWarmupStats } from '../../../rendering/webgl-blend-warmup';
+import { getBlendModeProgramWarmupStats } from '../../../rendering/blend-warmup';
 import { materialManager, type BlendingMode } from '../../../rendering/material-manager';
 import { normalizeBlendingMode } from '../../../rendering/blending-state';
 import { getDepthSortWorkerStatus } from '../../../rendering/depth-sort-coordinator';
@@ -106,7 +106,9 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     get camera() {
       return ports.sceneManager.camera;
     },
-    renderer: ports.sceneManager.renderer,
+    get renderer() {
+      return ports.sceneManager.renderer;
+    },
     controls: ports.sceneManager.controls,
     postProcessing: ports.sceneManager.postProcessing,
     // The scene environment's state, and the `?bakeEnv` hand-off slot the

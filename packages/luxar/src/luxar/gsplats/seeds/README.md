@@ -252,9 +252,10 @@ seeds = seed_from_edges(
 ```python
 seeds = seed_from_peaks(
     V,                                    # Input volume (any dimensionality)
-    n_seeds=None,                         # Number of seeds (None = one per non-zero voxel)
+    n_seeds=100,                          # Sample 100 seeds (None = one per non-zero voxel)
     init_sigma=None,                      # Gaussian sigma (None = auto-scaled)
     device=None,                          # GPU device ('cuda', 'mps', 'auto', None)
+    seed=42,                              # Reproducible sampling without changing global RNG
 )
 ```
 
@@ -458,6 +459,9 @@ All methods sample seed amplitudes from the input volume and scale them by
 below the target intensity avoids initial over-prediction when splats overlap,
 which would otherwise trigger the asymmetric over-prediction penalty and risk
 divergence. The optimizer raises amplitudes as needed during fitting.
+The sampled values still carry the volume's background pedestal; the fitter
+removes the pedestal before re-applying the factor (`_rescale_init_amps` in
+`fitting/preprocessing.py`), so the 0.9 shrinks only the signal above the floor.
 
 ### Peak Detection Algorithm
 
@@ -512,9 +516,15 @@ hatch run pytest packages/luxar/src/luxar/gsplats/seeds/tests/test_generate_seed
 | `multiscale_decomposition.py` | `seed_from_decomposition()` |
 | `grid.py` | `seed_from_grid()` |
 | `edges.py` | `seed_from_edges()`, plus shared `_compute_nd_sobel_magnitude()` and `_sample_amplitudes()` helpers |
-| `peaks.py` | `seed_from_peaks()` (PyTorch, GPU-accelerated multinomial sampling) |
-| `utils.py` | `local_maxima()`, `dedupe_farthest_first()`, `greedy_min_distance_select()`, `combine_seeds()`, `sigmas_to_cholesky_isotropic()`, `SEED_AMPLITUDE_SCALE`; re-exports `SpatialHashGrid` from `luxar.gsplats.spatial_hash` |
+| `peaks.py` | `seed_from_peaks()` (PyTorch, GPU-accelerated multinomial sampling), `top_k_indices_stable()` |
+| `utils.py` | `local_maxima()`, `dedupe_farthest_first()`, `greedy_min_distance_select()`, `combine_seeds()`, `sigmas_to_cholesky_isotropic()`, `argsort_descending()`, `SEED_AMPLITUDE_SCALE`; re-exports `SpatialHashGrid` from `luxar.gsplats.spatial_hash` |
 | `gpu_ops.py` | PyTorch GPU kernels (`_get_device()`, `should_use_gpu()`, Sobel/grid-sample) shared by the CPU/GPU dispatch paths |
+
+Every sort that decides seed order is stable: brightest first, with equal
+values kept in input (C) order (`argsort_descending()`, `torch.sort(...,
+stable=True)`, `top_k_indices_stable()`). NumPy's default `argsort` and
+`torch.topk` order ties differently on x86 and arm64, which used to make the
+same fit give different seeds on Linux and macOS.
 
 ## References
 

@@ -36,7 +36,7 @@ ln -sfn ../../.agents/skills/<skill-name> .claude/skills/<skill-name>
 
 | Skill | Purpose |
 | --- | --- |
-| `luxar-install` | Install Luxar on a machine — user-install vs dev-setup, per profile: modest laptop, NVIDIA-GPU desktop, Slurm/HPC cluster (no-sudo path, CUDA extension via `SLURM=1`). |
+| `luxar-install` | Install Luxar on a machine — `pip install` into a venv first (Python 3.12 per OS, extras, CPU-only torch, runtime Metal, NVRTC CUDA and numba CPU kernels), then the source-checkout dev route: the optional ahead-of-time CUDA extension, Slurm/HPC cluster (no-sudo path, `SLURM=1`). |
 | `luxar-visualization` | Build a `.luxar.zarr` scene from a dataset (Points/Lines/GSplats, Dimensions, transforms) and view it. |
 | `luxar-gsplat-pipeline` | Calibrate, fit, and build LOD for Gaussian splats (`luxar gsplat` cal -> fit -> lod, tiling), full CLI options + Python API. |
 | `luxar-hpc-batch-fit` | Fit a whole nD timelapse at scale — local multi-GPU (`batch-fit run`) or Slurm/Bruno (`batch-fit submit`); status/validate/merge/cancel + GPU benchmark. |
@@ -47,6 +47,9 @@ ln -sfn ../../.agents/skills/<skill-name> .claude/skills/<skill-name>
 ## Authoring a new skill
 
 1. Create `.agents/skills/<name>/SKILL.md` with `name` + `description` frontmatter.
-2. Keep `SKILL.md` lean (< ~500 lines); push detail into `references/`.
+2. Keep `SKILL.md` under 500 lines; push measured cases and lore into
+   `references/*.md` and link each one from `SKILL.md` (or a sibling reference).
+   `packages/luxar/src/luxar/tests/test_agent_skills.py` enforces the line budget,
+   the links, the frontmatter, the symlink, and the table row (step 4).
 3. Symlink it into `.claude/skills/` (see above).
 4. Add a row to the table above.

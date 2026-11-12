@@ -29,6 +29,16 @@ from .partition_flatten import (
 )
 from .transform import run_transform_dataset
 
+
+def _positive_factor(value: Optional[float]) -> Optional[float]:
+    """An intensity factor/target must be positive and finite (or absent)."""
+    import math
+
+    if value is not None and not (math.isfinite(value) and value > 0.0):
+        raise typer.BadParameter(f"must be a positive number, got {value!r}")
+    return value
+
+
 if TYPE_CHECKING:
     pass
 
@@ -842,12 +852,16 @@ def transform_dataset(
     ),
     # Intensity transforms
     scale_intensity_factor: Optional[float] = typer.Option(
-        None, "--scale-intensity", help="Scale amplitudes by factor (e.g. 0.01)"
+        None,
+        "--scale-intensity",
+        callback=_positive_factor,
+        help="Scale amplitudes by a positive factor (e.g. 0.01)",
     ),
     normalize_intensity: Optional[float] = typer.Option(
         None,
         "--normalize-intensity",
-        help="Normalize amplitudes so max equals this value (e.g. 1.0)",
+        callback=_positive_factor,
+        help="Normalize amplitudes so max equals this positive value (e.g. 1.0)",
     ),
     # Output options
     encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(

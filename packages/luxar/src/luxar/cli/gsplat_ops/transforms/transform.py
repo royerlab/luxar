@@ -150,6 +150,18 @@ class _IntensityChangeRecorder:
             drop_content_scoped_stats(stats)
 
 
+def _rebase_intensity_stats(stats: "Optional[dict]", *factors: Optional[float]) -> None:
+    """Carry the normalisation basis through intensity edits (see
+    :func:`~luxar.gsplats.fit_basis.rescale_intensity_basis`): ``--scale-intensity``
+    and ``--normalize-intensity`` are each one exact global factor, so the basis
+    scales with each applied factor (``None`` = that edit did not run)."""
+    from luxar.gsplats.fit_basis import rescale_intensity_basis
+
+    for factor in factors:
+        if factor is not None:
+            rescale_intensity_basis(stats, factor)
+
+
 def _restamp_tree_after_intensity(
     node: "GSplatNode", source: "GSplatNode", *, changed: bool
 ) -> "GSplatNode":
@@ -424,6 +436,7 @@ def run_transform_dataset(
                             f"target max: {normalize_intensity}"
                         )
                         data = data.normalize_intensity(normalize_intensity)
+                # (The GSplatData intensity methods rebase ``data.stats`` themselves.)
                 result_node = data.tree
             else:
                 # ── Tree-walking path: kind=partition / nested (structure kept) ──
@@ -437,6 +450,8 @@ def run_transform_dataset(
                 # Centroid shift applied by --center, captured for the split-plane
                 # remap below (it is only known once the centroid is measured).
                 center_shift: "Optional[np.ndarray]" = None
+                # The exact factor --normalize-intensity applied (None = no edit).
+                normalize_factor: Optional[float] = None
                 intensity = _IntensityChangeRecorder()
                 source_node = node
 
@@ -510,6 +525,7 @@ def run_transform_dataset(
                         )
                         if current_max > 0:
                             factor = normalize_intensity / current_max
+                            normalize_factor = factor
                             node = map_leaves(
                                 node,
                                 _leaf_op(
@@ -519,6 +535,7 @@ def run_transform_dataset(
                                 ),
                             )
                 intensity.scrub_root(stats)
+                _rebase_intensity_stats(stats, scale_intensity_factor, normalize_factor)
                 node = _restamp_tree_after_intensity(
                     node, source_node, changed=intensity.changed
                 )

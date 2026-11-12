@@ -14,9 +14,11 @@
     "bootstrapStandalone",
     "buildInfo",
     "buildInfoLine",
+    "buildMaterial",
     "getCompleteBlendingState",
     "normalizeDataSourceUrl",
     "readUrlParams",
+    "setTSLNodeOverride",
     "supportsScalarColormap"
   ]
 }

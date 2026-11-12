@@ -25,6 +25,9 @@ from luxar.gsplats.utils.trils import (
     validate_cholesky_shape,
 )
 
+# Shared by CLI torch setup and native CPU kernel worker allocation.
+CPU_THREADS_ENV = "LUXAR_CPU_THREADS"
+
 if TYPE_CHECKING:  # pragma: no cover - static analysis only
     from luxar.gsplats.utils.device import is_mps_available, resolve_torch_device
 

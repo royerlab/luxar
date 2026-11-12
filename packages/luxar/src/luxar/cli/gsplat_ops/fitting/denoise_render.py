@@ -264,10 +264,15 @@ def run_denoise_volume_cmd(
 def _load_render_leaves(
     input_path: Path, voxel_size: Optional[str]
 ) -> tuple[list[GSplatData], dict, int, Any]:
-    """The default-rendered leaves on the voxel grid, root stats, ndim, axis names."""
+    """The default-rendered leaves on the voxel grid, root stats, ndim, axis names.
+
+    The leaves are also back in the source's units: a recorded
+    ``intensity_scale`` (``transform --scale-intensity``) is divided out.
+    """
+    from luxar.gsplats.fit_basis import stored_intensity_scale
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.io.load_gsplats import load_gsplat_node
-    from luxar.gsplats.scoring_grid import map_to_grid
+    from luxar.gsplats.scoring_grid import amplitudes_in_source_units, map_to_grid
     from luxar.gsplats.tree import iter_default_leaves
 
     from ..compare_ops import resolve_voxel_size
@@ -285,7 +290,60 @@ def _load_render_leaves(
             f"(from {source})"
         )
         datas = [map_to_grid(d, scale=scale) for d in datas]
+    intensity_scale = stored_intensity_scale(stats)
+    if intensity_scale != 1.0:
+        aprint(
+            f"Amplitudes divided by intensity_scale={intensity_scale:.6g} (a "
+            "transform --scale-intensity edit); rendering in the source's units"
+        )
+        datas = [amplitudes_in_source_units(d, intensity_scale) for d in datas]
     return datas, stats, ndim, node.meta.get("dimension_metadata")
+
+
+def _recorded_fit_level(stats: Optional[dict]) -> Optional[float]:
+    """The ``image_min`` a store records, signed, else ``fit_image_min``'s answer.
+
+    ``fit_image_min`` refuses a negative level (it would corrupt a reference
+    shift), but a fit of signed data legitimately records one, and for the
+    render note "subtracted -12.5" is the truth while "not recorded" is not.
+    """
+    import math
+
+    from luxar.gsplats.fit_basis import fit_image_min
+
+    value = (stats or {}).get("image_min")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if math.isfinite(float(value)):
+            return float(value)
+    return fit_image_min(stats)
+
+
+def _announce_render_basis(stats: Optional[dict]) -> None:
+    """One line on the output's basis: background-relative, and by how much.
+
+    A fit reconstructs ``V - image_min`` and never adds the level back, so the
+    render sits that far below the raw volume; adding it back is the user's
+    step before any comparison with the raw data.
+    """
+    level = _recorded_fit_level(stats)
+    if level is None:
+        aprint(
+            "Output is background-relative: the fit's subtracted level is not "
+            "added back, and this store does not record it (no image_min)."
+        )
+    elif level == 0.0:
+        aprint(
+            "Output is background-relative; the store records image_min=0 (no "
+            "background subtracted), so it is in the source's units."
+        )
+    else:
+        aprint(
+            f"Output is background-relative: the fit subtracted image_min="
+            f"{level:.6g} (source units), which is not added back. Add it before "
+            "comparing with the raw volume (the fit's target was clipped at 0 "
+            "after the subtraction, so source voxels below that level are not "
+            "represented)."
+        )
 
 
 def _save_volume(volume: np.ndarray, output_path: Path) -> None:
@@ -351,6 +409,7 @@ def run_render_to_file(
                     f"range [{volume.min():.4f}, {volume.max():.4f}]"
                 )
 
+            _announce_render_basis(stats)
             _save_volume(volume, output_path)
 
         aprint(f"\nSaved: {output_path}")

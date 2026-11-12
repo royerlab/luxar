@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from luxar.core.dimension_inference import build_dimensions_from_data
 from luxar.gsplats._data.base import _GSplatDataOps
 from luxar.gsplats.gsplat_data import GSplatData
 
@@ -199,6 +200,42 @@ class TestTranslate:
 
 
 class TestCenterAtCentroid:
+    def test_integer_centers_keep_fractional_centroid_shift(self):
+        gs = GSplatData(
+            centers=np.array([[0, 0, 0], [1, 1, 1]], dtype=np.int32),
+            amplitudes=np.ones(2, dtype=np.float32),
+            cholesky_factors=np.zeros((2, 6), dtype=np.float32),
+        )
+
+        centered = gs.center_at_centroid()
+        np.testing.assert_array_equal(
+            centered.centers,
+            np.array([[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]]),
+        )
+
+    def test_empty_centers_keep_float32_dtype(self):
+        gs = _make_empty_gsplat(ndim=3)
+        assert gs.centers.dtype == np.float32
+        assert gs.center_at_centroid().centers.dtype == np.float32
+
+    def test_float32_centers_keep_exact_inferred_ranges(self):
+        rng = np.random.default_rng(0)
+        centers = rng.uniform(-25, 25, (12, 3)).astype(np.float32)
+        gs = GSplatData(
+            centers=centers,
+            amplitudes=(rng.random(12) + 0.1).astype(np.float32),
+            cholesky_factors=np.zeros((12, 6), dtype=np.float32),
+        )
+
+        centered = gs.center_at_centroid()
+        assert centered.centers.dtype == np.float32
+        dimensions = build_dimensions_from_data(centered.centers)
+        for i, dim in enumerate(dimensions.dimensions):
+            assert dim.range == (
+                float(centered.centers[:, i].min()),
+                float(centered.centers[:, i].max()),
+            )
+
     def test_uniform_amplitudes(self):
         """With uniform amplitudes, centroid = unweighted mean."""
         gs = GSplatData(

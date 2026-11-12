@@ -13,6 +13,7 @@
 import { test, expect } from './fixtures';
 import { raceEvaluate, waitForLuxarReady } from './helpers';
 import { flushRenderTicks, reportFlushVerdict } from './render-ticks';
+import { skipUnlessWebGL } from './webgpu-project';
 
 // Test all example datasets for WebGL errors
 const DATASETS = [
@@ -50,6 +51,14 @@ const DATASETS = [
 // `reportFlushVerdict` fails only on the evidence that the renderer really is
 // not drawing.
 test.describe.configure({ mode: 'default', timeout: 120000 });
+
+// Every detector here reads the WebGL error queue or the `GL_*` / `WebGL:`
+// console lines the GL implementation emits; a canvas in `webgpu` mode has
+// neither. The native-WebGPU counterpart is `getWebGLErrors` draining the
+// renderer's uncaptured GPU errors, which the rendering specs already call.
+test.beforeEach(() => {
+  skipUnlessWebGL('reads the WebGL error queue and GL console diagnostics');
+});
 
 // A timed-out test never reaches its own `expect` or the `console.log` dumps
 // that sit after the wait, and the shared fixture skips its teardown check for

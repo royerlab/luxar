@@ -379,6 +379,7 @@ export class MaterialManager {
       gamma: props.gamma,
       intensity: props.intensity,
       offset: props.offset,
+      displayGain: props.displayGain ?? 1.0,
       blendingMode: props.blendingMode,
       truncationRadius: props.truncationRadius ?? GSPLAT_DEFAULT_TRUNCATION_RADIUS,
     });

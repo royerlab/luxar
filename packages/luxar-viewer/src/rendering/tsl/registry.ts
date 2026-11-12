@@ -4,10 +4,10 @@
  * This is the **only** module under `src/` that may statically import
  * `three/webgpu` or `three/tsl` (transitively, via the `*-tsl` / `*.tsl`
  * modules it pulls in). Everything else reaches these classes and factories
- * through `rendering/tsl/load`, which imports this file
- * dynamically — so rolldown places this whole subgraph, plus the ~182 kB
- * gzipped `three-webgpu` chunk, in a lazy chunk that is fetched only when the
- * WebGPU backend is actually selected.
+ * through dynamic imports in `rendering/tsl/load` and the standalone
+ * `core/early-webgpu-prefetch` entry — so rolldown places this whole subgraph,
+ * plus the ~182 kB gzipped `three-webgpu` chunk, in a lazy chunk that
+ * sessions selecting `WebGLRenderer` at the outset do not fetch.
  *
  * That is the entire point of the file's existence, and the reason it looks
  * like a barrel with nothing of its own to say. Two gates hold it: the ESLint

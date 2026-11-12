@@ -254,8 +254,8 @@ const clearBlendModeProgramWarmup = vi.fn();
 // The layer's OWN warm-up manager (registered for commit routing).
 const registerBlendWarmupManager = vi.fn();
 const unregisterBlendWarmupManager = vi.fn();
-vi.mock('../../../rendering/webgl-blend-warmup', () => ({
-  WebGLBlendWarmupManager: class {
+vi.mock('../../../rendering/blend-warmup', () => ({
+  BlendWarmupManager: class {
     configure = (...a: unknown[]) => configureBlendModeProgramWarmup(...a);
     warmScene = (root: THREE.Object3D) => warmSceneBlendModePrograms(root);
     clear = () => clearBlendModeProgramWarmup();
@@ -402,10 +402,11 @@ describe('LuxarLayer', () => {
         renderer: options.renderer,
         camera: expect.any(THREE.Camera),
         targetScene: options.scene,
+        pipelineVariants: false,
       });
     });
 
-    it('disables WebGL blend-program warm-up on mobile', async () => {
+    it('disables blend-program warm-up on mobile', async () => {
       inputProfile.deviceClass = 'mobile';
       const options = makeOptions();
       const layer = new LuxarLayer(options);
@@ -416,6 +417,7 @@ describe('LuxarLayer', () => {
         renderer: options.renderer,
         camera: expect.any(THREE.Camera),
         targetScene: options.scene,
+        pipelineVariants: false,
       });
     });
 
@@ -429,11 +431,15 @@ describe('LuxarLayer', () => {
         renderer: options.renderer,
         camera: expect.any(THREE.Camera),
         targetScene: options.scene,
+        pipelineVariants: false,
       });
     });
 
-    it('disables WebGL blend-program warm-up for a WebGPU renderer', async () => {
+    it('warms pipeline variants (one per blend mode) for a WebGPU renderer', async () => {
+      const target = new THREE.WebGLRenderTarget(1, 1);
+      const getWarmupRenderTarget = vi.fn(() => target);
       const options = makeOptions({
+        getWarmupRenderTarget,
         renderer: {
           getDrawingBufferSize: (v: THREE.Vector2) => v.set(800, 600),
           getPixelRatio: () => 2,
@@ -443,10 +449,12 @@ describe('LuxarLayer', () => {
       await layer.load('http://example.test/scene.zarr');
 
       expect(configureBlendModeProgramWarmup).toHaveBeenCalledWith({
-        enabled: false,
-        renderer: null,
+        enabled: true,
+        renderer: options.renderer,
         camera: expect.any(THREE.Camera),
         targetScene: options.scene,
+        pipelineVariants: true,
+        getRenderTarget: getWarmupRenderTarget,
       });
     });
 

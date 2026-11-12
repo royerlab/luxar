@@ -285,6 +285,7 @@ describe('composeAttrs — algebraic invariants (data.md H6)', () => {
       gamma: 1.0,
       intensity: 1.0,
       offset: 0.0,
+      display_gain: 1.0,
       blending_mode: undefined,
       join: undefined,
     });

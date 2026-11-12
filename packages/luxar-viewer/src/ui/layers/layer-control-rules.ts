@@ -33,6 +33,7 @@ export interface LayerControlRule {
 /** Every control id, in panel order (also the `data-control` attribute values). */
 export const LAYER_CONTROL_IDS = [
   'displayRange',
+  'brightness',
   'gamma',
   'opacity',
   'absorption',
@@ -112,6 +113,9 @@ const section = (visibleFor: (layer: LayerInfo) => boolean): LayerControlRule =>
 /** The table. Keyed by {@link LayerControlId}, so a missing row is a compile error. */
 export const LAYER_CONTROL_RULES: Readonly<Record<LayerControlId, LayerControlRule>> = {
   displayRange: section(() => true),
+  // The data-unit display gain scales a splat AMPLITUDE: gsplats layers only
+  // (a kind=partition / kind=lod wrapper resolves to its `display_type`).
+  brightness: section((l) => l.type === 'gsplats'),
   // The physical family has no gamma term.
   gamma: section((l) => !isPhysicalMesh(l)),
   opacity: section(() => true),

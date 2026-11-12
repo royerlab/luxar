@@ -2,13 +2,19 @@
  * Helper utilities for Playwright E2E tests
  */
 
-import { Page } from '@playwright/test';
+import { test, Page } from '@playwright/test';
 
 import { isTypingSurfaceInPage } from './page-predicates';
+import { isUnpinnedViewerPage, isWebGPUProject, requiresNativeWebGPU } from './webgpu-project';
 
 /**
  * Wait for Luxar to fully initialize
  * Increased timeout for E2E tests with real dataset loading
+ *
+ * In the native-WebGPU project (`chromium-webgpu`, see `webgpu-project.ts`)
+ * this is also where that project's premise is enforced: viewer pages must
+ * select a renderer, and those asking for `renderer=webgpu` must have come up
+ * on a native, non-fallback WebGPU adapter — see {@link assertNativeWebGPUIfRequired}.
  */
 export async function waitForLuxarReady(page: Page, timeout = 45000): Promise<void> {
   await page.waitForFunction(
@@ -19,6 +25,79 @@ export async function waitForLuxarReady(page: Page, timeout = 45000): Promise<vo
     null, // no arguments to pass to the pageFunction
     { timeout }
   );
+  await assertNativeWebGPUIfRequired(page);
+}
+
+/**
+ * Fail fast when a native-WebGPU-project page did not get a native backend.
+ *
+ * Without this the project degrades silently: `WebGPURenderer` swaps in its
+ * WebGL2 backend with only a console warning when no adapter can be had, and
+ * every spec would then pass on WebGL while the run reads as WebGPU coverage.
+ * A SwiftShader adapter (`isFallbackAdapter`, which is all Playwright's bundled
+ * headless Chromium offers) is refused for the same reason: it runs WGSL, but
+ * on the CPU, at a speed and with limits no user sees.
+ * `LUXAR_E2E_WEBGPU_ALLOW_FALLBACK=1` accepts it, for a GPU-less box.
+ *
+ * Also hooks the renderer's uncaptured-error callback so {@link getWebGLErrors}
+ * has a WebGPU counterpart of the GL error queue to drain.
+ *
+ * A no-op outside the native-WebGPU project, outside a test, and for pages that
+ * pinned `renderer=webgl` or `webgpuForceWebgl` themselves.
+ *
+ * @param page - Playwright page, after `__luxarDebug.getState().initialized`
+ * @throws If the page should be native WebGPU and is not
+ */
+export async function assertNativeWebGPUIfRequired(page: Page): Promise<void> {
+  let inWebGPUProject: boolean;
+  try {
+    inWebGPUProject = isWebGPUProject(test.info());
+  } catch {
+    // Called outside a running test (a generator script): nothing to enforce.
+    return;
+  }
+  if (!inWebGPUProject) return;
+  if (isUnpinnedViewerPage(page.url())) {
+    throw new Error(
+      `chromium-webgpu project: ${page.url()} is a viewer page that bypassed the ` +
+        'renderer=webgpu rewrite. Use the shared page fixture or withWebGPURenderer.'
+    );
+  }
+  if (!requiresNativeWebGPU(page.url())) return;
+
+  const probe = await probeWebGPUBackend(page);
+  const adapter = probe.adapter;
+  const described = adapter
+    ? `${adapter.vendor ?? '?'} / ${adapter.architecture ?? '?'} / ${adapter.description ?? '?'}`
+    : 'no adapter info';
+  if (!probe.isNative) {
+    throw new Error(
+      `chromium-webgpu project: ${page.url()} asked for renderer=webgpu but the viewer is running ` +
+        `on a non-native backend (apiSurface=${probe.apiSurface ?? 'unread'}). The browser has no ` +
+        'usable WebGPU adapter, so WebGPURenderer fell back to WebGL2 — run this project on a ' +
+        'system Chrome with a GPU (see src/tests/e2e/README.md, "Native WebGPU project").'
+    );
+  }
+  if (adapter?.isFallbackAdapter === true && process.env.LUXAR_E2E_WEBGPU_ALLOW_FALLBACK !== '1') {
+    throw new Error(
+      `chromium-webgpu project: the WebGPU adapter is a software fallback (${described}). ` +
+        'Use system Chrome on a GPU host, or set LUXAR_E2E_WEBGPU_ALLOW_FALLBACK=1 to accept it.'
+    );
+  }
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      __luxarDebug?: { renderer?: { onError?: (info: { message?: string }) => void } };
+      __luxarE2EGPUErrors?: string[];
+    };
+    const renderer = w.__luxarDebug?.renderer;
+    if (!renderer || w.__luxarE2EGPUErrors) return;
+    w.__luxarE2EGPUErrors = [];
+    const original = renderer.onError?.bind(renderer);
+    renderer.onError = (info) => {
+      w.__luxarE2EGPUErrors?.push(`GPU_${info?.message ?? 'unknown uncaptured error'}`);
+      original?.(info);
+    };
+  });
 }
 
 /**
@@ -687,10 +766,23 @@ export async function getWebGLErrors(page: Page): Promise<string[]> {
     const canvas = document.querySelector('canvas');
     if (!canvas) return ['No canvas element found'];
 
+    // A canvas in `webgpu` context mode has no GL error queue: `getContext`
+    // with a WebGL type returns null there. The WebGPU counterpart is the
+    // renderer's uncaptured-error callback, which `assertNativeWebGPUIfRequired`
+    // hooks in the native-WebGPU project; drain that instead, so the same
+    // "no errors" assertion holds on both backends. (three ALSO logs each such
+    // error through console.error, which the shared fixture's gate sees.)
+    const gpuErrors = (window as unknown as { __luxarE2EGPUErrors?: string[] }).__luxarE2EGPUErrors;
+    if (gpuErrors) return gpuErrors.splice(0, gpuErrors.length);
+
     const gl =
       (canvas as HTMLCanvasElement).getContext('webgl2') ||
       (canvas as HTMLCanvasElement).getContext('webgl');
 
+    // A WebGPU canvas whose renderer was not hooked (the page never went
+    // through `waitForLuxarReady`): there is no queue to read, and three's
+    // console.error for an uncaptured GPU error still reaches the fixture.
+    if (!gl && (canvas as HTMLCanvasElement).getContext('webgpu')) return [];
     if (!gl) return ['No WebGL context available'];
 
     const errors: string[] = [];
@@ -2526,6 +2618,17 @@ export interface WebGPUBackendProbe {
   apiSurface?: string;
   /** `capabilities.framebufferYDown` as reported by the viewer, if available. */
   framebufferYDown?: boolean;
+  /**
+   * The native device's `GPUAdapterInfo` (`device.adapterInfo`), when the
+   * browser exposes it. `isFallbackAdapter` is how a SwiftShader adapter
+   * (bundled headless Chromium's only one) is told apart from a real GPU.
+   */
+  adapter?: {
+    vendor?: string;
+    architecture?: string;
+    description?: string;
+    isFallbackAdapter?: boolean;
+  };
 }
 
 /**
@@ -2563,15 +2666,38 @@ export async function probeWebGPUBackend(page: Page): Promise<WebGPUBackendProbe
               capabilities?: { apiSurface?: string; framebufferYDown?: boolean };
             };
           };
-          renderer?: { backend?: { isWebGPUBackend?: boolean } };
+          renderer?: {
+            backend?: {
+              isWebGPUBackend?: boolean;
+              device?: {
+                adapterInfo?: {
+                  vendor?: string;
+                  architecture?: string;
+                  description?: string;
+                  isFallbackAdapter?: boolean;
+                };
+              };
+            };
+          };
         };
       }
     ).__luxarDebug;
     const caps = debug?.app?.sceneManager?.capabilities;
+    const info = debug?.renderer?.backend?.device?.adapterInfo;
     return {
       isNative: debug?.renderer?.backend?.isWebGPUBackend === true,
       apiSurface: caps?.apiSurface,
       framebufferYDown: caps?.framebufferYDown,
+      // GPUAdapterInfo is a platform object: its fields are prototype getters
+      // that would not survive structured cloning, so copy them out.
+      adapter: info
+        ? {
+            vendor: info.vendor,
+            architecture: info.architecture,
+            description: info.description,
+            isFallbackAdapter: info.isFallbackAdapter,
+          }
+        : undefined,
     };
   });
 }

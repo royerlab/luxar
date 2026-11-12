@@ -67,6 +67,7 @@ export class GSplatPickingTSLMaterial
     uLabelFilterIndex: TSLNode;
     uProjectionMode: TSLNode;
     uRayIntegralFactor: TSLNode;
+    uDisplayGain: TSLNode;
     uIntensity: TSLNode;
     uOpacity: TSLNode;
     uHasElementAlpha: TSLNode;
@@ -116,6 +117,7 @@ export class GSplatPickingTSLMaterial
       // default, the pick pass's historical convention.
       uProjectionMode: uniform(1),
       uRayIntegralFactor: uniform(computeRayIntegralFactor(GSPLAT_DEFAULT_TRUNCATION_RADIUS)),
+      uDisplayGain: uniform(1),
       ...createPickVisibilityTSLNodes(),
     };
 
@@ -138,6 +140,7 @@ export class GSplatPickingTSLMaterial
       uLabelFilterIndex: proxyIUniform(this.tslNodes.uLabelFilterIndex),
       uProjectionMode: proxyIUniform(this.tslNodes.uProjectionMode),
       uRayIntegralFactor: proxyIUniform(this.tslNodes.uRayIntegralFactor),
+      uDisplayGain: proxyIUniform(this.tslNodes.uDisplayGain),
       ...proxyPickVisibilityUniforms(this.tslNodes),
     };
 
@@ -227,6 +230,7 @@ export class GSplatPickingTSLMaterial
     copyPickVisibilityUniforms(this.uniforms, cloned.uniforms);
     cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
     cloned.uniforms.uRayIntegralFactor.value = this.uniforms.uRayIntegralFactor.value;
+    cloned.uniforms.uDisplayGain.value = this.uniforms.uDisplayGain.value;
     return cloned as this;
   }
 

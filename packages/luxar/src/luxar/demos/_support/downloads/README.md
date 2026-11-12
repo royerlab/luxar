@@ -39,6 +39,11 @@ download_with_checksum(
   at 64 MiB and uncompressed output at 256 GiB by default, then verifies size
   and CRC before atomically promoting the selected member. Caller-supplied
   headers are scoped to the original URL across redirects.
+- `download_zip_members()` gives the same per-member guarantees for many
+  members of one archive, but fetches the tail and central directory once and
+  locates every member in a single pass. Use it for a timelapse pulled frame by
+  frame out of a multi-GB archive. Every member is located before any download,
+  so a missing name fails before any bytes are written.
 
 `zip_safety.py` centralizes member-name validation for local and remote
 archives. Dataset policy, cache layout, and manifest resolution belong in the

@@ -19,58 +19,12 @@
  */
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { context } from 'three/tsl';
-import { WGSLNodeBuilder, type NodeMaterial } from 'three/webgpu';
 
 import { GSplatPickingTSLMaterial } from '../../../../rendering/picking/gsplat/material-tsl';
 import { LinePickingTSLMaterial } from '../../../../rendering/picking/line/material-tsl';
 import { MeshPickingTSLMaterial } from '../../../../rendering/picking/mesh/material-tsl';
 import { PointPickingTSLMaterial } from '../../../../rendering/picking/point/material-tsl';
-
-/** The renderer surface `WGSLNodeBuilder.build()` reads (no GPU device needed). */
-function stubRenderer(): unknown {
-  return {
-    getRenderTarget: () => null,
-    getMRT: () => null,
-    depth: true,
-    reversedDepthBuffer: false,
-    logarithmicDepthBuffer: false,
-    contextNode: context(),
-    library: { fromMaterial: (m: unknown) => m },
-    hasFeature: () => false,
-    hasCompatibility: () => false,
-    backend: {
-      compatibilityMode: false,
-      capabilities: { getUniformBufferLimit: () => 65536 },
-      utils: {
-        getTextureSampleData: () => ({ samples: 1, primarySamples: 1, isMSAA: false }),
-      },
-    },
-  };
-}
-
-/** The `NodeBuilder` members this test drives (three's typings omit them). */
-interface BuilderSurface {
-  camera: THREE.Camera;
-  scene: THREE.Scene;
-  material: NodeMaterial;
-  fragmentShader: string;
-  build(): void;
-}
-
-/** Build `material` for `camera` and return its WGSL fragment shader. */
-function fragmentFor(material: THREE.Material, camera: THREE.Camera): string {
-  const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
-  const builder = new WGSLNodeBuilder(
-    mesh,
-    stubRenderer() as ConstructorParameters<typeof WGSLNodeBuilder>[1]
-  ) as unknown as BuilderSurface;
-  builder.camera = camera;
-  builder.scene = new THREE.Scene();
-  builder.material = material as NodeMaterial;
-  builder.build();
-  return String(builder.fragmentShader);
-}
+import { wgslFragmentFor } from '../../helpers/wgsl-build';
 
 /** viewZToOrthographicDepth as three emits it. */
 const ORTHO_DEPTH =
@@ -84,8 +38,8 @@ describe('TSL pick depth is chosen per draw, not per build', () => {
     ['gsplat', () => new GSplatPickingTSLMaterial({ nodeId: 1 })],
     ['mesh', () => new MeshPickingTSLMaterial({ nodeId: 1 })],
   ])('%s: a perspective build writes the ortho depth under an ortho camera', (_n, make) => {
-    const persp = fragmentFor(make(), new THREE.PerspectiveCamera(50, 1, 0.1, 100));
-    const ortho = fragmentFor(make(), new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100));
+    const persp = wgslFragmentFor(make(), new THREE.PerspectiveCamera(50, 1, 0.1, 100));
+    const ortho = wgslFragmentFor(make(), new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100));
     expect(persp).toContain('frag_depth');
     expect(persp).toMatch(ORTHO_DEPTH);
     // The inverse projection feeding both select arms must run before the

@@ -244,12 +244,21 @@ pnpm agent:debug
 | `pnpm test:e2e:smoke` | Non-GPU smoke subset | Fast local interaction smoke check |
 | `pnpm test:e2e:smoke:strict` | Smoke subset with strict console handling | CI-like local smoke validation |
 | `pnpm test:e2e:browsers` | Run the functional browser smoke matrix with snapshots ignored | After generating fixtures and installing Firefox/WebKit |
+| `pnpm test:e2e:webgpu` | Run the suite under the `chromium-webgpu` project: system Chrome, every viewer URL on `renderer=webgpu`, native adapter required | On a GPU machine, after touching a WebGPU/TSL path |
 | `pnpm test:e2e:ui` | Interactive test runner | Writing new tests |
 | `pnpm test:e2e:debug` | Debug mode | Debugging failing tests |
 | `pnpm test:e2e:report` | View last test report | After test run |
 
 `LUXAR_E2E_BROWSERS=all` enables the opt-in Firefox and WebKit projects; the
 `test:e2e:browsers` script sets it automatically.
+
+`LUXAR_E2E_WEBGPU=1` (or `--project=chromium-webgpu`) enables the opt-in
+native-WebGPU project. It fails a test whose viewer page did not come up on a
+native, non-fallback WebGPU adapter instead of quietly running WebGL, skips the
+specs that drive WebGL directly (`skipUnlessWebGL`), and runs the TSL parity
+spec against native WGSL. Playwright's bundled headless Chromium only offers a
+SwiftShader adapter, so the project launches system Chrome. Details:
+`packages/luxar-viewer/src/tests/e2e/README.md`, "Native WebGPU project".
 
 ---
 

@@ -85,10 +85,16 @@ describe('GLSL pick shaders weigh by the visual factors', () => {
   });
 
   it('gsplat: sum projection carries the visual ray-integral amplitude', () => {
+    // The display gain rides in the same product on both sides, so a
+    // Brightness edit moves pickability with visibility.
     const sumLine =
-      'vAmplitude2D = aAmplitude * rayIntegrationBoost * nearFade * dilationCompensation;';
+      'vAmplitude2D = aAmplitude * uDisplayGain * rayIntegrationBoost * nearFade * dilationCompensation;';
     expect(GSPLAT_VERTEX_SHADER).toContain(sumLine);
     expect(GSPLAT_PICK_VERTEX_SHADER).toContain(sumLine);
+    expect(GSPLAT_VERTEX_SHADER).toContain('vAmplitude2D = aAmplitude * uDisplayGain * nearFade;');
+    expect(GSPLAT_PICK_VERTEX_SHADER).toContain(
+      'vAmplitude2D = aAmplitude * uDisplayGain * nearFade;'
+    );
     expect(GSPLAT_PICK_VERTEX_SHADER).toContain('if (uProjectionMode == 0) {');
     expect(GSPLAT_PICK_VERTEX_SHADER).toContain('uniform float uRayIntegralFactor;');
   });

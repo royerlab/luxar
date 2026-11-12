@@ -18,6 +18,9 @@
  * doesn't supply.
  */
 
+import type { IUniform } from 'three';
+import type { NodeMaterial } from 'three/webgpu';
+
 /**
  * GLSL3 vertex + fragment pair for the WebGL2 path.
  */
@@ -35,9 +38,8 @@ export interface WebGLShaderSources {
  * time, not by the type system, so shader authors can author either
  * backend first.
  *
- * The `webgpu` field deliberately uses `unknown` rather than
- * importing `NodeMaterial` types so this module stays
- * three-version-agnostic.
+ * The WebGPU factory returns a TSL `NodeMaterial`, not a GLSL
+ * `ShaderMaterial` (which WebGPURenderer cannot draw).
  */
 export interface ShaderSource {
   /** Stable identifier for diagnostics (`point`, `bloom-threshold`, …). */
@@ -50,10 +52,10 @@ export interface ShaderSource {
   readonly webgl?: WebGLShaderSources;
   /**
    * TSL / NodeMaterial factory for the WebGPU backend. Returns the
-   * renderer-specific material; the shape is intentionally
-   * unspecified so this module stays three-version-agnostic.
+   * renderer-specific material. This is a type-only reference, so
+   * importing the public `ShaderSource` type does not load WebGPU code.
    */
-  readonly webgpu?: (uniforms: Record<string, unknown>) => unknown;
+  readonly webgpu?: (uniforms: Record<string, IUniform>) => NodeMaterial;
 }
 
 /**

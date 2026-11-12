@@ -37,7 +37,8 @@ import {
   type MeshTSLNodes,
 } from './shader-tsl';
 import { copyRuntimeUniforms, MESH_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
-import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
+import { applySharedVisualTSLGraph } from '../_shared/shared-graph-tsl';
+import { copyTSLNodeOverride } from '../_shared/tsl-node-override';
 import {
   MESH_DEFAULTS,
   clampAppearanceFraction,
@@ -288,7 +289,7 @@ export class MeshTSLMaterial
     };
     // ONE graph per configuration, shared by every mesh material of it
     // (see shared-graph-tsl.ts): the build cache keys on node ids.
-    applySharedTSLGraph(this, 'mesh', config, this.tslNodes, (inputs, scratch) => {
+    applySharedVisualTSLGraph(this, 'mesh', config, this.tslNodes, (inputs, scratch) => {
       meshWebGPUFactory(inputs as MeshTSLNodes, config, scratch);
     });
     applyMeshMaterialState(
@@ -467,8 +468,7 @@ export class MeshTSLMaterial
 
     if (!this.defines) this.defines = {};
 
-    const previousMode = this.userData.blendingMode as BlendingMode | undefined;
-    const stateChanged = applyBlendingStateToMaterial(this, state);
+    applyBlendingStateToMaterial(this, state);
     // One shared helper maintains the at-most-one-emission-define invariant for both
     // backends — see `syncMeshEmissionDefines`.
     const definesChanged = syncMeshEmissionDefines(this.defines, state.shaderOutputMode);
@@ -478,8 +478,6 @@ export class MeshTSLMaterial
     // The emission branch is baked into the graph, so any change to it rebuilds.
     if (definesChanged) {
       this.rebuildGraph();
-    } else if (previousMode !== resolved && stateChanged) {
-      this.needsUpdate = true;
     }
   }
 
@@ -517,6 +515,7 @@ export class MeshTSLMaterial
     cloned.side = this.side;
     // Runtime state a fresh clone would reset (MESH_RUNTIME_UNIFORMS, ../_shared/runtime-uniforms.ts).
     copyRuntimeUniforms(this, cloned, MESH_RUNTIME_UNIFORMS);
+    copyTSLNodeOverride(this, cloned);
     return cloned as this;
   }
 

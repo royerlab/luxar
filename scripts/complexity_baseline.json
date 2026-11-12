@@ -32,9 +32,6 @@
     "packages/luxar/src/luxar/cli/gsplat_ops/benchmark.py::benchmark_gpu": [
       21
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/fitting/calibrate.py::run_calibrate_command": [
-      30
-    ],
     "packages/luxar/src/luxar/cli/gsplat_ops/fitting/fit.py::run_fit_volume": [
       16
     ],
@@ -49,9 +46,6 @@
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/recipe_shared.py::parse_lod_breakpoints": [
       11
-    ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/scene_commands.py::convert_to_scene": [
-      17
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/scene_commands.py::reencode_command": [
       11
@@ -155,11 +149,11 @@
     "packages/luxar/src/luxar/demos/_support/downloads/download.py::verify_file_checksum": [
       14
     ],
+    "packages/luxar/src/luxar/demos/_support/downloads/remote_zip.py::_extract_member": [
+      22
+    ],
     "packages/luxar/src/luxar/demos/_support/downloads/remote_zip.py::_parse_remote_zip_directory": [
       11
-    ],
-    "packages/luxar/src/luxar/demos/_support/downloads/remote_zip.py::download_zip_member": [
-      24
     ],
     "packages/luxar/src/luxar/demos/demo_arxiv_embeddings_kaggle.py::generate_paper_landscape": [
       16
@@ -309,13 +303,13 @@
       13
     ],
     "packages/luxar/src/luxar/gsplats/batch/local_runner.py::run_batch_local": [
-      16
+      12
     ],
     "packages/luxar/src/luxar/gsplats/batch/merge_orchestrator.py::_build_part_for_tile": [
       11
     ],
     "packages/luxar/src/luxar/gsplats/batch/merge_orchestrator.py::_merge_flat": [
-      23
+      22
     ],
     "packages/luxar/src/luxar/gsplats/batch/merge_orchestrator.py::_merge_partition": [
       15
@@ -334,9 +328,6 @@
     ],
     "packages/luxar/src/luxar/gsplats/calibration/curve_analysis.py::find_k_star": [
       11
-    ],
-    "packages/luxar/src/luxar/gsplats/calibration/driver.py::calibrate": [
-      20
     ],
     "packages/luxar/src/luxar/gsplats/culling.py::cull_by_contribution": [
       16
@@ -357,10 +348,10 @@
       16
     ],
     "packages/luxar/src/luxar/gsplats/fitting/initialization.py::initialize_optimization": [
-      20
+      19
     ],
     "packages/luxar/src/luxar/gsplats/fitting/optimization.py::run_optimization_loop": [
-      37
+      36
     ],
     "packages/luxar/src/luxar/gsplats/fitting/preprocessing.py::_generate_seeds": [
       12
@@ -498,7 +489,7 @@
       13
     ],
     "packages/luxar/src/luxar/io/volume.py::load_volume": [
-      12
+      11
     ],
     "packages/luxar/src/luxar/mesh/interop/_gltf.py::read_gltf": [
       28

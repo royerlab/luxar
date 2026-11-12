@@ -253,7 +253,9 @@ console.log('Float support:', !!gl.getExtension('EXT_color_buffer_float'));
 
 **"HDR looks washed out"**
 - Adjust HDR/SDR brightness in OS settings
-- Try different tone mapping exposure values in viewer
+- Try different tone mapping exposure values in viewer (this is the global
+  tone-mapping exposure; a gsplats layer's **Brightness** control is a separate
+  per-layer `display_gain` applied before tone mapping)
 - Check display calibration
 
 **"No visible difference with HDR"**

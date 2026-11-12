@@ -31,6 +31,9 @@ gsplats_pipeline/
 ├── amplitude_norm.py  # one insertion-time amplitude scale per structure
 ├── from_data.py       # add_gsplats_from_data_impl — top-level dispatch
 ├── from_io.py         # add_gsplats_from_file_impl / add_gsplats_from_volume_impl
+├── fitted_defaults.py # add_gsplats_from_file's fitted-store default: convert's
+│                      #   dim_order / exposure / layer / amplitude tier (+ scene
+│                      #   dims and camera on a fresh root scene); fitted_defaults=False opts out
 └── lod_dispatch.py    # add_gsplats_as_lod_group_impl / add_gsplats_multi_lod_impl
 ```
 
@@ -41,7 +44,11 @@ gsplats_pipeline/
 The public data, file, and volume doors normalize fitted raw-unit amplitudes
 before writing a scene. ``True`` / ``"auto"`` maps a robust p99.9 reference to
 1.0 only when it exceeds 1.0, ``False`` opts out, and a positive number sets an
-explicit target. A child inserted directly into a ``kind=lod`` or
+explicit target; ``AmplitudeScale(f)`` multiplies by exactly ``f``, so the stamped factor divides
+back bit-for-bit. ``gsplat convert`` no longer goes through this: it passes
+``normalize_amplitudes=False``, keeps the amplitudes in data units and stamps its
+exposure as ``display_gain`` (see ``luxar.gsplats.exposure.data_unit_display_attrs``,
+which the adders refuse while normalising). A child inserted directly into a ``kind=lod`` or
 ``kind=partition`` group defaults to no normalization because its exposure must
 stay shared with its siblings; whole structures still use one pooled factor.
 Partition parts share one pooled reference; substitutive LOD groups contribute

@@ -2,7 +2,7 @@
 
 A Python library for compiling n-dimensional scientific datasets into optimized Zarr archives for high-performance visualization. Luxar Core provides the data compilation layer of the Luxar ecosystem, transforming your scientific data into a format optimized for GPU-accelerated rendering.
 
-**[▶ See what it compiles to](https://demos.luxarviewer.dev)** — 88 demos rendered as live, interactive scenes in the browser.
+**[▶ See what it compiles to](https://demos.luxarviewer.dev)** — 90 demos rendered as live, interactive scenes in the browser.
 
 ## 🎯 Design Philosophy
 
@@ -16,11 +16,12 @@ Luxar Core is built on the principle that **data compilation should never be the
 ## 📦 Installation
 
 ```bash
-# From PyPI (when available)
+# From PyPI (Python 3.12+, ideally inside a virtual environment)
+python3 -m venv luxar-env && source luxar-env/bin/activate
 pip install luxar
 
-# Optional Gaussian splatting support
-pip install "luxar[gsplats]"
+# Gaussian splatting (fitting) + TIFF reading
+pip install "luxar[gsplats,io]"
 
 # Development installation
 git clone https://github.com/royerlab/luxar.git

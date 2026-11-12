@@ -23,6 +23,16 @@ from luxar.gsplats.fit_tiled_parallel import (
 )
 from luxar.gsplats.tiling import compute_tile_specs
 
+
+@pytest.fixture(autouse=True)
+def _discrete_gpus(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Model every CUDA device as discrete, so the suite reads the same on a
+    unified-memory host (GB10, Jetson); unified tests opt back in."""
+    import luxar.gsplats.utils.device as _device
+
+    monkeypatch.setattr(_device, "is_unified_memory_device", lambda index: False)
+
+
 # Subprocess-pool tiled fitting (seconds per test). Slow → CI runs `-m "not
 # slow"`; the full suite runs locally pre-push.
 pytestmark = pytest.mark.slow
@@ -800,3 +810,23 @@ class TestFitTiledParallel:
         )
         assert merged.n_splats == 5 * m
         assert not stale.exists()  # tmp_dir was cleared before the run
+
+
+def test_resolve_jobs_auto_sizes_unified_memory_as_one_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`fit -j auto` on an integrated GPU adds device and host cost per worker."""
+    import luxar.gsplats.metrics as metrics
+    import luxar.gsplats.utils.device as device_mod
+
+    monkeypatch.setattr(metrics, "_gpu_free_memory", lambda dev: 50 * 1024**3)
+    monkeypatch.setattr(
+        device_mod, "resolve_torch_device", lambda *a, **k: torch.device("cuda")
+    )
+    monkeypatch.setattr(device_mod, "is_unified_memory_device", lambda index: True)
+    monkeypatch.setattr(device_mod, "available_host_memory_bytes", lambda: 54 * 1024**3)
+    monkeypatch.setattr(device_mod, "_effective_cpu_count", lambda: 20)
+
+    limit = resolve_jobs("auto", tile_voxels=94_000_000, num_tiles=26, device="cuda")
+
+    assert (limit.count, limit.limit) == (6, "unified memory")

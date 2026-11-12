@@ -20,6 +20,7 @@ if HAS_TORCH:
     from luxar.gsplats.fitting.preprocessing import (
         _compression_ratio_to_target_count,
         _compute_floats_per_splat,
+        _generate_seeds,
         _normalize_data,
         _resolve_floor,
         preprocess_data,
@@ -91,6 +92,22 @@ class TestPreprocessDataValidation:
 
 class TestPreprocessData:
     """Test data preprocessing functionality."""
+
+    def test_peaks_fit_seeding_is_independent_of_global_rng(self) -> None:
+        volume = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(1)
+            before = torch.random.get_rng_state().clone()
+            first = _generate_seeds(volume, 8, "peaks", False, device="cpu")
+            assert torch.equal(torch.random.get_rng_state(), before)
+            torch.manual_seed(99)
+            before = torch.random.get_rng_state().clone()
+            second = _generate_seeds(volume, 8, "peaks", False, device="cpu")
+            assert torch.equal(torch.random.get_rng_state(), before)
+            override = _generate_seeds(volume, 8, "peaks", False, device="cpu", seed=43)
+        assert len(first) == 8
+        np.testing.assert_array_equal(first, second)
+        assert not np.array_equal(first, override)
 
     def test_basic_preprocessing(self, mock_config_2d) -> None:
         """Test basic data preprocessing."""
@@ -656,8 +673,9 @@ class TestInitAmpsProvenance:
         """
         V = _pedestal_volume()
         centers = np.array([[12.0, 12.0], [20.0, 20.0], [26.0, 26.0]], np.float32)
-        # Sampled off the raw volume: pedestal level, and two blob-level values.
-        raw_amps = np.array([100.0, 300.0, 500.0], dtype=np.float32)
+        # Sampled off the raw volume as generate_seeds() does (times its 0.9
+        # seeding factor): pedestal level, and two blob-level values.
+        raw_amps = 0.9 * np.array([100.0, 300.0, 500.0], dtype=np.float32)
 
         mock_config_2d.V = V
         mock_config_2d.norm_percentile = 0.0
@@ -669,12 +687,16 @@ class TestInitAmpsProvenance:
         result = preprocess_data(mock_config_2d)
 
         assert result.init_amps is not None
+        # The 0.9 factor is divided out before the pedestal comes off and
+        # re-applied after, so it scales the signal above the floor only.
         expected = np.clip(
-            (raw_amps - result.image_min) / result.intensity_range, 0.0, 1.0
+            (raw_amps / 0.9 - result.image_min) * 0.9 / result.intensity_range,
+            0.0,
+            1.0,
         )
         assert np.allclose(result.init_amps, expected, atol=1e-6)
         # The pedestal-level seed rescales to exactly 0 under this convention
-        # (it would be 0.25 if the floor were skipped).
+        # (it would be 0.225 if the floor were skipped).
         assert float(result.init_amps[0]) == pytest.approx(0.0, abs=1e-6)
 
     def test_config_init_amps_stay_raw_sampled(self, mock_config_2d) -> None:
@@ -996,7 +1018,7 @@ class TestInitAmpsProvenance:
         """An empty seed set must come back as an empty result, not a KeyError.
 
         ``GaussianSplatFitter.fit`` deliberately short-circuits ``N == 0`` and
-        returns an empty ``GSplatData`` with an empty ``stats`` dict, so the
+        returns an empty ``GSplatData`` with no optimization stats, so the
         ``verbose`` summary in ``fit_gaussian_splats`` (verbose defaults to True)
         has no timing/iteration record to print. It used to index them anyway and
         died with ``KeyError: 'time_seconds'`` — right after the rescaling report
@@ -1023,7 +1045,8 @@ class TestInitAmpsProvenance:
 
         assert result.n_splats == 0
         assert result.centers.shape == (0, 2)
-        assert result.stats == {}
+        assert result.stats["fit_provenance"]["outcome"]["n_splats"] == 0
+        assert result.stats["fit_provenance"]["config"]["seed_count"] == 0
 
 
 class TestCompressionRatio:

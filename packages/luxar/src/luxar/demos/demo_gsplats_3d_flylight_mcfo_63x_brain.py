@@ -703,6 +703,18 @@ def recompute_archive() -> Path:
                 "--auto-region",
                 "--feature-metric",
                 "edges",
+                # Pin the sweep the archive was calibrated with: the historical
+                # grid, every point, K* on the min--max curve (`cal`'s defaults
+                # now size the grid from the volume, stop early, and pick K* on
+                # the foreground curve).
+                "--k-star-metric",
+                "psnr_minmax",
+                "--k-min",
+                "1000",
+                "--k-max",
+                "512000",
+                "--no-early-stop",
+                "--no-extend-below",
                 "--device",
                 detect_device(),
             )
@@ -962,6 +974,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 scene.add_gsplats_from_file(
                     name="mcfo_neurons",
                     path=str(data_path),
+                    fitted_defaults=False,
                     normalize_amplitudes=False,
                     # `volumetric` — emission–absorption. The neurons are sparse
                     # but the brain is 167 um deep, so additive summing along the

@@ -51,6 +51,7 @@ import {
   updateBloomSettings as updateBloomSettingsImpl,
   clampBloomLevels,
   validateMSAASamples,
+  supportedMSAASamples,
   setVignetteEnabled as setVignetteEnabledImpl,
   setChromaticLensDistortionEnabled as setChromaticLensDistortionEnabledImpl,
   updateChromaticLensDistortion as updateChromaticLensDistortionImpl,
@@ -96,6 +97,10 @@ export class PostProcessingManager {
   // Transient GPU resources (recreated on context loss)
   // ----------------------------------------------------------------
   private hdrTarget!: THREE.WebGLRenderTarget;
+  /** Current scene-pass target; replaced when size or MSAA changes. */
+  get sceneRenderTarget(): THREE.WebGLRenderTarget {
+    return this.hdrTarget;
+  }
   private ldrTarget!: THREE.WebGLRenderTarget;
   private bloomChain: BloomChain | null = null;
   private megaShader!: LuxarMegaShaderMaterial;
@@ -198,6 +203,9 @@ export class PostProcessingManager {
     this.renderer.toneMapping = THREE.NoToneMapping; // We tone-map in mega-shader.
 
     this.renderSize = { ...size };
+
+    this.msaaSamples = this.resolveMSAASamples(this.msaaSamples);
+    if (this.capabilities.maxMSAASamples < 2) this.msaaEnabled = false;
 
     this.hdrHeadroom = capabilities.hdrOutput?.headroom ?? 1;
     this.initializeTransientResources({ applyDefaults: true });
@@ -641,14 +649,31 @@ export class PostProcessingManager {
   // MSAA + SSAA (canvas-level; reallocate HDR target on change)
   // ================================================================
 
-  setMSAAEnabled(enabled: boolean): void {
-    if (this.msaaEnabled === enabled) return;
+  getSupportedMSAASamples(): number[] {
+    return supportedMSAASamples(
+      this.capabilities.maxMSAASamples,
+      this.capabilities.backendKind === 'webgpu-native'
+    );
+  }
+
+  private resolveMSAASamples(samples: number): number {
+    return validateMSAASamples(
+      samples,
+      this.capabilities.maxMSAASamples,
+      this.capabilities.backendKind === 'webgpu-native'
+    );
+  }
+
+  setMSAAEnabled(enabled: boolean): boolean {
+    if (this.msaaEnabled === enabled) return this.msaaEnabled;
     if (enabled) {
       const maxSamples = this.capabilities.maxMSAASamples;
       if (maxSamples < 2) {
         log.error(Modules.POST_PROCESSING, `MSAA not supported (MAX_SAMPLES: ${maxSamples})`);
-        return;
+        return this.msaaEnabled;
       }
+      if (this.msaaSamples === 0) return false;
+      this.msaaSamples = this.resolveMSAASamples(this.msaaSamples);
     }
     this.msaaEnabled = enabled;
     this.reallocateForSize();
@@ -656,16 +681,19 @@ export class PostProcessingManager {
       Modules.POST_PROCESSING,
       `MSAA ${enabled ? `enabled (${this.describeMSAA()})` : 'disabled'}`
     );
+    return this.msaaEnabled;
   }
 
-  setMSAASamples(samples: number): void {
-    const validated = validateMSAASamples(samples, this.capabilities.maxMSAASamples);
-    if (this.msaaSamples === validated) return;
+  setMSAASamples(samples: number): number {
+    const validated = this.resolveMSAASamples(samples);
+    if (this.msaaSamples === validated) return validated;
+    if (validated === 0 && this.msaaEnabled) this.setMSAAEnabled(false);
     this.msaaSamples = validated;
     if (this.msaaEnabled) {
       this.reallocateForSize();
       log.info(Modules.POST_PROCESSING, `MSAA samples set to ${this.describeMSAA()}`);
     }
+    return validated;
   }
 
   setSSAAEnabled(enabled: boolean): void {
@@ -1002,8 +1030,28 @@ export class PostProcessingManager {
   // ================================================================
 
   /**
+   * Adopt a NEW renderer (a WebGPU renderer rebuilt on a fresh device after
+   * device loss; see `webgpu-device-recovery.ts`) and rebuild every GPU
+   * resource against it, keeping user state exactly as a context restore does.
+   * The identity of this manager survives, so the references PickingSystem,
+   * AnimationController and RenderingControls hold stay valid.
+   */
+  adoptRenderer(renderer: Renderer, capabilities: RendererCapabilities): void {
+    if (this.disposed) return;
+    this.renderer = renderer;
+    this.capabilities = capabilities;
+    // Same output pinning as the constructor (see the comment there).
+    this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+    this.renderer.toneMapping = THREE.NoToneMapping;
+    // A new canvas configuration may have lost HDR output; keep the user's
+    // headroom only when it still applies.
+    if (capabilities.hdrOutput === undefined) this.hdrHeadroom = 1;
+    this.rebuildAfterContextRestore();
+  }
+
+  /**
    * Capture every uniform / define state then rebuild from scratch.
-   * Used after a WebGL context-restore event.
+   * Used after a WebGL context-restore event, and by `adoptRenderer`.
    */
   rebuildAfterContextRestore(): void {
     if (this.disposed) return;

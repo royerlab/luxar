@@ -49,38 +49,28 @@ layout( std140 ) uniform render {
 layout( std140 ) uniform object {
 	mat4 nodeUniform1;
 	float nodeUniform3;
-	mat3 nodeUniform5;
+	uint nodeUniform5;
 	uint nodeUniform6;
-	mat3 nodeUniform7;
+	uint nodeUniform7;
 	uint nodeUniform8;
-	mat3 nodeUniform9;
+	uint nodeUniform9;
 	uint nodeUniform10;
-	mat3 nodeUniform11;
-	uint nodeUniform12;
-	mat3 nodeUniform13;
-	uint nodeUniform14;
-	mat3 nodeUniform15;
-	uint nodeUniform16;
-	float nodeUniform18;
-	float nodeUniform19;
-	vec2 nodeUniform20;
+	float nodeUniform12;
+	float nodeUniform13;
+	vec2 nodeUniform14;
+	float nodeUniform15;
+	float nodeUniform16;
+	uint nodeUniform17;
+	uint nodeUniform18;
+	uint nodeUniform19;
+	uint nodeUniform20;
 	float nodeUniform21;
 	float nodeUniform22;
-	mat3 nodeUniform23;
-	uint nodeUniform24;
-	mat3 nodeUniform25;
-	uint nodeUniform26;
-	mat3 nodeUniform27;
-	uint nodeUniform28;
-	mat3 nodeUniform29;
-	uint nodeUniform30;
-	float nodeUniform31;
-	float nodeUniform32;
-	float nodeUniform33;
-	float nodeUniform34;
-	float nodeUniform38;
-	float nodeUniform39;
-	float nodeUniform40;
+	float nodeUniform23;
+	float nodeUniform24;
+	float nodeUniform28;
+	float nodeUniform29;
+	float nodeUniform30;
 };
 
 
@@ -353,9 +343,9 @@ void main() {
 	}
 
 
-	if ( ( int( nodeUniform31 ) == 1 ) ) {
+	if ( ( int( nodeUniform21 ) == 1 ) ) {
 
-		nodeVar243 = mix( 1.0, ( - log( ( 1.0 - min( nodeVarying5, 0.998046875 ) ) ) ), nodeUniform32 );
+		nodeVar243 = mix( 1.0, ( - log( ( 1.0 - min( nodeVarying5, 0.998046875 ) ) ) ), nodeUniform22 );
 
 	} else {
 
@@ -363,7 +353,7 @@ void main() {
 
 	}
 
-	lineCapsulePickBrightness = ( ( nodeVar208 * nodeVarying3 ) * ( ( nodeVar243 * nodeUniform33 ) * max( nodeUniform34, 1.0 ) ) );
+	lineCapsulePickBrightness = ( ( nodeVar208 * nodeVarying3 ) * ( ( nodeVar243 * nodeUniform23 ) * max( nodeUniform24, 1.0 ) ) );
 
 	if ( ( cameraProjectionMatrix[ 3 ].w > 0.5 ) ) {
 
@@ -386,7 +376,7 @@ void main() {
 
 	}
 
-	gl_FragDepth = mix( ( 1.0 / ( 1.0 + lineCapsulePickBrightness ) ), nodeVar244, nodeUniform38 );
+	gl_FragDepth = mix( ( 1.0 / ( 1.0 + lineCapsulePickBrightness ) ), nodeVar244, nodeUniform28 );
 
 	if ( ( lineCapsulePickBrightness < 0.0001 ) ) {
 
@@ -396,7 +386,7 @@ void main() {
 	}
 
 	DiffuseColor = vec4( nodeVarying9, nodeVarying10.x, lineCapsulePickBrightness, nodeVarying10.y );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform40 );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform30 );
 	nodeVar248 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
 	Output = nodeVar248;
 
