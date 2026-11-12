@@ -1080,6 +1080,27 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
       sliders.dispose();
     });
 
+    it('lets a speed chip win when an edited Custom field blurs into the menu', () => {
+      const sliders = buildSliders();
+      const stub = makeAnimationManagerStub();
+      sliders.setAnimationManager(stub as never);
+      open();
+      toPeriod();
+      type('45');
+      const chip = Array.from(
+        document.querySelectorAll<HTMLButtonElement>(
+          '[role="radiogroup"][aria-label="Speed"] button'
+        )
+      ).find((button) => button.textContent === '10s')!;
+      amount().dispatchEvent(new FocusEvent('blur', { relatedTarget: chip }));
+      expect(menuOpen()).toBe(true);
+      chip.click();
+      expect(stub.setTargetFPS).toHaveBeenCalledTimes(1);
+      expect(stub.setTargetFPS).toHaveBeenLastCalledWith(3, 1 / 10);
+      expect(menuOpen()).toBe(false);
+      sliders.dispose();
+    });
+
     it('a rate that is no preset opens seeded and marked; an untouched seed never commits', () => {
       const sliders = buildSliders();
       const stub = makeAnimationManagerStub();

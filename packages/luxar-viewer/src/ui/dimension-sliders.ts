@@ -1355,9 +1355,10 @@ export class DimensionSliders {
    * radiogroup's radios, and a focused input or select suppresses the global
    * shortcuts while typing. Shown filled in, and marked as the current
    * choice, when the rate is not one of the view's presets. An edited value
-   * commits on Enter, on blur (not to the unit picker) or on a unit change,
-   * and closes the menu; an untouched seed never commits, and a unit change
-   * converts it in place. A value outside the range is flagged, not set.
+   * commits on Enter, on blur leaving the menu, or on a unit change, and
+   * closes the menu. A click on another menu control takes precedence; an
+   * untouched seed never commits, and a unit change converts it in place.
+   * A value outside the range is flagged, not set.
    */
   private buildCustomRateRow(
     dimIndex: number,
@@ -1412,8 +1413,11 @@ export class DimensionSliders {
       else this.closeContextMenu();
     });
     amount.addEventListener('blur', (e) => {
-      // Moving to the unit picker is part of typing the value, not a commit.
-      if (edited && e.relatedTarget !== unit) commit();
+      // Let a clicked menu control receive its click before the menu closes.
+      if (e.relatedTarget instanceof Node && this.activeContextMenu?.contains(e.relatedTarget)) {
+        return;
+      }
+      if (edited) commit();
     });
     unit.addEventListener('change', () => {
       const next = unit.value as PeriodUnit;
