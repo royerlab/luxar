@@ -20,7 +20,12 @@ beforeAll(() => {
   writeFileSync(join(dist, 'viewer.js'), 'export const payload = "' + 'x'.repeat(10000) + '";');
   writeFileSync(join(dist, 'viewer.css'), 'body{' + 'color:red;'.repeat(1000) + '}');
   writeFileSync(join(dist, 'empty.js'), '');
+  writeFileSync(join(dist, 'viewer.mjs'), 'export const value = 42;');
+  writeFileSync(join(dist, 'module.wasm'), Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
+  writeFileSync(join(dist, 'config.json'), '{"enabled":true}');
+  writeFileSync(join(dist, 'icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
   writeFileSync(join(data, 'gate', 'blob.bin'), BODY);
+  writeFileSync(join(data, 'gate', 'config.json'), '{"dataset":true}');
 });
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -50,6 +55,37 @@ describe('parseRange', () => {
 });
 
 describe('startServer', () => {
+  it.each([
+    ['/', 'text/html; charset=utf-8', '<html></html>'],
+    ['/viewer.mjs', 'text/javascript; charset=utf-8', 'export const value = 42;'],
+    ['/module.wasm', 'application/wasm', Buffer.from([0, 97, 115, 109, 1, 0, 0, 0])],
+    ['/config.json', 'application/json', '{"enabled":true}'],
+    ['/icon.svg', 'image/svg+xml', '<svg xmlns="http://www.w3.org/2000/svg"></svg>'],
+  ])('gzips static %s with its content type', async (path, contentType, expected) => {
+    await withServer({ gzip: true }, async (s) => {
+      const response = await fetch(`${s.origin}${path}`, {
+        headers: { 'Accept-Encoding': 'gzip' },
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-encoding')).toBe('gzip');
+      expect(response.headers.get('content-type')).toBe(contentType);
+      expect(response.headers.get('vary')).toBe('Accept-Encoding');
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(Buffer.from(expected));
+      expect(Number(response.headers.get('content-length'))).toBe(s.log[0].bytes);
+    });
+  });
+
+  it('leaves dataset JSON identity-encoded', async () => {
+    await withServer({ gzip: true }, async (s) => {
+      const response = await fetch(`${s.origin}/datasets/gate/config.json`, {
+        headers: { 'Accept-Encoding': 'gzip' },
+      });
+      expect(response.headers.get('content-encoding')).toBeNull();
+      expect(response.headers.get('vary')).toBeNull();
+      expect(await response.text()).toBe('{"dataset":true}');
+    });
+  });
+
   it('transfers compressed JS on the hosted link while keeping byte ranges uncompressed', async () => {
     await withServer({ range: true, gzip: true, etag: true }, async (s) => {
       const url = `${s.origin}/viewer.js`;

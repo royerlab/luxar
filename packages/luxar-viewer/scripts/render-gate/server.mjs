@@ -18,8 +18,8 @@
  *   generated once into `certDir` (the browser needs
  *   `--ignore-certificate-errors`), removing HTTP/1.1's 6-connection limit;
  * - `etag`: strong `ETag` from size + mtime, `If-None-Match` answers 304;
- * - `gzip`: transfer static JS/CSS as compressed bytes when requested, as a
- *   production host does (dataset byte ranges remain identity-encoded);
+ * - `gzip`: transfer static JS, MJS, CSS, WASM, HTML, JSON, and SVG as compressed
+ *   bytes when requested (dataset byte ranges remain identity-encoded);
  * - `cacheControl`: the `Cache-Control` value (default `no-store`).
  *
  * Every server keeps a request log, exposed at `GET /__gate/requests` (JSON)
@@ -55,6 +55,7 @@ const TYPES = {
   '.svg': 'image/svg+xml',
   '.woff2': 'font/woff2',
 };
+const COMPRESSIBLE = new Set(['.js', '.mjs', '.css', '.wasm', '.html', '.json', '.svg']);
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** `<repo>/delme/gate-certs`: this file lives at packages/luxar-viewer/scripts/render-gate. */
@@ -208,8 +209,9 @@ export function startServer({
     // Pre-compress before the server accepts requests or the browser navigates.
     // A hosted CDN serves static assets already encoded; doing this on the first request
     // would add synchronous server CPU work to the measured cold load.
+    // The gate starts a fresh server per build; do not reuse it after rebuilding dist.
     for (const asset of readdirSync(distDir, { recursive: true, withFileTypes: true })) {
-      if (!asset.isFile() || !['.js', '.css'].includes(extname(asset.name))) continue;
+      if (!asset.isFile() || !COMPRESSIBLE.has(extname(asset.name))) continue;
       const path = join(asset.parentPath, asset.name);
       compressedAssets.set(path, gzipSync(readFileSync(path)));
     }
@@ -259,7 +261,7 @@ export function startServer({
   }
 
   async function serveHosted(req, res, file, entry, isData) {
-    const compressible = gzip && !isData && ['.js', '.css'].includes(extname(file.path));
+    const compressible = gzip && !isData && COMPRESSIBLE.has(extname(file.path));
     const compressed =
       compressible &&
       !req.headers.range &&

@@ -454,9 +454,19 @@ the manifest's `serverProfiles` (the suite's `defaults.serverProfile`, or
 - `hosted`: 100 ms latency before every response's headers, ONE shared token
   bucket at 25 Mbit/s, HTTP/2 over TLS (a self-signed certificate generated
   once into `delme/gate-certs/`; the browser gets
-  `--ignore-certificate-errors`), gzip transfer of static JS/CSS when the browser
-  accepts it, a strong `ETag` with `If-None-Match` → 304, and
+  `--ignore-certificate-errors`), gzip-6 transfer of static JS, MJS, CSS, WASM,
+  HTML, JSON, and SVG when the browser accepts it, a strong `ETag` with
+  `If-None-Match` → 304, and
   `Cache-Control: max-age=300`. Dataset byte ranges stay identity-encoded.
+  Gzip level 6 is the `gzipSync` default and is slightly conservative compared
+  with brotli or gzip-9 CDN responses. The roughly 665 kB raw to 185 kB gzip
+  `three-webgpu` figure uses this level.
+
+Hosted-profile results recorded before static asset compression are not
+comparable with later results, including the hosted figures behind #3225's
+platform policy. First-frame times change, and an earlier first frame can lower
+`requestsToFirstFrame` and `serialDepth` because they count dataset requests
+started before that cutoff. A/B arms within one run share the same profile.
 
 The exact and perf suites keep the unconfigured server, whose responses are
 unchanged. Every server logs its requests (`GET /__gate/requests`, cleared by
