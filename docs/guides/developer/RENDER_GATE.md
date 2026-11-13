@@ -468,6 +468,19 @@ platform policy. First-frame times change, and an earlier first frame can lower
 `requestsToFirstFrame` and `serialDepth` because they count dataset requests
 started before that cutoff. A/B arms within one run share the same profile.
 
+The `cold_zip_mixed` hosted case also checks #3172's cold-start target. Run
+`node scripts/render-gate/run-gate.mjs --suite hosted --only cold_zip_mixed --backends webgl,webgpu --rounds 5`
+from `packages/luxar-viewer` on each acceptance machine. The WebGPU candidate's
+median `firstFrameMs` must be no more than 150 ms above the WebGL candidate's
+median; the report shows the baseline gap as well. This is an absolute target
+in addition to each backend's A/B regression judgment. Run it on an idle host:
+the identical-build A/A spread can be comparable to the target under load.
+The WebGPU row fails with reason `backend-gap` if the candidate gap exceeds the
+target or either first-frame median is unavailable. A baseline gap above the
+target is marked as a noisy run in the report; it does not change the verdict.
+The cross-backend check is skipped if either backend is not selected (for example,
+`--backends webgpu`) or either backend row errored; that row already fails the run.
+
 The exact and perf suites keep the unconfigured server, whose responses are
 unchanged. Every server logs its requests (`GET /__gate/requests`, cleared by
 `POST /__gate/reset`). `serialDepth` approximates the longest dependent request

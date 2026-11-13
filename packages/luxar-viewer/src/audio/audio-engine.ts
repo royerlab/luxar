@@ -67,6 +67,8 @@ export interface AudioEngineDeps {
   /** Where the autoplay gate mounts. */
   container(): HTMLElement;
   emit(event: 'sound-started' | 'sound-ended', payload: { name: string }): void;
+  /** Private playback signal, keyed by full scene path rather than public node name. */
+  onNarrationEvent?(event: 'started' | 'ended', path: string, durationMs?: number): void;
   /** Tell the UI (the rail) the engine's state changed. */
   notifyUiChanged(): void;
   /**
@@ -238,13 +240,20 @@ export class AudioEngine {
     for (const { desc, parent } of found) {
       if (this.nodes.has(desc.path)) continue;
       const attrs = parseSoundNodeAttrs(desc.path, desc.rawAttrs, scale);
+      const narration = attrs.trigger === 'on_arrive' && attrs.bus === 'voice' && !attrs.loop;
       const node = new SoundNode(desc, attrs, {
         listener,
         bus: buses[attrs.bus],
         panningModel: this.panningModel,
         parent,
-        onStarted: (name) => this.onNodeStarted(name, attrs.bus),
-        onEnded: (name) => this.onNodeEnded(name, attrs.bus),
+        onStarted: (name, durationMs) => {
+          this.onNodeStarted(name, attrs.bus);
+          if (narration) this.deps.onNarrationEvent?.('started', desc.path, durationMs);
+        },
+        onEnded: (name) => {
+          this.onNodeEnded(name, attrs.bus);
+          if (narration) this.deps.onNarrationEvent?.('ended', desc.path);
+        },
         resolveAttachCenter:
           attrs.attach_to !== undefined
             ? () => this.resolveAttachCenter(attrs.attach_to as string)
@@ -328,11 +337,12 @@ export class AudioEngine {
    * to that waypoint fires (`SOUND_SPEC.md` §4.3); a node without rows belongs
    * to every waypoint. Called by the app from the driver's event port.
    */
-  notifyWaypoint(kind: WaypointEventKind, when: SoundWaypointCondition): void {
-    if (this.disposed || this.nodes.size === 0) return;
+  notifyWaypoint(kind: WaypointEventKind, when: SoundWaypointCondition): string[] {
+    if (this.disposed || this.nodes.size === 0) return [];
     const dims = this.deps.getDims();
     const sceneIndex = this.deps.getSceneNodeIndex();
     let fired = 0;
+    const narrations: string[] = [];
     for (const node of this.nodes.values()) {
       if (node.attrs.trigger !== `on_${kind}`) continue;
       // A new event supersedes older deferred triggers of the SAME kind. The
@@ -340,11 +350,21 @@ export class AudioEngine {
       node.clearDeferredTrigger();
       const rows = this.belongingRows(node, when, dims, sceneIndex);
       if (rows === undefined) continue;
-      if (node.triggerFromWaypoint(kind, rows)) fired++;
+      if (node.triggerFromWaypoint(kind, rows)) {
+        fired++;
+        if (this.isNarratedArrival(kind, node)) {
+          narrations.push(node.path);
+        }
+      }
     }
     if (fired > 0) {
       log.custom('🔈', Modules.AUDIO, `waypoint ${kind}: ${fired} sound node(s) triggered`);
     }
+    return narrations;
+  }
+
+  private isNarratedArrival(kind: WaypointEventKind, node: SoundNode): boolean {
+    return kind === 'arrive' && node.attrs.bus === 'voice' && !node.attrs.loop;
   }
 
   /**

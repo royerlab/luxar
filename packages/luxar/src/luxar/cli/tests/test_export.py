@@ -317,7 +317,9 @@ class TestExportScene:
         with p1, p2:
             export_scene(sample_scene, output, auto_advance=60)
         assert "\nAUTO_ADVANCE = 60.0\n" in (output / "serve.py").read_text()
-        assert "tour rests 60 s" in (output / "README.txt").read_text()
+        readme = (output / "README.txt").read_text()
+        assert "tour rests at least 60 s" in readme
+        assert "narration can extend a stop" in readme
         with p1, p2, pytest.raises(ValueError, match="--auto-advance"):
             export_scene(sample_scene, tmp_path / "bad", auto_advance=-5)
         assert not (tmp_path / "bad").exists()  # refused before writing anything

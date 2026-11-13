@@ -694,8 +694,9 @@ def export(
         metavar="SECONDS",
         help=(
             "Bake a default into the exported serve.py's --auto-advance: the "
-            "seconds its tour rests at each stop (0 = no auto-advance), without "
-            "rebuilding the scene. serve.py --auto-advance N still overrides it. "
+            "minimum seconds per stop (narration can extend through its clip's "
+            "end; 0 = off), without rebuilding the scene. "
+            "serve.py --auto-advance N still overrides it. "
             "Not with --native, which has no serve.py."
         ),
     ),
@@ -718,7 +719,7 @@ def export(
         luxar export my_scene.luxar.zarr -o my_export/
         luxar export my_scene.luxar.zarr -o my_export/ --overwrite
         luxar export my_scene.luxar.zarr -o my_export/ --open
-        luxar export my_scene.luxar.zarr -o my_export/ --auto-advance 60
+        luxar export my_scene.luxar.zarr -o my_export/ --auto-advance 20
         luxar export my_scene.luxar.zarr -o out/ --native macos
         luxar export my_scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64
     """

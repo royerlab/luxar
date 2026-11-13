@@ -508,7 +508,9 @@ class AnimationConfig:
             detail); when the step starts a waypoint flight with
             ``reveal="on_arrival"``, the period counts from the landing, so it
             is how long the view rests; and moving the dimension to another
-            position by hand restarts the period.
+            position by hand restarts the period. If an ``on_arrive`` voice
+            narration starts at the waypoint, the viewer also waits until that
+            clip ends plus two seconds, keeping ``period_s`` as the minimum.
         loop: Loop mode ('once', 'loop', 'bounce').
         direction: Playback direction ('forward', 'backward').
         step_size: How far one animation tick advances the dimension, in the

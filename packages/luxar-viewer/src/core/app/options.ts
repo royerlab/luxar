@@ -263,9 +263,10 @@ export interface LuxarAppOptions {
   textScale?: number;
 
   /**
-   * Seconds per step for the scene's authored playback, beating every playing
-   * `viewer_config.animation` entry's rate; `0` keeps it from starting. Mirrors
-   * `UrlParams.playbackPeriod` (`?playbackPeriod=30`).
+   * Minimum seconds per stop for the scene's authored playback, beating every
+   * playing `viewer_config.animation` entry's rate. On-arrival narration can
+   * extend a stop through its clip's end; `0` keeps playback from starting.
+   * Mirrors `UrlParams.playbackPeriod` (`?playbackPeriod=30`).
    */
   playbackPeriod?: number;
 

@@ -51,6 +51,7 @@ import {
   runSuite,
   suiteMarkdown,
   validateMetricDirections,
+  validateWebGPUFirstFrameGapTargets,
 } from './suites.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -137,6 +138,7 @@ const log = (m) => console.log(`[render-gate] ${m}`);
 const manifestSuites = manifest.suites ?? {};
 try {
   validateMetricDirections(manifestSuites);
+  validateWebGPUFirstFrameGapTargets(manifestSuites);
 } catch (e) {
   configError(e.message);
 }
