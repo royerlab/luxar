@@ -1461,10 +1461,12 @@ normalization span used to prune negligible fitted splats before merging;
 `pipeline/tile_amplitude_pruned` records how many splats it removed, and is
 absent when a parallel (`-j N`) merge reloads a tile saved by an older run that
 did not stamp its count. A multi-tile `batch-fit merge` records the threshold
-but not the aggregate pruned count. A worker's zero-splat `.empty` marker starts
-with `0 splats` and carries `tile_amplitude_pruned=<n>` on the next line when the
-floor ran; legacy and content-plan markers may be empty. Both stats are fit
-provenance only and survive later content edits.
+but not the aggregate pruned count. A worker-written zero-splat `.empty` marker
+starts with `0 splats` and carries `tile_amplitude_pruned=<n>` on the next line
+when the floor ran. `batch-fit run` and `submit` discard the staging marker's
+contents when creating the final marker, so its count is not preserved there;
+content-plan and legacy markers may also be empty. Both stats are fit provenance
+only and survive later content edits.
 
 **What survives a rewrite: the authored appearance.** The rules above govern
 what a rewriting tool must *drop*; the mirror-image obligation is what it must
