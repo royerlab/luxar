@@ -1101,6 +1101,44 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
       sliders.dispose();
     });
 
+    it('lets a speed chip win when its mouse press blurs the field without focusing the chip', () => {
+      const sliders = buildSliders();
+      const stub = makeAnimationManagerStub();
+      sliders.setAnimationManager(stub as never);
+      open();
+      toPeriod();
+      type('45');
+      const chip = Array.from(
+        document.querySelectorAll<HTMLButtonElement>(
+          '[role="radiogroup"][aria-label="Speed"] button'
+        )
+      ).find((button) => button.textContent === '10s')!;
+      chip.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      amount().dispatchEvent(new FocusEvent('blur', { relatedTarget: null }));
+      expect(menuOpen()).toBe(true);
+      chip.click();
+      expect(stub.setTargetFPS).toHaveBeenCalledTimes(1);
+      expect(stub.setTargetFPS).toHaveBeenLastCalledWith(3, 1 / 10);
+      expect(menuOpen()).toBe(false);
+      sliders.dispose();
+    });
+
+    it('commits a later blur after an inside press produces no click', async () => {
+      const sliders = buildSliders();
+      const stub = makeAnimationManagerStub();
+      sliders.setAnimationManager(stub as never);
+      open();
+      toPeriod();
+      type('45');
+      row().dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      amount().dispatchEvent(new FocusEvent('blur', { relatedTarget: null }));
+      expect(stub.setTargetFPS).toHaveBeenCalledTimes(1);
+      expect(stub.setTargetFPS).toHaveBeenLastCalledWith(3, 1 / 45);
+      expect(menuOpen()).toBe(false);
+      sliders.dispose();
+    });
+
     it('a rate that is no preset opens seeded and marked; an untouched seed never commits', () => {
       const sliders = buildSliders();
       const stub = makeAnimationManagerStub();

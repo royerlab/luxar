@@ -200,6 +200,9 @@ export class DimensionSliders {
   /** Active context menu element (only one can be open at a time) */
   private activeContextMenu: HTMLElement | null = null;
 
+  /** A press inside the menu may blur an input without a related target. */
+  private menuPressPending = false;
+
   /** Stored event handlers for context menu cleanup */
   private contextMenuCleanup: {
     clickOutside?: (e: MouseEvent) => void;
@@ -1414,7 +1417,10 @@ export class DimensionSliders {
     });
     amount.addEventListener('blur', (e) => {
       // Let a clicked menu control receive its click before the menu closes.
-      if (e.relatedTarget instanceof Node && this.activeContextMenu?.contains(e.relatedTarget)) {
+      if (
+        this.menuPressPending ||
+        (e.relatedTarget instanceof Node && this.activeContextMenu?.contains(e.relatedTarget))
+      ) {
         return;
       }
       if (edited) commit();
@@ -1449,6 +1455,16 @@ export class DimensionSliders {
     // Create context menu
     const menu = document.createElement('div');
     menu.className = 'luxar-dimension-slider__context-menu';
+    menu.addEventListener('mousedown', () => {
+      this.menuPressPending = true;
+      // A cancelled press must not suppress a later blur outside the menu.
+      setTimeout(() => {
+        if (this.activeContextMenu === menu) this.menuPressPending = false;
+      }, 0);
+    });
+    menu.addEventListener('click', () => {
+      this.menuPressPending = false;
+    });
 
     // Compact chip layout (UI Design Guide §6/§8): each section is one
     // micro-header row (title + an optional right-aligned muted readout)
@@ -1752,6 +1768,7 @@ export class DimensionSliders {
     // the menu again -- re-entering here with the node already detached.
     const menu = this.activeContextMenu;
     this.activeContextMenu = null;
+    this.menuPressPending = false;
     menu?.remove();
 
     // Cancel a pending click-outside attach if the menu was closed before
