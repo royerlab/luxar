@@ -6,6 +6,7 @@ import {
   getElementTexture,
   getElementTextureLayout,
   isElementTextureCurrent,
+  type DeviceOrderingWrite,
 } from '../element-storage';
 import { rendererBackendPolicy } from '../renderer-backend-policy';
 import { setGpuOrderScratchBytes } from '../gpu-buffer-pool/geometry-bytes';
@@ -92,40 +93,53 @@ function gpuResourcesReady(
   return !!(activeBackend.get(texture).texture && target && count <= target.array.length);
 }
 
-/** Submit into the inactive ordering buffer. The caller selects it only on success. */
-export function submitGpuSort(
+function storageBuffer(
+  activeBackend: NativeBackend,
+  attribute: THREE.InstancedBufferAttribute
+): GpuBuffer | undefined {
+  const existing = activeBackend.get(attribute).buffer;
+  if (existing) return existing;
+  activeBackend.createStorageAttribute(attribute);
+  return activeBackend.get(attribute).buffer;
+}
+
+/** Capture a GPU sort for the staged writer; submission waits for the pump. */
+export function createGpuSortWrite(
   geometry: THREE.InstancedBufferGeometry,
   count: number,
   modelView: THREE.Matrix4
-): boolean {
-  if (!canGpuSort(geometry, count) || !backend || !sorter) return false;
+): DeviceOrderingWrite | null {
+  if (!canGpuSort(geometry, count) || !backend || !sorter) return null;
+  const currentEpoch = epoch;
   const texture = getElementTexture(geometry)!;
   const layout = getElementTextureLayout(geometry)!;
-  const inactive = geometry.getAttribute(
-    activeSortedIndexSlot(geometry) === 0 ? 'aSortedIndexB' : 'aSortedIndex'
-  ) as THREE.BufferAttribute;
-  let target = backend.get(inactive).buffer;
-  if (!target) {
-    backend.createStorageAttribute(inactive);
-    target = backend.get(inactive).buffer;
-  }
-  if (!target) return false;
-  const sorted = sorter.sort({
-    centers: backend.get(texture).texture!,
-    textureWidth: texture.image.width,
-    texelsPerElement: layout.texelsPerElement,
-    centerMode: layout.label === 'segment' ? 'midpoint01' : 'texel0',
+  const pose = modelView.elements.slice();
+  return {
     count,
-    modelView: modelView.elements,
-    target,
-  });
-  if (!sorted) return false;
-  if (!scratchOwner) {
-    scratchOwner = geometry;
-    geometry.addEventListener('dispose', releaseOwnedScratch);
-  }
-  setGpuOrderScratchBytes(scratchOwner, sorter.scratchBytes);
-  return true;
+    write(attribute) {
+      if (currentEpoch !== epoch || !backend || !sorter || !isElementTextureCurrent(texture))
+        return false;
+      const target = storageBuffer(backend, attribute);
+      const centers = backend.get(texture).texture;
+      if (!target || !centers) return false;
+      const sorted = sorter.sort({
+        centers,
+        textureWidth: texture.image.width,
+        texelsPerElement: layout.texelsPerElement,
+        centerMode: layout.label === 'segment' ? 'midpoint01' : 'texel0',
+        count,
+        modelView: pose,
+        target,
+      });
+      if (!sorted) return false;
+      if (!scratchOwner) {
+        scratchOwner = geometry;
+        geometry.addEventListener('dispose', releaseOwnedScratch);
+      }
+      setGpuOrderScratchBytes(scratchOwner, sorter.scratchBytes);
+      return true;
+    },
+  };
 }
 
 /** Stop using this device after a failed sort; worker ordering remains available. */

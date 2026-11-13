@@ -903,33 +903,6 @@ export function pumpSortedIndexOrderingApply(
   return applyNextSortedIndexChunk(geometry, state);
 }
 
-/** Select an inactive ordering filled by a WebGPU compute pass. */
-export function selectComputedSortedIndexOrdering(
-  geometry: THREE.InstancedBufferGeometry,
-  count: number,
-  callbacks?: SortedIndexApplyCallbacks
-): boolean {
-  const inactive = getInactiveSortedIndexAttribute(geometry);
-  if (!inactive || !sortedIndexBuffersUsable(geometry) || count > inactive.array.length)
-    return false;
-  cancelSortedIndexOrderingApply(geometry);
-  clearIdentityPrefix(inactive);
-  installComputedMirror(geometry, inactive);
-  setSortedIndexSlot(geometry, activeSortedIndexSlot(geometry) === 0 ? 1 : 0);
-  raiseHeldDraw(geometry, count);
-  if (callbacks) awaitingDrawAcknowledgement.set(geometry, callbacks);
-  return true;
-}
-
-function installComputedMirror(
-  geometry: THREE.InstancedBufferGeometry,
-  inactive: THREE.BufferAttribute
-): void {
-  const active = getActiveSortedIndexAttribute(geometry)!;
-  clearIdentityPrefix(active);
-  inactive.array = active.array;
-}
-
 /**
  * Acknowledge that THREE completed a render of `geometry` using its currently
  * selected ordering buffer. This is the first point at which the final update

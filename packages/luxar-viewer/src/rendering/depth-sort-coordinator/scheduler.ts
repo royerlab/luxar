@@ -13,7 +13,7 @@ import {
   cancelSortedIndexOrderingApply,
   hasPendingSortedIndexOrderingApply,
   pumpSortedIndexOrderingApply,
-  selectComputedSortedIndexOrdering,
+  writeDeviceSortedIndexOrdering,
   writeSortedIndexOrdering,
   type SortedIndexApplyCallbacks,
 } from '../element-storage';
@@ -49,7 +49,7 @@ import {
   syncSortedIndexSlot,
 } from './ordering-apply';
 import { SORT_RPC_TIMEOUT_MS, maybeRetryStarvedWorkerInit } from './worker-lifecycle';
-import { canGpuSort, disableGpuOrderProducer, submitGpuSort } from './gpu-order-producer';
+import { canGpuSort, createGpuSortWrite, disableGpuOrderProducer } from './gpu-order-producer';
 import type { SortResult } from '../../workers/sort-worker';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 
@@ -121,11 +121,43 @@ function stageGpuSort(
   geometry: THREE.InstancedBufferGeometry,
   count: number,
   modelView: THREE.Matrix4,
-  callbacks: SortedIndexApplyCallbacks
+  callbacks: SortedIndexApplyCallbacks,
+  onWriteFailure: () => void
 ): boolean {
   try {
-    if (!submitGpuSort(geometry, count, modelView)) return false;
-    return selectComputedSortedIndexOrdering(geometry, count, callbacks);
+    const op = createGpuSortWrite(geometry, count, modelView);
+    if (!op) return false;
+    let failed = false;
+    const staged = writeDeviceSortedIndexOrdering(
+      geometry,
+      {
+        count,
+        write(target) {
+          try {
+            const written = op.write(target);
+            failed = !written;
+            return written;
+          } catch (error) {
+            failed = true;
+            disableGpuOrderProducer();
+            log.warning(
+              Modules.WORKER_POOL,
+              'WebGPU depth ordering failed; using worker order',
+              error
+            );
+            return false;
+          }
+        },
+      },
+      {
+        ...callbacks,
+        onAbandoned: () => {
+          callbacks.onAbandoned?.();
+          if (failed) onWriteFailure();
+        },
+      }
+    );
+    return staged === count;
   } catch (error) {
     disableGpuOrderProducer();
     log.warning(Modules.WORKER_POOL, 'WebGPU depth ordering failed; using worker order', error);
@@ -134,16 +166,12 @@ function stageGpuSort(
 }
 
 function finishGpuSort(
-  c: CoordinatorState,
-  mesh: THREE.Mesh,
   state: NodeSortState,
   modelView: THREE.Matrix4,
   session: UpdateSession | null
 ): void {
   session?.setMetadata({ elements: state.count, info: 'GPU compute' });
   recordSortPose(state, modelView);
-  syncSortedIndexSlot(c, mesh);
-  c.requestRender?.();
 }
 
 /** Select a submitted GPU sort before the next draw on the same queue. */
@@ -164,13 +192,15 @@ function tryGpuOrdering(
     geometry,
     state.count,
     modelView,
-    gpuOrderingCallbacks(c, state.count, startedAt, profiler, session)
+    gpuOrderingCallbacks(c, state.count, startedAt, profiler, session),
+    () => scheduleSort(c, mesh, mesh.uuid)
   );
   if (!selected) {
     session?.end();
     return false;
   }
-  finishGpuSort(c, mesh, state, modelView, session);
+  finishGpuSort(state, modelView, session);
+  c.requestRender?.();
   return true;
 }
 

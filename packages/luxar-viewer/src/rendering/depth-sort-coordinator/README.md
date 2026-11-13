@@ -14,13 +14,13 @@ What the coordinators SHARE is the one **SortWorker** (`workerHost` in `state.ts
 
 **There are two APPLY paths, and only the apply differs.** A "center" is a splat/point center, a line segment midpoint, or a triangle centroid — 3 floats either way, so registration, worker and kernel are shared:
 
-|                  | Instanced (gsplats, points, lines)                             | Indexed (mesh)                                                                                              |
-| ---------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| What is permuted | `aSortedIndex`, a per-instance draw-slot indirection           | `geometry.index` itself                                                                                     |
-| Buffering        | Double-buffered pair + `uSortedIndexSlot` uniform              | Single buffer                                                                                               |
-| Cadence          | Chunked: one 4 MB slice per rendered frame, flip on completion | Atomic: the whole visible prefix in one write                                                               |
-| Why              | A half-written INACTIVE buffer is never drawn                  | A half-written index buffer is not a permutation — it would draw some triangles twice and others not at all |
-| Owner            | `rendering/element-storage.ts`                                 | `triangle-ordering.ts`                                                                                      |
+|                  | Instanced (gsplats, points, lines)                                                                                     | Indexed (mesh)                                                                                              |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| What is permuted | `aSortedIndex`, a per-instance draw-slot indirection                                                                   | `geometry.index` itself                                                                                     |
+| Buffering        | Double-buffered pair + `uSortedIndexSlot` uniform                                                                      | Single buffer                                                                                               |
+| Cadence          | WebGL host order: one 4 MB slice per frame; WebGPU device order: one write after pending host uploads flush, then flip | Atomic: the whole visible prefix in one write                                                               |
+| Why              | A half-written INACTIVE buffer is never drawn                                                                          | A half-written index buffer is not a permutation — it would draw some triangles twice and others not at all |
+| Owner            | `rendering/element-storage.ts`                                                                                         | `triangle-ordering.ts`                                                                                      |
 
 Mesh cannot double-buffer because `geometry.index` is _bound_ state: no uniform can select between two index buffers, and reassigning `geometry.index` is the drawn-geometry rebind `applyMeshIndices` exists to avoid. The atomic write costs one upload of a prefix the mesh path already re-uploads on every slice move. Its permutation is applied to the commit's CANONICAL triples (retained on `NodeSortState.triangleSource` only while the node is sorting), never to the live buffer, which would compose successive permutations.
 
@@ -212,7 +212,7 @@ Enforces **at most one in-flight sort per node**; a commit landing mid-sort queu
 
 1. Get `state` (from THIS coordinator's node map) and `camera` (from its `getCamera()`); return if either is missing
 2. Return if already `inFlight` — set `resortQueued = true` and return
-3. When requested, try the texture-based GPU sort first. A successful submission selects the inactive ordering buffer and records the pose without waiting for worker initialization
+3. When requested, stage a texture-based GPU write through `writeDeviceSortedIndexOrdering` and record the pose without waiting for worker initialization. The per-frame pump submits it to the inactive buffer and flips only after any earlier host upload on that slot has drawn; a failed write falls back to the worker
 4. Otherwise return unless the worker is usable: `api` is wrapped BEFORE `initializeWithGuard` is awaited, so a live handle is not a ready worker. `workerInitState === 'ready'` gates the worker RPC here rather than at each caller (the offline-capture force loop dispatches without consulting `registered`). Skipping keeps `recordSortPose` below from stamping a pose for a sort that never ran, which would silence the per-frame `!lastSortAxis` recovery dispatch
 5. Set `inFlight = true`
 6. Refresh `mesh.matrixWorld` and `camera.matrixWorld` (can be stale when a commit fires before the next frame)
@@ -241,7 +241,7 @@ Enforces **at most one in-flight sort per node**; a commit landing mid-sort queu
 
 ### Chunked Ordering Apply (Perf Lever L8)
 
-Every ordering uses the same staged-apply path; orderings larger than one 1M-index (4 MB) slice span multiple frames on the classic WebGL backend:
+Host and device orderings use the same staged-apply path. Host orderings larger than one 1M-index (4 MB) slice span multiple frames on the classic WebGL backend:
 
 - The resolve path only records the pending state (`writeSortedIndexOrdering`)
 - The per-frame pump (`pumpChunkedOrderingApplies`, called from `evaluateDepthSortPerFrame`) writes at most one slice per rendered frame
@@ -253,6 +253,7 @@ Every ordering uses the same staged-apply path; orderings larger than one 1M-ind
 - On **completion**, drain a queued re-sort (a commit that landed mid-sort parked it)
 - **Abort** when `committedData` is cleared, the node/scene is released, or the geometry is disposed; accepted-but-unrendered profiler sessions close as abandoned rather than uploaded
 - Chunk slicing/back-pressure is gated to the classic WebGL backend (the backend policy's `ordering.chunked`, `rendering/renderer-backend-policy.ts`): the back-pressure waits on the attribute's `onUploadCallback`, which neither WebGPU backend fires, so there an ordering is written in one slice and flips on the next pump. The WebGPU backends do honour attribute update ranges, but three re-uploads a `DynamicDrawUsage` attribute on every render, so the pair is `StaticDrawUsage` there (the policy's `ordering.usage`). Double buffering and post-render acknowledgement remain unconditional
+- A device write waits if the inactive attribute still has host `updateRanges`: three would otherwise upload that stale range over the GPU result. Once a draw consumes it, the draw hook wakes the pump. After a device write the host array is behind; append/grow seeds check `isSortedIndexHostArrayCurrent`, and context restore calls `repairSortedIndexHostArray` before re-uploading
 
 **Bounded per node, not globally**: several large nodes resolving simultaneously each add one slice's cost to a frame (simultaneous 10M-scale resolves are already serialized by the per-node single-in-flight sort rule).
 

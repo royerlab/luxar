@@ -4,6 +4,9 @@ import {
   acknowledgeSortedIndexOrderingDraw,
   attachElementStorage,
   activeSortedIndexSlot,
+  getActiveSortedIndexAttribute,
+  pumpSortedIndexOrderingApply,
+  writeSortedIndexIdentity,
 } from '../../../../rendering/element-storage';
 import { POINT_TEXTURE_LAYOUT } from '../../../../rendering/element-texture-layout';
 import { configureRendererBackendPolicy } from '../../../../rendering/renderer-backend-policy';
@@ -11,7 +14,10 @@ import {
   canGpuSort,
   configureGpuOrderProducer,
 } from '../../../../rendering/depth-sort-coordinator/gpu-order-producer';
-import { scheduleSort } from '../../../../rendering/depth-sort-coordinator/scheduler';
+import {
+  evaluateDepthSortPerFrame,
+  scheduleSort,
+} from '../../../../rendering/depth-sort-coordinator/scheduler';
 import {
   workerHost,
   type CoordinatorState,
@@ -32,6 +38,7 @@ function fakeBackend(targetUsage = BufferUsage.VERTEX | BufferUsage.COPY_DST) {
   const copies: { target: GpuBuffer; bytes: number }[] = [];
   const allocations: { size: number; destroyed: boolean }[] = [];
   const buffers = new WeakMap<THREE.BufferAttribute, GpuBuffer>();
+  const contents = new WeakMap<GpuBuffer, Uint32Array>();
   const texture = { createView: () => ({}) };
   const device: GpuDevice = {
     limits: {
@@ -59,6 +66,8 @@ function fakeBackend(targetUsage = BufferUsage.VERTEX | BufferUsage.COPY_DST) {
       }),
       copyBufferToBuffer: (_source, _sourceOffset, target, _targetOffset, bytes) => {
         copies.push({ target, bytes });
+        const order = contents.get(target)!;
+        for (let i = 0; i < bytes / 4; i++) order[i] = bytes / 4 - 1 - i;
       },
       finish: () => ({}),
     }),
@@ -70,19 +79,21 @@ function fakeBackend(targetUsage = BufferUsage.VERTEX | BufferUsage.COPY_DST) {
         ? { texture }
         : { buffer: buffers.get(resource as THREE.BufferAttribute) },
     createStorageAttribute: (attribute: THREE.BufferAttribute) => {
-      buffers.set(attribute, {
+      const buffer = {
         size: attribute.array.byteLength,
         usage: targetUsage,
         destroy: () => {},
-      });
+      };
+      buffers.set(attribute, buffer);
+      contents.set(buffer, new Uint32Array(attribute.array as Uint32Array));
     },
   };
-  return { backend, buffers, copies, allocations };
+  return { backend, buffers, contents, copies, allocations };
 }
 
-function scene() {
+function scene(capacity = 4) {
   const geometry = new THREE.InstancedBufferGeometry();
-  const texture = attachElementStorage(geometry, 4, POINT_TEXTURE_LAYOUT);
+  const texture = attachElementStorage(geometry, capacity, POINT_TEXTURE_LAYOUT);
   const material = new THREE.ShaderMaterial({ uniforms: { uSortedIndexSlot: { value: 0 } } });
   material.userData.blendingMode = 'normal';
   const mesh = new THREE.Mesh(geometry, material);
@@ -92,7 +103,7 @@ function scene() {
   const state = {
     mesh,
     generation: 1,
-    count: 4,
+    count: capacity,
     inFlight: false,
     resortQueued: false,
     lastSortAxis: null,
@@ -138,6 +149,9 @@ describe('native WebGPU ordering producer', () => {
     const inactive = geometry.getAttribute('aSortedIndexB') as THREE.BufferAttribute;
     const version = inactive.version;
     scheduleSort(coordinator, mesh, mesh.uuid, true);
+    expect(fake.copies).toHaveLength(0);
+    expect(activeSortedIndexSlot(geometry)).toBe(0);
+    evaluateDepthSortPerFrame(coordinator);
     expect(fake.copies).toEqual([{ target: fake.buffers.get(inactive), bytes: 16 }]);
     expect(activeSortedIndexSlot(geometry)).toBe(1);
     expect(inactive.version).toBe(version);
@@ -163,6 +177,7 @@ describe('native WebGPU ordering producer', () => {
     const original = geometry.getAttribute('aSortedIndex') as THREE.BufferAttribute;
     const originalVersion = original.version;
     scheduleSort(coordinator, mesh, mesh.uuid, true);
+    evaluateDepthSortPerFrame(coordinator);
     expect(fake.copies.at(-1)).toEqual({ target: fake.buffers.get(original), bytes: 16 });
     expect(activeSortedIndexSlot(geometry)).toBe(0);
     expect(original.version).toBe(originalVersion);
@@ -186,6 +201,55 @@ describe('native WebGPU ordering producer', () => {
     geometry.dispose();
   });
 
+  it('keeps an undrawn identity tail from overwriting a later GPU ordering', async () => {
+    configureRendererBackendPolicy('webgpu-native');
+    const fake = fakeBackend();
+    configureGpuOrderProducer({ backend: fake.backend } as unknown as Renderer);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const { geometry, texture, mesh, state, coordinator } = scene(64);
+    workerHost.api = null;
+    texture.onUpdate?.(texture);
+    writeSortedIndexIdentity(geometry, 32);
+    geometry.instanceCount = 32;
+    const slotA = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+    fake.backend.createStorageAttribute(slotA);
+    slotA.clearUpdateRanges(); // The initial 32-element identity was drawn.
+    writeSortedIndexIdentity(geometry, 48);
+    state.count = 48;
+    geometry.instanceCount = 48;
+    expect(slotA.updateRanges).toEqual([{ start: 32, count: 16 }]);
+
+    scheduleSort(coordinator, mesh, mesh.uuid, true);
+    pumpSortedIndexOrderingApply(geometry);
+    scheduleSort(coordinator, mesh, mesh.uuid, true);
+    expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ stalled: true, flipped: false });
+    expect(fake.copies).toHaveLength(1);
+
+    // The next draw flushes the old host tail on A while B remains selected.
+    const slotB = geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute;
+    for (const attr of [slotA, slotB]) {
+      const buffer = fake.buffers.get(attr);
+      if (buffer) {
+        const data = fake.contents.get(buffer)!;
+        for (const range of attr.updateRanges) {
+          data.set(
+            (attr.array as Uint32Array).subarray(range.start, range.start + range.count),
+            range.start
+          );
+        }
+        attr.clearUpdateRanges();
+      }
+    }
+    acknowledgeSortedIndexOrderingDraw(geometry);
+    expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ stalled: false, flipped: true });
+    const drawn = getActiveSortedIndexAttribute(geometry)!;
+    const drawnBuffer = fake.buffers.get(drawn)!;
+    expect(
+      Array.from(fake.contents.get(drawnBuffer)!.subarray(0, 48)).sort((a, b) => a - b)
+    ).toEqual(Array.from({ length: 48 }, (_, i) => i));
+    geometry.dispose();
+  });
+
   it('falls back to the worker when the target lacks COPY_DST', async () => {
     configureRendererBackendPolicy('webgpu-native');
     const fake = fakeBackend(BufferUsage.VERTEX);
@@ -198,6 +262,7 @@ describe('native WebGPU ordering producer', () => {
     workerHost.workerInitState = 'ready';
 
     scheduleSort(coordinator, mesh, mesh.uuid, true);
+    expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ flipped: false });
 
     expect(sort).toHaveBeenCalledOnce();
     expect(activeSortedIndexSlot(geometry)).toBe(0);
