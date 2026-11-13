@@ -27,6 +27,8 @@ test('native GSplat draw consumes a compute-built order without an index upload'
   page,
 }) => {
   test.skip(!isWebGPUProject(), 'requires a native WebGPU adapter');
+  // Initialization can take 45 s; allow time for rendering and the compute slot flip.
+  test.setTimeout(90_000);
   await page.goto(`/?src=${FIXTURE}&debug&dpr=1`);
   await waitForLuxarReady(page);
   await waitForRenderStable(page);
