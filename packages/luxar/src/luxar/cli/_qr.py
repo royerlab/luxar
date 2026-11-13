@@ -21,6 +21,9 @@ Scope is deliberately the narrow case this needs, not the QR standard:
 * **Mask pattern chosen by the standard's penalty rules**, because a bad mask
   is the usual reason a home-made QR scans on one phone and not another.
 
+Three renderings: terminal half-blocks, a PNG, and an A4 PDF page (the symbol
+half the page wide, with words the caller supplies) for printing.
+
 The oracle is a DECODER, not another encoder: ``test_qr.py`` renders each
 matrix and asserts `zxing-cpp` reads the payload back, over a spread of sizes
 and versions. Agreement with another encoder does not establish that a symbol
@@ -40,6 +43,7 @@ __all__ = [
     "qr_matrix",
     "qr_ascii",
     "qr_png_bytes",
+    "qr_pdf_bytes",
 ]
 
 
@@ -645,3 +649,245 @@ def qr_png_bytes(matrix: list[list[bool]], *, scale: int = 8, border: int = 4) -
         + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
         + chunk(b"IEND", b"")
     )
+
+
+# ── a printable A4 page ─────────────────────────────────────────────────────
+#
+# A one-page PDF written by hand, for the same reason as the PNG: it is made in
+# the exported folder, where nothing is installed. It uses only the standard
+# 14 fonts every PDF reader carries (Helvetica, Helvetica-Bold, Courier), so
+# nothing is embedded, and draws the symbol as vector squares, so it prints
+# sharp at any size. No date is written: the same URL gives the same bytes.
+
+#: A4 portrait, in PostScript points.
+_A4 = (595.28, 841.89)
+_MARGIN = 56.0
+#: Glyph widths (1/1000 em) for ASCII 32..126 in WinAnsiEncoding, from the
+#: Adobe metrics of the two proportional standard fonts. Only used to wrap and
+#: centre lines; any other character is measured as 556.
+_WIDTHS = {
+    "Helvetica": (
+        278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278,
+        278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584,
+        584, 556, 1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556,
+        833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278,
+        278, 278, 469, 556, 333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222,
+        500, 222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500,
+        500, 334, 260, 334, 584,
+    ),
+    "Helvetica-Bold": (
+        278, 333, 474, 556, 556, 889, 722, 238, 333, 333, 389, 584, 278, 333, 278,
+        278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 333, 333, 584, 584,
+        584, 611, 975, 722, 722, 722, 722, 667, 611, 778, 722, 278, 556, 722, 611,
+        833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 333,
+        278, 333, 584, 556, 333, 556, 611, 556, 611, 556, 333, 611, 611, 278, 278,
+        556, 278, 889, 611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556,
+        500, 389, 280, 389, 584,
+    ),
+}  # fmt: skip
+_FONT_KEYS = {"Helvetica": "F1", "Helvetica-Bold": "F2", "Courier": "F3"}
+
+
+def _text_width(text: str, font: str, size: float) -> float:
+    if font == "Courier":
+        return 0.6 * size * len(text)
+    widths = _WIDTHS[font]
+    total = 0
+    for char in text:
+        code = ord(char)
+        total += widths[code - 32] if 32 <= code <= 126 else 556
+    return total * size / 1000.0
+
+
+def _wrap(text: str, font: str, size: float, width: float) -> list[str]:
+    """Greedy word wrap; a word longer than the line is broken by characters."""
+    lines: list[str] = []
+    line = ""
+    for word in text.split():
+        candidate = f"{line} {word}" if line else word
+        if _text_width(candidate, font, size) <= width:
+            line = candidate
+            continue
+        if line:
+            lines.append(line)
+        line = word
+        while _text_width(line, font, size) > width:
+            cut = len(line)
+            while cut > 1 and _text_width(line[:cut], font, size) > width:
+                cut -= 1
+            lines.append(line[:cut])
+            line = line[cut:]
+    if line:
+        lines.append(line)
+    return lines
+
+
+def _pdf_string(text: str) -> bytes:
+    raw = text.encode("cp1252", errors="replace")
+    return (
+        b"("
+        + raw.replace(b"\\", b"\\\\").replace(b"(", b"\\(").replace(b")", b"\\)")
+        + b")"
+    )
+
+
+class _Page:
+    """A content stream with a cursor running down the page."""
+
+    def __init__(self) -> None:
+        self.ops: list[bytes] = []
+        self.y = _A4[1] - _MARGIN
+
+    def text(
+        self,
+        lines: list[str],
+        font: str,
+        size: float,
+        *,
+        leading: float,
+        x: float = _MARGIN,
+        centre: bool = False,
+        grey: float = 0.0,
+    ) -> None:
+        for line in lines:
+            self.y -= leading
+            left = (_A4[0] - _text_width(line, font, size)) / 2 if centre else x
+            self.ops.append(
+                f"BT {grey:.2f} g /{_FONT_KEYS[font]} {size:g} Tf "
+                f"{left:.2f} {self.y:.2f} Td ".encode("ascii")
+                + _pdf_string(line)
+                + b" Tj ET"
+            )
+
+    def qr(self, matrix: list[list[bool]], width: float) -> tuple[float, ...]:
+        """Draw the symbol ``width`` wide, centred; return its rectangle."""
+        size = len(matrix)
+        module = width / size
+        left = (_A4[0] - width) / 2
+        top = self.y
+        rects: list[str] = []
+        for row, values in enumerate(matrix):
+            y = top - (row + 1) * module
+            col = 0
+            while col < size:
+                if not values[col]:
+                    col += 1
+                    continue
+                start = col
+                while col < size and values[col]:
+                    col += 1
+                # A hair taller than a module, so no reader shows seams between rows.
+                rects.append(
+                    f"{left + start * module:.3f} {y - 0.02:.3f} "
+                    f"{(col - start) * module:.3f} {module + 0.04:.3f} re"
+                )
+        self.ops.append(("0 g " + " ".join(rects) + " f").encode("ascii"))
+        self.y = top - width
+        return (left, self.y, left + width, top)
+
+
+def qr_pdf_bytes(
+    matrix: list[list[bool]],
+    *,
+    url: str,
+    heading: str,
+    subheading: str = "",
+    intro: str = "",
+    steps: tuple[str, ...] = (),
+    notes: tuple[str, ...] = (),
+    footer: str = "",
+) -> bytes:
+    """An A4 portrait page: heading, the symbol half the page wide, its URL,
+    an ``intro`` paragraph, numbered ``steps`` and bulleted ``notes``, and a
+    small ``footer``.
+
+    The symbol and the URL are a link too, for the PDF opened on a screen. The
+    caller words the page; this only lays it out.
+    """
+    page = _Page()
+    column = _A4[0] - 2 * _MARGIN
+    page.text(_wrap(heading, "Helvetica-Bold", 24, column), "Helvetica-Bold", 24,
+              leading=30, centre=True)  # fmt: skip
+    if subheading:
+        page.text(_wrap(subheading, "Helvetica", 14, column), "Helvetica", 14,
+                  leading=20, centre=True, grey=0.3)  # fmt: skip
+    page.y -= 22
+    left, bottom, right, top = page.qr(matrix, _A4[0] / 2)
+    page.y -= 8
+    url_lines = _wrap(url, "Courier", 8.5, column)
+    page.text(url_lines, "Courier", 8.5, leading=11, centre=True, grey=0.25)
+    link = (left, page.y - 2, right, top)
+    if intro:
+        page.y -= 16
+        page.text(_wrap(intro, "Helvetica", 13, column), "Helvetica", 13, leading=18)
+    if steps:
+        page.y -= 16
+        page.text(["How to use it"], "Helvetica-Bold", 15, leading=21)
+        for number, step in enumerate(steps, 1):
+            lines = _wrap(step, "Helvetica", 13, column - 24)
+            page.text([f"{number}."], "Helvetica-Bold", 13, leading=18)
+            page.y += 18
+            page.text(lines, "Helvetica", 13, leading=18, x=_MARGIN + 24)
+            page.y -= 5
+    if notes:
+        page.y -= 12
+        page.text(["Good to know"], "Helvetica-Bold", 15, leading=21)
+        for note in notes:
+            lines = _wrap(note, "Helvetica", 11.5, column - 18)
+            page.text(["\u2022"], "Helvetica", 11.5, leading=16)
+            page.y += 16
+            page.text(lines, "Helvetica", 11.5, leading=16, x=_MARGIN + 18)
+            page.y -= 4
+    if footer:
+        page.y = _MARGIN - 6
+        page.text(_wrap(footer, "Helvetica", 8.5, column), "Helvetica", 8.5,
+                  leading=0, centre=True, grey=0.45)  # fmt: skip
+    return _pdf_document(b"\n".join(page.ops), link, url, heading)
+
+
+def _pdf_document(
+    content: bytes, link: tuple[float, ...], url: str, title: str
+) -> bytes:
+    stream = zlib.compress(content, 9)
+    fonts = " ".join(
+        f"/{key} {index} 0 R" for index, key in enumerate(_FONT_KEYS.values(), 6)
+    )
+    rect = " ".join(f"{value:.2f}" for value in link)
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {_A4[0]} {_A4[1]}] "
+            f"/Resources << /Font << {fonts} >> >> /Contents 4 0 R /Annots [5 0 R] >>"
+        ).encode("ascii"),
+        b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(stream)
+        + stream
+        + b"\nendstream",
+        f"<< /Type /Annot /Subtype /Link /Rect [{rect}] /Border [0 0 0] "
+        f"/A << /S /URI /URI ".encode("ascii")
+        + _pdf_string(url)
+        + b" >> >>",
+        *(
+            f"<< /Type /Font /Subtype /Type1 /BaseFont /{name} "
+            f"/Encoding /WinAnsiEncoding >>".encode("ascii")
+            for name in _FONT_KEYS
+        ),
+        # A text string in the Info dictionary is PDFDocEncoding or UTF-16BE,
+        # not the page fonts' WinAnsi: UTF-16BE with a BOM keeps any title readable.
+        b"<< /Title <"
+        + ("\ufeff" + title).encode("utf-16-be").hex().upper().encode("ascii")
+        + b"> /Producer (Luxar) >>",
+    ]
+    out = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+    out += (
+        b"trailer\n<< /Size %d /Root 1 0 R /Info %d 0 R >>\nstartxref\n%d\n%%%%EOF\n"
+        % (len(objects) + 1, len(objects), xref)
+    )
+    return bytes(out)

@@ -193,3 +193,84 @@ def test_padding_codewords_are_the_specified_alternating_pair() -> None:
     assert expected_pad(exact_len - 1) == [0xEC]
     assert one_short[-1] == 0xEC
     assert len(one_short) == capacity
+
+
+# ── the A4 sheet ────────────────────────────────────────────────────────────
+
+SHEET_URL = "http://lobby-pc.local:8000/viewer/control.html?control&controlToken=Xq3vLm9TzPqR2wYc"
+
+
+def _sheet(url: str = SHEET_URL, **words: object) -> bytes:
+    return _qr.qr_pdf_bytes(
+        qr_matrix(url),
+        url=url,
+        heading="Drive the display from your phone",
+        subheading="A (scene) with \\ and ( ) in its title",
+        intro="What this is.",
+        steps=("Join the network.", "Scan the code.", "Tap a tile."),
+        notes=("A note long enough to wrap " * 8,),
+        footer="Luxar  |  lobby-pc.local:8000",
+        **words,  # type: ignore[arg-type]
+    )
+
+
+def test_the_sheet_is_a_well_formed_a4_page() -> None:
+    import re
+    import zlib
+
+    pdf = _sheet()
+    assert pdf.startswith(b"%PDF-1.4") and pdf.rstrip().endswith(b"%%EOF")
+    assert b"/MediaBox [0 0 595.28 841.89]" in pdf
+    # Every xref offset points at the object it names.
+    xref = int(pdf.rsplit(b"startxref\n", 1)[1].split(b"\n")[0])
+    entries = pdf[xref:].split(b"\n")[3:]
+    for number, entry in enumerate(entries, 1):
+        if not entry.endswith(b" n "):
+            break
+        offset = int(entry[:10])
+        assert pdf[offset:].startswith(b"%d 0 obj" % number)
+    stream = re.search(rb"stream\n(.*?)\nendstream", pdf, re.S)
+    assert stream is not None
+    content = zlib.decompress(stream.group(1))
+    # Parentheses and backslashes in the text are escaped, not unbalanced.
+    assert rb"A \(scene\) with \\ and \( \) in its title" in content
+    assert _sheet() == pdf  # no date or id: the same URL, the same bytes
+
+
+def test_the_sheet_links_the_code_to_its_url() -> None:
+    assert b"/URI (" + SHEET_URL.encode() + b")" in _sheet()
+
+
+def test_long_text_wraps_inside_the_margins() -> None:
+    lines = _qr._wrap("word " * 60, "Helvetica", 13, 400)
+    assert len(lines) > 1
+    assert all(_qr._text_width(line, "Helvetica", 13) <= 400 for line in lines)
+    url_lines = _qr._wrap("x" * 300, "Courier", 8.5, 483)
+    assert "".join(url_lines) == "x" * 300  # a long URL breaks, nothing is lost
+
+
+def test_the_printed_sheet_scans_and_the_code_is_half_the_page_wide(
+    tmp_path: object,
+) -> None:
+    """Rendered by a real PDF rasteriser, the symbol on the page reads back."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    if shutil.which("pdftoppm") is None:
+        pytest.skip("pdftoppm (poppler) is not installed")
+    folder = Path(str(tmp_path))
+    (folder / "sheet.pdf").write_bytes(_sheet())
+    subprocess.run(
+        ["pdftoppm", "-r", "100", "-png", "sheet.pdf", "page"], cwd=folder, check=True
+    )
+    page = next(folder.glob("page*.png"))
+    assert _decode(page.read_bytes()) == SHEET_URL
+    pixels = np.array(Image.open(page).convert("L")) < 128
+    height, width = pixels.shape
+    assert abs(width / height - 595.28 / 841.89) < 0.01  # A4 portrait
+    # The symbol is the only thing dark in a large share of the band's rows;
+    # a line of text crosses a column in a few rows at most.
+    band = pixels[int(0.15 * height) : int(0.65 * height)]
+    columns = np.where(band.mean(axis=0) > 0.15)[0]
+    assert abs((columns.max() - columns.min() + 1) / width - 0.5) < 0.01
