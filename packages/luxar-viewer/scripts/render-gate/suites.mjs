@@ -102,6 +102,20 @@ export const METRIC_DIRECTIONS = Object.freeze({
 export function validateMetricDirections(manifestSuites) {
   for (const suite of Object.values(manifestSuites ?? {})) {
     for (const c of suite.cases ?? []) {
+      if (c.maxWebGPUFirstFrameGapMs !== undefined) {
+        const target = c.maxWebGPUFirstFrameGapMs;
+        if (
+          !Number.isFinite(target) ||
+          target < 0 ||
+          !(c.backends ?? suite.defaults?.backends ?? []).includes('webgl') ||
+          !(c.backends ?? suite.defaults?.backends ?? []).includes('webgpu') ||
+          !(c.metrics ?? []).some((m) => m.name === 'firstFrameMs' && m.kind === 'timing')
+        ) {
+          throw new Error(
+            `${c.id}: WebGPU first-frame gap requires both backends and a timing metric`
+          );
+        }
+      }
       for (const [name, want] of Object.entries(c.expectations ?? {})) {
         if (!(c.metrics ?? []).some((m) => m.name === name)) {
           throw new Error(`${c.id}: expectation names undeclared metric '${name}'`);
@@ -474,6 +488,35 @@ export function rowRegressed(caseMetrics, judged) {
   return caseMetrics.some((m) => !m.report && judged[m.name].verdict === 'fail');
 }
 
+/** Compare candidate backend medians on one cold-load case, independently of A/B regressions. */
+function checkWebGPUFirstFrameGap(caseRows, targetMs) {
+  const webgl = caseRows.find((r) => r.backend === 'webgl');
+  const webgpu = caseRows.find((r) => r.backend === 'webgpu');
+  if (!webgl || !webgpu || webgl.status === 'error' || webgpu.status === 'error') return;
+  const gl = webgl.metrics.firstFrameMs;
+  const gpu = webgpu.metrics.firstFrameMs;
+  const baseGap = gpu.baseMedian - gl.baseMedian;
+  const candGap = gpu.candMedian - gl.candMedian;
+  const met = Number.isFinite(baseGap) && Number.isFinite(candGap) && candGap <= targetMs;
+  webgpu.metrics.webgpuFirstFrameGapMs = {
+    kind: 'timing',
+    better: 'lower',
+    baseMedian: baseGap,
+    candMedian: candGap,
+    targetMs,
+    verdict: met ? 'pass' : 'fail',
+  };
+  if (!met) {
+    webgpu.status = 'fail';
+    webgpu.reasons.push('backend-gap');
+    webgpu.failures.push(
+      Number.isFinite(baseGap) && Number.isFinite(candGap)
+        ? `WebGPU first-frame gap ${fmt(candGap)} ms exceeds ${targetMs} ms`
+        : 'WebGPU first-frame gap is unavailable'
+    );
+  }
+}
+
 /**
  * Run one manifest suite.
  *
@@ -529,6 +572,7 @@ export async function runSuite({
       rows.push(row);
       continue;
     }
+    const firstRow = rows.length;
     for (const backend of backends) {
       log(`${name}: ${c.id} ${backend} (${rounds} rounds, server ${profile.name})`);
       const row = {
@@ -583,6 +627,9 @@ export async function runSuite({
       applyExpectations(row, c, expected);
       rows.push(row);
     }
+    if (c.maxWebGPUFirstFrameGapMs !== undefined) {
+      checkWebGPUFirstFrameGap(rows.slice(firstRow), c.maxWebGPUFirstFrameGapMs);
+    }
   }
   return rows;
 }
@@ -617,8 +664,9 @@ export function suiteMarkdown(name, rows) {
     for (const [m, v] of entries) {
       const exp = v.expected ? ` [expect ${v.expected}: ${v.met ? 'met' : 'UNMET'}]` : '';
       const report = v.report ? ' (report)' : '';
+      const target = v.targetMs !== undefined ? ` [max ${fmt(v.targetMs)} ms]` : '';
       lines.push(
-        `| ${r.case} | ${r.backend} | ${m} | ${fmt(v.baseMedian)} | ${fmt(v.candMedian)} | ${fmt(v.ratio)} | ${v.verdict}${report}${exp} |`
+        `| ${r.case} | ${r.backend} | ${m} | ${fmt(v.baseMedian)} | ${fmt(v.candMedian)} | ${fmt(v.ratio)} | ${v.verdict}${report}${exp}${target} |`
       );
     }
     if (r.status !== 'pass')

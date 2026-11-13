@@ -40,6 +40,14 @@ const HARNESS_METRICS = [
 ];
 
 describe('render-gate scene manifest', () => {
+  it('checks the four-geometry hosted cold load against WebGL on both backends', () => {
+    const mixed = manifest.suites.hosted.cases.find((c) => c.id === 'cold_zip_mixed');
+    expect(mixed).toMatchObject({
+      backends: ['webgl', 'webgpu'],
+      maxWebGPUFirstFrameGapMs: 150,
+    });
+  });
+
   it('runs every default exact case on all three renderer paths', () => {
     expect(manifest.defaults.backends).toEqual(['webgl', 'webgpu', 'webgpu-gl']);
     for (const scene of manifest.exact) {

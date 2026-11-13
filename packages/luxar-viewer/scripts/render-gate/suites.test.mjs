@@ -208,6 +208,91 @@ describe('manifest expectations', () => {
   });
 });
 
+describe('hosted WebGPU cold-start target', () => {
+  async function run(webgpuCandidateMs, backends = ['webgl', 'webgpu']) {
+    const servers = Object.fromEntries(
+      ['base', 'cand'].map((arm) => [
+        arm,
+        {
+          origin: `http://${arm}`,
+          reset() {},
+          now: () => 0,
+          log: [],
+          stats: () => ({ maxInflight: 0 }),
+        },
+      ])
+    );
+    return runSuite({
+      name: 'hosted',
+      suite: {
+        cases: [
+          {
+            id: 'cold_zip_mixed',
+            workload: { kind: 'coldLoad' },
+            backends: ['webgl', 'webgpu'],
+            maxWebGPUFirstFrameGapMs: 150,
+            metrics: [{ name: 'firstFrameMs', kind: 'timing' }],
+          },
+        ],
+      },
+      profile: { name: 'hosted' },
+      session: { run: async (fn) => fn({}) },
+      openCase: async (_browser, origin, _case, { backend }) => ({
+        page: {
+          evaluate: async (fn) => {
+            if (fn === ops.coldLoad) {
+              return {
+                firstFrameMs:
+                  backend === 'webgl' ? 1000 : origin.endsWith('base') ? 1160 : webgpuCandidateMs,
+              };
+            }
+            return {};
+          },
+        },
+        context: { close: async () => {} },
+      }),
+      servers,
+      dataRoot: '.',
+      opts: { rounds: 1, backends },
+      log() {},
+    });
+  }
+
+  it('fails a 160 ms candidate gap even when both backends match their baselines', async () => {
+    const rows = await run(1160);
+    expect(rows.find((r) => r.backend === 'webgpu')).toMatchObject({
+      status: 'fail',
+      metrics: {
+        webgpuFirstFrameGapMs: { baseMedian: 160, candMedian: 160, targetMs: 150, verdict: 'fail' },
+      },
+    });
+  });
+
+  it('passes a candidate at 140 ms and skips the comparison when only WebGL is selected', async () => {
+    const rows = await run(1140);
+    expect(rows.find((r) => r.backend === 'webgpu')).toMatchObject({
+      status: 'pass',
+      metrics: {
+        webgpuFirstFrameGapMs: { baseMedian: 160, candMedian: 140, targetMs: 150, verdict: 'pass' },
+      },
+    });
+    const webglOnly = await run(1160, ['webgl']);
+    expect(webglOnly).toHaveLength(1);
+    expect(webglOnly[0].metrics.webgpuFirstFrameGapMs).toBeUndefined();
+  });
+
+  it('accepts the 150 ms boundary and fails closed when a first frame is missing', async () => {
+    const boundary = await run(1150);
+    expect(boundary.find((r) => r.backend === 'webgpu').status).toBe('pass');
+    const missing = await run(undefined);
+    expect(missing.find((r) => r.backend === 'webgpu')).toMatchObject({
+      status: 'fail',
+      reasons: ['backend-gap'],
+      failures: ['WebGPU first-frame gap is unavailable'],
+    });
+  });
+});
+
 describe('unsettled drag row', () => {
   it('reports a harness error on both backends, not an idle-zero failure', async () => {
     const page = {
