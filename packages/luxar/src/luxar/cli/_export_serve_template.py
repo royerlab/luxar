@@ -1449,7 +1449,9 @@ def viewer_target(
     if text_scale is not None:
         target += f"&textScale={text_scale:g}"
     if playback_period is not None:
-        target += f"&playbackPeriod={playback_period:g}"
+        target += (
+            f"&playbackPeriod={quote(str(playback_period).removesuffix('.0'), safe='')}"
+        )
     return target
 
 
@@ -2042,16 +2044,27 @@ def _watch_display(server: ControlServer, process: Any) -> None:
     def early_exit() -> None:
         code = process.poll()
         if code is not None and server.display_report.pending():
-            print(
-                f"\n  WARNING  Chrome exited at once (status {code}): no display. Is there"
-            )
-            print(
-                "           a screen session? Run it with --chrome from that session."
-            )
+            if os.path.lexists(SCRIPT_DIR / CHROME_PROFILE_DIR / "SingletonLock"):
+                print(
+                    f"\n  WARNING  Chrome exited at once (status {code}). It may have handed"
+                )
+                print(
+                    f"           the URL to another Chrome using {CHROME_PROFILE_DIR}/. Check"
+                )
+                print(
+                    "           that window; if no check arrives, quit it before restarting."
+                )
+            else:
+                print(
+                    f"\n  WARNING  Chrome exited at once (status {code}): no display."
+                )
+                print(
+                    "           Is there a screen session? Run it with --chrome from that session."
+                )
             sys.stdout.flush()
 
     def no_report() -> None:
-        if server.display_report.pending() and process.poll() is None:
+        if server.display_report.pending():
             print(
                 f"\n  WARNING  the display sent no report within {_DISPLAY_REPORT_WAIT_S:.0f} s:"
             )

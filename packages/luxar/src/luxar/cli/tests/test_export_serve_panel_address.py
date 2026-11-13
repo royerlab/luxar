@@ -25,6 +25,7 @@ from contextlib import closing, contextmanager
 from functools import partial
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from websockets.exceptions import ConnectionClosed
@@ -584,6 +585,12 @@ def test_auto_advance_reaches_the_display_url_and_the_redirect(tmp_path: Path) -
     assert "&playbackPeriod=0" in reply
 
 
+@pytest.mark.parametrize("period", [1_000_000.0, 1_234_567.125, 2_592_000.0, 1e20])
+def test_large_auto_advance_survives_the_display_query(period: float) -> None:
+    display = template.urls("127.0.0.1", 8123, False, None, playback_period=period)[0]
+    assert float(parse_qs(urlsplit(display).query)["playbackPeriod"][0]) == period
+
+
 @pytest.mark.parametrize("value", ["-1", "inf", "nan", "soon"])
 def test_auto_advance_must_be_a_period_or_zero(value: str) -> None:
     with pytest.raises(SystemExit):
@@ -891,6 +898,53 @@ def test_a_chrome_that_cannot_start_falls_back(
     )
     assert "could not start Chrome" in capsys.readouterr().out
     assert not server.display_report.pending()
+
+
+@pytest.mark.parametrize("profile_in_use", [False, True])
+def test_chrome_early_exit_explains_the_profile_or_display(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    profile_in_use: bool,
+) -> None:
+    checks: list[Any] = []
+
+    class Timer:
+        daemon = False
+
+        def __init__(self, _delay: float, check: Any) -> None:
+            checks.append(check)
+
+        def start(self) -> None:
+            pass
+
+    class Process:
+        def poll(self) -> int:
+            return 21
+
+    monkeypatch.setattr(template.threading, "Timer", Timer)
+    monkeypatch.setattr(template, "SCRIPT_DIR", tmp_path)
+    if profile_in_use:
+        profile = tmp_path / template.CHROME_PROFILE_DIR
+        profile.mkdir()
+        (profile / "SingletonLock").symlink_to("other-host-999999")
+    server = object.__new__(template.ControlServer)
+    server.display_report = template.DisplayReportSlot()
+    server.display_report.expect()
+    template._watch_display(server, Process())
+    for check in checks:
+        check()
+    out = capsys.readouterr().out
+    assert "status 21" in out
+    if profile_in_use:
+        assert ".chrome-display/" in out
+        assert "quit" in out.lower()
+        assert "no display" not in out
+    else:
+        assert "no display" in out
+        assert "screen session" in out
+        assert ".chrome-display/" not in out
+    assert "sent no report" in out
 
 
 def test_chrome_paths_are_checked_and_a_mac_app_bundle_is_opened(

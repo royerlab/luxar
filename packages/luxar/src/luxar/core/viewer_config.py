@@ -80,6 +80,12 @@ VALID_FOV_PRESETS = (
 VALID_THEMES = ("dark", "light", "frosted-glass", "liquid-glass")
 VALID_LOOP_MODES = ("once", "loop", "bounce")
 VALID_DIRECTIONS = ("forward", "backward")
+#: Longest `AnimationConfig.period_s`: one step every 30 days, the viewer's
+#: slowest accepted rate (`MAX_ANIMATION_PERIOD_S` in its `types/zarr.ts`, from
+#: which `dimensionAnimation.presets.customMin` is derived).
+MAX_ANIMATION_PERIOD_S = 30 * 24 * 3600.0
+#: Accepted `ViewerConfig.text_scale` range (inclusive).
+TEXT_SCALE_RANGE = (0.25, 4.0)
 # Where the scene environment that lights `material="physical"` meshes comes
 # from (MESH_PHYSICAL_MATERIALS_SPEC.md §3.3). "room" is three's procedural
 # RoomEnvironment (the default); "scene" is an exact cube capture of the scene
