@@ -14,6 +14,10 @@ const STAGE_BINDINGS = [
   [0, 1, 2, 4, 6, 8, 9],
 ] as const;
 
+/**
+ * Workgroup histogram, parallel prefix scan, and stable scatter kernels.
+ * @internal
+ */
 export const ORDER_WGSL = `
 struct Params { count: u32, tiles: u32, blocks: u32, shift: u32, initial: u32,
   pad0: u32, pad1: u32, pad2: u32 }
@@ -189,7 +193,10 @@ function dispatchStage(compute: GpuPass, stage: number, tiles: number, blocks: n
   else compute.dispatchWorkgroups(1);
 }
 
-/** A renderer-scoped sorter; resources follow each geometry's dispose event. */
+/**
+ * A renderer-scoped sorter; resources follow each geometry's dispose event.
+ * @internal
+ */
 export class WebGpuOrderBuilder {
   private pipelines: GpuPipeline[] | null = null;
   private readonly resources = new Map<THREE.InstancedBufferGeometry, GpuResources>();
@@ -216,6 +223,10 @@ export class WebGpuOrderBuilder {
 
   get ready(): boolean {
     return !this.disabled && this.pipelines !== null;
+  }
+
+  usesBackend(backend: GpuBackend): boolean {
+    return this.backend === backend;
   }
 
   disable(): void {
@@ -363,13 +374,21 @@ export class WebGpuOrderBuilder {
 
 let builder: WebGpuOrderBuilder | null = null;
 
+/**
+ * Bind the ordering service to the active renderer's native WebGPU device.
+ * @internal
+ */
 export function configureWebGpuOrderBuilder(renderer: Renderer, native: boolean): void {
+  const backend = (renderer as unknown as { backend: GpuBackend }).backend;
+  if (native && builder?.usesBackend(backend)) return;
   builder?.dispose();
-  builder = native
-    ? new WebGpuOrderBuilder((renderer as unknown as { backend: GpuBackend }).backend)
-    : null;
+  builder = native ? new WebGpuOrderBuilder(backend) : null;
 }
 
+/**
+ * Return the compiled sorter, or null while it is unavailable.
+ * @internal
+ */
 export function getWebGpuOrderBuilder(): WebGpuOrderBuilder | null {
   return builder?.ready ? builder : null;
 }
