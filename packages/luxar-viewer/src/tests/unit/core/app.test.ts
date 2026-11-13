@@ -297,6 +297,7 @@ describe('LuxarApp', () => {
       setDatasetBrowser: vi.fn(),
       setOverlayManager: vi.fn(),
       setSlideshowHold: vi.fn(),
+      getAnimationManager: vi.fn(() => undefined),
       setColormapLegend: vi.fn(),
       clearDimensionUI: vi.fn(),
       initDimensionSliders: vi.fn(),

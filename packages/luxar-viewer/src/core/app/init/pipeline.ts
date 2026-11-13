@@ -123,6 +123,7 @@ export interface InitPipelinePorts {
   restorePanelVisibilityStates: (states: Map<string, boolean>) => void;
   /** Emit a public embedder event (the audio engine's `sound-started` / `sound-ended`). */
   emitEmbedderEvent: (event: 'sound-started' | 'sound-ended', payload: { name: string }) => void;
+  onNarrationEvent?: (event: 'started' | 'ended', path: string) => void;
   /** Mark the current dataset's cached pick buffer dirty (no-op without picking). */
   invalidatePickBuffer?: () => void;
 }
@@ -755,6 +756,7 @@ export async function runInitPipeline(
     getSceneScale: () => sceneManager.getSceneScale(),
     container: getViewerContainer,
     emit: (event, payload) => ports.emitEmbedderEvent(event, payload),
+    onNarrationEvent: (event, path) => ports.onNarrationEvent?.(event, path),
     resolveNodeCenter: (name) => {
       const root = sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene');
       return root ? resolveTargetNodeCenter(root as THREE.Group, name) : null;

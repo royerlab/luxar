@@ -334,6 +334,11 @@ export class LuxarApp {
           getPanelVisibilityStates: () => this.getPanelVisibilityStates(),
           restorePanelVisibilityStates: (states) => this.restorePanelVisibilityStates(states),
           emitEmbedderEvent: (event, payload) => this.embedderEvents.emit(event, payload),
+          onNarrationEvent: (event, path) => {
+            const manager = this.inputHandler?.getAnimationManager();
+            if (event === 'started') manager?.narrationStarted(path);
+            else manager?.narrationEnded(path);
+          },
           // Read lazily: `this.pickingSystem` is (re)assigned per dataset load.
           invalidatePickBuffer: () => this.pickingSystem?.markDirty(),
         },
@@ -719,12 +724,23 @@ export class LuxarApp {
   private installAudio(audio: unknown, session: DatasetSession = this.session): void {
     if (!this.audioEngine) return;
     const driver = session.waypointDriver;
-    installSceneAudio(audio, {
+    const narrations = installSceneAudio(audio, {
       audioEngine: this.audioEngine,
       sceneRoot: this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene'),
       pushAudioMutes: () => this.layersPanel?.pushAudioMutes(),
       openingWaypointWhen: driver ? driver.getWaypoint(driver.currentIndex)?.when : undefined,
     });
+    const when = driver?.getWaypoint(driver.currentIndex)?.when;
+    if (when) this.beginNarratedLanding(when, narrations);
+  }
+
+  /** Give each playing dimension bound by this waypoint its own landed stop. */
+  private beginNarratedLanding(when: NonNullable<ZarrWaypoint['when']>, paths: string[]): void {
+    const manager = this.inputHandler?.getAnimationManager();
+    if (!manager) return;
+    for (const [index, name] of sceneDimsManager.getDimensionNames().entries()) {
+      if (Object.hasOwn(when, name)) manager.beginNarratedStop(index, paths);
+    }
   }
 
   /**
@@ -756,7 +772,10 @@ export class LuxarApp {
             });
           }
         },
-        notifySound: (kind, when) => this.audioEngine?.notifyWaypoint(kind, when),
+        notifySound: (kind, when) => {
+          const narrations = this.audioEngine?.notifyWaypoint(kind, when) ?? [];
+          if (kind === 'arrive') this.beginNarratedLanding(when, narrations);
+        },
         updateOverlayVisibility: () => this.overlayManager?.updateVisibility(),
       })
     );

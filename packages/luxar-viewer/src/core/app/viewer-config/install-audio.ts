@@ -34,7 +34,7 @@ export interface SceneAudioPorts {
  * Apply `audio` (the scene's raw `viewer_config.audio`) and attach the scene's
  * sound nodes to the engine, replaying the opening waypoint's arrival.
  */
-export function installSceneAudio(audio: unknown, ports: SceneAudioPorts): void {
+export function installSceneAudio(audio: unknown, ports: SceneAudioPorts): string[] {
   const { audioEngine } = ports;
   audioEngine.detachScene();
   audioEngine.applySceneConfig(extractAudioConfig(audio));
@@ -45,5 +45,7 @@ export function installSceneAudio(audio: unknown, ports: SceneAudioPorts): void 
   // The waypoints install first and snap to the opening waypoint before any
   // sound node exists, so the load-time arrival is replayed here — otherwise
   // the opening story's `on_arrive` narration would never fire.
-  if (ports.openingWaypointWhen) audioEngine.notifyWaypoint('arrive', ports.openingWaypointWhen);
+  return ports.openingWaypointWhen
+    ? audioEngine.notifyWaypoint('arrive', ports.openingWaypointWhen)
+    : [];
 }
