@@ -25,7 +25,11 @@ import {
 } from './material-manager';
 import { type InstancedLinesMeshConfig } from './line-geometry';
 import { type InstancedGSplatsMeshConfig } from './gsplat-geometry';
-import { getElementTexture, markElementTextureFullDirty } from './element-storage';
+import {
+  getElementTexture,
+  markElementTextureFullDirty,
+  repairSortedIndexHostArray,
+} from './element-storage';
 import {
   syncGSplatMaterialWithGeometry,
   syncLineMaterialWithGeometry,
@@ -442,6 +446,9 @@ export class NodeFactory {
         // SLOT is deliberately left alone: the buffer it points at still
         // holds a whole permutation, so resetting it would swap in the
         // other, staler one.
+        // A GPU-written order (#3162) left the active host array behind; make
+        // it a permutation of the drawn population before it is re-uploaded.
+        repairSortedIndexHostArray(geom);
         for (const name of ['aSortedIndex', 'aSortedIndexB']) {
           const idx = geom.getAttribute(name) as THREE.InstancedBufferAttribute | undefined;
           if (idx) {

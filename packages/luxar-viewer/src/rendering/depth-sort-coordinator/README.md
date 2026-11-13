@@ -525,7 +525,7 @@ The per-frame scheduler and render-order assignment do no per-element allocation
 
 - **`workers/sort-worker.ts`** — Worker-side entry point (Phase 2)
 - **`workers/sort-worker/README.md`** — Worker internals (registration, sorting, state)
-- **`rendering/element-storage.ts`** — `writeSortedIndexOrdering` / `pumpSortedIndexOrderingApply` / chunked-apply machinery
+- **`rendering/element-storage.ts`** — `writeSortedIndexOrdering` (host arrays) / `writeDeviceSortedIndexOrdering` (GPU-written orderings, #3162) / `pumpSortedIndexOrderingApply` / the shared staged-apply machinery
 - **`rendering/blending-state.ts`** — `needsDepthSort(mode)` predicate
 - **`docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md`** — Full depth-sorting specification (Phases 1-3)
 - **`config/sections/depth-sort/`** — `depthSort.enabled`, `depthSort.angleThresholdDeg`, `depthSort.translationFraction`, `depthSort.workerInitTimeoutMs`, `depthSort.syncSortMaxElements`
