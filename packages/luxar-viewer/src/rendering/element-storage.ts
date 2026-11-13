@@ -809,7 +809,11 @@ function installComputedMirror(
   if (ordering === null) {
     // GPU keys can differ by one bucket from the CPU. Keep the last CPU
     // permutation as the repair seed without copying it on every orbit sort.
-    inactive.array = getActiveSortedIndexAttribute(geometry)!.array;
+    // The arrays now alias, so a later write through either attribute can
+    // change the other's CPU values without touching its identity memo.
+    const active = getActiveSortedIndexAttribute(geometry)!;
+    clearIdentityPrefix(active);
+    inactive.array = active.array;
   } else if (ordering.byteOffset === 0 && ordering.buffer.byteLength === mirror.byteLength) {
     inactive.array = new Uint32Array(ordering.buffer);
   } else {

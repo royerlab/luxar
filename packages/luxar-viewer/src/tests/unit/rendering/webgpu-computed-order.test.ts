@@ -6,6 +6,7 @@ import {
   attachElementStorage,
   repairSortedIndexForCount,
   selectComputedSortedIndexOrdering,
+  writeSortedIndexIdentity,
   writeSortedIndexOrderingLive,
 } from '../../../rendering/element-storage';
 import { POINT_TEXTURE_LAYOUT } from '../../../rendering/element-texture-layout';
@@ -48,6 +49,23 @@ describe('compute-built ordering handoff', () => {
     attachElementStorage(geometry, 4, POINT_TEXTURE_LAYOUT);
     expect(selectComputedSortedIndexOrdering(geometry, 4, new Uint32Array([3, 2]))).toBe(false);
     expect(activeSortedIndexSlot(geometry)).toBe(0);
+    geometry.dispose();
+  });
+
+  it('invalidates identity knowledge when the GPU mirror aliases the prior slot', () => {
+    configureRendererBackendPolicy('webgpu-native');
+    const geometry = new THREE.InstancedBufferGeometry();
+    attachElementStorage(geometry, 4, POINT_TEXTURE_LAYOUT);
+    writeSortedIndexIdentity(geometry, 4);
+    const original = geometry.getAttribute('aSortedIndex') as THREE.BufferAttribute;
+    expect(selectComputedSortedIndexOrdering(geometry, 4, null)).toBe(true);
+    expect(writeSortedIndexOrderingLive(geometry, new Uint32Array([2, 0, 3, 1]), 4)).toBe(4);
+    expect(Array.from(original.array)).toEqual([2, 0, 3, 1]);
+
+    writeSortedIndexIdentity(geometry, 4);
+
+    expect(activeSortedIndexSlot(geometry)).toBe(0);
+    expect(Array.from(original.array)).toEqual([0, 1, 2, 3]);
     geometry.dispose();
   });
 });
