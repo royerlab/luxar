@@ -29,7 +29,7 @@ from urllib.parse import quote
 from arbol import aprint, asection
 
 from .._zarr_compat import read_node_attrs
-from ..core.viewer_config import LaunchConfig
+from ..core.viewer_config import MAX_ANIMATION_PERIOD_S, LaunchConfig
 from ..utils.atomic_copy import atomic_copytree
 from ._export_serve_template import CONTROL_TOKEN_FILE
 from .utils import (
@@ -410,11 +410,6 @@ _SUBSTITUTED = (
 )
 
 
-#: The longest step period the viewer plays (its ``MAX_ANIMATION_PERIOD_S``,
-#: 30 days); a longer ``--auto-advance`` would be clamped there silently.
-_MAX_AUTO_ADVANCE_S = 30 * 24 * 3600.0
-
-
 def auto_advance_seconds(value: float | None) -> float | None:
     """Validate ``luxar export --auto-advance``: None, 0 (off) or a period.
 
@@ -425,10 +420,10 @@ def auto_advance_seconds(value: float | None) -> float | None:
     if value is None:
         return None
     seconds = float(value)
-    if not (0 <= seconds <= _MAX_AUTO_ADVANCE_S):  # NaN fails too
+    if not (0 <= seconds <= MAX_ANIMATION_PERIOD_S):  # NaN fails too
         raise ValueError(
             "--auto-advance must be 0 (off) or a period in seconds up to "
-            f"{_MAX_AUTO_ADVANCE_S:g} (30 days), got {value!r}"
+            f"{MAX_ANIMATION_PERIOD_S:g} (30 days), got {value!r}"
         )
     return seconds
 
