@@ -10,8 +10,10 @@ import {
   METRIC_DIRECTIONS,
   runSuite,
   serverMetrics,
+  suiteMarkdown,
   validateExpectations,
   validateMetricDirections,
+  validateWebGPUFirstFrameGapTargets,
 } from './suites.mjs';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -205,6 +207,105 @@ describe('manifest expectations', () => {
       expect(row.metrics.renders).toMatchObject({ expected: 'zero', met: true });
       expect(row.metrics.frames).toMatchObject({ expected: 'pass', met: true });
     }
+  });
+});
+
+describe('hosted WebGPU cold-start target', () => {
+  async function run(webgpuCandidateMs, backends = ['webgl', 'webgpu'], webgpuBaseMs = 1160) {
+    const servers = Object.fromEntries(
+      ['base', 'cand'].map((arm) => [
+        arm,
+        {
+          origin: `http://${arm}`,
+          reset() {},
+          now: () => 0,
+          log: [],
+          stats: () => ({ maxInflight: 0 }),
+        },
+      ])
+    );
+    return runSuite({
+      name: 'hosted',
+      suite: {
+        cases: [
+          {
+            id: 'cold_zip_mixed',
+            workload: { kind: 'coldLoad' },
+            backends: ['webgl', 'webgpu'],
+            maxWebGPUFirstFrameGapMs: 150,
+            metrics: [{ name: 'firstFrameMs', kind: 'timing' }],
+          },
+        ],
+      },
+      profile: { name: 'hosted' },
+      session: { run: async (fn) => fn({}) },
+      openCase: async (_browser, origin, _case, { backend }) => ({
+        page: {
+          evaluate: async (fn) => {
+            if (fn === ops.coldLoad) {
+              return {
+                firstFrameMs:
+                  backend === 'webgl'
+                    ? 1000
+                    : origin.endsWith('base')
+                      ? webgpuBaseMs
+                      : webgpuCandidateMs,
+              };
+            }
+            return {};
+          },
+        },
+        context: { close: async () => {} },
+      }),
+      servers,
+      dataRoot: '.',
+      opts: { rounds: 1, backends },
+      log() {},
+    });
+  }
+
+  it('fails a 160 ms candidate gap even when both backends match their baselines', async () => {
+    const rows = await run(1160);
+    expect(rows.find((r) => r.backend === 'webgpu')).toMatchObject({
+      status: 'fail',
+      metrics: {
+        webgpuFirstFrameGapMs: { baseMedian: 160, candMedian: 160, targetMs: 150, verdict: 'fail' },
+      },
+    });
+  });
+
+  it('passes a candidate at 140 ms and skips the comparison when only WebGL is selected', async () => {
+    const rows = await run(1140);
+    expect(rows.find((r) => r.backend === 'webgpu')).toMatchObject({
+      status: 'pass',
+      metrics: {
+        webgpuFirstFrameGapMs: { baseMedian: 160, candMedian: 140, targetMs: 150, verdict: 'pass' },
+      },
+    });
+    const webglOnly = await run(1160, ['webgl']);
+    expect(webglOnly).toHaveLength(1);
+    expect(webglOnly[0].metrics.webgpuFirstFrameGapMs).toBeUndefined();
+  });
+
+  it('accepts the 150 ms boundary and fails closed when a first frame is missing', async () => {
+    const boundary = await run(1150);
+    expect(boundary.find((r) => r.backend === 'webgpu').status).toBe('pass');
+    const missing = await run(undefined);
+    expect(missing.find((r) => r.backend === 'webgpu')).toMatchObject({
+      status: 'fail',
+      reasons: ['backend-gap'],
+      failures: ['WebGPU first-frame gap is unavailable'],
+    });
+  });
+
+  it('flags a baseline gap above the target as noisy without failing a passing candidate', async () => {
+    const noisy = await run(1140);
+    expect(noisy.find((r) => r.backend === 'webgpu').status).toBe('pass');
+    expect(suiteMarkdown('hosted', noisy).join('\n')).toContain(
+      'pass [max 150 ms] [baseline gap above target: noisy run]'
+    );
+    const quiet = await run(1140, ['webgl', 'webgpu'], 1140);
+    expect(suiteMarkdown('hosted', quiet).join('\n')).not.toContain('noisy run');
   });
 });
 
@@ -491,6 +592,58 @@ describe('validateMetricDirections', () => {
     c.expectations = { renders: 'quiet' };
     expect(() => validateMetricDirections({ counters: { cases: [c] } })).toThrow(
       /unknown expectation 'quiet'/
+    );
+  });
+});
+
+describe('validateWebGPUFirstFrameGapTargets', () => {
+  const validCase = () => ({
+    id: 'cold_zip_mixed',
+    maxWebGPUFirstFrameGapMs: 150,
+    metrics: [{ name: 'firstFrameMs', kind: 'timing' }],
+  });
+  const suites = (c, backends = ['webgl', 'webgpu']) => ({
+    hosted: { defaults: { backends }, cases: [c] },
+  });
+
+  it('accepts the same implicit backend default used by the runner and a zero target', () => {
+    expect(() =>
+      validateWebGPUFirstFrameGapTargets({ hosted: { cases: [validCase()] } })
+    ).not.toThrow();
+    expect(() =>
+      validateWebGPUFirstFrameGapTargets(suites({ ...validCase(), maxWebGPUFirstFrameGapMs: 0 }))
+    ).not.toThrow();
+  });
+
+  it.each([
+    ['150', '150 (string)'],
+    [NaN, 'NaN (number)'],
+    [Infinity, 'Infinity (number)'],
+    [-1, '-1 (number)'],
+  ])('rejects invalid target %s', (target, description) => {
+    expect(() =>
+      validateWebGPUFirstFrameGapTargets(
+        suites({ ...validCase(), maxWebGPUFirstFrameGapMs: target })
+      )
+    ).toThrow(`cold_zip_mixed: invalid WebGPU first-frame gap target ${description}`);
+  });
+
+  it.each(['webgl', 'webgpu'])('requires %s in the configured backends', (backend) => {
+    const other = backend === 'webgl' ? 'webgpu' : 'webgl';
+    expect(() => validateWebGPUFirstFrameGapTargets(suites(validCase(), [other]))).toThrow(
+      `cold_zip_mixed: WebGPU first-frame gap requires ${backend} backend`
+    );
+  });
+
+  it('requires firstFrameMs as a timing metric', () => {
+    const c = validCase();
+    c.metrics = [{ name: 'firstFrameMs', kind: 'counter' }];
+    expect(() => validateWebGPUFirstFrameGapTargets(suites(c))).toThrow(
+      'cold_zip_mixed: WebGPU first-frame gap requires firstFrameMs timing metric'
+    );
+    c.metrics = [];
+    expect(() => validateWebGPUFirstFrameGapTargets(suites(c))).toThrow(
+      'cold_zip_mixed: WebGPU first-frame gap requires firstFrameMs timing metric'
     );
   });
 });

@@ -730,6 +730,8 @@
         {
           "id": "cold_zip_mixed",
           "store": "gate/zip_mixed.luxar.zarr.zip",
+          "backends": ["webgl", "webgpu"],
+          "maxWebGPUFirstFrameGapMs": 150,
           "workload": { "kind": "coldLoad" },
           "metrics": [
             { "name": "firstFrameMs", "better": "lower", "kind": "timing" },
