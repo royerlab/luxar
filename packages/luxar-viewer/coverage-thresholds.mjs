@@ -153,7 +153,9 @@ export const COVERAGE_THRESHOLDS = {
   // lines 89 -> 91: the keeper-draw regression tests (#3204) and the
   // texel-load WGSL cases (#3194) both raised measured rendering line
   // coverage past the old floor's slack budget.
-  'src/rendering/**': { lines: 91, functions: 88, branches: 80 },
+  // functions 88 -> 90: the GPU depth-sort tests raised measured function
+  // coverage to 91.07, beyond the old floor's slack budget (#3306).
+  'src/rendering/**': { lines: 91, functions: 90, branches: 80 },
 
   // The last two measured top-level source directories without a sub-gate;
   // until 2026-10 their coverage could erode freely inside the global pool.
@@ -176,10 +178,10 @@ export const COVERAGE_RECORDED = {
   'src/controls/**': { lines: 96.81, functions: 92.92, branches: 89.82 },
   'src/data/**': { lines: 94.59, functions: 93.54, branches: 88.38 },
   'src/workers/**': { lines: 95.07, functions: 95.65, branches: 90.07 },
-  'src/ui/**': { lines: 92.69, functions: 90.2, branches: 80.63 },
+  'src/ui/**': { lines: 92.69, functions: 90.2, branches: 81.72 },
   'src/core/**': { lines: 92.79, functions: 82.22, branches: 87.96 },
   'src/input/**': { lines: 92.96, functions: 89.41, branches: 86.11 },
-  'src/rendering/**': { lines: 92.61, functions: 90.74, branches: 81.98 },
+  'src/rendering/**': { lines: 92.61, functions: 91.07, branches: 81.98 },
   'src/audio/**': { lines: 96.5, functions: 95.48, branches: 84.11 },
   'src/profiling/**': { lines: 96.63, functions: 96.25, branches: 88.75 },
 };
