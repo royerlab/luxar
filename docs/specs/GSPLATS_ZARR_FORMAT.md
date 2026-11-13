@@ -1463,8 +1463,8 @@ absent when a parallel (`-j N`) merge reloads a tile saved by an older run that
 did not stamp its count. A multi-tile `batch-fit merge` records the threshold
 but not the aggregate pruned count. A worker's zero-splat `.empty` marker starts
 with `0 splats` and carries `tile_amplitude_pruned=<n>` on the next line when the
-floor ran; older markers may be empty. Both stats are fit provenance only and
-survive later content edits.
+floor ran; legacy and content-plan markers may be empty. Both stats are fit
+provenance only and survive later content edits.
 
 **What survives a rewrite: the authored appearance.** The rules above govern
 what a rewriting tool must *drop*; the mirror-image obligation is what it must
