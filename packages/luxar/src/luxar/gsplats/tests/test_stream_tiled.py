@@ -95,6 +95,12 @@ def test_streamed_tile_parts_and_root_match_in_memory_merge(tmp_path: Path) -> N
     memory_root = open_group(memory_path, mode="r")
     stream_root = open_group(streamed_path, mode="r")
     assert stream_root.attrs["kind"] == memory_root.attrs["kind"] == "partition"
+    generated = {"content_hash", "timestamp"}
+    assert {
+        key: value for key, value in stream_root.attrs.items() if key not in generated
+    } == {
+        key: value for key, value in memory_root.attrs.items() if key not in generated
+    }
     assert stream_root.attrs["bsp_tree"] == memory_root.attrs["bsp_tree"]
     for i in range(3):
         a = memory_root[f"part_{i}"]
