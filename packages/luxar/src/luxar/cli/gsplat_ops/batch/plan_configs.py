@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+import typer
+
 
 @dataclass
 class PlanConfigs:
@@ -96,7 +98,10 @@ def build_plan_configs(
     )
     from luxar.gsplats.fit_tiled_gsplats import validate_tile_amplitude_floor
 
-    validate_tile_amplitude_floor(tile_amplitude_floor)
+    try:
+        validate_tile_amplitude_floor(tile_amplitude_floor)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--tile-amplitude-floor") from exc
 
     fit_cfg = FitConfig(
         preset=preset,

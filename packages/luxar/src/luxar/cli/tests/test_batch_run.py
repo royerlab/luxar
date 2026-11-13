@@ -18,6 +18,34 @@ from luxar.gsplats.fit_tiled_gsplats import fit_tiled, merge_tile_results
 runner = CliRunner()
 
 
+@pytest.mark.parametrize("floor", ["-1", "nan"])
+def test_batch_run_rejects_invalid_tile_amplitude_floor(
+    tmp_path: Path, floor: str
+) -> None:
+    volume = tmp_path / "volume.npy"
+    np.save(volume, np.ones((8, 8), dtype=np.float32))
+    result = runner.invoke(
+        app_gsplat,
+        [
+            "batch-fit",
+            "run",
+            str(volume),
+            str(tmp_path / "out"),
+            "--gpus",
+            "cpu",
+            "--tile-size",
+            "8",
+            "--tile-amplitude-floor",
+            floor,
+            "--dry-run",
+        ],
+    )
+    assert result.exit_code == 2
+    output = normalized_cli_output(result)
+    assert "tile_amplitude_floor must be finite and non-negative" in output
+    assert "--tile-amplitude-floor" in output
+
+
 def test_tile_worker_metadata_rejects_fold_without_tile() -> None:
     from luxar.cli.gsplat_ops.fitting.fit import _parse_tile_worker_metadata
 
