@@ -145,6 +145,7 @@ import {
   trySynchronousFirstSort,
 } from './depth-sort-coordinator/ordering-apply';
 import { evaluateDepthSortPerFrame, scheduleSort } from './depth-sort-coordinator/scheduler';
+import { workerSortProducer } from './depth-sort-coordinator/sort-producers';
 import { resortForCapture } from './depth-sort-coordinator/capture';
 
 export {
@@ -252,7 +253,7 @@ function drawsAnyFace(mesh: THREE.Mesh): boolean {
  */
 export class DepthSortCoordinator {
   /** This instance's state; the submodules take it as their first argument. */
-  private readonly state: CoordinatorState = createCoordinatorState();
+  private readonly state: CoordinatorState = createCoordinatorState([workerSortProducer]);
   /**
    * Set by {@link dispose}, cleared by {@link configure} / {@link warmUp}: a
    * torn-down host's late commit is ignored ({@link noteCommit}), so it can
