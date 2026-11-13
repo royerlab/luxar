@@ -349,7 +349,7 @@ printed control-panel sheet.
     "entries": [                                   // REQUIRED, at least one, unique labels
       {
         "label": "Proteobacteria",                 // REQUIRED: what the colour stands for
-        "color": "#66E680",                        // REQUIRED: #RRGGBB, stored upper-case
+        "color": "#AAF3BC",                        // REQUIRED: #RRGGBB, stored upper-case
         "color_name": "lime green",                // REQUIRED: a name a reader can say
         "description": "Dominant phylum Pseudomonadota."  // optional
       }
@@ -359,7 +359,7 @@ printed control-panel sheet.
 }
 ```
 
-`color` is the AUTHORED value as sRGB hex. On screen a colour can also be
+`color` is the sRGB display encoding of an authored linear [0, 1] colour. On screen a colour can also be
 scaled by a layer's intensity, the exposure and tone mapping, and summed where
 points overlap, so the legend names the hue; `note` is where to say what else
 changes the look. Every text field is a single line of printable text (the

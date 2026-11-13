@@ -883,7 +883,7 @@ with LuxarZarrCompiler('output.luxar.zarr') as compiler:
 What a scene's colours mean, as a validated root attribute (`legend`), like the
 citation: `Legend(title, entries, note)` of `LegendEntry(label, color "#RRGGBB",
 color_name, description)`, written with `create_scene(legend=...)` and read back
-as `Scene.legend`. `hex_color(rgb)` turns an authored [0, 1] triple into its hex
+as `Scene.legend`. `hex_color(rgb)` display-encodes an authored linear [0, 1] triple as sRGB hex
 code, so a demo can build its legend from the palette it draws with (the ESM
 protein universe does: `universe_legend()`). `luxar export` prints it in the
 folder's README, COLOURS.txt and COLOURS.pdf, and on the panel sheet.

@@ -22,8 +22,11 @@ LEGEND = Legend(
 
 
 def test_hex_color_is_upper_case_and_clamped() -> None:
-    assert hex_color((0.4, 0.9, 0.5)) == "#66E680"
-    assert hex_color((1.5, -0.2, 0.5)) == "#FF0080"
+    assert hex_color((0.4, 0.9, 0.5)) == "#AAF3BC"
+    assert hex_color((0.5, 0.5, 0.5)) == "#BCBCBC"
+    assert hex_color((0, 0, 0)) == "#000000"
+    assert hex_color((1, 1, 1)) == "#FFFFFF"
+    assert hex_color((1.5, -0.2, 0.5)) == "#FF00BC"
     with pytest.raises(ValueError, match="RGB triple"):
         hex_color((0.1, 0.2))
 

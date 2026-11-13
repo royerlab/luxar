@@ -7,7 +7,7 @@ and ``luxar export`` prints it in the exported folder's README. Like the
 citation (:mod:`luxar.core.citation`), it is validated once, here, rather than
 trusted wherever it is read.
 
-The colours are the AUTHORED values, as sRGB hex. On screen a colour can also
+The hex colours display-encode authored linear [0, 1] values as sRGB. On screen a colour can also
 be scaled by a layer's intensity, the exposure and tone mapping, and summed
 where points overlap, so the legend's job is to name the hue: ``note`` is the
 place to say what else changes the look.
@@ -61,11 +61,15 @@ def _single_line(where: str, text: Any, *, required: bool = True) -> str:
 
 
 def hex_color(rgb: Iterable[float]) -> str:
-    """``#RRGGBB`` for an RGB triple in [0, 1] (clamped)."""
+    """sRGB ``#RRGGBB`` for an authored linear RGB triple (clamped to [0, 1])."""
     channels = [float(c) for c in rgb]
     if len(channels) != 3:
         raise ValueError(f"expected an RGB triple, got {len(channels)} values")
-    return "#" + "".join(f"{round(min(1.0, max(0.0, c)) * 255):02X}" for c in channels)
+    linear = [min(1.0, max(0.0, c)) for c in channels]
+    srgb = [
+        c / 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055 for c in linear
+    ]
+    return "#" + "".join(f"{round(c * 255):02X}" for c in srgb)
 
 
 @dataclass(frozen=True)
