@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import os
-from typing import Any, Optional, Sequence
+from typing import Any, Iterable, Optional, Sequence, cast
 
 import numpy as np
 from arbol import aprint
@@ -492,8 +492,18 @@ def _announce_missing_basis(image_min: Optional[float]) -> None:
         aprint(f"WARNING: {MISSING_BASIS_HINT}")
 
 
+def _quality_parts(
+    merged: GSplatData | Iterable[GSplatData], total_splats: int | None
+) -> tuple[Iterable[GSplatData], int]:
+    parts: Iterable[GSplatData] = [merged] if isinstance(merged, GSplatData) else merged
+    if total_splats is None:
+        parts = list(parts)
+        total_splats = sum(part.n_splats for part in parts)
+    return parts, total_splats
+
+
 def stamp_merged_quality(
-    merged: "GSplatData | Sequence[GSplatData]",
+    merged: "GSplatData | Iterable[GSplatData]",
     volume: Any,
     *,
     volume_shape: tuple[int, ...],
@@ -502,6 +512,7 @@ def stamp_merged_quality(
     verbose: bool,
     image_min: Optional[float],
     stats: "dict[str, Any] | None" = None,
+    total_splats: int | None = None,
 ) -> None:
     """Score the MERGED reconstruction against the whole volume, in place.
 
@@ -524,18 +535,14 @@ def stamp_merged_quality(
     ``--denoise`` is not a tiling artifact. A lazy source is materialized here — during the fit it
     is only ever read tile-by-tile — which is what the budget below bounds.
     """
-    if stats is not None:
-        parts = [merged] if isinstance(merged, GSplatData) else list(merged)
-        target_stats = stats
-    elif isinstance(merged, GSplatData):
-        parts = [merged]
-        target_stats = merged.stats
-    else:
+    if stats is None and not isinstance(merged, GSplatData):
         announce_unscored_merge(
             "partition merged-quality scoring was not given a stats target"
         )
         return
-    if not parts or sum(part.n_splats for part in parts) == 0:
+    target_stats = stats if stats is not None else cast(GSplatData, merged).stats
+    parts, total_splats = _quality_parts(merged, total_splats)
+    if total_splats == 0:
         return
     _announce_missing_basis(image_min)
     over_budget = _quality_memory_guard(volume_shape, device)

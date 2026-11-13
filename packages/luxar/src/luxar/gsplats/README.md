@@ -313,6 +313,14 @@ print(f"Splats per tile: {result.stats['splats_per_tile']}")
 result.save("tiled_output.gsplats.zarr")
 ```
 
+For a partition store, `fit_tiled_to_store(volume, output_path, **fit_kwargs)`
+fits and writes each tile without retaining the merged splat set in memory.
+It returns `output_path`; `fit_tiled` continues to return an in-memory result.
+The default directory-store CLI partition fit uses this streaming path, including
+`-j N` worker fits. Flat and compressed CLI output still use the in-memory merge.
+Until the write finishes, lossless staged tiles occupy disk beside the output;
+allow space for the whole uncompressed fit as well as the output store.
+
 **Individual tile fitting** (for Slurm or distributed workflows):
 
 ```python
@@ -1221,6 +1229,15 @@ above.
 **Merged quality metrics:** per-region scores describe apodized tile crops or halo-padded content boxes and do not compose into the merged result, so uniform and content-planned merges render the reconstruction against the whole volume and attach `psnr_db` / `ssim` / `mse` / `foreground_*` to the merged result (#1669, #1703, #1733, #1858). The CLI save path publishes that block at the archive root; a library caller that writes a returned partition node directly must pass its `meta["fit_stats"]` through `split_fitting_info` to `write_gsplats_tree`. A partition is rendered as the sum of its surviving parts, exactly as the parts compose, without flattening the splats: uniform tiles retain overlapping Hann-apodized contributions, while content boxes retain only splats centered in disjoint cores. Before scoring, the selected volume is shifted to `clip(V - image_min, 0, None)`, the background-relative basis reconstructed by the merged fit and used by the non-tiled path and `gsplat compare` (#1173). Scoring materializes the whole reference on the host (the fit itself may only read it region by region) and renders on the resolved torch device, so admission checks both resources: the host copies stay under half of free physical RAM and the render/metric peak stays under half of free CUDA memory, each held under a 24 GiB ceiling. Concurrent local batch workers divide the default host allowance across the whole run and the default CUDA allowance across the workers on their card. `LUXAR_TILED_QUALITY_MAX_GB` overrides both checks (`0` declines outright, an unreadable value falls back with a note). Over budget, or on a failure, it says so even when `verbose=False` — an archive that silently carries no PSNR is the failure this exists to end.
 
 **Returns:** `GSplatData` with all splats in global coordinates. Hilbert curve resorting happens automatically on `save()`.
+
+#### `fit_tiled_to_store(volume, output_path, **fit_kwargs)`
+
+Fits a uniform tile grid into a `.gsplats.zarr` directory. Multi-tile output is
+`kind=partition`; one tile keeps the existing bare-leaf form. It
+stages each sequential tile losslessly, then writes parts through the batch
+partition writer. Only one fitted tile and lightweight per-tile statistics are
+held during the write. The root carries the merged source grid, normalization,
+floor counts, and quality metrics. `output_path` is returned as a `Path`.
 
 #### `fit_tile(volume, spec, **fit_kwargs)`
 Fit a single tile (Slurm-ready). Takes a `TileSpec` from `compute_tile_specs()` and

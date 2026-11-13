@@ -25,7 +25,12 @@ from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Sequence,
 
 from arbol import aprint, asection
 
-from luxar.core.group.partition import prune_serialized_bsp_tree
+from luxar.core.group.partition import (
+    map_serialized_bsp_tree,
+)
+from luxar.core.group.partition import (
+    prune_serialized_bsp_tree as prune_serialized_bsp_tree,
+)
 from luxar.gsplats.batch.manifest import (
     BatchManifest,
     floor_erased_slices,
@@ -848,6 +853,13 @@ def _slot_cells(
         return {}
 
 
+def _translate_slot_tree(tree: Dict[str, Any], offset: Any) -> Optional[Dict[str, Any]]:
+    """Move a streamed grid's split planes with its fitted centers."""
+    import numpy as np
+
+    return map_serialized_bsp_tree(tree, np.eye(len(offset)), offset)
+
+
 def _cell_for_slot(
     slot_tree: "Optional[Dict[str, Any]]",
     cache: "Dict[int, List[Tuple[float, float]]]",
@@ -1212,8 +1224,6 @@ def _content_slot_bsp_tree(
         return plan.bsp_tree
     try:
         import numpy as np
-
-        from luxar.core.group.partition import map_serialized_bsp_tree
 
         return map_serialized_bsp_tree(
             plan.bsp_tree, linear=np.diag([float(v) for v in manifest.grid_scale])

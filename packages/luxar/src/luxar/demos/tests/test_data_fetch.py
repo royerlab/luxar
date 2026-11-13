@@ -1511,18 +1511,18 @@ def test_load_local_fit_raises_on_a_multi_part_store(tmp_path):
     rebuild keeps happening" that cannot help. ``load_dataset_gsplats`` already
     translates this error; so does its local sibling.
     """
-    from luxar.demos._lod_policy import save_with_lod
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+    from luxar.gsplats.lod import RecipeParams, build_recipe
 
     path = local_fit_path("toy", "a.gsplats.zarr.zip", cache_root=tmp_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    save_with_lod(
+    tree = build_recipe(
         _tiny_gsplats(64),
-        path,
-        recipe="adaptive",
-        device="cpu",
-        quiet=True,
-        compress="zip",
+        "adaptive",
+        RecipeParams(max_elements=32, levels=1, n_lods=1, device="cpu"),
     )
+    assert len(tree.children) > 1
+    write_gsplats_tree(path, tree, compress="zip")
 
     with pytest.raises(ValueError, match="multi-part gsplats store"):
         load_local_fit_gsplats(

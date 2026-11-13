@@ -1143,17 +1143,35 @@ def dispatch_parallel_tiled(
                 volume=reference_volume,
                 device=ctx.device,
                 fold_tile_slivers=True,
+                output_path=(
+                    ctx.output_path if not ctx.flat and ctx.compress is None else None
+                ),
+                root_attrs=(
+                    {"dimension_metadata": ctx.dimension_metadata}
+                    if ctx.dimension_metadata is not None
+                    else None
+                ),
+                frame=ctx.fit_frame,
             )
 
-        with asection(f"Saving to {ctx.output_path.name}"):
-            n_splats = save_fit_output(
-                result,
-                ctx.output_path,
-                compress=ctx.compress,
-                verbose=ctx.verbose,
-                frame=ctx.fit_frame,
-                dimension_metadata=ctx.dimension_metadata,
-            )
+        if isinstance(result, Path):
+            from luxar._zarr_compat import open_group
+
+            root = open_group(result, mode="r")
+            stats = dict(root["fitting"].attrs)
+            n_splats = int(stats["n_splats"])
+            if ctx.verbose:
+                _report_saved_store_summary(result, stats, n_splats)
+        else:
+            with asection(f"Saving to {ctx.output_path.name}"):
+                n_splats = save_fit_output(
+                    result,
+                    ctx.output_path,
+                    compress=ctx.compress,
+                    verbose=ctx.verbose,
+                    frame=ctx.fit_frame,
+                    dimension_metadata=ctx.dimension_metadata,
+                )
 
         aprint(f"\nDone: {n_splats:,} splats in {time.perf_counter() - started:.1f}s")
         return True
@@ -1769,7 +1787,7 @@ def fit_sequential_tiled(
     recipe_params: "Any",
 ) -> "Any":
     """Full (in-process, sequential) tiled fitting."""
-    from luxar.gsplats.fit_tiled_gsplats import fit_tiled
+    from luxar.gsplats.fit_tiled_gsplats import fit_tiled, fit_tiled_to_store
     from luxar.gsplats.tiling import compute_tile_specs
 
     # An integer --seeds is a WHOLE-VOLUME budget (what `gsplat cal` reports);
@@ -1815,8 +1833,8 @@ def fit_sequential_tiled(
             "Note: --downscale on the sequential tiled path writes a "
             "flat leaf; use -j>1 for a downscaled partition."
         )
-    return fit_tiled(
-        volume,
+    stream_output = seq_partition and ctx.compress is None
+    options = dict(
         tile_size=ctx.tile_size,
         overlap=ctx.tile_overlap,
         voxel_size=fc_voxel_size,
@@ -1827,7 +1845,6 @@ def fit_sequential_tiled(
         psnr_patience=ctx.psnr_patience,
         max_passes=ctx.max_passes,
         seeds=tile_seeds,
-        partition=seq_partition,
         recipe=ctx.recipe,
         recipe_params=recipe_params,
         fold_tile_slivers=True,
@@ -1835,6 +1852,19 @@ def fit_sequential_tiled(
         tile_amplitude_floor=ctx.tile_amplitude_floor,
         **fit_config,
     )
+    if stream_output:
+        return fit_tiled_to_store(
+            volume,
+            ctx.output_path,
+            _root_attrs=(
+                {"dimension_metadata": ctx.dimension_metadata}
+                if ctx.dimension_metadata is not None
+                else None
+            ),
+            _frame=ctx.fit_frame,
+            **options,
+        )
+    return fit_tiled(volume, partition=seq_partition, **options)
 
 
 def fit_progressive(
@@ -2090,4 +2120,18 @@ def _report_saved_compression(result: Any, stored_bytes: int, n_splats: int) -> 
         n_splats=n_splats,
         source_voxels=stats.get("source_voxels"),
         source_stored_bytes=stats.get("source_stored_bytes"),
+    )
+
+
+def _report_saved_store_summary(
+    path: Path, stats: dict[str, Any], n_splats: int
+) -> None:
+    """Report the completed streamed store using its persisted fit statistics."""
+    from types import SimpleNamespace
+
+    stored = store_size(path)
+    aprint(f"Saved {n_splats:,} splats")
+    aprint(f"File size: {format_memory_size(stored)}")
+    _report_saved_compression(
+        SimpleNamespace(meta={"fit_stats": stats}), stored, n_splats
     )

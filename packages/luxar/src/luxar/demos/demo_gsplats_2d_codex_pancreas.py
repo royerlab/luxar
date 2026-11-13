@@ -13,8 +13,7 @@ splatting on a real multiplexed immunofluorescence dataset:
 - Downloading 12-channel CODEX data from Zenodo
 - Extracting and normalising each fluorescence channel
 - Tiled fitting of 2D Gaussian splats per channel (Hann cosine apodization)
-- Building an ``adaptive`` LOD topology per channel: spatial tiles, each with
-  its own substitutive levels, each level with an additive streaming ladder
+- Writing one streamed partition per channel, with one rung per fitted tile
 - Grafting each channel into the scene as a separate layer with colormap
 - Visualising in the Luxar web viewer
 
@@ -62,8 +61,7 @@ WORKFLOW:
 2. **Extract** 12 TIFF channel files
 3. **Normalise** each channel (uint16 -> float32 [0, 1])
 4. **Tiled fit** 2D Gaussian splats per channel with GPU acceleration
-5. **Ladder** each fit with the ``adaptive`` recipe and cache it as a
-   ``kind=partition`` tree
+5. **Cache** each fit as a streamed ``kind=partition`` tree
 6. **Graft** each channel into the scene as a separate layer with colormap
 7. **Visualise** in the Luxar web viewer
 
@@ -134,7 +132,6 @@ from luxar.demos import (
     robust_download,
     warn_if_no_cuda_gpu,
 )
-from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
@@ -366,7 +363,7 @@ def load_channel(tiff_dir: Path, ch_config: dict) -> np.ndarray:
 
 
 def channel_cache_path(channel_index: int) -> Path:
-    """Return the current-frame adaptive cache path for one CODEX channel."""
+    """Return the current-frame cache path for one CODEX channel."""
     return CACHE_DIR / f"codex_ch{channel_index:02d}.v2.gsplats.zarr.zip"
 
 
@@ -374,7 +371,7 @@ def fit_channel_tiled(
     image: np.ndarray,
     channel_name: str,
     cache_file: Path,
-) -> GSplatData:
+) -> GSplatData | int:
     """Fit 2D gsplats to a single channel using tiled fitting.
 
     Args:
@@ -383,7 +380,7 @@ def fit_channel_tiled(
         cache_file: Where to cache the fitted result.
 
     Returns:
-        Fitted GSplatData with 2D centers.
+        Stored splat count, or the in-memory fit for ``--show-roundtrip``.
     """
     from luxar.gsplats import fit_tiled
 
@@ -413,8 +410,7 @@ def fit_channel_tiled(
     # isotropic (0.325 um on both axes), so transposing costs no metric fidelity.
     image = np.ascontiguousarray(image.T)
 
-    result = fit_tiled(
-        image,
+    fit_kwargs = dict(
         tile_size=TILE_SIZE,
         overlap=OVERLAP,
         seeds=SEEDS_PER_TILE,
@@ -431,53 +427,51 @@ def fit_channel_tiled(
         tile_amplitude_floor=1e-5,
     )
 
-    n_splats = len(result.amplitudes)
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    # The display comparison needs an in-memory fit; both modes publish the
+    # same streamed cache so a display flag cannot change the artifact.
+    comparison = fit_tiled(image, **fit_kwargs) if SHOW_ROUNDTRIP else None
+
+    import tempfile
+
+    from luxar._zarr_compat import open_group
+    from luxar.gsplats.fit_tiled_gsplats import fit_tiled_to_store
+    from luxar.gsplats.io.save_gsplats import _compress_zarr
+    from luxar.gsplats.lod import RecipeParams
+
+    with tempfile.TemporaryDirectory(dir=cache_file.parent) as stage:
+        store = Path(stage) / cache_file.name.removesuffix(".zip")
+        fit_tiled_to_store(
+            image,
+            store,
+            recipe="stream",
+            recipe_params=RecipeParams(n_lods=1),
+            encoding_mode=EncodingMode.MEMORY,
+            **fit_kwargs,
+        )
+        n_splats = int(open_group(store, mode="r")["fitting"].attrs["n_splats"])
+        _compress_zarr(store, cache_file, "zip", True, None)
     aprint(f"  Fitted {n_splats:,} splats across all tiles")
-
-    # Cache result. `adaptive` is the recipe a 476-megapixel plane wants: the
-    # slide is panned and zoomed rather than orbited, so most of it is off
-    # screen most of the time and a per-tile level beats one global one. BSP
-    # splitting needs only two spatial axes, so a strictly 2D fit tiles the same
-    # way a volume does. What lands on disk is a `kind=partition` tree: spatial
-    # tiles, each carrying its own substitutive levels, each level carrying an
-    # additive ladder underneath.
-    aprint(f"  Caching to {cache_file.name}")
-    save_with_lod(
-        result,
-        cache_file,
-        recipe="adaptive",
-        # MPS lacks the float64 the substitutive reduction wants and warns as it
-        # falls back; CPU is the same answer without the noise. CUDA keeps the
-        # reduction on the GPU that just did the fit.
-        device="cpu" if DEVICE == "mps" else DEVICE,
-        encoding_mode=EncodingMode.MEMORY,
-        include_fitting_info=True,
-        compress="zip",
-        zip_deflate=True,
-    )
-
-    return result
+    return comparison if comparison is not None else n_splats
 
 
-def fit_all_channels(tiff_dir: Path) -> tuple[list[Path], list[GSplatData | None]]:
+def fit_all_channels(
+    tiff_dir: Path,
+) -> tuple[list[Path], list[GSplatData | int | None]]:
     """Load and fit all 12 channels, one at a time to save memory.
 
     Returns the per-channel cache PATHS alongside the fitted data. The paths are
-    what the scene is built from — an ``adaptive`` artifact is a
+    what the scene is built from — a partitioned artifact is a
     ``kind=partition`` tree with no flat matrix form, so it is grafted with
     :meth:`~luxar.core.group.Group.add_gsplats_from_file` rather than loaded
     into a ``GSplatData`` first.
 
-    The data slots exist only for ``--show-roundtrip``, and only for channels
-    fitted in THIS run: a channel restored from cache yields ``None`` there,
-    because the flat matrix loader refuses a partition store outright. That
-    keeps the resume behaviour this demo advertises — a 12-channel GPU fit over
-    a 5.9 GB download is routinely interrupted — without pretending the cache
-    round-trips to a matrix.
+    Data slots hold counts for streamed fits, in-memory results for
+    ``--show-roundtrip``, and ``None`` for channels restored from cache.
     """
     with asection(f"Tiled fitting of {N_CHANNELS} fluorescence channels"):
         cache_paths: list[Path] = []
-        gsplats_list: list[GSplatData | None] = []
+        gsplats_list: list[GSplatData | int | None] = []
 
         for i, ch_config in enumerate(CHANNELS):
             ch_name = ch_config["name"]
@@ -517,9 +511,8 @@ def create_luxar_scene(
     per-channel visibility, display-range, gamma, and colormap controls.
 
     Each channel is **grafted from its artifact** rather than loaded into a
-    ``GSplatData`` first. The fit writes the ``adaptive`` topology — spatial
-    tiles, each picking its own detail level, with an additive ladder under
-    every level — which is what a 476-megapixel plane that is panned and zoomed
+    ``GSplatData`` first. The fit writes spatial tile parts with one stream
+    rung each, which is what a 476-megapixel plane that is panned and zoomed
     rather than orbited wants. That is a ``kind=partition`` tree with no flat
     matrix form, so ``add_gsplats_from_file`` is the entry point that grafts one
     whole; ``add_gsplats`` would flatten all of it back to a single leaf.
@@ -667,7 +660,7 @@ _ROUNDTRIP_MAX_CHANNELS = 3
 
 def show_roundtrip_comparison(
     tiff_dir: Path,
-    gsplats_list: list[GSplatData | None],
+    gsplats_list: list[GSplatData | int | None],
 ) -> None:
     """Show original vs round-trip reconstructed 2D images side by side.
 
@@ -684,7 +677,7 @@ def show_roundtrip_comparison(
         aprint(f"Skipping --show-roundtrip: {exc}")
         return
 
-    fitted = [(i, g) for i, g in enumerate(gsplats_list) if g is not None]
+    fitted = [(i, g) for i, g in enumerate(gsplats_list) if isinstance(g, GSplatData)]
     n_cached = len(gsplats_list) - len(fitted)
     if n_cached:
         aprint(
@@ -812,7 +805,7 @@ def main():
     # the same set of channels.
     counted = [g for g in gsplats_list if g is not None]
     n_counted = len(counted)
-    total_splats = sum(len(g.amplitudes) for g in counted)
+    total_splats = sum(g if isinstance(g, int) else g.n_splats for g in counted)
     total_pixels = ORIGINAL_WIDTH * ORIGINAL_HEIGHT * n_counted
     pixel_bytes = total_pixels * 2  # uint16 original
     # Floats per 2D splat: d + d*(d+1)/2 + 2 + 3 (colors) = 2 + 3 + 2 + 3 = 10

@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 import torch
 
+from luxar._zarr_compat import open_group
 from luxar.gsplats.fit_tiled_parallel import (
     build_worker_cmd,
     fit_tiled_parallel,
@@ -47,7 +48,9 @@ def _pin_worker_thread_env(monkeypatch: pytest.MonkeyPatch) -> None:
 # ── A fake worker: writes a deterministic tiny gsplats per tile ──────────────
 
 
-def _fake_worker_builder(n_per_tile: int = 5, n_lods: int = 1):
+def _fake_worker_builder(
+    n_per_tile: int = 5, n_lods: int = 1, floor_count: int | None = None
+):
     """Return a worker_cmd_builder writing ``n_per_tile`` splats (x ``n_lods``)."""
 
     def builder(i: int, m: int, out_path: Path) -> list[str]:
@@ -68,6 +71,8 @@ def _fake_worker_builder(n_per_tile: int = 5, n_lods: int = 1):
 
             lods = [lod({i} * 100 + j, {n_per_tile}) for j in range({n_lods})]
             data = GSplatData.from_additive_sublods(lods)
+            if {floor_count!r} is not None:
+                data.stats['tile_amplitude_pruned'] = {floor_count!r}
             data.save(r"{out_path}")
             """
         )
@@ -155,6 +160,76 @@ def _corrupt_store_builder(corrupt_on: int):
 
 
 # ── resolve_jobs ─────────────────────────────────────────────────────────────
+
+
+def test_partition_output_streams_worker_stores(tmp_path: Path) -> None:
+    output = tmp_path / "merged.gsplats.zarr"
+    result = fit_tiled_parallel(
+        num_tiles=3,
+        jobs=2,
+        tmp_dir=tmp_path / "workers",
+        worker_cmd_builder=_fake_worker_builder(n_per_tile=5),
+        volume_shape=(30, 10, 10),
+        tile_size=10,
+        overlap=0,
+        progressive=False,
+        cull_retention=None,
+        partition=True,
+        output_path=output,
+        source_dtype="float32",
+        verbose=False,
+    )
+
+    assert result == output
+    root = open_group(output, mode="r")
+    assert root.attrs["kind"] == "partition"
+    assert root["fitting"].attrs["n_splats"] == 15
+    assert sorted(name for name in root.keys() if name.startswith("part_")) == [
+        "part_0",
+        "part_1",
+        "part_2",
+    ]
+    assert not (tmp_path / "workers").exists()
+
+
+def test_partition_output_counts_empty_worker_floor_marker(tmp_path: Path) -> None:
+    output = tmp_path / "merged.gsplats.zarr"
+    regular = _fake_worker_builder(floor_count=2)
+
+    def worker(index: int, count: int, path: Path) -> list[str]:
+        if index != 1:
+            return regular(index, count, path)
+        return [
+            sys.executable,
+            "-c",
+            f"from pathlib import Path; Path({str(path) + '.empty'!r})"
+            ".write_text('0 splats\\ntile_amplitude_pruned=7\\n')",
+        ]
+
+    fit_tiled_parallel(
+        num_tiles=3,
+        jobs=2,
+        tmp_dir=tmp_path / "workers",
+        worker_cmd_builder=worker,
+        volume_shape=(30, 10, 10),
+        tile_size=10,
+        overlap=0,
+        progressive=False,
+        cull_retention=None,
+        partition=True,
+        output_path=output,
+        tile_amplitude_floor=1e-5,
+        source_dtype="float32",
+        verbose=False,
+    )
+
+    root = open_group(output, mode="r")
+    assert root["pipeline"].attrs["tile_amplitude_pruned"] == 11
+    assert root["fitting"].attrs["n_splats"] == 10
+    assert [part["slot_id"] for part in root["fitting"].attrs["part_provenance"]] == [
+        "tile_0",
+        "tile_2",
+    ]
 
 
 class TestResolveJobs:
@@ -692,7 +767,8 @@ class TestFitTiledParallel:
         assert "failed to build/launch" in str(exc.value).lower()
         assert tiles.exists()
 
-    def test_corrupt_store_is_curated(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_corrupt_store_is_curated(self, tmp_path: Path, stream: bool) -> None:
         """A present-but-unreadable tile store → curated error naming the tile."""
         tiles = tmp_path / "tiles"
         with pytest.raises(RuntimeError) as exc:
@@ -706,10 +782,33 @@ class TestFitTiledParallel:
                 overlap=4,
                 progressive=False,
                 cull_retention=None,
+                output_path=tmp_path / "merged.gsplats.zarr" if stream else None,
             )
         msg = str(exc.value).lower()
         assert "unreadable" in msg
         assert tiles.exists()
+        assert not (tmp_path / "merged.gsplats.zarr").exists()
+
+    def test_stream_missing_store_is_reported_before_write(
+        self, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "merged.gsplats.zarr"
+        with pytest.raises(RuntimeError, match="1 of .* tiles exited cleanly") as exc:
+            fit_tiled_parallel(
+                num_tiles=self._specs_count(),
+                jobs=2,
+                tmp_dir=tmp_path / "tiles",
+                worker_cmd_builder=_exit0_nofile_builder(silent_on=1),
+                volume_shape=(40, 40),
+                tile_size=16,
+                overlap=4,
+                progressive=False,
+                cull_retention=None,
+                output_path=output,
+            )
+        assert "tiles: 1" in str(exc.value)
+        assert not output.exists()
+        assert (tmp_path / "tiles").exists()
 
     def test_empty_marker_tile_is_skipped(self, tmp_path: Path) -> None:
         """A tile that writes only an .empty marker contributes nothing (no raise)."""

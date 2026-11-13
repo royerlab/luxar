@@ -21,6 +21,7 @@ FIT_CALLS = {
     "fit_gaussian_splats",
     "fit_progressive_gaussian_splats",
     "fit_tiled",
+    "fit_tiled_to_store",
 }
 
 #: Demos that fit but legitimately need no declaration, and why.

@@ -471,10 +471,11 @@ Applied to the current demo code:
   `add_gsplats_from_file` re-authors it through `GSplatData`; **`h2afva_stack`**
   still supplies a nested partition and is grafted. Only the stack inherits its
   archive tree node-for-node.
-- **`codex_pancreas`** fits locally through `save_with_lod(recipe="adaptive")`
-  and grafts its own output, so its groups are authored rather than inherited.
-  Its structure changes through recipe settings such as `max_elements`, not by
-  flattening a separately supplied artifact.
+- **`codex_pancreas`** fits locally through `fit_tiled_to_store` with
+  `recipe="stream"` and `n_lods=1`, then grafts its own partition. It writes one
+  part per fit tile; `TILE_SIZE` and `OVERLAP` set the tile grid and group count.
+  At the production grid, the bound is 38 groups per channel (456 across all
+  12 channels).
 - **`cmu1_pathology`** grafts the record's partition, so its archive structure
   reaches the scene node-for-node (3.10). Flattening that archive is a real load
   win, but measure the resulting topology before claiming it.

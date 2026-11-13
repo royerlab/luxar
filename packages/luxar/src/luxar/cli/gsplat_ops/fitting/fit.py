@@ -86,12 +86,62 @@ def _stamp_cli_fit_provenance(
     fit_started: float,
 ) -> None:
     _stamp_fit_command(result, sys.argv.copy(), preset, workers)
-    stats = getattr(result, "stats", {})
+    stats = getattr(result, "stats", None)
+    if stats is None:
+        stats = result.meta.get("fit_stats", {})
     record = stats.get("fit_provenance")
     if isinstance(record, dict):
         timings = record["timings"]
         timings["loading"] = loaded_at - started
         timings["cli_preprocessing"] = fit_started - loaded_at
+
+
+def _finish_fit_result(
+    ctx: FitPipelineCtx,
+    result: Any,
+    tiled_downscale_factors: Any,
+    *,
+    preset: str | None,
+    workers: str,
+    started: float,
+    loaded_at: float,
+    fit_started: float,
+) -> tuple[Any, int, bool]:
+    if isinstance(result, Path):
+        from types import SimpleNamespace
+
+        from luxar._zarr_compat import consolidate, open_group
+        from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+        from .fit_utils import _report_saved_store_summary
+
+        root = open_group(result, mode="r+")
+        stats = dict(root["fitting"].attrs)
+        _stamp_cli_fit_provenance(
+            SimpleNamespace(meta={"fit_stats": stats}),
+            preset=preset,
+            workers=workers,
+            started=started,
+            loaded_at=loaded_at,
+            fit_started=fit_started,
+        )
+        root["fitting"].attrs.update(stats)
+        _stamp_content_hash(root)
+        consolidate(root)
+        n_splats = int(stats["n_splats"])
+        if ctx.verbose:
+            _report_saved_store_summary(result, stats, n_splats)
+        return result, n_splats, False
+
+    _stamp_cli_fit_provenance(
+        result,
+        preset=preset,
+        workers=workers,
+        started=started,
+        loaded_at=loaded_at,
+        fit_started=fit_started,
+    )
+    return rescale_and_save(ctx, result, tiled_downscale_factors)
 
 
 def _refuse_existing_output(
@@ -1370,18 +1420,15 @@ def run_fit_volume(
                     )
 
             announce_denoised_quality_basis(ctx, is_tiled)
-            _stamp_cli_fit_provenance(
+            result, n_splats, is_leaf = _finish_fit_result(
+                ctx,
                 result,
+                tiled_downscale_factors,
                 preset=preset,
                 workers=str(jobs),
                 started=started,
                 loaded_at=loaded_at,
                 fit_started=fit_started,
-            )
-
-            # 7. Rescale (if downscaled tiled) + save
-            result, n_splats, is_leaf = rescale_and_save(
-                ctx, result, tiled_downscale_factors
             )
 
         aprint(

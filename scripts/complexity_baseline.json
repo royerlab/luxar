@@ -342,7 +342,7 @@
       20
     ],
     "packages/luxar/src/luxar/gsplats/fit_tiled_parallel.py::fit_tiled_parallel": [
-      14
+      11
     ],
     "packages/luxar/src/luxar/gsplats/fitting/dynamic_ops/operations.py::apply_dynamic_operations": [
       16

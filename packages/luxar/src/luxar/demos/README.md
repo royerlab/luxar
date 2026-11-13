@@ -90,8 +90,8 @@ The LOD topology a fitting demo writes its cached artifact with is chosen in
 sub-LOD, which is how five shipped archives ended up with no ladder at all).
 Demos call `save_with_lod(result, cache_file, recipe=...)` in place of
 `result.save(...)`; the per-recipe parameters live in one table there so two
-demos asking for `levels` cannot drift apart. `adaptive` is the one that changes
-how a demo READS its cache back — it writes a `kind=partition` tree, which has
+demos asking for `levels` cannot drift apart. The two pathology refits instead
+write a `kind=partition` tree with `fit_tiled_to_store(recipe=...)`. That tree has
 no flat `GSplatData` form, so those demos fetch paths with `ensure_dataset` and
 graft each with `add_gsplats_from_file`. Anything costlier than `stream` is also
 conditional on how the demo BUILDS its scene: `add_gsplats_from_data` and
@@ -102,9 +102,10 @@ and then discard it.
 `tests/test_lod_policy.py` holds both gates: a fitting demo either routes every
 archive through the policy or is accounted for by name — it ships no artifact, it
 names the topology itself with a literal `build_recipe(...)`, or it sits on the
-shrinking pending list — and a demo choosing `levels`/`adaptive` must reach the
-scene through an adder that preserves it, whichever of those doors it came
-through. The choice applies from the next refit onwards — the
+shrinking pending list. A demo choosing `levels` must reach the scene through
+an adder that preserves it; a streamed tile partition must reach it through
+`add_gsplats_from_file`. The gates accept either cache writer. The choice
+applies from the next refit onwards — the
 hosted archives keep whatever topology they were written with until they are
 refitted and reuploaded, since the manifest pins their checksums.
 
