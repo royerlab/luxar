@@ -220,14 +220,14 @@ Enforces **at most one in-flight sort per node**; a commit landing mid-sort queu
 8. Record the pose (`recordSortPose(state, modelView)`) — stores the model-view z-row (axis direction + normalized offset)
 9. Begin a detached profiler pass (`getProfiler()?.beginDepthSortPass()`) — its duration is the dispatch→applied round-trip
 10. `withTimeout('depth-sort', api.sort({ nodeId, generation, modelView }), 30s)`:
-   - **Timeout**: a worker that CRASHES mid-session leaves the Comlink RPC pending forever, and a stuck `inFlight` is unrecoverable — the per-frame scheduler skips in-flight nodes and later commits only set `resortQueued`, which never drains. Routing the timeout through the existing .catch clears `inFlight` and drains the queue (bounded staleness degrade instead of a permanently unsorted node).
+    - **Timeout**: a worker that CRASHES mid-session leaves the Comlink RPC pending forever, and a stuck `inFlight` is unrecoverable — the per-frame scheduler skips in-flight nodes and later commits only set `resortQueued`, which never drains. Routing the timeout through the existing .catch clears `inFlight` and drains the queue (bounded staleness degrade instead of a permanently unsorted node).
 11. On **resolve**:
-   - Clear `inFlight`
-   - **Stale-drop**: stage only when `result.generation === current.generation` AND `hasCommittedData(mesh)` (LOD demotion signal)
-   - Set profiler metadata: `splats`, `kernelMs`, `boundaryMs` (worker overhead), `queueMs` (round-trip minus worker time), and `info` with ordering bytes labeled `sched`
-   - Stage the ordering with lifecycle callbacks: `writeSortedIndexOrdering(geometry, result.ordering, count, callbacks, { adoptOrdering: true })` — `callbacks` always carries the owner hooks (`orderingApplyHooks(c)`) and, with a profiler session, `onApplied` / `onAbandoned`; the per-frame pump streams slices into the inactive buffer. On WebGPU, a result backed by the full attribute capacity becomes the inactive attribute array without a second CPU copy; orderings without that backing and WebGL still copy.
-   - Transfer profiler-session ownership to those callbacks and request the bootstrap frame
-   - Drain `resortQueued` if set: `scheduleSort(c, mesh, nodeId)`
+    - Clear `inFlight`
+    - **Stale-drop**: stage only when `result.generation === current.generation` AND `hasCommittedData(mesh)` (LOD demotion signal)
+    - Set profiler metadata: `splats`, `kernelMs`, `boundaryMs` (worker overhead), `queueMs` (round-trip minus worker time), and `info` with ordering bytes labeled `sched`
+    - Stage the ordering with lifecycle callbacks: `writeSortedIndexOrdering(geometry, result.ordering, count, callbacks, { adoptOrdering: true })` — `callbacks` always carries the owner hooks (`orderingApplyHooks(c)`) and, with a profiler session, `onApplied` / `onAbandoned`; the per-frame pump streams slices into the inactive buffer. On WebGPU, a result backed by the full attribute capacity becomes the inactive attribute array without a second CPU copy; orderings without that backing and WebGL still copy.
+    - Transfer profiler-session ownership to those callbacks and request the bootstrap frame
+    - Drain `resortQueued` if set: `scheduleSort(c, mesh, nodeId)`
 12. On **rendered application**:
     - The final pump selects the complete buffer but does not yet report it applied
     - The mesh's chained `onAfterRender` hook acknowledges that THREE consumed the pending attribute ranges and completed a draw with the selected buffer

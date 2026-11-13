@@ -21,7 +21,7 @@ here automatically — not just when WASM is missing.
 | `decode.ts`             | LUT / quantized / log-scalar / geolog-scalar / per-channel decoders + `decode_broadcasted`; log-scalar is bit-exact with WASM and is now the single route the main-thread `ArrayDecoder` uses too                                 |
 | `float32-math.ts`       | Exact TypeScript ports of Rust/WASM `expf`, `logf`, and `expm1f`, used where narrowing the host's f64 transcendental result can choose the neighboring f32 (#1830, #1843)                                                         |
 | `projection.ts`         | nD→3D position extraction (`extract_3d_positions`)                                                                                                                                                                                |
-| `depth-sort.ts`         | `sort_splats_by_depth` — back-to-front ordering; frounds every float step in the Rust op order for exact WASM↔TS parity                                     |
+| `depth-sort.ts`         | `sort_splats_by_depth` — back-to-front ordering; frounds every float step in the Rust op order for exact WASM↔TS parity                                                                                                           |
 
 ### Decode kernels
 
