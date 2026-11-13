@@ -615,12 +615,17 @@ describe('validateWebGPUFirstFrameGapTargets', () => {
     ).not.toThrow();
   });
 
-  it.each(['150', NaN, Infinity, -1])('rejects invalid target %s', (target) => {
+  it.each([
+    ['150', '150 (string)'],
+    [NaN, 'NaN (number)'],
+    [Infinity, 'Infinity (number)'],
+    [-1, '-1 (number)'],
+  ])('rejects invalid target %s', (target, description) => {
     expect(() =>
       validateWebGPUFirstFrameGapTargets(
         suites({ ...validCase(), maxWebGPUFirstFrameGapMs: target })
       )
-    ).toThrow(/cold_zip_mixed: invalid WebGPU first-frame gap target/);
+    ).toThrow(`cold_zip_mixed: invalid WebGPU first-frame gap target ${description}`);
   });
 
   it.each(['webgl', 'webgpu'])('requires %s in the configured backends', (backend) => {
