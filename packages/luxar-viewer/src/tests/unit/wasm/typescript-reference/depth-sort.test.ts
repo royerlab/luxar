@@ -49,6 +49,8 @@ describe('depth_sort: sort_splats_by_depth', () => {
       [-8, -2, -8, -4, 1, -2, -1],
       [1e6, -1e6, -1e6 + 1, -1e6 + 1],
       [-1e-6, -3e-6, -2e-6, -3e-6],
+      [-Infinity, -3, -2, NaN, Infinity],
+      [-3, -3, -3],
       [1, 2, 3],
       [-4],
       [],

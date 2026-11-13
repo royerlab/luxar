@@ -13,6 +13,7 @@
 import { transfer } from 'comlink';
 import { requireWasm, type SortWorkerCtx } from './state';
 import { log, Modules } from '../../utils/log';
+import { depthSortKeys } from '../../wasm/typescript/depth-sort';
 
 export interface RegisterNodeParams {
   /** Node identity (mesh UUID on the main thread). */
@@ -33,13 +34,17 @@ export interface SortParams {
   generation: number;
   /** Column-major 4x4 model-view matrix [16]. */
   modelView: Float32Array;
+  /** Native WebGPU builds the permutation from compact keys. */
+  compactKeys?: boolean;
 }
 
 export interface SortResult {
   /** Generation the ordering was computed for (re-checked on the main thread). */
   generation: number;
-  /** Back-to-front permutation [count] — TRANSFERRED to the main thread. */
+  /** CPU mirror for commit preservation; not uploaded on the GPU path. */
   ordering: Uint32Array;
+  /** Compact GPU sort keys, present only for native WebGPU instanced draws. */
+  keys?: Uint16Array;
   /**
    * Time spent inside the backend `sort_splats_by_depth` call, in ms.
    * For compiled WASM this INCLUDES the wasm-bindgen boundary copies
@@ -96,15 +101,19 @@ export function sortNode(ctx: SortWorkerCtx, params: SortParams): SortResult | n
   // compiled WASM module or the TypeScript fallback, so both report.
   const kernelStart = performance.now();
   wasm.sort_splats_by_depth(node.centers3, params.modelView, ordering, node.count);
+  const keys = params.compactKeys
+    ? depthSortKeys(node.centers3, params.modelView, node.count)
+    : undefined;
   const kernelEnd = performance.now();
   return transfer(
     {
       generation: node.generation,
       ordering,
+      keys,
       kernelMs: kernelEnd - kernelStart,
       workerMs: kernelEnd - bodyStart,
     },
-    [ordering.buffer]
+    keys ? [ordering.buffer, keys.buffer] : [ordering.buffer]
   );
 }
 

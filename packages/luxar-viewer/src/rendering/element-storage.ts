@@ -22,6 +22,7 @@
  */
 
 import * as THREE from 'three';
+import StorageInstancedBufferAttribute from 'three/src/renderers/common/StorageInstancedBufferAttribute.js';
 import {
   type ElementTextureLayout,
   clampElementCapacity,
@@ -310,10 +311,29 @@ export function setSortedIndexChunkElementsForTests(elements: number | null): vo
  * renderer to misbehave.
  */
 let chunkedApplyEnabled = true;
+let gpuComputeOrderingEnabled = false;
 
 /** Configure whether large orderings apply chunked (classic WebGL only). */
 export function configureSortedIndexChunkedApply(enabled: boolean): void {
   chunkedApplyEnabled = enabled;
+}
+
+/** Native WebGPU needs STORAGE usage on both order buffers at creation. */
+export function configureSortedIndexGpuCompute(enabled: boolean): void {
+  gpuComputeOrderingEnabled = enabled;
+}
+
+/** True only for geometries built with storage-capable ordering buffers. */
+export function canComputeSortedIndex(geometry: THREE.InstancedBufferGeometry): boolean {
+  const a = geometry.getAttribute('aSortedIndex');
+  const b = geometry.getAttribute('aSortedIndexB');
+  return (
+    !!a &&
+    !!b &&
+    a !== b &&
+    'isStorageInstancedBufferAttribute' in a &&
+    'isStorageInstancedBufferAttribute' in b
+  );
 }
 
 /**
@@ -778,6 +798,37 @@ export function pumpSortedIndexOrderingApply(
   return applyNextSortedIndexChunk(geometry, state);
 }
 
+/** Select an inactive ordering filled by a WebGPU compute pass. */
+export function selectComputedSortedIndexOrdering(
+  geometry: THREE.InstancedBufferGeometry,
+  count: number,
+  ordering: Uint32Array,
+  callbacks?: SortedIndexApplyCallbacks
+): boolean {
+  const inactive = getInactiveSortedIndexAttribute(geometry);
+  if (
+    !inactive ||
+    !sortedIndexBuffersUsable(geometry) ||
+    ordering.length < count ||
+    count > inactive.array.length
+  )
+    return false;
+  cancelSortedIndexOrderingApply(geometry);
+  const mirror = inactive.array as Uint32Array;
+  clearIdentityPrefix(inactive);
+  if (ordering.byteOffset === 0 && ordering.buffer.byteLength === mirror.byteLength) {
+    inactive.array = new Uint32Array(ordering.buffer);
+  } else {
+    mirror.set(ordering.subarray(0, count), 0);
+  }
+  // The compute pass wrote the GPU buffer. Deliberately leave `version`
+  // unchanged, so three does not overwrite it with the CPU mirror on draw.
+  setSortedIndexSlot(geometry, activeSortedIndexSlot(geometry) === 0 ? 1 : 0);
+  raiseHeldDraw(geometry, count);
+  if (callbacks) awaitingDrawAcknowledgement.set(geometry, callbacks);
+  return true;
+}
+
 /**
  * Acknowledge that THREE completed a render of `geometry` using its currently
  * selected ordering buffer. This is the first point at which the final update
@@ -917,7 +968,9 @@ export function attachElementStorage(
   // (and caps aSortedIndex to match). Idempotent for the pool path, which
   // already clamps at acquire time.
   capacity = clampElementCapacity(capacity, layout);
-  const sortedIndex = new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
+  const sortedIndex = gpuComputeOrderingEnabled
+    ? new StorageInstancedBufferAttribute(new Uint32Array(capacity), 1)
+    : new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
   sortedIndex.setUsage(sortedIndexUsage());
   geometry.setAttribute('aSortedIndex', sortedIndex);
   // Slot B is a DISTINCT buffer from the very first frame — never an
@@ -959,7 +1012,9 @@ export function attachElementStorage(
   // costs a flat +4 B/element on nodes that never sort (≈6% of a
   // gsplat's 68 B/element), which is the honest price of not depending
   // on a cache-invalidation path that does not exist.
-  const sortedIndexB = new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
+  const sortedIndexB = gpuComputeOrderingEnabled
+    ? new StorageInstancedBufferAttribute(new Uint32Array(capacity), 1)
+    : new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
   sortedIndexB.setUsage(sortedIndexUsage());
   geometry.setAttribute('aSortedIndexB', sortedIndexB);
 

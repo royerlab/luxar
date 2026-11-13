@@ -37,7 +37,11 @@ import {
   type RendererCapabilities,
 } from '../../../rendering/renderer-capabilities';
 import { configureElementTextureLayout } from '../../../rendering/element-texture-layout';
-import { configureSortedIndexChunkedApply } from '../../../rendering/element-storage';
+import {
+  configureSortedIndexChunkedApply,
+  configureSortedIndexGpuCompute,
+} from '../../../rendering/element-storage';
+import { configureWebGpuOrderBuilder } from '../../../rendering/depth-sort-coordinator/webgpu-order';
 import { installUploadCounters } from '../../../rendering/upload-counters';
 import { installElementTextureRowUploads } from '../../../rendering/element-texture-row-upload';
 import { configureRenderObjectEviction } from '../../../data/scene-loader/commit/invalidate-render-object';
@@ -99,6 +103,8 @@ export function configureRendererBackend(
   configureElementTextureLayout(capabilities.maxTextureSize);
   installElementTextureRowUploads(renderer);
   configureSortedIndexChunkedApply(capabilities.apiSurface === 'webgl2');
+  configureSortedIndexGpuCompute(capabilities.backendKind === 'webgpu-native');
+  configureWebGpuOrderBuilder(renderer, capabilities.backendKind === 'webgpu-native');
   configureRenderObjectEviction(capabilities.apiSurface === 'webgpu');
 }
 
