@@ -1,6 +1,6 @@
 /**
  * The depth-sort coordinator's scheduler: the single-in-flight sort dispatch
- * and its resolve/apply handling ({@link scheduleSort}), the per-frame chunked
+ * and its settle/apply handling ({@link scheduleSort}), the per-frame chunked
  * apply pump, and the Phase-3 camera-motion re-sort pass
  * ({@link evaluateDepthSortPerFrame}) that also drives the cross-node
  * renderOrder assignment.
@@ -85,7 +85,7 @@ export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: stri
     mesh,
     state,
     generation: state.generation,
-    modelView: computeModelView(mesh, camera),
+    modelView: computeModelView(mesh, camera).clone(),
   };
   // Skipping a dispatch no producer can serve beats letting it reject:
   // `recordSortPose` below runs BEFORE the sort, so a dispatch that fails still

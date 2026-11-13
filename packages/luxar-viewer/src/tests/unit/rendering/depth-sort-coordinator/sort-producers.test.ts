@@ -12,7 +12,9 @@ import {
   attachElementStorage,
   cancelAllSortedIndexOrderingApplies,
   getActiveSortedIndexAttribute,
+  holdSortedIndexDrawForAppend,
   pumpSortedIndexOrderingApply,
+  sortedIndexDrawHoldTarget,
   writeSortedIndexIdentity,
   type DeviceOrderingWrite,
 } from '../../../../rendering/element-storage';
@@ -108,10 +110,40 @@ describe('producer selection', () => {
   it('dispatches nothing, and releases a held draw, when no producer can sort', () => {
     const idle = producer('worker', () => null, { ready: false });
     const { c, mesh, state } = setup([idle]);
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    geometry.instanceCount = holdSortedIndexDrawForAppend(geometry, COUNT - 1, COUNT);
+    expect(sortedIndexDrawHoldTarget(geometry)).toBe(COUNT);
     scheduleSort(c, mesh, mesh.uuid);
     expect(idle.run).not.toHaveBeenCalled();
     expect(state.inFlight).toBe(false);
     expect(state.lastSortAxis).toBeNull();
+    expect(sortedIndexDrawHoldTarget(geometry)).toBeUndefined();
+    expect(geometry.instanceCount).toBe(COUNT);
+    expect(c.drawnStateChanged).toBe(true);
+    expect(c.requestRender).toHaveBeenCalledOnce();
+  });
+
+  it('keeps each deferred producer job at its dispatch pose', async () => {
+    const jobs: SortJob[] = [];
+    const resolves: Array<(outcome: null) => void> = [];
+    const deferred = producer('gpu', (job) => {
+      jobs.push(job);
+      return new Promise<null>((resolve) => resolves.push(resolve));
+    });
+    const first = setup([deferred]);
+    scheduleSort(first.c, first.mesh, first.mesh.uuid);
+    const dispatchPose = jobs[0].modelView.clone();
+
+    const second = setup([deferred]);
+    second.mesh.position.set(3, 2, 1);
+    scheduleSort(second.c, second.mesh, second.mesh.uuid);
+
+    expect(jobs).toHaveLength(2);
+    expect(jobs[0].modelView).not.toBe(jobs[1].modelView);
+    expect(jobs[0].modelView.elements).toEqual(dispatchPose.elements);
+    expect(jobs[1].modelView.elements).not.toEqual(dispatchPose.elements);
+    resolves.forEach((resolve) => resolve(null));
+    await Promise.resolve();
   });
 });
 
