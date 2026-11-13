@@ -666,6 +666,11 @@
       "count": 1
     }
   },
+  "src/rendering/blend-warmup.ts": {
+    "complexity": {
+      "count": 4
+    }
+  },
   "src/rendering/depth-sort-coordinator.ts": {
     "complexity": {
       "count": 1
@@ -701,7 +706,7 @@
   },
   "src/rendering/element-storage.ts": {
     "complexity": {
-      "count": 3
+      "count": 2
     }
   },
   "src/rendering/gpu-buffer-pool.ts": {
@@ -972,11 +977,6 @@
       "count": 1
     }
   },
-  "src/rendering/blend-warmup.ts": {
-    "complexity": {
-      "count": 4
-    }
-  },
   "src/scene/animation/advance-value.ts": {
     "complexity": {
       "count": 1
@@ -1140,14 +1140,14 @@
       "count": 1
     }
   },
-  "src/tests/unit/rendering/depth-sort-coordinator.test.ts": {
-    "@typescript-eslint/no-misused-promises": {
-      "count": 23
-    }
-  },
   "src/tests/unit/rendering/blend-warmup.test.ts": {
     "@typescript-eslint/no-floating-promises": {
       "count": 7
+    }
+  },
+  "src/tests/unit/rendering/depth-sort-coordinator.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 23
     }
   },
   "src/tests/unit/types/geometry-capabilities.test.ts": {
