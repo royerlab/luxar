@@ -19,6 +19,8 @@ describe('compute-built ordering handoff', () => {
     attachElementStorage(geometry, 4, POINT_TEXTURE_LAYOUT);
     writeSortedIndexIdentity(geometry, 4);
     const inactive = geometry.getAttribute('aSortedIndexB') as THREE.BufferAttribute;
+    expect(inactive).toBeInstanceOf(THREE.InstancedBufferAttribute);
+    expect((inactive as THREE.InstancedBufferAttribute & { isStorageInstancedBufferAttribute: boolean }).isStorageInstancedBufferAttribute).toBe(true);
     const version = inactive.version;
     let applied = 0;
     expect(

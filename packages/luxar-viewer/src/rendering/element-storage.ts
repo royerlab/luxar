@@ -22,13 +22,18 @@
  */
 
 import * as THREE from 'three';
-import StorageInstancedBufferAttribute from 'three/src/renderers/common/StorageInstancedBufferAttribute.js';
 import {
   type ElementTextureLayout,
   clampElementCapacity,
   getElementTextureWidth,
   elementTextureHeightForCapacity,
 } from './element-texture-layout';
+
+// Three's WebGPU backend recognizes this flag; inherit from the public
+// instance so the eager WebGL bundle keeps one BufferAttribute class graph.
+class StorageInstancedBufferAttribute extends THREE.InstancedBufferAttribute {
+  readonly isStorageInstancedBufferAttribute = true;
+}
 
 /**
  * Above this fraction of a texture's rows being dirty, the per-row
