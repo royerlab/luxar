@@ -90,13 +90,6 @@ const NARRATION_PAD_MS = 2000;
 /** Allow a little scheduling slack before abandoning a stalled clip. */
 const NARRATION_SLACK_MS = 1000;
 
-interface NarratedStop {
-  value: number;
-  expected: Set<string>;
-  active: Map<string, number>;
-  deadline: number;
-}
-
 /** A discrete dimension's own grid step (the snap grid), else null. */
 function gridStepOf(metadata: { discrete?: boolean; step?: number } | undefined): number | null {
   return metadata?.discrete ? metadata.step || 1.0 : null;
@@ -142,7 +135,10 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   private lastSteppedValues = new Map<number, number>();
 
   /** Only the current stop's on-arrival voice clips may extend each playhead. */
-  private narratedStops = new Map<number, NarratedStop>();
+  private narratedStops = new Map<
+    number,
+    { value: number; expected: Set<string>; active: Map<string, number>; deadline: number }
+  >();
 
   /** Unsubscribe function for sceneDimsManager listener */
   private removeDimsListener: (() => void) | null = null;
@@ -417,7 +413,8 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     const stepsBefore = this.stepCount;
     this.updateDimension(dimIndex, now);
     // A held stop must not steal dwell time from the stop after it.
-    if (narrated && this.stepCount !== stepsBefore) state.nextDue = now + this.tickPeriodMs(state);
+    if (narrated && this.stepCount !== stepsBefore)
+      state.nextDue = Math.max(state.nextDue, now + this.tickPeriodMs(state));
   }
 
   /**

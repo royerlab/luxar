@@ -412,6 +412,7 @@ export class SoundNode {
       return false;
     }
     v.pending = false;
+    const durationMs = this.buffer.duration * 1000;
     if (v.stopTimer) {
       clearTimeout(v.stopTimer);
       v.stopTimer = undefined;
@@ -445,7 +446,7 @@ export class SoundNode {
       if (v.playing) {
         v.started = true;
         v.endPending = true;
-        this.deps.onStarted(this.name, this.buffer!.duration * 1000);
+        this.deps.onStarted(this.name, durationMs);
       }
     }, this.attrs.delay_ms);
     return true;
