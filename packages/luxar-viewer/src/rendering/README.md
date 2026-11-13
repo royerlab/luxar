@@ -122,6 +122,7 @@ rendering/
 │
 ├── environment/                        # scene.environment for physical meshes: room / live capture / HDRI / baked map (see environment/README.md)
 ├── depth-sort-coordinator/             # Coordinator submodules: state, scheduler, render-order, ordering-apply, triangle-ordering, worker-lifecycle, capture
+├── gpu-depth-sort/                     # WebGPU compute depth sort (#3162): view-depth keys + stable radix sort written into the ordering buffer
 ├── adaptive-dpr/                       # FPS, stall, refresh-rate and hysteresis trackers behind adaptive-dpr-manager
 │
 ├── shaders/                            # Barrel only — re-exports GLSL constants from materials/<kind>/shader-glsl.ts

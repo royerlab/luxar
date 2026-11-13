@@ -28,13 +28,14 @@
  * @module rendering/gpu-buffer-pool/byte-tracked-maps
  */
 
-import { estimateGeometryBytes } from './geometry-bytes';
+import { estimateGeometryBytes, onGeometryByteChange } from './geometry-bytes';
 import type { PooledBuffer } from './pool-stats';
 
 /** nodeId → active (in-use) buffer, with a running byte total. */
 export class ActiveBufferMap extends Map<string, PooledBuffer> {
   /** Bytes charged per key — subtracted exactly on removal. */
   private readonly charged = new Map<string, number>();
+  private readonly unwatch = new Map<string, () => void>();
   private total = 0;
 
   /** Sum of `estimateGeometryBytes` over every active buffer. O(1). */
@@ -48,6 +49,16 @@ export class ActiveBufferMap extends Map<string, PooledBuffer> {
     const bytes = estimateGeometryBytes(buffer.geometry);
     this.charged.set(nodeId, bytes);
     this.total += bytes;
+    this.unwatch.set(
+      nodeId,
+      onGeometryByteChange(buffer.geometry, () => {
+        const previous = this.charged.get(nodeId);
+        if (previous === undefined) return;
+        const updated = estimateGeometryBytes(buffer.geometry);
+        this.total += updated - previous;
+        this.charged.set(nodeId, updated);
+      })
+    );
     return super.set(nodeId, buffer);
   }
 
@@ -57,12 +68,16 @@ export class ActiveBufferMap extends Map<string, PooledBuffer> {
   }
 
   override clear(): void {
+    for (const unwatch of this.unwatch.values()) unwatch();
+    this.unwatch.clear();
     this.charged.clear();
     this.total = 0;
     super.clear();
   }
 
   private uncharge(nodeId: string): void {
+    this.unwatch.get(nodeId)?.();
+    this.unwatch.delete(nodeId);
     const bytes = this.charged.get(nodeId);
     if (bytes === undefined) return;
     this.total -= bytes;
@@ -81,6 +96,7 @@ function bucketBytes(buffers: readonly PooledBuffer[]): number {
 export class FreeBucketMap extends Map<number, PooledBuffer[]> {
   /** Bytes charged per bucket at its last resync. */
   private readonly charged = new Map<number, number>();
+  private readonly unwatches = new Map<number, Map<PooledBuffer, () => void>>();
   private total = 0;
 
   /** Sum of `estimateGeometryBytes` over every pooled buffer. O(1). */
@@ -94,6 +110,7 @@ export class FreeBucketMap extends Map<number, PooledBuffer[]> {
     const bytes = bucketBytes(buffers);
     this.charged.set(bucket, bytes);
     this.total += bytes;
+    for (const buffer of buffers) this.watch(bucket, buffer);
     return super.set(bucket, buffers);
   }
 
@@ -103,6 +120,7 @@ export class FreeBucketMap extends Map<number, PooledBuffer[]> {
   }
 
   override clear(): void {
+    for (const bucket of this.unwatches.keys()) this.unwatchBucket(bucket);
     this.charged.clear();
     this.total = 0;
     super.clear();
@@ -117,6 +135,7 @@ export class FreeBucketMap extends Map<number, PooledBuffer[]> {
     }
     buffers.push(buffer);
     this.charge(bucket, estimateGeometryBytes(buffer.geometry));
+    this.watch(bucket, buffer);
   }
 
   /**
@@ -130,6 +149,7 @@ export class FreeBucketMap extends Map<number, PooledBuffer[]> {
       throw new RangeError(`FreeBucketMap.takeAt: no buffer at ${bucket}[${index}]`);
     }
     buffers.splice(index, 1);
+    this.unwatchBuffer(bucket, buffer);
     this.charge(bucket, -estimateGeometryBytes(buffer.geometry));
     return buffer;
   }
@@ -148,6 +168,7 @@ export class FreeBucketMap extends Map<number, PooledBuffer[]> {
       const index = buffers.findIndex(match);
       if (index === -1) continue;
       const [buffer] = buffers.splice(index, 1);
+      this.unwatchBuffer(bucket, buffer);
       if (deleteEmptyBucket && buffers.length === 0) this.delete(bucket);
       else this.charge(bucket, -estimateGeometryBytes(buffer.geometry));
       return buffer;
@@ -161,9 +182,36 @@ export class FreeBucketMap extends Map<number, PooledBuffer[]> {
   }
 
   private uncharge(bucket: number): void {
+    this.unwatchBucket(bucket);
     const bytes = this.charged.get(bucket);
     if (bytes === undefined) return;
     this.total -= bytes;
     this.charged.delete(bucket);
+  }
+
+  private watch(bucket: number, buffer: PooledBuffer): void {
+    let watchers = this.unwatches.get(bucket);
+    if (!watchers) {
+      watchers = new Map();
+      this.unwatches.set(bucket, watchers);
+    }
+    if (watchers.has(buffer)) return;
+    watchers.set(
+      buffer,
+      onGeometryByteChange(buffer.geometry, () => {
+        this.set(bucket, this.get(bucket) ?? []);
+      })
+    );
+  }
+
+  private unwatchBuffer(bucket: number, buffer: PooledBuffer): void {
+    const watchers = this.unwatches.get(bucket);
+    watchers?.get(buffer)?.();
+    watchers?.delete(buffer);
+  }
+
+  private unwatchBucket(bucket: number): void {
+    for (const unwatch of this.unwatches.get(bucket)?.values() ?? []) unwatch();
+    this.unwatches.delete(bucket);
   }
 }

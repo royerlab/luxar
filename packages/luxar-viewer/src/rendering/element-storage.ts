@@ -22,13 +22,19 @@
  */
 
 import * as THREE from 'three';
+import { rendererBackendPolicy } from './renderer-backend-policy';
 import {
   type ElementTextureLayout,
   clampElementCapacity,
   getElementTextureWidth,
   elementTextureHeightForCapacity,
 } from './element-texture-layout';
-import { rendererBackendPolicy } from './renderer-backend-policy';
+
+// Three's WebGPU backend recognizes this flag; inherit from the public
+// instance so the eager WebGL bundle keeps one BufferAttribute class graph.
+class StorageInstancedBufferAttribute extends THREE.InstancedBufferAttribute {
+  readonly isStorageInstancedBufferAttribute = true;
+}
 
 /**
  * Above this fraction of a texture's rows being dirty, the per-row
@@ -110,6 +116,7 @@ export function hasPendingElementTextureFullUpload(texture: THREE.DataTexture): 
  * storage equals a full one — what the classic renderer already does.
  */
 const uploadedOnce = new WeakSet<THREE.DataTexture>();
+const uploadedVersions = new WeakMap<THREE.DataTexture, number>();
 
 /** True once any renderer has consumed an upload of this element texture. */
 export function hasElementTextureBeenUploaded(texture: THREE.DataTexture): boolean {
@@ -205,6 +212,7 @@ export function registerElementTexelDirtyRange(
 /** `geometry.userData` slot carrying the element texture. */
 interface ElementStorageUserData {
   elementTexture?: THREE.DataTexture;
+  elementTextureLayout?: ElementTextureLayout;
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -267,14 +275,15 @@ interface ElementStorageUserData {
 // identity and never receive orderings — but that is precisely the
 // population depth sorting exists for.
 //
-// WebGPU: slicing is limited to the classic WebGL backend by the backend
-// policy (`renderer-backend-policy.ts`, `ordering.chunked`), because its
-// back-pressure waits on the attribute's `onUploadCallback`, which neither
-// WebGPU backend fires. The WebGPU backends write the ordering in ONE slice
-// and flip on the next pump. They DO honour attribute `updateRanges` (and
-// clear them after the upload); the pair's buffer usage there is
-// `StaticDrawUsage` (`ordering.usage`), so it uploads only when a write bumps
-// its version.
+// WebGPU: slicing is gated to the classic WebGL backend by
+// `rendererBackendPolicy().ordering.chunked`, because its back-pressure waits on the
+// attribute's `onUploadCallback`, which neither WebGPU backend fires. The
+// WebGPU backends write the ordering in ONE slice and flip on the next
+// pump. They DO honour attribute `updateRanges` (and clear them after the
+// upload), but three's shared attribute cache re-uploads a
+// `DynamicDrawUsage` attribute on EVERY render regardless of its version,
+// so the pair is `StaticDrawUsage` there (backend policy): it
+// uploads only when a write bumps its version.
 // Double-buffering itself is unconditional — the atomic swap is a
 // correctness property, not a per-backend optimisation.
 // ────────────────────────────────────────────────────────────────────
@@ -298,6 +307,33 @@ let sortedIndexChunkElements = SORTED_INDEX_CHUNK_ELEMENTS;
 export function setSortedIndexChunkElementsForTests(elements: number | null): void {
   sortedIndexChunkElements = elements ?? SORTED_INDEX_CHUNK_ELEMENTS;
 }
+
+/** True only for geometries built with storage-capable ordering buffers. */
+export function canComputeSortedIndex(geometry: THREE.InstancedBufferGeometry): boolean {
+  const a = geometry.getAttribute('aSortedIndex');
+  const b = geometry.getAttribute('aSortedIndexB');
+  return (
+    !!a &&
+    !!b &&
+    a !== b &&
+    'isStorageInstancedBufferAttribute' in a &&
+    'isStorageInstancedBufferAttribute' in b
+  );
+}
+
+/**
+ * Buffer usage for the ordering pair on the current backend.
+ *
+ * WebGPU (both backends): `StaticDrawUsage`. three's shared attribute cache
+ * (`renderers/common/Attributes.js`) re-uploads a `DynamicDrawUsage`
+ * attribute on every render even when its version is unchanged, which cost
+ * a full `writeBuffer` of both buffers per node per frame (8 B x capacity:
+ * 80 MB/frame at 10M elements, #2944). Every buffer three creates there
+ * carries COPY_DST, so a static attribute still uploads on each version bump.
+ *
+ * Classic WebGL: `DynamicDrawUsage`, unchanged. There usage is only the
+ * `bufferData` hint and uploads already follow the version.
+ */
 
 /** In-flight chunked application state for one geometry. */
 interface ChunkedOrderingApply {
@@ -558,7 +594,7 @@ function isBackPressureBypassed(state: ChunkedOrderingApply): boolean {
  * advancing. The first slice of every stream always proceeds (the guard
  * also avoids blocking on a residual flag from a prior cancelled stream
  * on this attribute), and the WebGPU single-slice path
- * (`!ordering.chunked`) never stalls.
+ * (the non-chunked backend policy) never stalls.
  *
  * Returns true when more chunks remain after this one.
  */
@@ -578,9 +614,8 @@ function applyNextSortedIndexChunk(
   // acknowledged (issue #715). Gated on the chunked backend and on having
   // written at least one slice, so WebGPU's single-slice path and every
   // stream's first slice always proceed.
-  const policy = rendererBackendPolicy().ordering;
   if (
-    policy.chunked &&
+    rendererBackendPolicy().ordering.chunked &&
     !isBackPressureBypassed(state) &&
     state.cursor > 0 &&
     sliceUploadPending.has(attr)
@@ -593,7 +628,9 @@ function applyNextSortedIndexChunk(
   // the WebGPU backends never fire the upload callback the slice
   // back-pressure waits on, so they write the ordering whole and flip next
   // frame — still atomic, still one upload.
-  const sliceEnd = policy.chunked ? start + sortedIndexChunkElements : state.count;
+  const sliceEnd = rendererBackendPolicy().ordering.chunked
+    ? start + sortedIndexChunkElements
+    : state.count;
   const end = Math.min(state.count, sliceEnd, arr.length);
   clearIdentityPrefix(attr);
   // Both WebGPURenderer backends upload from attribute.array at update time.
@@ -601,7 +638,7 @@ function applyNextSortedIndexChunk(
   // that buffer when it exactly matches the attribute's cached GPU buffer.
   // Partial-capacity and borrowed orderings keep the copy path.
   if (
-    policy.adoptHostBuffer &&
+    !rendererBackendPolicy().ordering.chunked &&
     state.adoptOrdering &&
     start === 0 &&
     end === state.count &&
@@ -620,7 +657,7 @@ function applyNextSortedIndexChunk(
 
   collapseSortedIndexRanges(attr, end, start);
 
-  if (policy.chunked) {
+  if (rendererBackendPolicy().ordering.chunked) {
     // Arm the back-pressure flag and wire its acknowledgement (issue
     // #715). `onUpload` sets `attr.onUploadCallback`, which three fires
     // from BOTH `createBuffer` (first upload) and `updateBuffer` (later
@@ -734,6 +771,39 @@ export function pumpSortedIndexOrderingApply(
   const state = chunkedApplies.get(geometry);
   if (!state) return { more: false, flipped: false, stalled: false };
   return applyNextSortedIndexChunk(geometry, state);
+}
+
+/** Select an inactive ordering filled by a WebGPU compute pass. */
+export function selectComputedSortedIndexOrdering(
+  geometry: THREE.InstancedBufferGeometry,
+  count: number,
+  callbacks?: SortedIndexApplyCallbacks
+): boolean {
+  const inactive = getInactiveSortedIndexAttribute(geometry);
+  if (!inactive || !sortedIndexBuffersUsable(geometry) || count > inactive.array.length)
+    return false;
+  cancelSortedIndexOrderingApply(geometry);
+  clearIdentityPrefix(inactive);
+  installComputedMirror(geometry, inactive);
+  // The compute pass wrote the GPU buffer. Deliberately leave `version`
+  // unchanged, so three does not overwrite it with the CPU mirror on draw.
+  setSortedIndexSlot(geometry, activeSortedIndexSlot(geometry) === 0 ? 1 : 0);
+  raiseHeldDraw(geometry, count);
+  if (callbacks) awaitingDrawAcknowledgement.set(geometry, callbacks);
+  return true;
+}
+
+function installComputedMirror(
+  geometry: THREE.InstancedBufferGeometry,
+  inactive: THREE.BufferAttribute
+): void {
+  // GPU keys can differ by one bucket from the CPU. Keep the last CPU
+  // permutation as the repair seed without copying it on every orbit sort.
+  // The arrays now alias, so a later write through either attribute can
+  // change the other's CPU values without touching its identity memo.
+  const active = getActiveSortedIndexAttribute(geometry)!;
+  clearIdentityPrefix(active);
+  inactive.array = active.array;
 }
 
 /**
@@ -875,7 +945,9 @@ export function attachElementStorage(
   // (and caps aSortedIndex to match). Idempotent for the pool path, which
   // already clamps at acquire time.
   capacity = clampElementCapacity(capacity, layout);
-  const sortedIndex = new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
+  const sortedIndex = rendererBackendPolicy().gpuCompute
+    ? new StorageInstancedBufferAttribute(new Uint32Array(capacity), 1)
+    : new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
   sortedIndex.setUsage(rendererBackendPolicy().ordering.usage);
   geometry.setAttribute('aSortedIndex', sortedIndex);
   // Slot B is a DISTINCT buffer from the very first frame — never an
@@ -917,7 +989,9 @@ export function attachElementStorage(
   // costs a flat +4 B/element on nodes that never sort (≈6% of a
   // gsplat's 68 B/element), which is the honest price of not depending
   // on a cache-invalidation path that does not exist.
-  const sortedIndexB = new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
+  const sortedIndexB = rendererBackendPolicy().gpuCompute
+    ? new StorageInstancedBufferAttribute(new Uint32Array(capacity), 1)
+    : new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
   sortedIndexB.setUsage(rendererBackendPolicy().ordering.usage);
   geometry.setAttribute('aSortedIndexB', sortedIndexB);
 
@@ -945,11 +1019,13 @@ export function attachElementStorage(
   texture.onUpdate = () => {
     pendingFullUpload.delete(texture);
     uploadedOnce.add(texture);
+    uploadedVersions.set(texture, texture.version);
   };
   texture.needsUpdate = true;
   elementTextures.add(texture);
 
   (geometry.userData as ElementStorageUserData).elementTexture = texture;
+  (geometry.userData as ElementStorageUserData).elementTextureLayout = layout;
   geometry.addEventListener('dispose', () => texture.dispose());
   return texture;
 }
@@ -957,6 +1033,18 @@ export function attachElementStorage(
 /** The element texture attached by `attachElementStorage`, if any. */
 export function getElementTexture(geometry: THREE.BufferGeometry): THREE.DataTexture | null {
   return (geometry.userData as ElementStorageUserData).elementTexture ?? null;
+}
+
+/** True after three has uploaded the current texture version. */
+export function isElementTextureCurrent(texture: THREE.DataTexture): boolean {
+  return uploadedVersions.get(texture) === texture.version;
+}
+
+/** The layout used to allocate a geometry's element texture. */
+export function getElementTextureLayout(
+  geometry: THREE.BufferGeometry
+): ElementTextureLayout | null {
+  return (geometry.userData as ElementStorageUserData).elementTextureLayout ?? null;
 }
 
 /**
@@ -1437,11 +1525,9 @@ export function writeSortedIndexOrdering(
 }
 
 /**
- * Register ONE update range covering the fresh entries `[from, n)` plus any
- * still-pending ranges (see the identity writer's doc comment for why ranges
- * must never accumulate). Every writer's ranges are prefixes or consecutive
- * slices, so the union is contiguous and the data under it is current: a
- * superset upload is correct, never stale.
+ * Register a single collapsed `[0, max-end)` update range covering `n`
+ * fresh entries plus any still-pending ranges (see the identity writer's
+ * doc comment for why ranges must never accumulate).
  */
 function collapseSortedIndexRanges(
   attr: THREE.InstancedBufferAttribute,

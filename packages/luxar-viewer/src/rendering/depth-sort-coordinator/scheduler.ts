@@ -13,6 +13,7 @@ import {
   cancelSortedIndexOrderingApply,
   hasPendingSortedIndexOrderingApply,
   pumpSortedIndexOrderingApply,
+  selectComputedSortedIndexOrdering,
   writeSortedIndexOrdering,
   type SortedIndexApplyCallbacks,
 } from '../element-storage';
@@ -38,6 +39,7 @@ import {
   syncSortElementLimit,
   workerHost,
   type CoordinatorState,
+  type NodeSortState,
 } from './state';
 import {
   computeModelView,
@@ -47,6 +49,9 @@ import {
   syncSortedIndexSlot,
 } from './ordering-apply';
 import { SORT_RPC_TIMEOUT_MS, maybeRetryStarvedWorkerInit } from './worker-lifecycle';
+import { canGpuSort, disableGpuOrderProducer, submitGpuSort } from './gpu-order-producer';
+import type { SortResult } from '../../workers/sort-worker';
+import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 
 /**
  * How far behind an orthographic camera the BSP eye is placed (world units):
@@ -56,27 +61,140 @@ import { SORT_RPC_TIMEOUT_MS, maybeRetryStarvedWorkerInit } from './worker-lifec
  */
 const ORTHO_BSP_EYE_DISTANCE = 1e15;
 
+/** @internal */
+export interface OrderingApply {
+  geometry: THREE.InstancedBufferGeometry;
+  result: SortResult;
+  callbacks: SortedIndexApplyCallbacks;
+  triangleSource?: Uint32Array;
+}
+
+/** @internal — worker sort-result handoff. */
+export function stageOrdering(p: OrderingApply): number {
+  const { geometry, result, callbacks } = p;
+  if (p.triangleSource) {
+    return writeSortedTriangleOrdering(
+      geometry,
+      p.triangleSource,
+      result.ordering,
+      result.ordering.length,
+      callbacks
+    );
+  }
+  return writeSortedIndexOrdering(geometry, result.ordering, result.ordering.length, callbacks, {
+    adoptOrdering: true,
+  });
+}
+
+/** Report a GPU ordering only after the selected slot has drawn. */
+function gpuOrderingCallbacks(
+  c: CoordinatorState,
+  count: number,
+  startedAt: number,
+  profiler: UpdateProfiler | null,
+  session: UpdateSession | null
+): SortedIndexApplyCallbacks {
+  const hooks = orderingApplyHooks(c);
+  if (!session) return hooks;
+  const generation = profiler?._currentGeneration();
+  return {
+    ...hooks,
+    onApplied: () => {
+      const appliedAt = performance.now();
+      session.setMetadata({ applyMs: Math.max(0, appliedAt - startedAt) });
+      if (profiler && profiler._currentGeneration() === generation) {
+        profiler.recordDepthSortCompletion({
+          lastMs: Math.max(0, appliedAt - startedAt),
+          kernelMs: null,
+          boundaryMs: null,
+          queueMs: null,
+          elements: count,
+        });
+      }
+      session.end();
+    },
+    onAbandoned: () => session.end(),
+  };
+}
+
+function stageGpuSort(
+  geometry: THREE.InstancedBufferGeometry,
+  count: number,
+  modelView: THREE.Matrix4,
+  callbacks: SortedIndexApplyCallbacks
+): boolean {
+  try {
+    if (!submitGpuSort(geometry, count, modelView)) return false;
+    return selectComputedSortedIndexOrdering(geometry, count, callbacks);
+  } catch (error) {
+    disableGpuOrderProducer();
+    log.warning(Modules.WORKER_POOL, 'WebGPU depth ordering failed; using worker order', error);
+    return false;
+  }
+}
+
+function finishGpuSort(
+  c: CoordinatorState,
+  mesh: THREE.Mesh,
+  state: NodeSortState,
+  modelView: THREE.Matrix4,
+  session: UpdateSession | null
+): void {
+  session?.setMetadata({ elements: state.count, info: 'GPU compute' });
+  recordSortPose(state, modelView);
+  syncSortedIndexSlot(c, mesh);
+  c.requestRender?.();
+}
+
+/** Select a submitted GPU sort before the next draw on the same queue. */
+function tryGpuOrdering(
+  c: CoordinatorState,
+  mesh: THREE.Mesh,
+  state: NodeSortState,
+  camera: THREE.Camera
+): boolean {
+  if (state.triangleSource) return false;
+  const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+  if (!canGpuSort(geometry, state.count)) return false;
+  const modelView = computeModelView(mesh, camera);
+  const startedAt = performance.now();
+  const profiler = c.getProfiler?.() ?? null;
+  const session = profiler?.beginDepthSortPass() ?? null;
+  const selected = stageGpuSort(
+    geometry,
+    state.count,
+    modelView,
+    gpuOrderingCallbacks(c, state.count, startedAt, profiler, session)
+  );
+  if (!selected) {
+    session?.end();
+    return false;
+  }
+  finishGpuSort(c, mesh, state, modelView, session);
+  return true;
+}
+
+function requestWorkerSort(nodeId: string, generation: number, modelView: THREE.Matrix4) {
+  return workerHost.api!.sort({
+    nodeId,
+    generation,
+    modelView: new Float32Array(modelView.elements),
+  });
+}
+
 /**
  * Request one sort for a registered node, respecting the
  * single-in-flight rule. Queues a re-sort if one is already running.
  */
-export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: string): void {
+export function scheduleSort(
+  c: CoordinatorState,
+  mesh: THREE.Mesh,
+  nodeId: string,
+  preferGpu = false
+): void {
   const state = c.nodeStates.get(nodeId);
   const camera = c.getCamera?.();
-  // `api` is wrapped BEFORE `initializeWithGuard` is awaited, so a live handle
-  // is not the same thing as a usable worker: between the spawn and 'ready'
-  // there is a window in which `sort` would reject NOT_INITIALIZED worker-side
-  // (`requireWasm`). Gating here rather than at each caller keeps it a single
-  // chokepoint — the capture drain's force loop dispatches without consulting
-  // `state.registered`, and a commit stamps `nodeStates` + `committedData`
-  // synchronously, so it can reach this during startup warm-up.
-  //
-  // Skipping beats letting it reject, and not only for the error line:
-  // `recordSortPose` below runs BEFORE the RPC, so a dispatch that rejects
-  // still leaves a pose on record for a sort that never ran — which is exactly
-  // what silences the per-frame `!lastSortAxis` recovery dispatch for a node
-  // whose first real dispatch raced a null camera.
-  if (!state || !workerHost.api || workerHost.workerInitState !== 'ready' || !camera) {
+  if (!state || !camera) {
     // Nothing will sort this population, so a held append draw must not wait.
     if (state) releaseHeldDraw(c, mesh);
     return;
@@ -85,6 +203,14 @@ export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: stri
     state.resortQueued = true;
     return;
   }
+  if (preferGpu && tryGpuOrdering(c, mesh, state, camera)) return;
+  // Try the GPU before requiring a ready worker, so capture can sort during
+  // worker initialization. `api` is wrapped before `initializeWithGuard`
+  // completes; a live handle alone can reject `sort` as NOT_INITIALIZED.
+  // Gate here because the capture drain dispatches without `registered`.
+  // `recordSortPose` must run only for a dispatched sort, or a failed startup
+  // dispatch would suppress the per-frame `!lastSortAxis` recovery.
+  if (!workerHost.api || workerHost.workerInitState !== 'ready') return releaseHeldDraw(c, mesh);
   // NO apply-gate. Sorting and applying run CONCURRENTLY: a stream writes
   // into the inactive buffer, so the displayed ordering stays a complete
   // permutation throughout and a fresher sort is never wasted — it is
@@ -143,7 +269,7 @@ export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: stri
   // stays unsorted until the next commit/camera trigger re-sorts it.
   void withTimeout(
     'depth-sort',
-    workerHost.api.sort({ nodeId, generation, modelView: new Float32Array(modelView.elements) }),
+    requestWorkerSort(nodeId, generation, modelView),
     SORT_RPC_TIMEOUT_MS
   )
     .then((result) => {
@@ -252,21 +378,12 @@ export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: stri
           // the slices. Indexed: the write is atomic and complete on
           // return, because a half-permuted index buffer is not a
           // permutation (triangle-ordering.ts).
-          const staged = triangleSource
-            ? writeSortedTriangleOrdering(
-                geometry,
-                triangleSource,
-                result.ordering,
-                result.ordering.length,
-                applyCallbacks
-              )
-            : writeSortedIndexOrdering(
-                geometry,
-                result.ordering,
-                result.ordering.length,
-                applyCallbacks,
-                { adoptOrdering: true }
-              );
+          const staged = stageOrdering({
+            geometry,
+            result,
+            callbacks: applyCallbacks,
+            triangleSource,
+          });
           if (staged > 0) {
             // Handed off BEFORE the throwing `requestRender()` below, so a
             // throw there can't route into .catch and close the pass early.
@@ -649,7 +766,7 @@ export function evaluateDepthSortPerFrame(c: CoordinatorState): boolean {
       }
     }
 
-    if (moved) scheduleSort(c, mesh, nodeId);
+    if (moved) scheduleSort(c, mesh, nodeId, true);
   }
 
   const ordered = assignGlobalRenderOrder();
