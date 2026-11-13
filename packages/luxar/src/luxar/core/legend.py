@@ -67,7 +67,7 @@ def hex_color(rgb: Iterable[float]) -> str:
         raise ValueError(f"expected an RGB triple, got {len(channels)} values")
     linear = [min(1.0, max(0.0, c)) for c in channels]
     srgb = [
-        c / 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055 for c in linear
+        c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055 for c in linear
     ]
     return "#" + "".join(f"{round(c * 255):02X}" for c in srgb)
 
