@@ -86,8 +86,20 @@ Usage:
     python -m luxar.demos.demo_esm_protein_universe --high-quality   # kiosk: SSAA + 95% dolly
     python -m luxar.demos.demo_esm_protein_universe --no-permission-note   # private showing: citation only
     python -m luxar.demos.demo_esm_protein_universe --kiosk   # the exhibit display (see KIOSK_*)
-    python -m luxar.demos.demo_esm_protein_universe --kiosk --kiosk-aspect 1.0
+    python -m luxar.demos.demo_esm_protein_universe --kiosk --aspect 48/9 --text-scale 1.5
+    python -m luxar.demos.demo_esm_protein_universe --kiosk --auto-advance 0   # no auto-advance
     python -m luxar.demos.demo_esm_protein_universe --coords X.parquet --annotations Y.parquet
+
+Screen shape and pace:
+    ``--aspect W/H`` (``48/9``, ``7200x1360``, ``5.33``) lays the panels, the
+    turntable and the logo out for that screen: sized against its height and
+    flanking the map, so a panel reads at about 9 words a line (at most ~12)
+    on a wide wall; a screen too narrow for a readable panel is refused. Without
+    it the layout is the one tuned for 16:9. ``--text-scale`` sets the
+    reading-text size for the room. A kiosk build moves on to the next story by
+    itself, resting 60 s at each stop after the camera lands, long enough for
+    the narration (clips run 20-43 s); a silent wall can use 30
+    (``--auto-advance SECONDS``; ``0`` turns it off).
 
 Touch panel (off by default):
     A kiosk can be driven from a tablet — a full-screen matrix of one tile per
@@ -159,7 +171,7 @@ import sys
 import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import numpy as np
 from arbol import aprint, asection
@@ -170,6 +182,9 @@ from luxar.core.group.lod.group import partitioned_coverage_fractions
 from luxar.core.group.partition import bsp_leaf_parts, spatial_bsp_tree
 from luxar.core.legend import Legend, LegendEntry, hex_color
 from luxar.core.viewer_config import (
+    MAX_ANIMATION_PERIOD_S,
+    TEXT_SCALE_RANGE,
+    AnimationConfig,
     AudioConfig,
     CameraConfig,
     Chapter,
@@ -219,6 +234,9 @@ from luxar.demos.demo_esm3_protein_stories import (
     bubble_radius,
     cluster_geometry,
     icosphere,
+    panel_box_open,
+    panel_box_width_vh,
+    panel_measure_for_width,
     story_camera,
     story_camera_distance,
     story_node_name,
@@ -3258,11 +3276,13 @@ def story_panel_for(
     *,
     unit: str,
     kiosk: bool = False,
+    measure_em: float | None = None,
 ) -> str:
     """The story panel, with the kiosk build's shorter text when ``kiosk``.
 
     Only the reading text changes (see :data:`KIOSK_TEXT`); the title, the
-    count and the layout are the same in both builds.
+    count and the layout are the same in both builds. ``measure_em`` see
+    :func:`panel_box_open`.
     """
     if kiosk:
         text = KIOSK_TEXT[story.key]
@@ -3272,25 +3292,30 @@ def story_panel_for(
             facts=text.facts,
             mystery=text.mystery,
         )
-    return story_panel_html(story, n_members, index, total, unit=unit)
+    return story_panel_html(
+        story, n_members, index, total, unit=unit, measure_em=measure_em
+    )
 
 
 def overview_panel_html(
-    n_clusters: int, *, permission_note: bool = True, kiosk: bool = False
+    n_clusters: int,
+    *,
+    permission_note: bool = True,
+    kiosk: bool = False,
+    measure_em: float | None = None,
 ) -> str:
     """The overview panel shown at story 0.
 
     ``permission_note=False`` drops the licence half of the attribution line,
     keeping the citation, for a private showing (``--no-permission-note``).
-    ``kiosk`` swaps in :data:`KIOSK_OVERVIEW_HTML`.
+    ``kiosk`` swaps in :data:`KIOSK_OVERVIEW_HTML`; ``measure_em`` see
+    :func:`panel_box_open`.
     """
     attribution = ATTRIBUTION if permission_note else DEMO_META["citation"]["ref"]
     body = (KIOSK_OVERVIEW_HTML if kiosk else OVERVIEW_HTML).format(n=n_clusters)
     return (
-        f'<div style="font-size:{text_vh(1.3)};line-height:1.35;color:#e8e8e8;'
-        "background:rgba(0,0,0,0.62);padding:1.4vh 1.6vh;border-radius:6px;"
-        'border-left:0.5vh solid #ffffff">'
-        f'<div style="font-size:{text_vh(2.2)};font-weight:bold;margin-bottom:{text_vh(0.6)}">'
+        panel_box_open("#ffffff", measure_em=measure_em)
+        + f'<div style="font-size:{text_vh(2.2)};font-weight:bold;margin-bottom:{text_vh(0.6)}">'
         f"{html.escape(OVERVIEW_TITLE)}</div>"
         f"{body}"
         f'<div style="margin-top:{text_vh(1.1)};font-size:{text_vh(1.05)};color:rgba(232,232,232,0.55)">'
@@ -3410,11 +3435,146 @@ KIOSK_TEXT_SCALE = 0.8
 #: package's serve.py (they must be known before the scene loads): WebGPU, the
 #: full worker pool, the full prefetch limit.
 KIOSK_LAUNCH = LaunchConfig(renderer="webgpu", workers=16, prefetch=12)
-#: Width / height of the display. The turntable is sized in viewport WIDTH, so
-#: its caption's height on screen depends on the shape of the screen.
-KIOSK_ASPECT = 1.0
-#: Shape the default build lays the caption out for.
+#: Seconds each kiosk stop RESTS before the tour moves on by itself, so the
+#: wall is never still with no one at the controls: the story dimension plays
+#: at this period, and the period counts from the camera's landing (a flight is
+#: 5-16 s). A visitor's pick restarts it. It must outlast the narration, which
+#: also starts at the landing (`on_arrive`, +0.6 s) and which the lobby kiosk
+#: does play: the openai/alloy clips run 20.3-43.3 s (mean 35.9 s; the longest,
+#: CRISPR-Cas, 43.3 s), and at 30 s the tour cut 19 of the 21 off. 60 s is the
+#: longest plus 10 s, rounded up. A silent wall can go shorter
+#: (`--auto-advance 30`, or `serve.py --auto-advance 30` on site).
+#: Re-measure when the scripts change (`ffprobe` the store's narration_*/audio.mp3).
+KIOSK_AUTO_ADVANCE_S = 60.0
+#: Shape the default layout is drawn for (and its caption laid out on).
 DEFAULT_ASPECT = 16 / 9
+
+
+@dataclass(frozen=True)
+class WallLayout:
+    """Where the overlays sit on a screen of a given shape.
+
+    Fonts are in viewport HEIGHT (:func:`text_vh`) while the default boxes are
+    in viewport WIDTH, which holds together near 16:9 and falls apart on a
+    wide wall: at 48:9 a 0.32 vw panel is one line of ~55 words and a 0.26 vw
+    square turntable is taller than the screen. :func:`wall_layout` re-derives
+    every box for a known shape; :data:`DEFAULT_LAYOUT` is the layout every
+    build used before, and still uses without ``--aspect``.
+
+    Positions are viewport fractions; widths are fractions of the viewport
+    width. The turntable is anchored ``center-left`` and the panel at
+    ``panel_anchor``.
+    """
+
+    aspect: float
+    turntable_position: tuple[float, float]
+    turntable_width: float
+    panel_position: tuple[float, float]
+    panel_anchor: str
+    #: The overlay box's width; ``None`` sizes it to the panel's own measure.
+    panel_width: float | None
+    #: The panel's text column in ``em`` (see :func:`panel_box_open`).
+    panel_measure_em: float | None
+    logo_width: float
+
+
+#: The layout without ``--aspect``: tuned for 16:9 and kept as it was.
+DEFAULT_LAYOUT = WallLayout(
+    aspect=DEFAULT_ASPECT,
+    turntable_position=TURNTABLE_POSITION,
+    turntable_width=TURNTABLE_WIDTH,
+    panel_position=(0.98, 0.5),
+    panel_anchor="center-right",
+    panel_width=PANEL_WIDTH,
+    panel_measure_em=None,
+    logo_width=BIOHUB_LOGO_WIDTH,
+)
+
+#: Margin kept clear at the screen's edges (the corners' title, credit and logo
+#: already sit at 0.02 / 0.98).
+WALL_MARGIN = 0.02
+#: The turntable's square is at most this share of the screen HEIGHT.
+WALL_TURNTABLE_HEIGHT = 0.70
+#: Distance, in screen HEIGHTS, from the screen's centre to the near edges of
+#: the turntable and the panel: the map fills the height and is about as wide
+#: as it is tall, so this is its half width plus a gap. They flank the map.
+WALL_FLANK_GAP = 0.62
+#: The panel's text column, in ``em`` of the body text, so it holds at any
+#: screen shape and text scale. Measured on the 7200x1360 lobby wall at text
+#: scale 1.5 (Chrome, Linux fonts), over the overview and all twenty kiosk
+#: panels: 9.2 words a line on average (no panel above 10.2; the house rule is
+#: at most ~12), and a box aspect of 1.61 on average (1.44-1.88), the golden
+#: ratio. 32 em gave 1.45, 38 em 1.81.
+WALL_PANEL_MEASURE_EM = 35.0
+#: The narrowest text column :func:`wall_layout` accepts, in ``em``: about what
+#: the default layout's panel reads at on the square exhibit wall (27 em at text
+#: scale 0.8), some six words a line. A screen too narrow (or text too large)
+#: for it gets an error rather than an unreadable panel.
+WALL_MIN_MEASURE_EM = 24.0
+#: The logo's width in screen HEIGHTS: the default layout's, so a 16:9 wall
+#: keeps its size and a wider one does not inflate it.
+WALL_LOGO_WIDTH = BIOHUB_LOGO_WIDTH * DEFAULT_ASPECT
+
+
+def wall_layout(aspect: float, text_scale: float) -> WallLayout:
+    """The layout for a screen ``aspect`` (width / height) wide.
+
+    Every box is sized against the screen's HEIGHT and capped at its default
+    width, so near 16:9 the boxes keep their default sizes while a wide wall
+    gets a turntable that fits its height, a panel that reads at about 9 words
+    a line (at most ~12) and a logo that does not grow with the width. The turntable and the
+    panel flank the map at :data:`WALL_FLANK_GAP` from the centre, pulled in
+    to stay on screen where that is too far out. ``text_scale`` is the
+    viewer's text scale, which the panel's width (in ``em``) follows; a viewer
+    whose text scale is changed at run time keeps the panel's left edge, so a
+    much larger scale can push its right edge off screen.
+
+    Raises ``ValueError`` when the column would be narrower than
+    :data:`WALL_MIN_MEASURE_EM` (a square or portrait screen, or very large
+    text): use the default layout (no ``--aspect``) there.
+    """
+    turntable_width = min(TURNTABLE_WIDTH, WALL_TURNTABLE_HEIGHT / aspect)
+    # The measure, unless the panel would then be wider than the default box
+    # (a narrow screen, or a large text scale): then the column narrows.
+    measure = min(
+        WALL_PANEL_MEASURE_EM,
+        panel_measure_for_width(PANEL_WIDTH * aspect * 100, text_scale),
+    )
+    if measure < WALL_MIN_MEASURE_EM:
+        raise ValueError(
+            f"a {aspect:.2f}:1 screen at text scale {text_scale:g} leaves the panel "
+            f"{measure:.1f} em wide (minimum {WALL_MIN_MEASURE_EM:g}); drop --aspect "
+            "for the default layout, or lower --text-scale"
+        )
+    panel_width = panel_box_width_vh(measure, text_scale) / 100 / aspect
+    gap = WALL_FLANK_GAP / aspect
+    turntable_left = max(WALL_MARGIN, 0.5 - gap - turntable_width)
+    panel_left = min(0.5 + gap, 1 - WALL_MARGIN - panel_width)
+    return WallLayout(
+        aspect=aspect,
+        turntable_position=(turntable_left, TURNTABLE_POSITION[1]),
+        turntable_width=turntable_width,
+        panel_position=(max(WALL_MARGIN, panel_left), 0.5),
+        panel_anchor="center-left",
+        panel_width=None,
+        panel_measure_em=measure,
+        logo_width=min(BIOHUB_LOGO_WIDTH, WALL_LOGO_WIDTH / aspect),
+    )
+
+
+def parse_aspect(text: str) -> float:
+    """A screen shape from ``48/9``, ``7200x1360`` or ``5.33``, as width / height."""
+    for sep in ("/", "x", ":"):
+        if sep in text:
+            w, h = (float(part) for part in text.split(sep, 1))
+            break
+    else:
+        w, h = float(text), 1.0
+    aspect = w / h if h > 0 else float("nan")
+    if not 0.2 <= aspect <= 8.0:  # also rejects NaN
+        raise ValueError(f"--aspect must be in [0.2, 8] (width / height), got {text!r}")
+    return aspect
+
 
 #: Detector noise, Poisson (shot) only, at its gentlest gain: the cinematic
 #: preset's readout and fixed-pattern terms read as grain across a wall.
@@ -3451,7 +3611,48 @@ def poster_content_bottom(poster: Path) -> float:
     return float(rows[-1] + 1) / alpha.shape[0]
 
 
-def kiosk_caption_html(text: str, content_bottom: float) -> str:
+def reading_text_scale(kiosk: bool, override: float | None) -> float | None:
+    """The scene's ``text_scale``: ``override``, else the kiosk's, else the viewer's (None)."""
+    if override is not None:
+        return override
+    return KIOSK_TEXT_SCALE if kiosk else None
+
+
+def layout_for(
+    aspect: float | None, kiosk: bool, text_scale: float | None
+) -> WallLayout:
+    """The build's overlay layout: :data:`DEFAULT_LAYOUT` without an ``aspect``.
+
+    With one, :func:`wall_layout` at the scene's reading-text scale (the
+    viewer's own, 1.0, when the scene sets none).
+    """
+    if aspect is None:
+        return DEFAULT_LAYOUT
+    return wall_layout(aspect, reading_text_scale(kiosk, text_scale) or 1.0)
+
+
+def story_auto_advance(dims: Dimensions, period_s: float) -> list[AnimationConfig]:
+    """Playback that moves the tour on by one story every ``period_s`` seconds.
+
+    It is the story dimension's ordinary playback, looping back to the Overview
+    after the last story. At a period this slow the viewer plays it as a
+    slideshow: the period counts from each flight's landing, a visitor's pick
+    (touch panel, slider, keys) restarts it, and every stop refines to full
+    detail. One entry per dimension, as ``ViewerConfig.animation`` is indexed.
+    """
+    return [
+        AnimationConfig(
+            playing=True, period_s=period_s, loop="loop", direction="forward"
+        )
+        if name == STORY_DIM
+        else AnimationConfig()
+        for name in dims.names
+    ]
+
+
+def kiosk_caption_html(
+    text: str, content_bottom: float, layout: WallLayout = DEFAULT_LAYOUT
+) -> str:
     """The kiosk build's structure caption, placed in the turntable's own units.
 
     The clip is a square sized in viewport WIDTH, so a caption placed in
@@ -3463,7 +3664,7 @@ def kiosk_caption_html(text: str, content_bottom: float) -> str:
     width, the unit the clip and its perspective swing scale with). Right under
     the molecule on any screen shape.
     """
-    offset_vw = 100 * (TURNTABLE_WIDTH * (content_bottom - 0.5) + CAPTION_GAP)
+    offset_vw = 100 * (layout.turntable_width * (content_bottom - 0.5) + CAPTION_GAP)
     return (
         f'<div style="padding-top:{offset_vw:.2f}vw;font-size:{text_vh(1.3)};'
         'line-height:1.3;color:rgba(255,255,255,0.7);text-align:center">'
@@ -3471,23 +3672,23 @@ def kiosk_caption_html(text: str, content_bottom: float) -> str:
     )
 
 
-def kiosk_caption_anchor() -> tuple[float, float]:
+def kiosk_caption_anchor(layout: WallLayout = DEFAULT_LAYOUT) -> tuple[float, float]:
     """The centre of the turntable clip, where :func:`kiosk_caption_html` hangs from."""
-    x, y = TURNTABLE_POSITION
-    return (x + TURNTABLE_WIDTH / 2, y)
+    x, y = layout.turntable_position
+    return (x + layout.turntable_width / 2, y)
 
 
-def turntable_caption_position(aspect: float) -> tuple[float, float]:
+def turntable_caption_position(layout: WallLayout) -> tuple[float, float]:
     """Where the default structure caption goes: centred under the clip.
 
-    The clip is a square ``TURNTABLE_WIDTH`` of the viewport WIDTH, centred at
-    ``TURNTABLE_POSITION``'s height, so it is ``TURNTABLE_WIDTH * aspect`` of
+    The clip is a square ``turntable_width`` of the viewport WIDTH, centred at
+    the turntable position's height, so it is ``turntable_width * aspect`` of
     the viewport HEIGHT tall.
     """
-    x, y = TURNTABLE_POSITION
-    height = TURNTABLE_WIDTH * aspect
+    x, y = layout.turntable_position
+    height = layout.turntable_width * layout.aspect
     top = y - height / 2
-    return (x + TURNTABLE_WIDTH / 2, top + height + CAPTION_GAP)
+    return (x + layout.turntable_width / 2, top + height + CAPTION_GAP)
 
 
 def _viewer_config(
@@ -3499,6 +3700,8 @@ def _viewer_config(
     high_quality: bool = False,
     kiosk: bool = False,
     control_panel: ControlPanelConfig | None = None,
+    text_scale: float | None = None,
+    animation: list[AnimationConfig] | None = None,
 ) -> ViewerConfig:
     # Based on the Swiss-Prot tour's kiosk settings, with a different dolly,
     # natural drag pinned on, and render quality selected by `high_quality`.
@@ -3560,10 +3763,13 @@ def _viewer_config(
         # sparser where it is densest. The default build keeps the viewer's
         # default (on).
         density_guard_enabled=False if kiosk else None,
-        text_scale=KIOSK_TEXT_SCALE if kiosk else None,
+        text_scale=reading_text_scale(kiosk, text_scale),
         launch=KIOSK_LAUNCH if kiosk else None,
         environment=EnvironmentConfig(source="scene", probe="auto"),
         waypoints=waypoints,
+        # Auto-advance, when asked for: the story dimension's own playback
+        # (see `story_auto_advance`).
+        animation=animation,
         audio=AudioConfig(
             enabled=True,
             master_gain=0.8,
@@ -3584,7 +3790,7 @@ def _add_overlays(
     n: int,
     units: dict[int, str],
     permission_note: bool = True,
-    aspect: float = DEFAULT_ASPECT,
+    layout: WallLayout = DEFAULT_LAYOUT,
     kiosk: bool = False,
 ) -> None:
     scene.add_text(
@@ -3611,10 +3817,15 @@ def _add_overlays(
         hover=True,
     )
     scene.add_html(
-        overview_panel_html(n, permission_note=permission_note, kiosk=kiosk),
-        position=(0.98, 0.5),
-        anchor="center-right",
-        width=PANEL_WIDTH,
+        overview_panel_html(
+            n,
+            permission_note=permission_note,
+            kiosk=kiosk,
+            measure_em=layout.panel_measure_em,
+        ),
+        position=layout.panel_position,
+        anchor=layout.panel_anchor,
+        width=layout.panel_width,
         visible_range={STORY_DIM: 0},
         transition="fade",
         transition_duration=0.35,
@@ -3622,10 +3833,18 @@ def _add_overlays(
     total = len(stories)
     for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
         scene.add_html(
-            story_panel_for(s, len(c.indices), k, total, unit=units[k], kiosk=kiosk),
-            position=(0.98, 0.5),
-            anchor="center-right",
-            width=PANEL_WIDTH,
+            story_panel_for(
+                s,
+                len(c.indices),
+                k,
+                total,
+                unit=units[k],
+                kiosk=kiosk,
+                measure_em=layout.panel_measure_em,
+            ),
+            position=layout.panel_position,
+            anchor=layout.panel_anchor,
+            width=layout.panel_width,
             visible_range={STORY_DIM: k},
             transition="fade",
             transition_duration=0.35,
@@ -3636,9 +3855,9 @@ def _add_overlays(
             continue
         scene.add_video(
             a.webm,
-            position=TURNTABLE_POSITION,
+            position=layout.turntable_position,
             anchor="center-left",
-            size=(TURNTABLE_WIDTH, None),
+            size=(layout.turntable_width, None),
             poster=a.poster,
             alpha_matte="stacked",
             visible_range={STORY_DIM: k},
@@ -3648,10 +3867,10 @@ def _add_overlays(
         caption = f"PDB {a.pdb_id} · {pdb_caption(s, a.title, kiosk=kiosk)}"
         if kiosk:
             scene.add_html(
-                kiosk_caption_html(caption, poster_content_bottom(a.poster)),
-                position=kiosk_caption_anchor(),
+                kiosk_caption_html(caption, poster_content_bottom(a.poster), layout),
+                position=kiosk_caption_anchor(layout),
                 anchor="top-center",
-                width=TURNTABLE_WIDTH,
+                width=layout.turntable_width,
                 interactive=False,
                 visible_range={STORY_DIM: k},
                 transition="fade",
@@ -3660,11 +3879,11 @@ def _add_overlays(
             continue
         scene.add_text(
             caption,
-            position=turntable_caption_position(aspect),
+            position=turntable_caption_position(layout),
             anchor="top-center",
             text_align="center",
             font_size=0.013,
-            width=TURNTABLE_WIDTH,
+            width=layout.turntable_width,
             color="rgba(255,255,255,0.7)",
             visible_range={STORY_DIM: k},
             transition="fade",
@@ -3683,7 +3902,7 @@ def _add_overlays(
         BIOHUB_LOGO,
         position=(0.98, 0.97),
         anchor="bottom-right",
-        size=(BIOHUB_LOGO_WIDTH, None),
+        size=(layout.logo_width, None),
         opacity=0.85,
         blend_mode="difference",
     )
@@ -3917,17 +4136,23 @@ def build_universe_scene(
     permission_note: bool = True,
     kiosk: bool = False,
     aspect: float | None = None,
+    text_scale: float | None = None,
+    auto_advance_s: float | None = None,
 ) -> int:
     """Write the universe scene. Returns the number of clusters in the backdrop.
 
     ``high_quality`` re-enables kiosk supersampling and the 95% dolly swing;
     both builds use the display's full device pixel ratio. ``kiosk`` adds the
-    exhibit display's settings (see :data:`KIOSK_TEXT_SCALE`); ``aspect`` is the
-    screen's width / height for the caption layout, defaulting to
-    :data:`KIOSK_ASPECT` for a kiosk build and :data:`DEFAULT_ASPECT` otherwise.
+    exhibit display's settings (see :data:`KIOSK_TEXT_SCALE`).
+
+    ``aspect`` is the screen's width / height: given, the overlays are laid out
+    for that shape (:func:`wall_layout`); ``None`` keeps :data:`DEFAULT_LAYOUT`.
+    ``text_scale`` overrides the reading-text scale (the kiosk's default is
+    :data:`KIOSK_TEXT_SCALE`, the web build's the viewer's own).
+    ``auto_advance_s`` moves the tour on by itself every that many seconds
+    (:func:`story_auto_advance`); ``None`` leaves it to the visitor.
     """
-    if aspect is None:
-        aspect = KIOSK_ASPECT if kiosk else DEFAULT_ASPECT
+    layout = layout_for(aspect, kiosk, text_scale)
     n = len(universe)
     assets: dict[str, TurntableAssets] = {}
     if turntables:
@@ -3941,6 +4166,21 @@ def build_universe_scene(
         if carries_labels(s, len(c.indices))
     }
     details = _member_details(annotations, universe, labelled)
+
+    dims = Dimensions(
+        [
+            Dimension(
+                STORY_DIM,
+                unit="",
+                categories=["Overview", *(s.key for s in stories)],
+                display=False,
+                description="Guided tour: overview, then one story per step",
+            ),
+            Dimension("x", unit="UMAP", display=True),
+            Dimension("y", unit="UMAP", display=True),
+            Dimension("z", unit="UMAP", display=True),
+        ]
+    )
 
     with asection("Composing waypoints"):
         positions = universe.positions
@@ -3992,6 +4232,9 @@ def build_universe_scene(
             # story's short `key`); this adds the second line the tour wrote.
             control_panel=ControlPanelConfig(
                 chapter_dimension=STORY_DIM,
+                # The panel's own idle reset (back to the Overview after 120 s)
+                # would cut across the auto-advance, so it is off with it.
+                idle_reset_s=0 if auto_advance_s else None,
                 chapters={
                     # +1: slot 0 is the Overview, so story k sits at k+1.
                     index + 1: Chapter(sublabel=story.subtitle)
@@ -4002,22 +4245,11 @@ def build_universe_scene(
             audio=audio,
             high_quality=high_quality,
             kiosk=kiosk,
+            text_scale=text_scale,
+            animation=story_auto_advance(dims, auto_advance_s)
+            if auto_advance_s
+            else None,
         )
-
-    dims = Dimensions(
-        [
-            Dimension(
-                STORY_DIM,
-                unit="",
-                categories=["Overview", *(s.key for s in stories)],
-                display=False,
-                description="Guided tour: overview, then one story per step",
-            ),
-            Dimension("x", unit="UMAP", display=True),
-            Dimension("y", unit="UMAP", display=True),
-            Dimension("z", unit="UMAP", display=True),
-        ]
-    )
 
     with asection("Writing to Zarr"):
         with LuxarZarrCompiler(output_path) as compiler:
@@ -4091,7 +4323,7 @@ def build_universe_scene(
                 n,
                 units,
                 permission_note=permission_note,
-                aspect=aspect,
+                layout=layout,
                 kiosk=kiosk,
             )
             if audio:
@@ -4117,6 +4349,46 @@ def build_universe_scene(
 # =============================================================================
 
 
+class LayoutArgs(TypedDict):
+    """The screen-shape and pace keywords of :func:`build_universe_scene`."""
+
+    aspect: float | None
+    text_scale: float | None
+    auto_advance_s: float | None
+
+
+def parse_layout_args(kiosk: bool) -> LayoutArgs:
+    """``--aspect``, ``--text-scale`` and ``--auto-advance`` as build kwargs.
+
+    ``--auto-advance`` defaults to :data:`KIOSK_AUTO_ADVANCE_S` on a kiosk build
+    and off otherwise; ``0`` turns it off. Raises ``ValueError`` on a bad value,
+    including a screen shape the layout cannot serve (:func:`wall_layout`), so a
+    bad command line fails before the build starts.
+    """
+    aspect_arg = parse_str_arg("aspect")
+    scale_arg = parse_str_arg("text-scale")
+    advance_arg = parse_str_arg("auto-advance")
+    text_scale = float(scale_arg) if scale_arg is not None else None
+    lo, hi = TEXT_SCALE_RANGE
+    if text_scale is not None and not lo <= text_scale <= hi:  # NaN fails too
+        raise ValueError(f"--text-scale must be in [{lo:g}, {hi:g}], got {scale_arg!r}")
+    if advance_arg is None:
+        auto_advance_s = KIOSK_AUTO_ADVANCE_S if kiosk else None
+    else:
+        period = float(advance_arg)
+        if not (period == 0 or 0 < period <= MAX_ANIMATION_PERIOD_S):  # NaN fails too
+            raise ValueError(
+                f"--auto-advance must be 0 (off) or in (0, {MAX_ANIMATION_PERIOD_S:.0f}] "
+                f"seconds, got {advance_arg!r}"
+            )
+        auto_advance_s = period or None  # 0 = off
+    aspect = parse_aspect(aspect_arg) if aspect_arg is not None else None
+    layout_for(aspect, kiosk, text_scale)  # validate the shape now
+    return LayoutArgs(
+        aspect=aspect, text_scale=text_scale, auto_advance_s=auto_advance_s
+    )
+
+
 def main() -> None:
     aprint("=" * 70)
     aprint("ESM PROTEIN UNIVERSE — twenty stories across 7.7 million clusters")
@@ -4134,11 +4406,8 @@ def main() -> None:
     # The exhibit display: reading text at 0.8x, no Density Guard, and the
     # WebGPU / 16-worker / 12-fetch machine settings for the exported package.
     kiosk = "--kiosk" in sys.argv
-    aspect_arg = parse_str_arg("kiosk-aspect")
     try:
-        aspect = float(aspect_arg) if aspect_arg is not None else None
-        if aspect is not None and not 0.2 <= aspect <= 5.0:
-            raise ValueError(f"--kiosk-aspect must be in [0.2, 5], got {aspect}")
+        layout_args = parse_layout_args(kiosk)
     except ValueError as e:
         aprint(f"\nError: {e}")
         sys.exit(1)
@@ -4161,7 +4430,7 @@ def main() -> None:
         high_quality=high_quality,
         permission_note=permission_note,
         kiosk=kiosk,
-        aspect=aspect,
+        **layout_args,
     )
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "esm_protein_universe.luxar.zarr"

@@ -17,7 +17,7 @@
  */
 
 import type { ZarrViewerConfig } from '../../../types/zarr';
-import type { AnimationDirection, LoopMode } from '../../../types/animation';
+import type { AnimationDirection, LoopMode, SpeedView } from '../../../types/animation';
 import { config } from '../../../config';
 import { clamp } from '../../../utils/clamp';
 
@@ -43,6 +43,11 @@ export interface ViewerConfigPorts {
   setDimensionValue: (dim: number, value: number) => void;
   /** Set the browser tab title (document.title) from the scene's title. */
   setDocumentTitle: (title: string) => void;
+  /**
+   * Seconds per step overriding every authored playing entry's rate
+   * (`?playbackPeriod=`); `0` keeps authored playback from starting.
+   */
+  playbackPeriodOverride?: number;
   /** Start playback on one dimension. Optional for lightweight test ports. */
   startDimensionAnimation?: (
     dim: number,
@@ -50,6 +55,8 @@ export interface ViewerConfigPorts {
       targetFPS?: number;
       loopMode?: LoopMode;
       direction?: AnimationDirection;
+      /** `'period'` when the rate was authored as `period_s`. */
+      speedView?: SpeedView;
       /** Per-tick advance in the dimension's units; omitted means Auto. */
       stepSize?: number;
     }
@@ -147,33 +154,78 @@ export function applyViewerConfigState(
   // and re-asserting it would mean a captured-then-paused scene could never
   // simply inherit whatever the viewer does next.
   if (viewerConfig.animation && ports.startDimensionAnimation) {
-    for (let dim = 0; dim < viewerConfig.animation.length; dim++) {
-      const entry = viewerConfig.animation[dim];
-      if (!entry || entry.playing !== true) continue;
-      const targetFPS =
-        typeof entry.target_fps === 'number' && Number.isFinite(entry.target_fps)
-          ? clamp(
-              entry.target_fps,
-              config.dimensionAnimation.presets.customMin,
-              config.dimensionAnimation.presets.customMax
-            )
-          : undefined;
-      const loopMode: LoopMode | undefined =
-        entry.loop === 'once' || entry.loop === 'loop' || entry.loop === 'bounce'
-          ? entry.loop
-          : undefined;
-      const direction: AnimationDirection | undefined =
-        entry.direction === 'forward' || entry.direction === 'backward'
-          ? entry.direction
-          : undefined;
-      ports.startDimensionAnimation(dim, {
-        targetFPS,
-        loopMode,
-        direction,
-        stepSize: entry.step_size,
-      });
-    }
+    startAuthoredPlayback(
+      viewerConfig.animation,
+      ports.startDimensionAnimation,
+      ports.playbackPeriodOverride
+    );
   }
+}
+
+/**
+ * Start every `playing: true` animation entry, at its authored rate or, with
+ * ``override`` (``?playbackPeriod=``), at that many seconds per step; an
+ * override of ``0`` starts none of them.
+ */
+function startAuthoredPlayback(
+  animation: NonNullable<ZarrViewerConfig['animation']>,
+  start: NonNullable<ViewerConfigPorts['startDimensionAnimation']>,
+  requested: number | undefined
+): void {
+  // The URL parser filters `?playbackPeriod=`; an embedder's option is
+  // checked here: anything but a finite number >= 0 is no override.
+  const override =
+    requested !== undefined && Number.isFinite(requested) && requested >= 0 ? requested : undefined;
+  if (override === 0) return;
+  for (let dim = 0; dim < animation.length; dim++) {
+    const entry = animation[dim];
+    if (!entry || entry.playing !== true) continue;
+    const { targetFPS, speedView } = authoredRate(
+      override !== undefined ? { period_s: override } : entry
+    );
+    const { loopMode, direction } = authoredMotion(entry);
+    start(dim, { targetFPS, speedView, loopMode, direction, stepSize: entry.step_size });
+  }
+}
+
+/** An entry's loop mode and direction, when they are ones the viewer knows. */
+function authoredMotion(entry: { loop?: string; direction?: string }): {
+  loopMode: LoopMode | undefined;
+  direction: AnimationDirection | undefined;
+} {
+  const loop = entry.loop;
+  const loopMode = loop === 'once' || loop === 'loop' || loop === 'bounce' ? loop : undefined;
+  const way = entry.direction;
+  const direction = way === 'forward' || way === 'backward' ? way : undefined;
+  return { loopMode, direction };
+}
+
+/**
+ * The playback rate an authored animation entry asks for, clamped to the
+ * viewer's accepted range: `period_s` (seconds per step, which also opens the
+ * Speed control in its period view) wins over `target_fps`. Neither, or a
+ * non-finite / non-positive value, leaves the viewer default (`undefined`) —
+ * the same values Python's `AnimationConfig` refuses to write.
+ */
+function authoredRate(entry: { target_fps?: number; period_s?: number }): {
+  targetFPS: number | undefined;
+  speedView: SpeedView | undefined;
+} {
+  const { customMin, customMax } = config.dimensionAnimation.presets;
+  if (isPositiveFinite(entry.period_s)) {
+    return { targetFPS: clamp(1 / entry.period_s, customMin, customMax), speedView: 'period' };
+  }
+  return {
+    targetFPS: isPositiveFinite(entry.target_fps)
+      ? clamp(entry.target_fps, customMin, customMax)
+      : undefined,
+    speedView: undefined,
+  };
+}
+
+/** A usable rate or period: a finite number above zero (0 is not a rate). */
+function isPositiveFinite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
 /**

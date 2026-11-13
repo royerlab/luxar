@@ -75,6 +75,12 @@ Features
 * **Gaussian Splatting**: Fit splats to volumes for compression, denoising, and visualization
 
 .. toctree::
+   :maxdepth: 1
+   :caption: Start Here:
+
+   evaluate
+
+.. toctree::
    :maxdepth: 2
    :caption: Concepts & Architecture:
 
@@ -116,7 +122,7 @@ Features
 
 .. toctree::
    :maxdepth: 2
-   :caption: Technical Specifications:
+   :caption: Developer Reference (Specifications):
 
    guides/specs/ND_TRANSFORMS_SPEC
    guides/specs/CACHE_PREFETCHING_SPEC
@@ -132,7 +138,7 @@ Features
 
 .. toctree::
    :maxdepth: 2
-   :caption: Developer Guides:
+   :caption: Developer Reference (Guides):
 
    guides/developer/BUILD_SYSTEM_SPEC
    guides/developer/DOCUMENTATION_QUALITY

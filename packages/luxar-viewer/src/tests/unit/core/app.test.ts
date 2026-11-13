@@ -98,6 +98,9 @@ vi.mock('../../../ui/control-rail', () => ({
   ControlRail: vi.fn().mockImplementation(() => ({ setCollapsed: vi.fn(), dispose: vi.fn() })),
   RAIL_ICONS: {},
 }));
+vi.mock('../../../core/app/display-report', () => ({
+  sendDisplayReport: vi.fn().mockResolvedValue(undefined),
+}));
 
 // Setup global mocks
 const mockAddEventListener = vi.fn();
@@ -177,6 +180,7 @@ import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 import { clearNotifierBackend, notifier } from '../../../utils/cross-layer/notifier';
 import type { ZarrWaypoint } from '../../../types/zarr';
 import { OverlayManager } from '../../../ui/overlay-manager';
+import { sendDisplayReport } from '../../../core/app/display-report';
 
 describe('LuxarApp', () => {
   let app: LuxarApp;
@@ -292,6 +296,7 @@ describe('LuxarApp', () => {
       setControlRail: vi.fn(),
       setDatasetBrowser: vi.fn(),
       setOverlayManager: vi.fn(),
+      setSlideshowHold: vi.fn(),
       setColormapLegend: vi.fn(),
       clearDimensionUI: vi.fn(),
       initDimensionSliders: vi.fn(),
@@ -412,6 +417,7 @@ describe('LuxarApp', () => {
         expect.any(Function)
       );
       expect(mockInputHandler.init).toHaveBeenCalled();
+      expect(mockInputHandler.setSlideshowHold).toHaveBeenCalledWith(expect.any(Function));
     });
 
     it('should create RenderingControls with postProcessing and sceneManager', async () => {
@@ -548,6 +554,22 @@ describe('LuxarApp', () => {
       expect(app.components.animationController).toBeDefined();
       // sceneManager.init was actually awaited (not just constructed).
       expect(mockSceneManager.init).toHaveBeenCalledTimes(1);
+    });
+
+    it('holds slideshow playback while a reveal-on-arrival waypoint flight is in the air', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
+
+      expect(mockInputHandler.setSlideshowHold).toHaveBeenCalledTimes(1);
+      const hold = mockInputHandler.setSlideshowHold.mock.calls[0][0] as () => boolean;
+      // Late-bound: it reads whichever driver the live dataset session holds.
+      const session: { waypointDriver?: unknown; dispose: () => void } = { dispose: vi.fn() };
+      Object.assign(app as unknown as Record<string, unknown>, { session });
+      expect(hold()).toBe(false);
+      session.waypointDriver = { inTransit: true };
+      expect(hold()).toBe(true);
+      session.waypointDriver = { inTransit: false };
+      expect(hold()).toBe(false);
     });
 
     it('should setup beforeunload dispose handler', async () => {
@@ -794,6 +816,53 @@ describe('LuxarApp', () => {
 
     it('should initialize dimension sliders after loading', async () => {
       expect(mockInputHandler.initDimensionSliders).toHaveBeenCalled();
+    });
+  });
+
+  describe('display report (?displayReport)', () => {
+    const sent = sendDisplayReport as unknown as ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      sent.mockClear();
+      mockFetch.mockResolvedValue({ ok: true });
+    });
+
+    it('is not sent unless asked for', async () => {
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
+      expect(sent).not.toHaveBeenCalled();
+    });
+
+    it('is sent once the viewer is up, echoing the nonce', async () => {
+      await app.init({
+        canvas: mockCanvas,
+        src: 'http://example.com/data.zarr',
+        displayReport: 'n0nce',
+        renderer: 'webgpu',
+      });
+      expect(sent).toHaveBeenCalledTimes(1);
+      expect(sent.mock.calls[0][1]).toEqual({
+        requested: 'webgpu',
+        nonce: 'n0nce',
+        error: undefined,
+        datasetError: undefined,
+      });
+    });
+
+    it('carries the reason when the first dataset failed to load', async () => {
+      mockSceneManager.loadSceneData.mockRejectedValue(new Error('Load failed'));
+      vi.spyOn(notifier, 'error').mockImplementation(() => {});
+      await app.init({ canvas: mockCanvas, src: 'http://x/typo.zarr', displayReport: '' });
+      expect(sent.mock.calls[0][1]).toMatchObject({
+        datasetError: expect.stringContaining('Load failed'),
+      });
+    });
+
+    it('carries the reason when the viewer failed to start', async () => {
+      mockSceneManager.init.mockRejectedValue(new Error('no GPU'));
+      await expect(
+        app.init({ canvas: mockCanvas, src: 'http://x/data.zarr', displayReport: 'n' })
+      ).rejects.toThrow('no GPU');
+      expect(sent.mock.calls[0][1]).toMatchObject({ error: 'no GPU', nonce: 'n' });
     });
   });
 

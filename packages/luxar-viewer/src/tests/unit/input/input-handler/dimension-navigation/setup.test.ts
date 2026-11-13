@@ -53,8 +53,8 @@ vi.mock('../../../../../scene/animation/dimension-animation-manager', () => ({
     getFrameBudgetMs: vi.fn(() => null),
     getPlaybackLadderDepth: vi.fn(() => null),
     getScrubLadderDepth: vi.fn(() => null),
-    isAnyPlaying: vi.fn(() => false),
-    getPlayingDimIndices: vi.fn(() => []),
+    isFramePacedPlaying: vi.fn(() => false),
+    getFramePacedDimIndices: vi.fn(() => []),
     peekNextValue: vi.fn(() => null),
   })),
 }));
@@ -214,6 +214,21 @@ describe('initAnimationManager', () => {
 
     sceneManager.scene = { children: [{ userData: { committedEnergyFraction: 0.7 } }] };
     expect(committedQuality?.()).toBeCloseTo(0.7);
+  });
+});
+
+describe('initAnimationManager slideshow hold', () => {
+  it('passes a late-bound slideshow hold that follows the ctx predicate', () => {
+    let held = false;
+    const ctx = makeCtx({ isSlideshowHeld: () => held });
+    initAnimationManager(ctx);
+
+    const constructor = DimensionAnimationManager as unknown as ReturnType<typeof vi.fn>;
+    const hold = constructor.mock.calls[0][3] as (() => boolean) | undefined;
+    expect(hold).toBeTypeOf('function');
+    expect(hold?.()).toBe(false);
+    held = true;
+    expect(hold?.()).toBe(true);
   });
 });
 

@@ -900,12 +900,12 @@ def test_a_chrome_that_cannot_start_falls_back(
     assert not server.display_report.pending()
 
 
-@pytest.mark.parametrize("profile_in_use", [False, True])
+@pytest.mark.parametrize("lock_owner", ["absent", "live", "stale", "foreign"])
 def test_chrome_early_exit_explains_the_profile_or_display(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    profile_in_use: bool,
+    lock_owner: str,
 ) -> None:
     checks: list[Any] = []
 
@@ -924,10 +924,19 @@ def test_chrome_early_exit_explains_the_profile_or_display(
 
     monkeypatch.setattr(template.threading, "Timer", Timer)
     monkeypatch.setattr(template, "SCRIPT_DIR", tmp_path)
-    if profile_in_use:
+    if lock_owner != "absent":
         profile = tmp_path / template.CHROME_PROFILE_DIR
         profile.mkdir()
-        (profile / "SingletonLock").symlink_to("other-host-999999")
+        if lock_owner == "live":
+            pid = os.getpid()
+        elif lock_owner == "foreign":
+            pid = 999999
+        else:
+            child = subprocess.Popen([sys.executable, "-c", "pass"])
+            child.wait()
+            pid = child.pid
+        host = "other-host" if lock_owner == "foreign" else socket.gethostname()
+        (profile / "SingletonLock").symlink_to(f"{host}-{pid}")
     server = object.__new__(template.ControlServer)
     server.display_report = template.DisplayReportSlot()
     server.display_report.expect()
@@ -936,7 +945,7 @@ def test_chrome_early_exit_explains_the_profile_or_display(
         check()
     out = capsys.readouterr().out
     assert "status 21" in out
-    if profile_in_use:
+    if lock_owner in {"live", "foreign"}:
         assert ".chrome-display/" in out
         assert "quit" in out.lower()
         assert "no display" not in out

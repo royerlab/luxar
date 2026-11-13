@@ -984,10 +984,7 @@
   },
   "src/scene/animation/dimension-animation-manager.ts": {
     "complexity": {
-      "count": 4
-    },
-    "max-depth": {
-      "count": 1
+      "count": 3
     }
   },
   "src/scene/dims/step-math.ts": {

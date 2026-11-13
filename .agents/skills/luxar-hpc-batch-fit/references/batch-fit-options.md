@@ -16,6 +16,7 @@ it rejects flat `.npy`/`.tiff`.
 | `--tiling` | uniform | `uniform` (regular grid) or `content` (content-balanced boxes) |
 | `--tile-size` | auto | uniform tile edge (voxels); auto from GPU profile if omitted |
 | `--overlap` | 32 | inter-tile overlap voxels (Hann-stitched) |
+| `--tile-amplitude-floor` | none | under uniform tiling, remove tile splats below this fraction of each fit's normalization span |
 
 ### Content mode (`--tiling content`) — needs a density
 `--cal PATH` (calibration JSON) **or** `--k-star-ref` + `--n-features-ref`. The shared

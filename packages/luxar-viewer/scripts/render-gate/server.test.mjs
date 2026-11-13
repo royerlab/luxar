@@ -15,9 +15,18 @@ beforeAll(() => {
   dist = join(root, 'dist');
   data = join(root, 'datasets');
   mkdirSync(dist);
+  mkdirSync(join(dist, 'wasm'));
   mkdirSync(join(data, 'gate'), { recursive: true });
   writeFileSync(join(dist, 'index.html'), '<html></html>');
+  writeFileSync(join(dist, 'viewer.js'), 'export const payload = "' + 'x'.repeat(10000) + '";');
+  writeFileSync(join(dist, 'viewer.css'), 'body{' + 'color:red;'.repeat(1000) + '}');
+  writeFileSync(join(dist, 'empty.js'), '');
+  writeFileSync(join(dist, 'viewer.mjs'), 'export const value = 42;');
+  writeFileSync(join(dist, 'wasm', 'module.wasm'), Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
+  writeFileSync(join(dist, 'config.json'), '{"enabled":true}');
+  writeFileSync(join(dist, 'icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
   writeFileSync(join(data, 'gate', 'blob.bin'), BODY);
+  writeFileSync(join(data, 'gate', 'config.json'), '{"dataset":true}');
 });
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -47,6 +56,97 @@ describe('parseRange', () => {
 });
 
 describe('startServer', () => {
+  it.each([
+    ['/', 'text/html; charset=utf-8', '<html></html>'],
+    ['/viewer.mjs', 'text/javascript; charset=utf-8', 'export const value = 42;'],
+    ['/wasm/module.wasm', 'application/wasm', Buffer.from([0, 97, 115, 109, 1, 0, 0, 0])],
+    ['/config.json', 'application/json', '{"enabled":true}'],
+    ['/icon.svg', 'image/svg+xml', '<svg xmlns="http://www.w3.org/2000/svg"></svg>'],
+  ])('gzips static %s with its content type', async (path, contentType, expected) => {
+    await withServer({ gzip: true }, async (s) => {
+      const response = await fetch(`${s.origin}${path}`, {
+        headers: { 'Accept-Encoding': 'gzip' },
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-encoding')).toBe('gzip');
+      expect(response.headers.get('content-type')).toBe(contentType);
+      expect(response.headers.get('vary')).toBe('Accept-Encoding');
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(Buffer.from(expected));
+      expect(Number(response.headers.get('content-length'))).toBe(s.log[0].bytes);
+    });
+  });
+
+  it('leaves dataset JSON identity-encoded', async () => {
+    await withServer({ gzip: true }, async (s) => {
+      const response = await fetch(`${s.origin}/datasets/gate/config.json`, {
+        headers: { 'Accept-Encoding': 'gzip' },
+      });
+      expect(response.headers.get('content-encoding')).toBeNull();
+      expect(response.headers.get('vary')).toBeNull();
+      expect(await response.text()).toBe('{"dataset":true}');
+    });
+  });
+
+  it('transfers compressed JS on the hosted link while keeping byte ranges uncompressed', async () => {
+    await withServer({ range: true, gzip: true, etag: true }, async (s) => {
+      const url = `${s.origin}/viewer.js`;
+      const compressed = await fetch(url, { headers: { 'Accept-Encoding': 'gzip' } });
+      expect(compressed.headers.get('content-encoding')).toBe('gzip');
+      expect(compressed.headers.get('accept-ranges')).toBeNull();
+      expect(compressed.headers.get('vary')).toBe('Accept-Encoding');
+      expect(await compressed.text()).toContain('x'.repeat(10000));
+      expect(s.log[0].bytes).toBeLessThan(1000);
+
+      const identity = await fetch(url, { headers: { 'Accept-Encoding': 'gzip;q=0' } });
+      expect(identity.headers.get('content-encoding')).toBeNull();
+      expect(identity.headers.get('vary')).toBe('Accept-Encoding');
+      expect(identity.headers.get('etag')).not.toBe(compressed.headers.get('etag'));
+      expect(await identity.text()).toContain('x'.repeat(10000));
+
+      const cached = await fetch(url, {
+        headers: {
+          'Accept-Encoding': 'gzip',
+          'If-None-Match': compressed.headers.get('etag'),
+        },
+      });
+      expect(cached.status).toBe(304);
+      expect(cached.headers.get('vary')).toBe('Accept-Encoding');
+
+      const ranged = await fetch(url, {
+        headers: { 'Accept-Encoding': 'gzip', Range: 'bytes=0-5' },
+      });
+      expect(ranged.status).toBe(206);
+      expect(ranged.headers.get('content-encoding')).toBeNull();
+      expect(ranged.headers.get('accept-ranges')).toBe('bytes');
+      expect(await ranged.text()).toBe('export');
+      expect(s.log[3].bytes).toBe(6);
+
+      const dataset = await fetch(`${s.origin}/datasets/gate/blob.bin`, {
+        headers: { 'Accept-Encoding': 'gzip', Range: 'bytes=2-5' },
+      });
+      expect(dataset.status).toBe(206);
+      expect(dataset.headers.get('content-encoding')).toBeNull();
+      expect(await dataset.text()).toBe('2345');
+
+      const css = await fetch(`${s.origin}/viewer.css`, {
+        headers: { 'Accept-Encoding': 'gzip' },
+      });
+      expect(css.headers.get('content-encoding')).toBe('gzip');
+      expect(await css.text()).toContain('color:red;');
+    });
+  });
+
+  it('sends the complete encoded body for an empty JS asset', async () => {
+    await withServer({ gzip: true }, async (s) => {
+      const response = await fetch(`${s.origin}/empty.js`, {
+        headers: { 'Accept-Encoding': 'gzip' },
+      });
+      expect(response.headers.get('content-encoding')).toBe('gzip');
+      expect(await response.text()).toBe('');
+      expect(s.log[0].bytes).toBeGreaterThan(0);
+    });
+  });
+
   it('default mode ignores Range and sends the unchanged minimal headers', async () => {
     await withServer({}, async (s) => {
       const r = await fetch(`${s.origin}/datasets/gate/blob.bin`, {

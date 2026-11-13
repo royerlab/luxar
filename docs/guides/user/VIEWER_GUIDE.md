@@ -242,6 +242,8 @@ Append parameters to the viewer URL to control startup behavior.
 | `workers` | number | Worker pool size for this session (`0` = auto, max 16). Beats the stored Settings value without rewriting it. |
 | `prefetch` | number | Concurrent chunk fetches for this session (the Settings "Prefetch Limit", 1-12). Beats the stored value without rewriting it. |
 | `textScale` | number | Multiplier on every overlay's type (e.g. `0.8`), beating the scene's `viewer_config.text_scale`. Positions, widths and anchors stay as authored. Clamped to [0.25, 4]. |
+| `playbackPeriod` | number | Seconds per step for the scene's authored playback (each `viewer_config.animation` entry with `playing: true`), beating its authored rate: a kiosk retimes its tour without a rebuild. `0` keeps authored playback from starting. |
+| `displayReport` | string | A nonce: once the first dataset load has finished or failed, report what this display renders with (WebGPU or WebGL, the GPU adapter, window and screen size, any start or load error) to the serving folder, echoing it; `serve.py --chrome` sets it and prints a check from it. |
 | `viewAxis` | `xy` \| `xz` \| `yz` | Axis-aligned opening view for the session: face the plane of the dimensions with those names, horizontal axis to the right. Beats the scene's `viewer_config.camera.view_axis`; the scene's `up` still decides whether the vertical axis points up or down (an image-convention scene keeps y down). Applies to the auto-framed opening and to Home/F re-framing, not to a scene that pins an explicit camera `position`. Named `viewAxis` because `view` is the bookmark parameter. |
 | `dpr` | number | Pin a fixed device pixel ratio and disable adaptive DPR (clamped to [0.25, native DPR]). Overrides the high-DPR ceiling, so `?dpr=2` renders at 2 even with **Allow High DPR** off. For deterministic E2E/visual runs. |
 | `input` | `touch` \| `mouse` | Force the session's JS input profile: pointer flags, hover capability, touch points, and device tier. This changes device-class fallback budgets (`touch` only — `mouse` keeps the detected tier), primary-tip pen routing, the Safari gesture-canceller gate, and whether the help overlay lists its Touch section; `touch` additionally applies the mobile rendering budgets (adaptive-DPR floor and refresh ceiling, high-DPR cap, GPU-byte and element-texture ceilings, data-worker count) and skips the blend-variant program warm-up. Stylesheets and non-pen gesture routing still follow the real media features and `PointerEvent.pointerType`, so a faithful check needs device emulation or a real device. Detected by default, including an iPad whose Safari reports a macOS user agent. |
@@ -381,6 +383,21 @@ field types an `o` instead of closing it.
 | End | Jump to dimension end |
 | Shift + Up | Increase animation speed |
 | Shift + Down | Decrease animation speed |
+
+Right-click a dimension's play button for its playback settings. **Speed** reads
+the rate either in `fps` (steps per second) or as a `period` (seconds per step,
+`1s` to `2m`). Under the presets, a Custom field takes any rate as a number and
+a unit: seconds, minutes, hours or days per step in the period view, steps per
+second, minute, hour or day in the fps view, from 120 a second to one every 30
+days. The toggle in the Speed header switches between the two views, and a
+rate below 1 fps opens in the period view. Playback at one step every 2 s or
+slower is a *slideshow*: each step loads at full detail like a manual one (on a
+continuous dimension it is also the size of a `]` key press), and if the step
+starts a waypoint flight authored with `reveal="on_arrival"` the period counts
+from the landing. Moving a playing dimension to another position yourself
+(slider, keys, a control-panel tile) restarts its period, so it does not step
+away from a view you just picked. Picking the position it is already at changes
+nothing, so the period keeps running.
 
 ### Fly Mode Movement
 
@@ -762,7 +779,7 @@ the preset; waypoint cameras ignore it. `?viewAxis=` overrides it per session.
 | Fly controls | `fly_movement_speed`, `fly_rotation_speed`, `fly_inertial_mode`, `fly_damping` |
 | UI visibility | `ui.show_help`, `ui.show_rendering_controls`, `ui.show_dimensions`, `ui.show_performance_monitor`, `ui.show_scale_bar`, `ui.show_layers` |
 | Dimensions | `dimensions.current_step`, `dimensions.selected_dimension` |
-| Animation | `animation` (per-dimension: `playing`, `target_fps`, `loop`, `direction`, `step_size`) — a scene with `playing: true` on a dimension starts that dimension animating on load, from wherever `dimensions.current_step` put it |
+| Animation | `animation` (per-dimension: `playing`, `target_fps` or `period_s` (seconds per step, for slow playback such as a kiosk tour's auto-advance), `loop`, `direction`, `step_size`) — a scene with `playing: true` on a dimension starts that dimension animating on load, from wherever `dimensions.current_step` put it |
 | Story waypoints | `waypoints` (list of `Waypoint`: `when`, `camera`, `duration_ms`, `easing`, `reveal`, `rendering`) — camera poses bound to hidden-dimension positions; see below |
 
 Set `allow_high_dpr=True` if your scene is **line-dominated** — a river network,

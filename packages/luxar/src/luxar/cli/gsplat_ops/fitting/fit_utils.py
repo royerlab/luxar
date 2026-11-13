@@ -23,7 +23,12 @@ if TYPE_CHECKING:
     pass
 
 
-CONTENT_UNSUPPORTED_FIT_FLAGS = ("--denoise", "--downscale", "--progressive")
+CONTENT_UNSUPPORTED_FIT_FLAGS = (
+    "--denoise",
+    "--downscale",
+    "--progressive",
+    "--tile-amplitude-floor",
+)
 
 
 def _invocation_token() -> str:
@@ -132,6 +137,7 @@ class FitPipelineCtx:
     dimension_metadata: "Optional[list[dict[str, str]]]" = None
     min_extent: Optional[float] = None
     reseed_sigma: Optional[float] = None
+    tile_amplitude_floor: Optional[float] = None
 
 
 def validate_hygiene_flags(
@@ -1052,6 +1058,7 @@ def dispatch_parallel_tiled(
                 # SPEC is guarded there exactly as `--tiling none` guards it.
                 # See _resolved_worker_preprocessing.
                 floor=worker_floor,
+                tile_amplitude_floor=ctx.tile_amplitude_floor,
                 floor_resolved=worker_floor_resolved,
                 norm_range=worker_norm_range,
                 seed_method=ctx.seed_method,
@@ -1132,6 +1139,7 @@ def dispatch_parallel_tiled(
                 ),
                 source_dtype=fit_config.get("source_dtype"),
                 floor_strategy=fit_config.get("_floor_strategy"),
+                tile_amplitude_floor=ctx.tile_amplitude_floor,
                 volume=reference_volume,
                 device=ctx.device,
                 fold_tile_slivers=True,
@@ -1536,6 +1544,21 @@ def _single_tile_seeds(
     return split_seeds_across_tiles(parsed_seeds, len(specs))
 
 
+def _apply_worker_tile_amplitude_floor(
+    result: "Any", floor: "Optional[float]"
+) -> "Any":
+    """Prune one worker's own tile below its amplitude floor, and stamp it."""
+    if floor is None:
+        return result
+    from luxar.gsplats.fit_tiled_gsplats import floor_tile_amplitudes
+
+    n_before = result.n_splats
+    result = floor_tile_amplitudes(result, floor)
+    result.stats["tile_amplitude_floor"] = floor
+    result.stats["tile_amplitude_pruned"] = n_before - result.n_splats
+    return result
+
+
 def fit_single_tile(
     ctx: FitPipelineCtx,
     volume: "Any",
@@ -1723,6 +1746,7 @@ def fit_single_tile(
             seeds=tile_seeds,
             **fit_config,
         )
+        result = _apply_worker_tile_amplitude_floor(result, ctx.tile_amplitude_floor)
         if (
             cull_retention is not None
             and 0 < float(cull_retention) < 1.0
@@ -1808,6 +1832,7 @@ def fit_sequential_tiled(
         recipe_params=recipe_params,
         fold_tile_slivers=True,
         tile_seed_counts=tile_seed_counts,
+        tile_amplitude_floor=ctx.tile_amplitude_floor,
         **fit_config,
     )
 
@@ -1899,8 +1924,19 @@ def rescale_and_save(
             # writer enforces a no-empty policy, so instead of erroring
             # we drop an .empty marker that the parallel orchestrator
             # treats as a legitimately-skipped tile at merge time.
-            marker = Path(str(ctx.output_path) + ".empty")
-            marker.write_text("0 splats\n")
+            from luxar.gsplats.fit_tiled_gsplats import write_empty_tile_marker
+
+            # Keep the floor's exact pruned count: the merge cannot recover it
+            # from a tile that saved no store.
+            pruned = (
+                result.stats.get("tile_amplitude_pruned")
+                if ctx.tile_amplitude_floor is not None
+                else None
+            )
+            write_empty_tile_marker(
+                Path(str(ctx.output_path) + ".empty"),
+                int(pruned) if pruned is not None else None,
+            )
             aprint("Empty tile (0 splats): wrote marker, skipped save")
             n_splats = 0
         else:

@@ -18,6 +18,8 @@
  *   generated once into `certDir` (the browser needs
  *   `--ignore-certificate-errors`), removing HTTP/1.1's 6-connection limit;
  * - `etag`: strong `ETag` from size + mtime, `If-None-Match` answers 304;
+ * - `gzip`: transfer static JS, MJS, CSS, WASM, HTML, JSON, and SVG as compressed
+ *   bytes when requested (dataset byte ranges remain identity-encoded);
  * - `cacheControl`: the `Cache-Control` value (default `no-store`).
  *
  * Every server keeps a request log, exposed at `GET /__gate/requests` (JSON)
@@ -28,9 +30,17 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { createReadStream, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import {
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+} from 'node:fs';
 import { createServer } from 'node:http';
 import http2 from 'node:http2';
+import { gzipSync } from 'node:zlib';
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -45,6 +55,7 @@ const TYPES = {
   '.svg': 'image/svg+xml',
   '.woff2': 'font/woff2',
 };
+const COMPRESSIBLE = new Set(['.js', '.mjs', '.css', '.wasm', '.html', '.json', '.svg']);
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** `<repo>/delme/gate-certs`: this file lives at packages/luxar-viewer/scripts/render-gate. */
@@ -154,11 +165,20 @@ function etagMatches(header, tag) {
   return header.split(',').some((t) => t.trim().replace(/^W\//, '') === tag);
 }
 
+function acceptsGzip(header) {
+  return (header ?? '').split(',').some((token) => {
+    const [name, ...parameters] = token.trim().split(';');
+    if (name.toLowerCase() !== 'gzip') return false;
+    const quality = parameters.map((p) => p.trim()).find((p) => /^q\s*=/i.test(p));
+    return quality === undefined || Number(quality.split('=')[1]) > 0;
+  });
+}
+
 /**
  * Start a server.
  *
  * @param {{ distDir: string, dataRoot: string, port: number, range?: boolean,
- *   latencyMs?: number, bytesPerSec?: number, h2?: boolean, etag?: boolean,
+ *   latencyMs?: number, bytesPerSec?: number, h2?: boolean, etag?: boolean, gzip?: boolean,
  *   cacheControl?: string, certDir?: string }} opts
  * @returns {Promise<{ origin: string, log: object[], now: () => number,
  *   stats: () => { requests: number, bytes: number, maxInflight: number },
@@ -173,16 +193,29 @@ export function startServer({
   bytesPerSec = 0,
   h2 = false,
   etag = false,
+  gzip = false,
   cacheControl = 'no-store',
   certDir = DEFAULT_CERT_DIR,
 }) {
-  const plain = !range && !latencyMs && !bytesPerSec && !h2 && !etag;
+  const plain = !range && !latencyMs && !bytesPerSec && !h2 && !etag && !gzip;
   const t0 = performance.now();
   const now = () => performance.now() - t0;
   const log = [];
   let inflight = 0;
   let maxInflight = 0;
   const bucket = tokenBucket(bytesPerSec);
+  const compressedAssets = new Map();
+  if (gzip) {
+    // Pre-compress before the server accepts requests or the browser navigates.
+    // A hosted CDN serves static assets already encoded; doing this on the first request
+    // would add synchronous server CPU work to the measured cold load.
+    // The gate starts a fresh server per build; do not reuse it after rebuilding dist.
+    for (const asset of readdirSync(distDir, { recursive: true, withFileTypes: true })) {
+      if (!asset.isFile() || !COMPRESSIBLE.has(extname(asset.name))) continue;
+      const path = join(asset.parentPath, asset.name);
+      compressedAssets.set(path, gzipSync(readFileSync(path)));
+    }
+  }
   const reset = () => {
     log.length = 0;
     maxInflight = inflight;
@@ -227,9 +260,17 @@ export function startServer({
     createReadStream(file.path).pipe(res);
   }
 
-  async function serveHosted(req, res, file, entry) {
-    const tag = `"${file.size.toString(16)}-${Math.floor(file.mtime).toString(16)}"`;
+  async function serveHosted(req, res, file, entry, isData) {
+    const compressible = gzip && !isData && COMPRESSIBLE.has(extname(file.path));
+    const compressed =
+      compressible &&
+      !req.headers.range &&
+      acceptsGzip(req.headers['accept-encoding']) &&
+      compressedAssets.has(file.path);
+    const body = compressed ? compressedAssets.get(file.path) : undefined;
+    const tag = `"${file.size.toString(16)}-${Math.floor(file.mtime).toString(16)}${compressed ? '-gzip' : ''}"`;
     const base = { 'Cache-Control': cacheControl, 'Access-Control-Allow-Origin': '*' };
+    if (compressible) base.Vary = 'Accept-Encoding';
     if (etag) base.ETag = tag;
     if (etag && etagMatches(req.headers['if-none-match'], tag)) {
       entry.status = 304;
@@ -249,17 +290,24 @@ export function startServer({
     const headers = {
       ...base,
       'Content-Type': TYPES[extname(file.path)] ?? 'application/octet-stream',
-      'Content-Length': Math.max(0, end - start + 1),
+      'Content-Length': body?.length ?? Math.max(0, end - start + 1),
     };
-    if (range) headers['Accept-Ranges'] = 'bytes';
+    if (body) headers['Content-Encoding'] = 'gzip';
+    if (range && !body) headers['Accept-Ranges'] = 'bytes';
     if (r) headers['Content-Range'] = `bytes ${start}-${end}/${file.size}`;
     entry.status = r ? 206 : 200;
     res.writeHead(entry.status, headers);
-    if (req.method === 'HEAD' || file.size === 0) {
+    if (req.method === 'HEAD' || (file.size === 0 && !body)) {
       res.end();
       return;
     }
-    const rs = createReadStream(file.path, { start, end, highWaterMark: 16384 });
+    const rs = body
+      ? (function* () {
+          for (let offset = 0; offset < body.length; offset += 16384) {
+            yield body.subarray(offset, offset + 16384);
+          }
+        })()
+      : createReadStream(file.path, { start, end, highWaterMark: 16384 });
     for await (const chunk of rs) {
       await bucket.take(chunk.length);
       if (res.destroyed) break;
@@ -308,7 +356,7 @@ export function startServer({
         return;
       }
       if (plain) servePlain(req, res, file, entry);
-      else await serveHosted(req, res, file, entry);
+      else await serveHosted(req, res, file, entry, isData);
     } catch (e) {
       entry.error = String(e?.message ?? e);
       if (!res.headersSent) res.writeHead(500);

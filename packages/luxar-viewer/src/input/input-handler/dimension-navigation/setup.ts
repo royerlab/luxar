@@ -33,6 +33,8 @@ export interface DimNavSetupCtx extends DimensionLoadingContext {
   dimensionSlidersFactory: DimensionSlidersFactory | undefined;
   panelCoordinator: PanelCoordinator;
   recordingPanel: RecordingPanelHandle | undefined;
+  /** Whether slideshow playback is held (a waypoint flight in the air). */
+  isSlideshowHeld?(): boolean;
   getSelectedDimension(): number;
   setSelectedDimension(value: number): void;
   setAnimationManager(manager: DimensionAnimationManager | undefined): void;
@@ -82,8 +84,11 @@ export function initAnimationManager(ctx: DimNavSetupCtx): void {
   // The pacing feedback needs to tell "loaders cannot keep up" from "the
   // playhead slowed to wait for them", and only the scene knows which (#2374).
   // Read live rather than captured: the scene is rebuilt across dataset loads.
-  const manager = new DimensionAnimationManager(sceneDimsManager, ctx.animationController, () =>
-    worstCommittedEnergy(ctx.sceneManager.scene as unknown as QualityNode)
+  const manager = new DimensionAnimationManager(
+    sceneDimsManager,
+    ctx.animationController,
+    () => worstCommittedEnergy(ctx.sceneManager.scene as unknown as QualityNode),
+    () => ctx.isSlideshowHeld?.() === true
   );
   ctx.setAnimationManager(manager);
 }

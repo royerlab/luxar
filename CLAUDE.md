@@ -563,6 +563,8 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 # Uniform tiled fitting for large volumes (Hann cosine apodization, seamless stitching)
 luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32
 luxar gsplat fit large.zarr tile_3.gsplats.zarr --tile 3/16 --tile-size 256 --overlap 32  # Single tile (Slurm-ready)
+# Opt-in: prune splats below F x EACH TILE'S OWN normalization span before save/merge (uniform only: fit, --tile k/M, batch-fit run/submit)
+luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-amplitude-floor 1e-5
 # Parallel tiles on ONE GPU (no Slurm): spawn N `fit --tile` worker subprocesses,
 # then merge. Default -j 1 = sequential. `-j auto` sizes N from GPU memory plus
 # shared host RAM/CPU limits; override its hard cap with LUXAR_AUTO_WORKER_HARD_CAP.

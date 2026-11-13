@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+import typer
+
 
 @dataclass
 class PlanConfigs:
@@ -85,6 +87,7 @@ def build_plan_configs(
     merge_coarsen_dims: Optional[str],
     batch_min_extent: Optional[float] = None,
     batch_reseed_sigma: Optional[float] = None,
+    tile_amplitude_floor: Optional[float] = None,
 ) -> PlanConfigs:
     """Map the CLI flags onto the ``plan_batch`` config dataclasses."""
     from luxar.cli.gsplat_ops.batch.planning import (
@@ -93,6 +96,12 @@ def build_plan_configs(
         FitConfig,
         MergeConfig,
     )
+    from luxar.gsplats.fit_tiled_gsplats import validate_tile_amplitude_floor
+
+    try:
+        validate_tile_amplitude_floor(tile_amplitude_floor)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--tile-amplitude-floor") from exc
 
     fit_cfg = FitConfig(
         preset=preset,
@@ -106,6 +115,7 @@ def build_plan_configs(
         psnr_patience=batch_psnr_patience,
         max_passes=batch_max_passes,
         cull_retention=batch_cull_retention,
+        tile_amplitude_floor=tile_amplitude_floor,
         min_extent=batch_min_extent,
         reseed_sigma=batch_reseed_sigma,
     )

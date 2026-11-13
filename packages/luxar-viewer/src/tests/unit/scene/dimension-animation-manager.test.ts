@@ -434,15 +434,15 @@ describe('DimensionAnimationManager', () => {
       expect(manager.peekNextValue(3)).toBeNull();
     });
 
-    it('isAnyPlaying / getPlayingDimIndices track play and pause', () => {
+    it('isAnyPlaying / getFramePacedDimIndices track play and pause', () => {
       expect(manager.isAnyPlaying()).toBe(false);
-      expect(manager.getPlayingDimIndices()).toEqual([]);
+      expect(manager.getFramePacedDimIndices()).toEqual([]);
       manager.play(3);
       manager.play(4);
       expect(manager.isAnyPlaying()).toBe(true);
-      expect(manager.getPlayingDimIndices()).toEqual([3, 4]);
+      expect(manager.getFramePacedDimIndices()).toEqual([3, 4]);
       manager.pause(3);
-      expect(manager.getPlayingDimIndices()).toEqual([4]);
+      expect(manager.getFramePacedDimIndices()).toEqual([4]);
       expect(manager.isAnyPlaying()).toBe(true);
       manager.pause(4);
       expect(manager.isAnyPlaying()).toBe(false);

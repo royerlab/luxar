@@ -79,3 +79,74 @@ def test_tile_amplitude_floor_is_invariant_to_input_scale() -> None:
 def test_tile_amplitude_floor_rejects_invalid_values(floor: float) -> None:
     with pytest.raises(ValueError, match="tile_amplitude_floor"):
         fit_tiled(np.ones((4, 4), dtype=np.float32), tile_amplitude_floor=floor)
+
+
+def _tile_store(path, stats: dict) -> None:
+    """Save a tiny 2D tile store carrying the given fit stats."""
+    n = 4
+    chol = np.zeros((n, 3), dtype=np.float32)
+    chol[:, 0] = 1.0
+    chol[:, 2] = 1.0
+    GSplatData(
+        centers=np.random.default_rng(0).random((n, 2)).astype(np.float32),
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=chol,
+        stats=dict(stats),
+    ).save(path)
+
+
+def test_empty_tile_marker_round_trips_the_pruned_count(tmp_path) -> None:
+    from luxar.gsplats.fit_tiled_gsplats import (
+        read_empty_tile_marker_pruned,
+        write_empty_tile_marker,
+    )
+
+    marker = tmp_path / "tile_0.gsplats.zarr.empty"
+    write_empty_tile_marker(marker, 17)
+    assert marker.read_text().splitlines()[0] == "0 splats"
+    assert read_empty_tile_marker_pruned(marker) == 17
+
+    write_empty_tile_marker(marker, None)
+    assert marker.read_text() == "0 splats\n"
+    assert read_empty_tile_marker_pruned(marker) is None
+
+    for legacy in ("", "0 splats\n", "0 splats\ntile_amplitude_pruned=x\n"):
+        marker.write_text(legacy)
+        assert read_empty_tile_marker_pruned(marker) is None
+
+
+def test_parallel_reload_sums_worker_counts_without_refloor(tmp_path) -> None:
+    """The worker's stamped count is authoritative, markers included."""
+    from luxar.gsplats.fit_tiled_gsplats import write_empty_tile_marker
+    from luxar.gsplats.fit_tiled_parallel import _reload_tile_results
+
+    paths = [tmp_path / f"tile_{i}.gsplats.zarr" for i in range(2)]
+    # A stamped store with no `intensity_range`: re-flooring it would raise
+    # and misreport the tile as corrupt.
+    _tile_store(paths[0], {"tile_amplitude_pruned": 5})
+    write_empty_tile_marker(tmp_path / "tile_1.gsplats.zarr.empty", 3)
+
+    results, missing, corrupt, pruned = _reload_tile_results(paths, 2, 1e-5)
+    assert (missing, corrupt) == ([], [])
+    assert [r.n_splats for r in results] == [4, 0]
+    assert pruned == 8
+
+
+def test_parallel_reload_reports_unknown_count_for_legacy_tiles(tmp_path) -> None:
+    """A tile saved before the count was stamped makes the total unknown."""
+    from luxar.gsplats.fit_tiled_parallel import _reload_tile_results
+
+    store = tmp_path / "tile_0.gsplats.zarr"
+    _tile_store(store, {})
+    _, _, corrupt, pruned = _reload_tile_results([store], 2, 1e-5)
+    assert corrupt == []
+    assert pruned is None
+
+    marker_tile = tmp_path / "tile_1.gsplats.zarr"
+    (tmp_path / "tile_1.gsplats.zarr.empty").write_text("0 splats\n")
+    _, _, _, pruned = _reload_tile_results([marker_tile], 2, 1e-5)
+    assert pruned is None
+
+    # Without the floor nothing is counted at all.
+    _, _, _, pruned = _reload_tile_results([store], 2, None)
+    assert pruned is None

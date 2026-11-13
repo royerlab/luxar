@@ -196,6 +196,11 @@ def run_batch_submit(
         "0.999 (near-lossless) for every preset. Set to 0 to keep every "
         "splat.",
     ),
+    tile_amplitude_floor: Optional[float] = typer.Option(
+        None,
+        "--tile-amplitude-floor",
+        help="Under uniform tiling, remove tile splats below this fraction of each fit's normalization span.",
+    ),
     batch_min_extent: Optional[float] = typer.Option(
         None,
         "--min-extent",
@@ -560,6 +565,7 @@ def run_batch_submit(
             batch_psnr_patience=batch_psnr_patience,
             batch_max_passes=batch_max_passes,
             batch_cull_retention=batch_cull_retention,
+            tile_amplitude_floor=tile_amplitude_floor,
             batch_min_extent=batch_min_extent,
             batch_reseed_sigma=batch_reseed_sigma,
             batch_denoise=batch_denoise,

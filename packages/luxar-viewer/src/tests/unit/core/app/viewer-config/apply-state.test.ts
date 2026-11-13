@@ -7,6 +7,7 @@
  * methods are called for each field combination.
  */
 
+import { MAX_ANIMATION_PERIOD_S } from '../../../../../types/zarr';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   applyViewerConfigState,
@@ -382,6 +383,82 @@ describe('applyViewerConfigState', () => {
       });
     });
 
+    it('a period_s rate starts playback at 1/period in the period view', () => {
+      applyViewerConfigState(
+        { animation: [{ playing: true, period_s: 20, loop: 'loop' }] },
+        asPorts(ports)
+      );
+      expect(ports.startDimensionAnimation).toHaveBeenCalledWith(
+        0,
+        expect.objectContaining({ targetFPS: 1 / 20, speedView: 'period', loopMode: 'loop' })
+      );
+    });
+
+    it('?playbackPeriod retimes every authored playing entry; 0 starts none', () => {
+      const animation = [
+        { playing: true, target_fps: 10, loop: 'loop' as const },
+        { playing: false, target_fps: 10 },
+        { playing: true, period_s: 20, direction: 'backward' as const },
+      ];
+      applyViewerConfigState({ animation }, { ...asPorts(ports), playbackPeriodOverride: 45 });
+      expect(ports.startDimensionAnimation).toHaveBeenCalledTimes(2);
+      expect(ports.startDimensionAnimation).toHaveBeenCalledWith(
+        0,
+        expect.objectContaining({ targetFPS: 1 / 45, speedView: 'period', loopMode: 'loop' })
+      );
+      expect(ports.startDimensionAnimation).toHaveBeenCalledWith(
+        2,
+        expect.objectContaining({ targetFPS: 1 / 45, direction: 'backward' })
+      );
+
+      ports.startDimensionAnimation?.mockClear();
+      applyViewerConfigState({ animation }, { ...asPorts(ports), playbackPeriodOverride: 0 });
+      expect(ports.startDimensionAnimation).not.toHaveBeenCalled();
+
+      // An embedder's unusable override is no override: the authored rate.
+      for (const bad of [Number.NaN, -5, Number.POSITIVE_INFINITY]) {
+        ports.startDimensionAnimation?.mockClear();
+        applyViewerConfigState({ animation }, { ...asPorts(ports), playbackPeriodOverride: bad });
+        expect(ports.startDimensionAnimation).toHaveBeenCalledWith(
+          0,
+          expect.objectContaining({ targetFPS: 10 })
+        );
+      }
+    });
+
+    it('period_s wins over target_fps; a period past the floor is clamped to it', () => {
+      applyViewerConfigState(
+        {
+          animation: [
+            { playing: true, period_s: 5, target_fps: 30 },
+            { playing: true, period_s: 1e9 },
+          ],
+        },
+        asPorts(ports)
+      );
+      expect(ports.startDimensionAnimation).toHaveBeenNthCalledWith(
+        1,
+        0,
+        expect.objectContaining({ targetFPS: 1 / 5, speedView: 'period' })
+      );
+      expect(ports.startDimensionAnimation).toHaveBeenNthCalledWith(
+        2,
+        1,
+        expect.objectContaining({ targetFPS: 1 / MAX_ANIMATION_PERIOD_S })
+      );
+    });
+
+    it('an unusable period_s falls back to target_fps', () => {
+      applyViewerConfigState(
+        { animation: [{ playing: true, period_s: 0, target_fps: 12 }] },
+        asPorts(ports)
+      );
+      expect(ports.startDimensionAnimation).toHaveBeenCalledWith(
+        0,
+        expect.objectContaining({ targetFPS: 12, speedView: undefined })
+      );
+    });
+
     it('forwards a per-dimension step override', () => {
       applyViewerConfigState(
         { animation: [{}, { playing: true, step_size: 2.5 }] },
@@ -404,8 +481,9 @@ describe('applyViewerConfigState', () => {
 
       applyViewerConfigState(config, asPorts(ports));
 
+      // 0 is not a rate: the viewer default applies (Python refuses to write it).
       expect(ports.startDimensionAnimation).toHaveBeenNthCalledWith(1, 0, {
-        targetFPS: 0.1,
+        targetFPS: undefined,
         loopMode: undefined,
         direction: undefined,
         stepSize: undefined,
