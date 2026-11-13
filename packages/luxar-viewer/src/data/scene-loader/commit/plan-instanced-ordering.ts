@@ -8,7 +8,10 @@
  */
 
 import type * as THREE from 'three';
-import { getActiveSortedIndexAttribute } from '../../../rendering/element-storage';
+import {
+  getActiveSortedIndexAttribute,
+  isSortedIndexHostArrayCurrent,
+} from '../../../rendering/element-storage';
 import type { InstancedOrderingOptions } from '../../../rendering/gpu-buffer-pool';
 
 /** The pre-commit facts {@link planInstancedOrdering} decides from. */
@@ -120,6 +123,9 @@ function drawnOrderingSeed(
   if (prevGeometry === nextGeometry) return undefined;
   const geometry = prevGeometry as THREE.InstancedBufferGeometry;
   if (!geometry.isInstancedBufferGeometry) return undefined;
+  // A GPU-written order leaves the host array behind, possibly a permutation
+  // of an older population: not a seed (the commit then starts from identity).
+  if (!isSortedIndexHostArrayCurrent(geometry)) return undefined;
   const attr = getActiveSortedIndexAttribute(geometry);
   if (!attr || !Number.isInteger(drawnCount) || drawnCount <= 0) return undefined;
   if (drawnCount > attr.array.length) return undefined;
