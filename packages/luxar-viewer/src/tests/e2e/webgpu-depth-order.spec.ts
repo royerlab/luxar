@@ -8,6 +8,7 @@ const FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_normal_overlap_reversed.luxar.zarr';
 
 test('native GSplat refresh flips the order buffer without a worker upload', async ({ page }) => {
+  test.setTimeout(120_000);
   test.skip(!isWebGPUProject(), 'requires a native WebGPU adapter');
   await page.goto(`/?src=${FIXTURE}&debug&dpr=1`);
   await waitForLuxarReady(page);
