@@ -3,7 +3,7 @@
  *
  * The native WebGPU counterpart of the SortWorker's counting sort: the same
  * 16-bit view-depth keys (see `wgsl.ts` for the arithmetic and its tolerance),
- * sorted by a stable two-pass LSD radix sort, written into an ordering
+ * sorted by a stable four-pass (4-bit digit) LSD radix sort, written into an ordering
  * attribute's GPU buffer. Nothing crosses the CPU: the centers are read from
  * the element texture the geometry already uploaded, and the order lands in
  * the buffer the vertex shader reads, so a re-sort costs no 4-byte-per-element
