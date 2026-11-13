@@ -11,6 +11,8 @@ import type { DepthSortConfig } from './types';
  */
 export const depthSortConfig: DepthSortConfig = {
   enabled: true, // URL escape hatch: ?depthSort=0 (pins identity ordering)
+  // Native WebGPU only (rendering/gpu-depth-sort/, #3162). URL: ?gpuSort=0|1.
+  gpuSort: false,
   angleThresholdDeg: 3,
   translationFraction: 0.05,
   // Generous relative to the data pool's 10 s: this one deadline covers a

@@ -107,6 +107,13 @@ declare global {
         state: 'idle' | 'ready' | 'starved' | 'failed';
         initTimeouts: number;
       };
+      /**
+       * The depth ordering an instanced node is drawn with (its selected
+       * `aSortedIndex` buffer, first `count` entries), read back from the GPU
+       * on native WebGPU, where a GPU depth sort leaves the host array stale.
+       * Null when `uuid` names no instanced node.
+       */
+      readDrawnOrdering?: (uuid: string, count: number) => Promise<number[] | null>;
       getSceneLoader?: () => unknown;
 
       /**

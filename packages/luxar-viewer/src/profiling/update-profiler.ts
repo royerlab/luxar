@@ -155,6 +155,11 @@ export interface DepthSortCompletion {
    * triangles), or null if unknown.
    */
   elements: number | null;
+  /**
+   * Which producer computed it: the CPU SortWorker or the WebGPU compute sort
+   * (#3162). For a GPU sort `kernelMs` is the encode time and `queueMs` 0.
+   */
+  route?: 'worker' | 'gpu';
 }
 
 /**
@@ -853,6 +858,7 @@ export class UpdateProfiler {
     boundaryMs: number | null;
     queueMs: number | null;
     elements: number | null;
+    route?: 'worker' | 'gpu';
   }): void {
     this.depthSortCompletionTotal++;
     this.depthSortCompletions.push({ seq: this.depthSortCompletionTotal, ...event });

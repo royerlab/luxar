@@ -42,6 +42,7 @@ import { getInputProfile } from '../../../utils/input-capabilities';
 import { eventBus } from '../../../utils/cross-layer/event-bus';
 import { RenderAudit, canvasReadback } from '../../../scene/animation/render-audit';
 import { retainWorkerPool } from '../../../workers/worker-pool';
+import { gpuSortContextGetter } from '../../../rendering/gpu-depth-sort/three-webgpu-bridge';
 
 /**
  * Render-on-change wiring for the loop: the kill switch (`?renderAlways` /
@@ -358,6 +359,12 @@ export async function runInitPipeline(
     // accessor the LOD registry gets above, and read live so nD navigation
     // is tracked (the stored tree stays valid, the mapping does not).
     getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? null,
+    // The GPU depth sort (#3162), read live so a renderer recreated after a
+    // WebGPU device loss is picked up; null off native WebGPU.
+    getGpuSortContext: gpuSortContextGetter(
+      ports.options.gpuSort ?? config.depthSort.gpuSort,
+      () => sceneManager.renderer
+    ),
   });
   // Start the SortWorker NOW, while the app is still idle, rather than
   // letting the first order-dependent commit spawn it. That commit lands
@@ -573,6 +580,9 @@ export async function runInitPipeline(
           capabilities: sceneManager.capabilities,
         });
       }
+      // The recreated ordering buffers hold the host arrays, which a
+      // GPU-written order had left stale: re-sort from the current pose.
+      sceneManager.depthSort.invalidateSortPoses();
       notifier.clearError();
       notifier.toast('Graphics device restored');
     };

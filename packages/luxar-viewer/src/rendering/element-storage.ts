@@ -207,9 +207,10 @@ export function registerElementTexelDirtyRange(
   texture.needsUpdate = true;
 }
 
-/** `geometry.userData` slot carrying the element texture. */
+/** `geometry.userData` slots carrying the element texture and its layout. */
 interface ElementStorageUserData {
   elementTexture?: THREE.DataTexture;
+  elementTextureLayout?: ElementTextureLayout;
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -1074,7 +1075,9 @@ export function attachElementStorage(
   texture.needsUpdate = true;
   elementTextures.add(texture);
 
-  (geometry.userData as ElementStorageUserData).elementTexture = texture;
+  const userData = geometry.userData as ElementStorageUserData;
+  userData.elementTexture = texture;
+  userData.elementTextureLayout = layout;
   geometry.addEventListener('dispose', () => texture.dispose());
   return texture;
 }
@@ -1082,6 +1085,16 @@ export function attachElementStorage(
 /** The element texture attached by `attachElementStorage`, if any. */
 export function getElementTexture(geometry: THREE.BufferGeometry): THREE.DataTexture | null {
   return (geometry.userData as ElementStorageUserData).elementTexture ?? null;
+}
+
+/** The element texture and the layout it was attached with, if any. */
+export function getElementStorage(
+  geometry: THREE.BufferGeometry
+): { texture: THREE.DataTexture; layout: ElementTextureLayout } | null {
+  const { elementTexture, elementTextureLayout } = geometry.userData as ElementStorageUserData;
+  return elementTexture && elementTextureLayout
+    ? { texture: elementTexture, layout: elementTextureLayout }
+    : null;
 }
 
 /**

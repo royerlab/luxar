@@ -4,6 +4,7 @@ import {
   getGpuByteBudget,
   initializeGpuByteBudget,
   reduceGpuByteBudgetForContextLoss,
+  setGpuByteReservation,
 } from '../../../rendering/gpu-byte-budget';
 import { config } from '../../../config';
 import { log, Modules } from '../../../utils/log';
@@ -97,6 +98,24 @@ describe('gpu-byte-budget', () => {
       );
     } finally {
       warning.mockRestore();
+    }
+  });
+
+  it('shrinks by reservations, never below the backoff floor, and 0 stays unbounded', () => {
+    const owner = {};
+    try {
+      configureGpuByteBudget(1536 * MB);
+      setGpuByteReservation(owner, 160 * MB);
+      expect(getGpuByteBudget()).toBe(1376 * MB);
+      setGpuByteReservation(owner, 1500 * MB);
+      expect(getGpuByteBudget()).toBe(256 * MB);
+      setGpuByteReservation(owner, 0);
+      expect(getGpuByteBudget()).toBe(1536 * MB);
+      configureGpuByteBudget(0);
+      setGpuByteReservation(owner, 160 * MB);
+      expect(getGpuByteBudget()).toBe(0);
+    } finally {
+      setGpuByteReservation(owner, 0);
     }
   });
 

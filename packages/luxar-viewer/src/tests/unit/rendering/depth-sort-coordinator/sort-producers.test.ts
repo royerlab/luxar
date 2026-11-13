@@ -130,7 +130,7 @@ describe('settling an outcome', () => {
     );
   });
 
-  it('stages a device writer, which the pump runs against the inactive buffer', () => {
+  it('writes and flips a device ordering in the dispatching call', () => {
     const write = vi.fn<DeviceOrderingWrite['write']>(() => true);
     const device = producer('gpu', (job) => ({
       kind: 'device',
@@ -139,12 +139,13 @@ describe('settling an outcome', () => {
       timing: TIMING,
     }));
     const { c, mesh } = setup([device]);
-    scheduleSort(c, mesh, mesh.uuid);
     const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
     const inactive = geometry.getAttribute('aSortedIndexB');
-    expect(pumpSortedIndexOrderingApply(geometry).flipped).toBe(true);
+    scheduleSort(c, mesh, mesh.uuid);
+    // Before the render this per-frame pass precedes, not at the next pump.
     expect(write).toHaveBeenCalledWith(inactive);
     expect(activeSortedIndexSlot(geometry)).toBe(1);
+    expect(pumpSortedIndexOrderingApply(geometry).flipped).toBe(false);
   });
 
   it('drops an outcome for another generation, or for a population it does not cover', () => {

@@ -280,12 +280,29 @@ function stageOutcome(
     // Handed off BEFORE the throwing `requestRender()` below, so a throw there
     // can't route into failSort and close the pass early.
     pass.handedOff = true;
+    if (outcome.kind === 'device') applyDeviceOrderingNow(c, job.mesh, geometry);
     // Instanced: bootstrap the pump's requestRender chain (the per-frame pump
     // keeps the on-demand loop alive between slices). Indexed: the
     // permutation is already in the buffer, so this is the one frame it needs
     // to reach the screen.
     c.requestRender?.();
   }
+}
+
+/**
+ * Write and flip a just-staged device ordering now rather than at the next
+ * frame's pump. A device ordering completes in one pump (the GPU writes the
+ * inactive buffer, then the slot flips), and the per-frame pass that dispatched
+ * it runs before the render, so the new order is drawn in this frame instead
+ * of one frame later. Behind a host ordering still streaming, it is held and
+ * the pump advances that one instead.
+ */
+function applyDeviceOrderingNow(
+  c: CoordinatorState,
+  mesh: THREE.Mesh,
+  geometry: THREE.InstancedBufferGeometry
+): void {
+  if (pumpSortedIndexOrderingApply(geometry).flipped) syncSortedIndexSlot(c, mesh);
 }
 
 /** Stage `outcome` into the node's ordering storage; the staged count, or 0. */

@@ -48,6 +48,8 @@ depth-sort-coordinator/
 │                          chunked apply pump, the per-frame camera-motion pass
 ├── sort-producers.ts    — Who computes an ordering: the SortProducer seam and the
 │                          SortWorker producer; selection by readiness + acceptance
+├── gpu-sort-producer.ts — The WebGPU compute sort as a producer (#3162): device
+│                          orderings for instanced nodes on native WebGPU
 ├── capture.ts           — resortForCapture / isCaptureQuiescent (offline drain)
 ├── render-order.ts      — Cross-node renderOrder assignment: BSP partition traversal +
 │                          centroid fallback, ONE global scale
@@ -55,7 +57,7 @@ depth-sort-coordinator/
                            permutation + the draw-acknowledgement lifecycle
 ```
 
-**Producers compute, the scheduler decides.** `scheduleSort` hands each sort to the first `SortProducer` (`sort-producers.ts`) that is ready and accepts the node, in the coordinator's preference order (`CoordinatorState.sortProducers`). A producer only computes: the SortWorker resolves later with a host array; a producer may also answer synchronously, or with a device writer that fills the ordering buffer on the GPU (`DeviceOrderingWrite`, #3162). Everything else is the scheduler's and is the same for every producer: the single-in-flight rule and its queued re-sort, the dispatch pose, the generation and commit checks (`settleSort`), staging into the node's apply path, the profiler pass, held-draw release, and the failure path (`failSort`).
+**Producers compute, the scheduler decides.** `scheduleSort` hands each sort to the first `SortProducer` (`sort-producers.ts`) that is ready and accepts the node, in the coordinator's preference order (`CoordinatorState.sortProducers`). A producer only computes. The SortWorker resolves later with a host array. The GPU producer (`gpu-sort-producer.ts`, enabled by the host's `getGpuSortContext` option on native WebGPU) answers synchronously with a device writer (`DeviceOrderingWrite`, #3162), which the scheduler writes and flips in the dispatching call, so the per-frame pass shows the new order in the same frame. It follows the host's device: it compiles on a new one, falls back to the worker while compiling and after a loss, and reserves its scratch against the GPU byte budget. Everything else is the scheduler's and is the same for every producer: the single-in-flight rule and its queued re-sort, the dispatch pose, the generation and commit checks (`settleSort`), staging into the node's apply path, the profiler pass, held-draw release, and the failure path (`failSort`).
 
 The coordinator as a whole owns:
 

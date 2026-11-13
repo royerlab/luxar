@@ -17,15 +17,29 @@ element's center from the element texture the geometry already uploaded, and
 writes the order into the ordering attribute's own GPU buffer, so a re-sort
 moves no data across the CPU.
 
-It is a standalone WebGPU module: it knows nothing about three.js or the
-depth-sort coordinator. The coordinator wires it in as a second producer of
-orderings alongside the SortWorker.
+The sort itself is a standalone WebGPU module that knows nothing about
+three.js or the depth-sort coordinator. Two pieces connect it:
+
+- `three-webgpu-bridge.ts` is the only file that reaches into three's
+  WebGPURenderer. It gets the device, and brings a texture or an attribute up
+  to date through three's own update paths before handing over its GPU object,
+  so the sort reads the committed texels and three never re-uploads over its
+  result.
+- `depth-sort-coordinator/gpu-sort-producer.ts` is the coordinator's GPU
+  producer of orderings, alongside the SortWorker.
+
+The GPU sort is off by default (`config.depthSort.gpuSort`), and `?gpuSort=1`
+or `?gpuSort=0` overrides it. It runs only on a native WebGPU device. Mesh
+nodes, nodes the device cannot hold, and every other backend keep the
+SortWorker, as do all nodes while the pipelines compile or after a device
+loss.
 
 ## File map
 
 ```
 gpu-depth-sort/
 ├── gpu-depth-sorter.ts — GpuDepthSorter: compile once per device, sort(request), scratch, dispose
+├── three-webgpu-bridge.ts — The device and up-to-date GPU resources of a three.js WebGPURenderer
 ├── pipelines.ts        — The compute pipelines and their explicit bind-group layouts
 ├── scratch.ts          — Scratch buffers, uniform slots and bind groups for one capacity
 ├── plan.ts             — Pure sizing: blocks, scan levels, device limits, uniform packing

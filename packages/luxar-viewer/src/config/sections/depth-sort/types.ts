@@ -15,6 +15,11 @@ export interface DepthSortConfig {
    *  `normal`-mode nodes keep the identity (storage) order — Phase-1
    *  behavior. URL escape hatch: `?depthSort=0`. */
   enabled: boolean;
+  /** Sort instanced nodes on the GPU when the renderer runs on a native
+   *  WebGPU device (default: false). The CPU SortWorker still sorts mesh
+   *  nodes, nodes too large for the device, and everything on the other
+   *  backends. URL override: `?gpuSort=1` / `?gpuSort=0`. */
+  gpuSort: boolean;
   /** View-axis rotation (relative to the node) that triggers a re-sort,
    *  in degrees (default: 3). Lower = fresher ordering, more sorts. */
   angleThresholdDeg: number;
