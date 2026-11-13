@@ -2628,6 +2628,7 @@ def test_uniform_tile_worker_does_not_re_guard_a_concrete_level(
         max_splats_per_pass=None,
         psnr_patience=None,
         max_passes=None,
+        tile_amplitude_floor=None,
     )
     dim_volume = _blob_field() * 0.1 + 1.0  # max ~2, far below the level below
 
@@ -2681,6 +2682,7 @@ def test_uniform_tile_worker_warns_loudly_when_the_level_erases_its_volume(
         max_splats_per_pass=None,
         psnr_patience=None,
         max_passes=None,
+        tile_amplitude_floor=None,
         timepoint=7,
         channel=1,
     )
