@@ -2,8 +2,8 @@ Evaluate Luxar in ten minutes
 =============================
 
 This page is the shortest path through Luxar for someone trying it for the first time: see
-it running, install it, build a scene, fit a volume and share the result. Every command
-below runs as written on a fresh install.
+it running, install it, build a scene, fit a volume and share the result. The commands
+below use a fresh install; the fit example needs your own ``volume.tiff``.
 
 See it running first
 --------------------
@@ -19,13 +19,17 @@ Nothing needs to be installed to look at Luxar scenes:
 Install
 -------
 
-The core package compiles and serves scenes; the ``gsplats`` extra adds Gaussian-splat
-fitting (it installs PyTorch, a download of several gigabytes on first install):
+Luxar needs Python 3.12 or newer. Install it into a fresh virtual environment; see the
+`README quick start <https://github.com/royerlab/luxar#quick-start>`_ for ways to get a
+suitable Python interpreter (shown as ``python3.12`` below). The core package compiles and
+serves scenes; the ``gsplats`` extra adds Gaussian-splat fitting (it installs PyTorch, a
+download of several gigabytes on first install), and ``io`` reads TIFF and OME-Zarr volumes:
 
 .. code-block:: bash
 
-   pip install luxar              # scenes, viewer, demos
-   pip install "luxar[gsplats]"   # adds fitting volumes as Gaussian splats
+   python3.12 -m venv luxar-env && source luxar-env/bin/activate
+   pip install luxar                 # scenes, viewer, demos
+   pip install "luxar[gsplats,io]"   # adds fitting and image-volume readers
 
 Fitting runs on an NVIDIA GPU (CUDA), an Apple GPU (MPS) or, more slowly, the CPU.
 
@@ -87,8 +91,9 @@ A small volume fits in seconds on a GPU. To choose the number of splats for a re
 Share a scene
 -------------
 
-A compiled scene is a folder of static files: copy it to any static web host and share the
-link ``https://luxarviewer.dev/?src=<URL of the folder>``. For an offline copy,
+A compiled scene is a folder of static files: copy it to any static web host that allows
+cross-origin reads (see :doc:`guides/user/VIEWER_GUIDE`) and share the link
+``https://luxarviewer.dev/?src=<URL of the folder>``. For an offline copy,
 ``luxar export scene.luxar.zarr -o my_export/`` writes the scene together with the viewer and
 a small script that serves both locally (see :doc:`tutorials/distributing_scenes`).
 
