@@ -766,8 +766,9 @@ function promotePending(state: OrderingApply, pending: StagedOrderingEntry): voi
 
 /**
  * Drop the streaming ordering without flipping (a device write that could not
- * run). A held newer ordering, if any, starts next. State is updated before the
- * hook fires, matching the cancel paths' remove-before-fire discipline.
+ * run). A held newer ordering, if any, starts next; otherwise a draw held for
+ * this ordering's append falls back to a repaired permutation. State is
+ * updated before the hook fires, matching the cancel paths' discipline.
  */
 function abandonStreamingOrdering(
   geometry: THREE.InstancedBufferGeometry,
@@ -780,6 +781,10 @@ function abandonStreamingOrdering(
     more = true;
   } else {
     orderingApplies.delete(geometry);
+    if (heldDrawTargets.get(geometry) === state.staged.count) {
+      releaseSortedIndexDrawHold(geometry);
+      abandoned?.requestFrame?.();
+    }
   }
   abandoned?.onAbandoned?.();
   return { more, flipped: false, stalled: false };

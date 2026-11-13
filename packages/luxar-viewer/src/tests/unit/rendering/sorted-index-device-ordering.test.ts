@@ -21,6 +21,7 @@ import {
   repairSortedIndexHostArray,
   pumpSortedIndexOrderingApply,
   releaseSortedIndexDrawHold,
+  sortedIndexDrawHoldTarget,
   writeDeviceSortedIndexOrdering,
   writeSortedIndexIdentity,
   writeSortedIndexOrdering,
@@ -217,6 +218,26 @@ describe('device orderings', () => {
     expect(requestFrame).toHaveBeenCalledTimes(1);
     expect(pumpSortedIndexOrderingApply(geometry).flipped).toBe(true);
     expect(next.targets).toEqual([slot0]);
+  });
+
+  it('releases a held append draw when its device writer fails without a successor', () => {
+    const geometry = makeGeometry(32);
+    expect(holdSortedIndexDrawForAppend(geometry, 32, 48)).toBe(32);
+    const hooks = { ...lifecycle(), requestFrame: vi.fn() };
+    writeDeviceSortedIndexOrdering(geometry, deviceWrite(48, false), hooks);
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+      more: false,
+      flipped: false,
+      stalled: false,
+    });
+    expect(geometry.instanceCount).toBe(48);
+    expect(sortedIndexDrawHoldTarget(geometry)).toBeUndefined();
+    expect(hooks.requestFrame).toHaveBeenCalledTimes(1);
+    expect(hooks.onAbandoned).toHaveBeenCalledTimes(1);
+    const active = getActiveSortedIndexAttribute(geometry)!;
+    expect(Array.from((active.array as Uint32Array).slice(0, 48))).toEqual(
+      Array.from({ length: 48 }, (_, i) => i)
+    );
   });
 
   it('rejects a count it cannot stage, firing no hooks', () => {
