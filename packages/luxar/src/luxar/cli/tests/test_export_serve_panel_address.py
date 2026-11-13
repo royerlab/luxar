@@ -900,6 +900,38 @@ def test_a_chrome_that_cannot_start_falls_back(
     assert not server.display_report.pending()
 
 
+def test_chrome_exiting_into_an_existing_profile_gets_an_actionable_warning(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    checks: list[Any] = []
+
+    class Timer:
+        daemon = False
+
+        def __init__(self, _delay: float, check: Any) -> None:
+            checks.append(check)
+
+        def start(self) -> None:
+            pass
+
+    class Process:
+        def poll(self) -> int:
+            return 21
+
+    monkeypatch.setattr(template.threading, "Timer", Timer)
+    server = object.__new__(template.ControlServer)
+    server.display_report = template.DisplayReportSlot()
+    server.display_report.expect()
+    template._watch_display(server, Process())
+    for check in checks:
+        check()
+    out = capsys.readouterr().out
+    assert "status 21" in out
+    assert ".chrome-display/" in out
+    assert "quit" in out.lower()
+    assert "sent no report" in out
+
+
 def test_chrome_paths_are_checked_and_a_mac_app_bundle_is_opened(
     tmp_path: Path,
 ) -> None:

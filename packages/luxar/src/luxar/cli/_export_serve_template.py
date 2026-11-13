@@ -2007,15 +2007,18 @@ def _watch_display(server: ControlServer, process: Any) -> None:
         code = process.poll()
         if code is not None and server.display_report.pending():
             print(
-                f"\n  WARNING  Chrome exited at once (status {code}): no display. Is there"
+                f"\n  WARNING  Chrome exited at once (status {code}). It may have handed"
             )
             print(
-                "           a screen session? Run it with --chrome from that session."
+                f"           the URL to another Chrome using {CHROME_PROFILE_DIR}/. Check"
+            )
+            print(
+                "           that window; if no check arrives, quit it before restarting."
             )
             sys.stdout.flush()
 
     def no_report() -> None:
-        if server.display_report.pending() and process.poll() is None:
+        if server.display_report.pending():
             print(
                 f"\n  WARNING  the display sent no report within {_DISPLAY_REPORT_WAIT_S:.0f} s:"
             )
