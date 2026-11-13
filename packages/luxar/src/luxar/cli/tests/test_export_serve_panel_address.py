@@ -25,6 +25,7 @@ from contextlib import closing, contextmanager
 from functools import partial
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from websockets.exceptions import ConnectionClosed
@@ -582,6 +583,12 @@ def test_auto_advance_reaches_the_display_url_and_the_redirect(tmp_path: Path) -
         server.shutdown()
         server.server_close()
     assert "&playbackPeriod=0" in reply
+
+
+@pytest.mark.parametrize("period", [1_000_000.0, 1_234_567.125, 2_592_000.0, 1e20])
+def test_large_auto_advance_survives_the_display_query(period: float) -> None:
+    display = template.urls("127.0.0.1", 8123, False, None, playback_period=period)[0]
+    assert float(parse_qs(urlsplit(display).query)["playbackPeriod"][0]) == period
 
 
 @pytest.mark.parametrize("value", ["-1", "inf", "nan", "soon"])

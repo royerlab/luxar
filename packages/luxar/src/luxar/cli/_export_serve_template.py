@@ -1446,7 +1446,9 @@ def viewer_target(
     if text_scale is not None:
         target += f"&textScale={text_scale:g}"
     if playback_period is not None:
-        target += f"&playbackPeriod={playback_period:g}"
+        target += (
+            f"&playbackPeriod={quote(str(playback_period).removesuffix('.0'), safe='')}"
+        )
     return target
 
 
