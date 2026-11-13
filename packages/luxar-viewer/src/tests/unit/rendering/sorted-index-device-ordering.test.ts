@@ -70,6 +70,21 @@ afterEach(() => {
 });
 
 describe('device orderings', () => {
+  it('acknowledges host ranges on a draw before any device writer is staged', () => {
+    const geometry = makeGeometry(32);
+    const slot0 = getActiveSortedIndexAttribute(geometry)!;
+    const slot1 = geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute;
+    slot1.addUpdateRange(0, 32);
+    expect(slot0.updateRanges).toEqual([{ start: 0, count: 32 }]);
+    expect(slot1.updateRanges).toEqual([{ start: 0, count: 32 }]);
+
+    acknowledgeSortedIndexOrderingDraw(geometry);
+
+    expect(slot0.updateRanges).toEqual([]);
+    expect(slot1.updateRanges).toEqual([]);
+    geometry.dispose();
+  });
+
   it('writes the inactive buffer, flips, and applies after the draw', () => {
     const geometry = makeGeometry();
     const inactive = geometry.getAttribute(

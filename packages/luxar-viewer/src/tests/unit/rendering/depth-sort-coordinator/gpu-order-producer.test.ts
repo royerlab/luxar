@@ -5,6 +5,7 @@ import {
   attachElementStorage,
   activeSortedIndexSlot,
   getActiveSortedIndexAttribute,
+  isSortedIndexHostArrayCurrent,
   pumpSortedIndexOrderingApply,
   writeSortedIndexIdentity,
 } from '../../../../rendering/element-storage';
@@ -155,6 +156,8 @@ describe('native WebGPU ordering producer', () => {
     expect(fake.copies).toEqual([{ target: fake.buffers.get(inactive), bytes: 16 }]);
     expect(activeSortedIndexSlot(geometry)).toBe(1);
     expect(inactive.version).toBe(version);
+    expect(inactive.array).not.toBe(geometry.getAttribute('aSortedIndex').array);
+    expect(isSortedIndexHostArrayCurrent(geometry)).toBe(false);
     expect(material.uniforms.uSortedIndexSlot.value).toBe(1);
     expect(state.inFlight).toBe(false);
     expect(state.lastSortAxis).not.toBeNull();
@@ -244,6 +247,11 @@ describe('native WebGPU ordering producer', () => {
     expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ stalled: false, flipped: true });
     const drawn = getActiveSortedIndexAttribute(geometry)!;
     const drawnBuffer = fake.buffers.get(drawn)!;
+    expect(fake.copies).toHaveLength(2);
+    expect(fake.copies[1]).toEqual({ target: drawnBuffer, bytes: 48 * 4 });
+    expect(Array.from(fake.contents.get(drawnBuffer)!.subarray(0, 48))).toEqual(
+      Array.from({ length: 48 }, (_, i) => 47 - i)
+    );
     expect(
       Array.from(fake.contents.get(drawnBuffer)!.subarray(0, 48)).sort((a, b) => a - b)
     ).toEqual(Array.from({ length: 48 }, (_, i) => i));
