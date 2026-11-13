@@ -1356,8 +1356,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=AUTO_ADVANCE,
         metavar="SECONDS",
         help=(
-            "Seconds the display rests at each stop before its tour moves on by "
-            "itself, overriding the scene's own setting (0 = no auto-advance). "
+            "Minimum seconds per stop before the tour moves on by itself; "
+            "on-arrival narration can extend a stop through its clip's end. "
+            "Overrides the scene's own setting (0 = no auto-advance). "
             + (
                 f"Default: {AUTO_ADVANCE:g} s, set when this folder was exported"
                 if AUTO_ADVANCE is not None
@@ -1467,8 +1468,9 @@ def urls(
     ``advertise`` replaces the address derived from the bind everywhere --
     the page, its ``?src=`` data URL and the panel URL -- so the page and its
     data stay same-origin (this server sends no cross-origin headers).
-    ``playback_period`` (``--auto-advance``) retimes the scene's authored
-    playback on the display; the panel URL does not carry it.
+    ``playback_period`` (``--auto-advance``) sets the minimum seconds per
+    authored stop; on-arrival narration can extend it through the clip's end.
+    The panel URL does not carry it.
     """
     reachable = _url_host(advertise or advertised_host(host))
     data_url = f"http://{reachable}:{port}/{DATA_DIR_NAME}"

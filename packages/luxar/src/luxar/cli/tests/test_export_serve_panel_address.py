@@ -606,7 +606,7 @@ def test_auto_advance_absent_leaves_the_scenes_own_setting() -> None:
 def test_an_exported_auto_advance_is_the_default_and_a_flag_still_wins(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`luxar export --auto-advance 60` makes a bare `serve.py` play 60 s stops."""
+    """`luxar export --auto-advance 60` sets a bare `serve.py` minimum to 60 s."""
     monkeypatch.setattr(template, "AUTO_ADVANCE", 60.0)
     assert parse().auto_advance == 60.0
     assert parse("--auto-advance", "20").auto_advance == 20.0
@@ -635,7 +635,7 @@ def test_export_accepts_off_a_period_and_none() -> None:
 
 def test_the_readme_states_the_baked_tour_period(tmp_path: Path) -> None:
     export_module._generate_readme(tmp_path, "data", SceneFacts(auto_advance=60.0))
-    assert "tour rests 60 s at each stop" in (tmp_path / "README.txt").read_text()
+    assert "tour rests at least 60 s at each stop" in (tmp_path / "README.txt").read_text()
     export_module._generate_readme(tmp_path, "data", SceneFacts(auto_advance=0.0))
     assert "does not advance by itself" in (tmp_path / "README.txt").read_text()
     export_module._generate_readme(tmp_path, "data", SceneFacts())

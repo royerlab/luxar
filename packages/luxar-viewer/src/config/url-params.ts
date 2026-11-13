@@ -644,10 +644,12 @@ export interface UrlParams {
    */
   textScale: number | null;
   /**
-   * Seconds per step for the scene's AUTHORED playback (`?playbackPeriod=30`),
-   * winning over every playing `viewer_config.animation` entry's rate -- a
-   * kiosk retimes its tour on site (`serve.py --auto-advance 30`) without a
-   * rebuild. `0` keeps authored playback from starting at all. Clamped to the
+   * Minimum seconds per stop for the scene's AUTHORED playback
+   * (`?playbackPeriod=30`), winning over every playing
+   * `viewer_config.animation` entry's rate. On-arrival narration can extend a
+   * stop through its clip's end. A kiosk can set the minimum on site
+   * (`serve.py --auto-advance 30`) without a rebuild.
+   * `0` keeps authored playback from starting at all. Clamped to the
    * viewer's rate range when applied. Null when absent or invalid (< 0).
    */
   playbackPeriod: number | null;

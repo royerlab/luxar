@@ -3555,13 +3555,14 @@ def layout_for(
 
 
 def story_auto_advance(dims: Dimensions, period_s: float) -> list[AnimationConfig]:
-    """Playback that moves the tour on by one story every ``period_s`` seconds.
+    """Playback with at least ``period_s`` seconds at each story stop.
 
     It is the story dimension's ordinary playback, looping back to the Overview
     after the last story. At a period this slow the viewer plays it as a
     slideshow: the period counts from each flight's landing, a visitor's pick
     (touch panel, slider, keys) restarts it, and every stop refines to full
-    detail. One entry per dimension, as ``ViewerConfig.animation`` is indexed.
+    detail. An on-arrival narration can extend a stop through its clip's end.
+    One entry per dimension, as ``ViewerConfig.animation`` is indexed.
     """
     return [
         AnimationConfig(
@@ -4072,8 +4073,9 @@ def build_universe_scene(
     for that shape (:func:`wall_layout`); ``None`` keeps :data:`DEFAULT_LAYOUT`.
     ``text_scale`` overrides the reading-text scale (the kiosk's default is
     :data:`KIOSK_TEXT_SCALE`, the web build's the viewer's own).
-    ``auto_advance_s`` moves the tour on by itself every that many seconds
-    (:func:`story_auto_advance`); ``None`` leaves it to the visitor.
+    ``auto_advance_s`` sets the minimum seconds per stop
+    (:func:`story_auto_advance`); on-arrival narration can extend a stop
+    through its clip's end. ``None`` leaves it to the visitor.
     """
     layout = layout_for(aspect, kiosk, text_scale)
     n = len(universe)
