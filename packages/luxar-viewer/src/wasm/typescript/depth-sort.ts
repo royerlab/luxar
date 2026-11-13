@@ -38,15 +38,6 @@ export function sort_splats_by_depth(
   ordering: Uint32Array,
   count: number
 ): number {
-  return sortDepth(centers3, modelView, ordering, count);
-}
-
-function sortDepth(
-  centers3: Float32Array,
-  modelView: Float32Array,
-  ordering: Uint32Array,
-  count: number
-): number {
   if (count === 0) {
     return 0;
   }
