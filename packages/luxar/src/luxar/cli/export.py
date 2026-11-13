@@ -60,7 +60,7 @@ def export_scene(
         output: Path to the output folder.
         data_dir_name: Name for the data directory inside output.
         overwrite: Whether to overwrite existing output.
-        auto_advance: Seconds per stop for the exported serve.py's
+        auto_advance: Minimum seconds per stop for the exported serve.py's
             ``--auto-advance`` default (0 = off); None keeps the scene's own.
 
     Returns:
@@ -161,9 +161,9 @@ class SceneFacts:
     #: What the scene's colours mean (the ``legend`` root attribute), printed
     #: in the README, COLOURS.txt / COLOURS.pdf and on the panel's sheet.
     legend: Legend | None = None
-    #: Seconds per stop baked into serve.py's ``--auto-advance`` default. NOT
+    #: Minimum seconds per stop baked into serve.py's ``--auto-advance`` default. NOT
     #: read from the scene: ``luxar export --auto-advance`` sets it, so a
-    #: package can retime its tour without rebuilding the scene (whose content
+    #: package can set its tour minimum without rebuilding the scene (whose content
     #: hash, and anything bound to it, would change).
     auto_advance: float | None = None
 
@@ -908,8 +908,9 @@ history -- fine for a LAN exhibit, not a password.
     display = _dedicated_display_section(facts, output.name)
     retimed = (
         f"""
-This package's tour rests {facts.auto_advance:g} s at each stop (set when it was
-exported), so `python3 serve.py` alone already uses it.
+This package's tour rests at least {facts.auto_advance:g} s at each stop (set
+when it was exported); narration can extend a stop through its clip's end.
+`python3 serve.py` alone already uses this minimum.
 """
         if facts.auto_advance
         else "\nThis package's tour does not advance by itself (set when it was exported).\n"
@@ -942,8 +943,8 @@ Options
     python3 serve.py --text-scale 0.8   Smaller on-screen text, same layout
     python3 serve.py --chrome           Open the display in Chrome, full screen,
                                         with WebGPU, and check what it got
-    python3 serve.py --auto-advance 30  Tour rests 30 s per stop (0 = no auto-
-                                        advance), whatever the scene was built with
+    python3 serve.py --auto-advance 30  At least 30 s per stop; narration can
+                                        extend it (0 = off), overriding the scene
 {retimed}
 If the port is busy the script picks the next free one and prints what it
 chose -- except with the control relay on, where the panel URL and its QR name

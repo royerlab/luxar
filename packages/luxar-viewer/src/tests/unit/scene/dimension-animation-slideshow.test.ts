@@ -168,9 +168,143 @@ describe('DimensionAnimationManager slideshow playback', () => {
     expect(value(STORY)).toBe(1);
   });
 
+  it('holds a narrated stop until its own long clip ends plus the pad', () => {
+    manager.play(STORY, { targetFPS: 1 / 20 });
+    manager.beginNarratedStop(STORY, ['/story-0/voice']);
+    tick(600);
+    manager.narrationStarted('/story-0/voice', 43_000);
+    tick(42_400);
+    expect(value(STORY)).toBe(0);
+    manager.narrationEnded('/story-0/voice');
+    tick(1_999);
+    expect(value(STORY)).toBe(0);
+    tick(1);
+    expect(value(STORY)).toBe(1);
+  });
+
+  it('releases a started clip that never ends at its duration plus pad and slack', async () => {
+    manager.play(STORY, { targetFPS: 1 / 20 });
+    manager.beginNarratedStop(STORY, ['/interrupted']);
+    tick(1_000);
+    manager.narrationStarted('/interrupted', 30_000);
+    tick(32_999);
+    expect(value(STORY)).toBe(0);
+    tick(1);
+    expect(value(STORY)).toBe(1);
+    await settle();
+    manager.narrationEnded('/interrupted');
+    tick(19_990);
+    expect(value(STORY)).toBe(1);
+    tick(10);
+    expect(value(STORY)).toBe(2);
+  });
+
+  it('does not extend the cap when a late end arrives before the next frame', () => {
+    manager.play(STORY, { targetFPS: 1 / 20 });
+    manager.beginNarratedStop(STORY, ['/interrupted']);
+    manager.narrationStarted('/interrupted', 30_000);
+    now += 33_000;
+    manager.narrationEnded('/interrupted');
+    tick(0);
+    expect(value(STORY)).toBe(1);
+  });
+
+  it('keeps the authored minimum when a short clip never ends', () => {
+    manager.play(STORY, { targetFPS: 1 / 20 });
+    manager.beginNarratedStop(STORY, ['/interrupted']);
+    manager.narrationStarted('/interrupted', 5_000);
+    tick(19_000);
+    expect(value(STORY)).toBe(0);
+    tick(1_000);
+    expect(value(STORY)).toBe(1);
+  });
+
+  it('keeps a running narration held across pause and resume', () => {
+    manager.play(STORY, { targetFPS: 1 / 20 });
+    manager.beginNarratedStop(STORY, ['/voice']);
+    manager.narrationStarted('/voice', 60_000);
+    tick(5_000);
+    manager.pause(STORY);
+    manager.play(STORY);
+    tick(20_000);
+    expect(value(STORY)).toBe(0);
+    manager.narrationEnded('/voice');
+    tick(1_999);
+    expect(value(STORY)).toBe(0);
+    tick(1);
+    expect(value(STORY)).toBe(1);
+  });
+
+  it('does not restore a paused stop after a visitor moves the playhead', () => {
+    manager.play(STORY, { targetFPS: 1 / 20 });
+    manager.beginNarratedStop(STORY, ['/old']);
+    manager.narrationStarted('/old', 60_000);
+    manager.pause(STORY);
+    dims.setDimensionValue(STORY, 5);
+    dims.setDimensionValue(STORY, 0);
+    manager.play(STORY);
+    tick(20_000);
+    expect(value(STORY)).toBe(1);
+  });
+
+  it('keeps the period for a short clip or one that never starts', () => {
+    manager.play(STORY, { targetFPS: 1 / 20 });
+    manager.beginNarratedStop(STORY, ['/short']);
+    manager.narrationStarted('/short', 5_000);
+    tick(5_000);
+    manager.narrationEnded('/short');
+    tick(14_999);
+    expect(value(STORY)).toBe(0);
+    tick(1);
+    expect(value(STORY)).toBe(1);
+  });
+
+  it('falls back to the period when autoplay blocks the clip', () => {
+    manager.play(STORY, { targetFPS: 1 / 20 });
+    manager.beginNarratedStop(STORY, ['/blocked']);
+    tick(20_000);
+    expect(value(STORY)).toBe(1);
+  });
+
+  it('waits for every voice of a spatial narration to end', () => {
+    manager.play(STORY, { targetFPS: 1 / 20 });
+    manager.beginNarratedStop(STORY, ['/spatial']);
+    manager.narrationStarted('/spatial', 30_000);
+    manager.narrationStarted('/spatial', 30_000);
+    tick(25_000);
+    manager.narrationEnded('/spatial');
+    tick(2_000);
+    expect(value(STORY)).toBe(0);
+    manager.narrationEnded('/spatial');
+    tick(2_000);
+    expect(value(STORY)).toBe(1);
+  });
+
+  it('restarts at a new landing and ignores the previous narration ending', () => {
+    manager.play(STORY, { targetFPS: 1 / 20 });
+    manager.beginNarratedStop(STORY, ['/old']);
+    manager.narrationStarted('/old', 30_000);
+    tick(10_000);
+    dims.setDimensionValue(STORY, 5);
+    manager.beginNarratedStop(STORY, ['/new']);
+    manager.narrationEnded('/old');
+    manager.narrationStarted('/new', 30_000);
+    tick(19_999);
+    expect(value(STORY)).toBe(5);
+    tick(1);
+    expect(value(STORY)).toBe(5);
+    manager.narrationEnded('/new');
+    tick(1_999);
+    expect(value(STORY)).toBe(5);
+    tick(1);
+    expect(value(STORY)).toBe(6);
+  });
+
   it('frame-paced playback is never held', () => {
     manager.play(TIME, { targetFPS: 10 });
     held = true;
+    manager.beginNarratedStop(TIME, ['/voice']);
+    manager.narrationStarted('/voice', 30_000);
     tick(150);
     expect(value(TIME)).toBe(1);
   });
