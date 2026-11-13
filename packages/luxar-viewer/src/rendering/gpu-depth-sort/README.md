@@ -18,8 +18,8 @@ writes the order into the ordering attribute's own GPU buffer, so a re-sort
 moves no data across the CPU.
 
 It is a standalone WebGPU module: it knows nothing about three.js or the
-depth-sort coordinator. The coordinator wires it in as a second producer of
-orderings alongside the SortWorker.
+depth-sort coordinator. A follow-up after #3305 and the element-storage change
+will wire it in as a second producer of orderings alongside the SortWorker.
 
 ## File map
 
