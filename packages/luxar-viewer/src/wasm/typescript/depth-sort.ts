@@ -20,50 +20,6 @@ const DEPTH_SORT_BUCKETS = 1 << 16;
 /** Maximum key value as f32 (matches Rust's `DEPTH_KEY_MAX`). */
 const DEPTH_KEY_MAX = Math.fround(DEPTH_SORT_BUCKETS - 1);
 
-/** Compact per-element depth keys for the WebGPU ordering pass. */
-export function depthSortKeys(
-  centers3: Float32Array,
-  modelView: Float32Array,
-  count: number
-): Uint16Array {
-  const keys = new Uint16Array(count);
-  if (count === 0) return keys;
-
-  const zScratch = new Float32Array(count);
-  let zMin = Infinity;
-  let zMax = -Infinity;
-  const m2 = modelView[2];
-  const m6 = modelView[6];
-  const m10 = modelView[10];
-  const m14 = modelView[14];
-  for (let i = 0; i < count; i++) {
-    const base = i * 3;
-    const z = Math.fround(
-      Math.fround(
-        Math.fround(Math.fround(m2 * centers3[base]) + Math.fround(m6 * centers3[base + 1])) +
-          Math.fround(m10 * centers3[base + 2])
-      ) + m14
-    );
-    zScratch[i] = z;
-    if (z < 0) {
-      zMin = Math.min(zMin, z);
-      zMax = Math.max(zMax, z);
-    }
-  }
-  // Equal or invalid depth ranges use all-zero keys; a stable GPU scatter
-  // then writes identity, exactly as the CPU kernel does.
-  if (!(zMax > zMin)) return keys;
-
-  const invRange = Math.fround(1 / Math.fround(zMax - zMin));
-  for (let i = 0; i < count; i++) {
-    const z = zScratch[i];
-    if (z >= 0) continue;
-    const scaled = Math.fround(Math.fround(Math.fround(z - zMin) * invRange) * DEPTH_KEY_MAX);
-    keys[i] = (scaled < DEPTH_KEY_MAX ? scaled : DEPTH_KEY_MAX) | 0;
-  }
-  return keys;
-}
-
 /**
  * Sort splats back-to-front by camera-space depth.
  *
@@ -81,6 +37,28 @@ export function sort_splats_by_depth(
   modelView: Float32Array,
   ordering: Uint32Array,
   count: number
+): number {
+  return sortDepth(centers3, modelView, ordering, count);
+}
+
+/** Sort and write the same compact keys used by the CPU permutation. */
+export function sort_splats_by_depth_with_keys(
+  centers3: Float32Array,
+  modelView: Float32Array,
+  ordering: Uint32Array,
+  outputKeys: Uint16Array,
+  count: number
+): number {
+  if (outputKeys.length < count) throw new RangeError('outputKeys too small');
+  return sortDepth(centers3, modelView, ordering, count, outputKeys);
+}
+
+function sortDepth(
+  centers3: Float32Array,
+  modelView: Float32Array,
+  ordering: Uint32Array,
+  count: number,
+  outputKeys?: Uint16Array
 ): number {
   if (count === 0) {
     return 0;
@@ -119,6 +97,7 @@ export function sort_splats_by_depth(
   // rather than `zMax <= zMin` so NaN centers also fall through to
   // identity (matches the Rust kernel).
   if (!(zMax > zMin)) {
+    outputKeys?.fill(0, 0, count);
     for (let j = 0; j < count; j++) {
       ordering[j] = j;
     }
@@ -128,7 +107,7 @@ export function sort_splats_by_depth(
   // Pass 2: normalized uint16 keys + histogram. zMin (farthest) -> key 0,
   // zMax (nearest in-front) -> key 65535; behind-camera -> far bucket 0.
   const invRange = Math.fround(1.0 / Math.fround(zMax - zMin));
-  const keys = new Uint16Array(count);
+  const keys = outputKeys ?? new Uint16Array(count);
   const histogram = new Uint32Array(DEPTH_SORT_BUCKETS);
   for (let i = 0; i < count; i++) {
     const z = zScratch[i];

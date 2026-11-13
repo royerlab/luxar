@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { sort_splats_by_depth } from '../../../../wasm/typescript';
-import { depthSortKeys } from '../../../../wasm/typescript/depth-sort';
+import { sort_splats_by_depth_with_keys } from '../../../../wasm/typescript/depth-sort';
 
 /** Identity model-view: view z == world z (camera at origin looking -z). */
 const IDENTITY_MV = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -56,12 +56,12 @@ describe('depth_sort: sort_splats_by_depth', () => {
       [],
     ]) {
       const centers = centersWithZ(zs);
-      const keys = depthSortKeys(centers, IDENTITY_MV, zs.length);
+      const keys = new Uint16Array(zs.length);
+      const ordering = new Uint32Array(zs.length);
+      sort_splats_by_depth_with_keys(centers, IDENTITY_MV, ordering, keys, zs.length);
       const byKey = Array.from({ length: zs.length }, (_, i) => i).sort(
         (a, b) => keys[a] - keys[b] || a - b
       );
-      const ordering = new Uint32Array(zs.length);
-      sort_splats_by_depth(centers, IDENTITY_MV, ordering, zs.length);
       expect(byKey).toEqual(Array.from(ordering));
     }
   });

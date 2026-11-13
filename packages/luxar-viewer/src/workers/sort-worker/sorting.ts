@@ -13,7 +13,6 @@
 import { transfer } from 'comlink';
 import { requireWasm, type SortWorkerCtx } from './state';
 import { log, Modules } from '../../utils/log';
-import { depthSortKeys } from '../../wasm/typescript/depth-sort';
 
 export interface RegisterNodeParams {
   /** Node identity (mesh UUID on the main thread). */
@@ -100,10 +99,12 @@ export function sortNode(ctx: SortWorkerCtx, params: SortParams): SortResult | n
   // Timing wraps the backend call generically: `ctx.wasm` is either the
   // compiled WASM module or the TypeScript fallback, so both report.
   const kernelStart = performance.now();
-  wasm.sort_splats_by_depth(node.centers3, params.modelView, ordering, node.count);
-  const keys = params.compactKeys
-    ? depthSortKeys(node.centers3, params.modelView, node.count)
-    : undefined;
+  const keys = params.compactKeys ? new Uint16Array(node.count) : undefined;
+  if (keys) {
+    wasm.sort_splats_by_depth_with_keys(node.centers3, params.modelView, ordering, keys, node.count);
+  } else {
+    wasm.sort_splats_by_depth(node.centers3, params.modelView, ordering, node.count);
+  }
   const kernelEnd = performance.now();
   return transfer(
     {

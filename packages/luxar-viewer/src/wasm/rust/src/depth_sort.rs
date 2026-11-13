@@ -77,6 +77,29 @@ pub fn sort_splats_by_depth(
     ordering: &mut [u32],
     count: usize,
 ) -> u32 {
+    sort_depth(centers3, model_view, ordering, None, count)
+}
+
+/// Sort and return the exact keys used for the CPU permutation in one pass.
+#[wasm_bindgen]
+pub fn sort_splats_by_depth_with_keys(
+    centers3: &[f32],
+    model_view: &[f32],
+    ordering: &mut [u32],
+    output_keys: &mut [u16],
+    count: usize,
+) -> u32 {
+    assert!(output_keys.len() >= count, "output_keys too small");
+    sort_depth(centers3, model_view, ordering, Some(output_keys), count)
+}
+
+fn sort_depth(
+    centers3: &[f32],
+    model_view: &[f32],
+    ordering: &mut [u32],
+    output_keys: Option<&mut [u16]>,
+    count: usize,
+) -> u32 {
     // Undersized buffers are SAFE in release too: the debug_asserts
     // below only add friendlier messages — Rust's slice bounds checks
     // trap (`unreachable`) before any out-of-bounds access, and a trap
@@ -132,6 +155,9 @@ pub fn sort_splats_by_depth(
     // z_min/z_max must fall through to identity, not into key math).
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
     if !(z_max > z_min) {
+        if let Some(keys) = output_keys {
+            keys[..count].fill(0);
+        }
         for (j, slot) in ordering.iter_mut().enumerate().take(count) {
             *slot = j as u32;
         }
@@ -141,7 +167,14 @@ pub fn sort_splats_by_depth(
     // Pass 2: normalized uint16 keys + histogram. zmin (farthest) -> key 0,
     // zmax (nearest in-front) -> key 65535; behind-camera -> far bucket 0.
     let inv_range = 1.0 / (z_max - z_min);
-    let mut keys = vec![0u16; count];
+    let mut owned_keys = Vec::new();
+    let keys = match output_keys {
+        Some(keys) => keys,
+        None => {
+            owned_keys.resize(count, 0);
+            owned_keys.as_mut_slice()
+        }
+    };
     let mut histogram = vec![0u32; DEPTH_SORT_BUCKETS];
     for i in 0..count {
         let z = z_scratch[i];
