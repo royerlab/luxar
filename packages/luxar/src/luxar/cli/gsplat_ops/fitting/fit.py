@@ -478,7 +478,8 @@ def run_fit_volume(
         None,
         "--tile-amplitude-floor",
         help="Remove fitted tile splats below this fraction of that tile's "
-        "normalization span before saving or merging (uniform tiled fits).",
+        "normalization span before saving or merging (uniform tiled fits and "
+        "single-tile workers).",
         rich_help_panel="Tiling",
     ),
     norm_range: Optional[str] = typer.Option(
