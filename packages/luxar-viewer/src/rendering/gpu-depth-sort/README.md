@@ -111,5 +111,6 @@ not fit keeps the SortWorker.
   `/gpu-sort-harness.html` and checks the contract above against
   `sort_splats_by_depth`. It covers:
   - sizes from 1 to 10M, including block and scan edges;
+  - one sorter's scratch reused for smaller nodes, then grown for a larger node;
   - the three texel layouts;
   - straddling, behind-camera and flat scenes.

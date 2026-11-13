@@ -104,6 +104,28 @@ test.describe('GPU depth sort', () => {
     });
   }
 
+  test('reuses scratch across nodes of different sizes and grows it', async ({ page }) => {
+    test.setTimeout(120_000);
+    const counts = [100_000, 5_000, 4_097, 1_000_003, 17];
+    const cases: GpuSortCase[] = counts.map((count) => ({
+      count,
+      texelsPerElement: 4,
+      centerMode: 'texel0',
+      seed: count,
+      layout: 'cloud',
+    }));
+    const reports = await page.evaluate(
+      (specs) => window.__gpuSortHarness!.runSequence(specs),
+      cases
+    );
+    expect(reports).toHaveLength(counts.length);
+    for (let i = 0; i < counts.length; i++) expectBackToFront(reports[i], counts[i]);
+    expect(reports[1].scratchBytes).toBe(reports[0].scratchBytes);
+    expect(reports[2].scratchBytes).toBe(reports[0].scratchBytes);
+    expect(reports[3].scratchBytes).toBeGreaterThan(reports[0].scratchBytes);
+    expect(reports[4].scratchBytes).toBe(reports[3].scratchBytes);
+  });
+
   test('sorts 10M splats', async ({ page }) => {
     test.setTimeout(180_000);
     const report = await runCase(page, {

@@ -6,7 +6,7 @@
  * (`wasm/typescript/depth-sort.ts`), inside the page, so a 10M-element case
  * returns a summary rather than 40 MB of indices.
  *
- * Exposes `window.__gpuSortHarness.run(spec)`. It fails closed without a
+ * Exposes `window.__gpuSortHarness.run(spec)` and `runSequence(specs)`. It fails closed without a
  * hardware adapter unless the URL carries `?allowFallbackAdapter`.
  *
  * @module tests/e2e/harnesses/gpu-sort-harness
@@ -46,12 +46,18 @@ export interface GpuSortReport {
   tieInversions: number;
   /** Mean ms per sort over back-to-back timed repeats. */
   gpuMs: number | null;
+  /** Scratch retained by this sorter after the sort. */
+  scratchBytes: number;
   adapter: string;
 }
 
 declare global {
   interface Window {
-    __gpuSortHarness?: { ready: Promise<void>; run(spec: GpuSortCase): Promise<GpuSortReport> };
+    __gpuSortHarness?: {
+      ready: Promise<void>;
+      run(spec: GpuSortCase): Promise<GpuSortReport>;
+      runSequence(specs: GpuSortCase[]): Promise<GpuSortReport[]>;
+    };
   }
 }
 
@@ -185,7 +191,7 @@ function compare(
   gpu: Uint32Array,
   cpu: Uint32Array,
   keys: Uint16Array
-): Omit<GpuSortReport, 'gpuMs' | 'adapter'> {
+): Omit<GpuSortReport, 'gpuMs' | 'scratchBytes' | 'adapter'> {
   const n = gpu.length;
   const seen = new Uint8Array(n);
   let permutation = true;
@@ -231,10 +237,12 @@ async function readBack(
   return out;
 }
 
-async function run(spec: GpuSortCase): Promise<GpuSortReport> {
-  deviceInfo ??= await acquireDevice();
-  const { device, adapter } = deviceInfo;
-  const sorter = await GpuDepthSorter.create(device);
+async function runWithSorter(
+  spec: GpuSortCase,
+  sorter: GpuDepthSorter,
+  device: DeviceLike,
+  adapter: string
+): Promise<GpuSortReport> {
   const { texels, width, height, centers3 } = buildElements(spec);
   const texture = device.createTexture({
     size: [width, height],
@@ -275,12 +283,28 @@ async function run(spec: GpuSortCase): Promise<GpuSortReport> {
     await device.queue.onSubmittedWorkDone();
     gpuMs = (performance.now() - t0) / repeats;
   }
-  sorter.dispose();
   texture.destroy();
   target.destroy();
-  return { ...report, gpuMs, adapter };
+  return { ...report, gpuMs, scratchBytes: sorter.scratchBytes, adapter };
 }
 
-window.__gpuSortHarness = { ready: Promise.resolve(), run };
+async function runSequence(specs: GpuSortCase[]): Promise<GpuSortReport[]> {
+  deviceInfo ??= await acquireDevice();
+  const { device, adapter } = deviceInfo;
+  const sorter = await GpuDepthSorter.create(device);
+  try {
+    const reports: GpuSortReport[] = [];
+    for (const spec of specs) reports.push(await runWithSorter(spec, sorter, device, adapter));
+    return reports;
+  } finally {
+    sorter.dispose();
+  }
+}
+
+async function run(spec: GpuSortCase): Promise<GpuSortReport> {
+  return (await runSequence([spec]))[0];
+}
+
+window.__gpuSortHarness = { ready: Promise.resolve(), run, runSequence };
 const status = document.getElementById('status');
 if (status) status.textContent = 'gpu-sort-harness ready';
