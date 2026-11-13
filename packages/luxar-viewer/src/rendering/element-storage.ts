@@ -318,7 +318,8 @@ export interface DeviceOrderingWrite {
    * the INACTIVE attribute, right before the flip. Return false when the
    * ordering can no longer be written (its population was superseded, the
    * device went away); that abandons it. Must not touch `target.array` or bump
-   * its version: three would then upload the host array over the result.
+   * its version: three would then upload the host array over the result. The
+   * pump waits for any earlier host upload on `target` before calling this.
    */
   write(target: THREE.InstancedBufferAttribute): boolean;
 }
@@ -416,15 +417,11 @@ export interface SortedIndexApplyCallbacks {
    */
   owner?: object;
   /**
-   * "Request one more frame", invoked from a slice's upload acknowledgement
-   * so a drained-but-idle stream resumes the instant the mesh is actually
-   * drawn again (issue #715 resume gap: the coordinator deliberately does NOT
-   * request a render on a stall, so a camera coming to rest exactly as a
-   * culled node becomes drawable would otherwise freeze the stream mid-drain).
-   * A consumed slice means the mesh WAS drawn, so this drives the next pump
-   * precisely — no spin while hidden, because a mesh that is never drawn
-   * never fires the acknowledgement. Per ordering rather than module-wide so
-   * it wakes the render loop of the host that owns the mesh.
+   * "Request one more frame" after a slice upload or a drawn frame that
+   * flushed a device writer's target. A failed device write also uses it
+   * when releasing a held append draw. The coordinator does not spin on a
+   * stall while the mesh is culled; a real draw wakes its next pump.
+   * Per ordering rather than module-wide so it wakes the owning render loop.
    */
   requestFrame?: () => void;
   /**
@@ -499,8 +496,8 @@ export interface SortedIndexPumpResult {
    * upload without bound (issue #715). `more` stays
    * `true` and `flipped` stays `false`; the caller must NOT spin the
    * on-demand loop on a stall (a subsequent DRAWN frame consumes the
-   * pending slice and the next pump advances). Always `false` on the
-   * WebGPU single-slice path, which never stalls.
+   * pending upload and wakes the next pump). A device writer also stalls on
+   * WebGPU when its target still has a pending host upload.
    */
   stalled: boolean;
 }
@@ -740,6 +737,10 @@ function writeDeviceOrdering(
   staged: Extract<StagedOrdering, { kind: 'device' }>,
   attr: THREE.InstancedBufferAttribute
 ): StagedWriteStep {
+  // A pending host upload would overwrite the device result on the next draw.
+  // Three clears ranges on WebGPU updates; the draw hook clears them after a
+  // first buffer creation, which uploads the full array but retains ranges.
+  if (attr.updateRanges.length > 0) return 'stalled';
   let written: boolean;
   try {
     written = staged.op.write(attr);
@@ -887,9 +888,19 @@ export function pumpSortedIndexOrderingApply(
  */
 export function acknowledgeSortedIndexOrderingDraw(geometry: THREE.InstancedBufferGeometry): void {
   const callbacks = awaitingDrawAcknowledgement.get(geometry);
-  if (!callbacks) return;
-  awaitingDrawAcknowledgement.delete(geometry);
-  callbacks.onApplied?.();
+  if (callbacks) {
+    awaitingDrawAcknowledgement.delete(geometry);
+    callbacks.onApplied?.();
+  }
+  // WebGPU has no attribute upload callback. An update clears ranges, but
+  // first buffer creation uploads the full array and leaves them set. Both
+  // ordering attributes are bound by the draw, so either path has consumed
+  // the old host data here. Clear a first-upload range and wake the writer.
+  const state = orderingApplies.get(geometry);
+  if (state?.staged.kind === 'device') {
+    getInactiveSortedIndexAttribute(geometry)?.clearUpdateRanges();
+    state.callbacks?.requestFrame?.();
+  }
 }
 
 /**

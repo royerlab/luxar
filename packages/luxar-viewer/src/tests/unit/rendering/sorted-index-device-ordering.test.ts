@@ -156,6 +156,8 @@ describe('device orderings', () => {
     expect(heldHost.onAbandoned).toHaveBeenCalledTimes(1);
     expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ more: true, flipped: true });
     expect(op.targets).toEqual([]);
+    geometry.getAttribute('aSortedIndex').clearUpdateRanges(); // Initial identity was drawn.
+    getActiveSortedIndexAttribute(geometry)!.clearUpdateRanges(); // Host ordering was drawn.
     expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ more: false, flipped: true });
     expect(op.targets).toHaveLength(1);
   });
@@ -167,6 +169,54 @@ describe('device orderings', () => {
     writeDeviceSortedIndexOrdering(geometry, deviceWrite(48), lifecycle());
     pumpSortedIndexOrderingApply(geometry);
     expect(geometry.instanceCount).toBe(48);
+  });
+
+  it('waits for an earlier host upload before writing that GPU slot', () => {
+    const geometry = makeGeometry(32);
+    const slot0 = getActiveSortedIndexAttribute(geometry)!;
+    slot0.clearUpdateRanges(); // The initial identity was drawn.
+    writeSortedIndexIdentity(geometry, 48); // Commit while culled: tail upload remains pending.
+    expect(slot0.updateRanges).toEqual([{ start: 32, count: 16 }]);
+
+    writeDeviceSortedIndexOrdering(geometry, deviceWrite(48), lifecycle());
+    expect(pumpSortedIndexOrderingApply(geometry).flipped).toBe(true); // B
+    const next = deviceWrite(48);
+    const requestFrame = vi.fn();
+    writeDeviceSortedIndexOrdering(geometry, next, { requestFrame });
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+      more: true,
+      flipped: false,
+      stalled: true,
+    });
+    expect(next.targets).toEqual([]);
+    expect(slot0.updateRanges).toEqual([{ start: 32, count: 16 }]);
+
+    slot0.clearUpdateRanges(); // The next drawn frame updates this existing buffer.
+    acknowledgeSortedIndexOrderingDraw(geometry);
+    expect(slot0.updateRanges).toEqual([]);
+    expect(requestFrame).toHaveBeenCalledTimes(1);
+    expect(pumpSortedIndexOrderingApply(geometry).flipped).toBe(true);
+    expect(next.targets).toEqual([slot0]);
+  });
+
+  it('resumes when the first WebGPU upload leaves its ranges set', () => {
+    const geometry = makeGeometry(32);
+    const slot0 = getActiveSortedIndexAttribute(geometry)!;
+    writeSortedIndexIdentity(geometry, 48);
+    writeDeviceSortedIndexOrdering(geometry, deviceWrite(48));
+    expect(pumpSortedIndexOrderingApply(geometry).flipped).toBe(true);
+    const next = deviceWrite(48);
+    const requestFrame = vi.fn();
+    writeDeviceSortedIndexOrdering(geometry, next, { requestFrame });
+    expect(pumpSortedIndexOrderingApply(geometry).stalled).toBe(true);
+    expect(slot0.updateRanges).toEqual([{ start: 0, count: 48 }]);
+
+    // Three creates the buffer from the full array without clearing ranges.
+    acknowledgeSortedIndexOrderingDraw(geometry);
+    expect(slot0.updateRanges).toEqual([]);
+    expect(requestFrame).toHaveBeenCalledTimes(1);
+    expect(pumpSortedIndexOrderingApply(geometry).flipped).toBe(true);
+    expect(next.targets).toEqual([slot0]);
   });
 
   it('rejects a count it cannot stage, firing no hooks', () => {
@@ -187,12 +237,12 @@ describe('host writes after a device write', () => {
    */
   function deviceWrittenSlot0(count: number): THREE.InstancedBufferGeometry {
     const geometry = makeGeometry(count);
+    getActiveSortedIndexAttribute(geometry)!.clearUpdateRanges(); // Initial identity was drawn.
     for (let k = 0; k < 2; k++) {
       writeDeviceSortedIndexOrdering(geometry, deviceWrite(count), lifecycle());
       pumpSortedIndexOrderingApply(geometry);
     }
     expect(activeSortedIndexSlot(geometry)).toBe(0);
-    getActiveSortedIndexAttribute(geometry)!.clearUpdateRanges();
     return geometry;
   }
 
@@ -246,6 +296,9 @@ describe('a host array a device write left behind', () => {
     writeSortedIndexOrdering(geometry, reversed, 32);
     pumpSortedIndexOrderingApply(geometry);
     expect(activeSortedIndexSlot(geometry)).toBe(1);
+    // Both attribute uploads completed in the draw after the host sort.
+    geometry.getAttribute('aSortedIndex').clearUpdateRanges();
+    getActiveSortedIndexAttribute(geometry)!.clearUpdateRanges();
     holdSortedIndexDrawForAppend(geometry, 32, 48);
     for (let k = 0; k < 2; k++) {
       writeDeviceSortedIndexOrdering(geometry, deviceWrite(48), lifecycle());
