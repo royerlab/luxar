@@ -107,7 +107,7 @@ const SORT_WORKER_INIT_RETRY_BASE_MS = 2_000;
 const SORT_WORKER_INIT_RETRY_WAKE_SLACK_MS = 50;
 
 /**
- * Per-sort RPC deadline (see scheduleSort). Generous — a sort is
+ * Per-sort RPC deadline (see workerSortProducer). Generous — a sort is
  * O(N + buckets) over at most a few million centers, milliseconds on any
  * live worker; the deadline only trips on a crashed/wedged worker thread.
  */

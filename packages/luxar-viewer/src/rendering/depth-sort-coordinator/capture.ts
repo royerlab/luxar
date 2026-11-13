@@ -62,7 +62,7 @@ function isCaptureQuiescent(c: CoordinatorState): boolean {
  * also degrades gracefully when the SortWorker is unavailable — or merely not
  * READY yet, a capture launched during startup warm-up: the cross-node
  * renderOrder pass inside `evaluateDepthSortPerFrame` is pure main-thread and
- * still runs, and `scheduleSort` guards both `api` and init readiness itself,
+ * still runs, and producer readiness guards both `api` and init state,
  * so no fresh sort is dispatched but the renderOrder assignment is still
  * refreshed for the pose.
  *
