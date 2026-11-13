@@ -446,6 +446,8 @@ def fit_tiled_parallel(
     volume: "Any | None" = None,
     device: Optional[str] = None,
     fold_tile_slivers: bool = True,
+    output_path: Path | None = None,
+    root_attrs: dict[str, Any] | None = None,
 ) -> "Any":  # GSplatData (flat) or a GSplatNode (partition)
     """Fit all tiles via concurrent worker subprocesses, then merge.
 
@@ -587,6 +589,52 @@ def fit_tiled_parallel(
             f"{len(failures)} of {num_tiles} tile fits failed (tiles: {idxs}). "
             f"Temp outputs kept at {tmp_dir} for inspection.\n{detail}"
         )
+
+    if output_path is not None and partition and num_tiles > 1:
+        from luxar.gsplats.stream_tiled import stream_tile_results
+
+        def _load_tile(index: int) -> GSplatData:
+            path = tile_paths[index]
+            if path.exists():
+                try:
+                    return GSplatData.load(path, include_stats=True)
+                except Exception as exc:
+                    raise RuntimeError(f"Tile {index} wrote an unreadable store at {path}") from exc
+            marker = Path(str(path) + ".empty")
+            if not marker.exists():
+                raise RuntimeError(f"Tile {index} wrote no output at {path}")
+            tile = _empty_tile(len(volume_shape))
+            pruned = read_empty_tile_marker_pruned(marker)
+            if pruned is not None:
+                tile.stats["tile_amplitude_pruned"] = pruned
+            return tile
+
+        stream_tile_results(
+            output_path,
+            _load_tile,
+            num_tiles=num_tiles,
+            volume_shape=volume_shape,
+            tile_size=tile_size,
+            overlap=overlap,
+            progressive=progressive,
+            cull_retention=cull_retention,
+            elapsed=time.perf_counter() - t0,
+            source_shape=source_shape,
+            source_dtype=source_dtype,
+            floor_strategy=floor_strategy,
+            tile_amplitude_floor=tile_amplitude_floor,
+            grid_scale=grid_scale,
+            volume=reference,
+            device=device,
+            recipe=recipe,
+            recipe_params=recipe_params,
+            fold_tile_slivers=fold_tile_slivers,
+            root_attrs=root_attrs,
+            verbose=verbose,
+        )
+        if not keep_tiles:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        return output_path
 
     # Reload each tile. A successful worker either wrote its .gsplats.zarr, or —
     # for a tile windowed to near-zero signal (0 splats) — wrote a sibling

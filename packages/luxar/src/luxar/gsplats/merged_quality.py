@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import os
-from typing import Any, Optional, Sequence
+from typing import Any, Iterable, Optional, Sequence
 
 import numpy as np
 from arbol import aprint
@@ -493,7 +493,7 @@ def _announce_missing_basis(image_min: Optional[float]) -> None:
 
 
 def stamp_merged_quality(
-    merged: "GSplatData | Sequence[GSplatData]",
+    merged: "GSplatData | Iterable[GSplatData]",
     volume: Any,
     *,
     volume_shape: tuple[int, ...],
@@ -502,6 +502,7 @@ def stamp_merged_quality(
     verbose: bool,
     image_min: Optional[float],
     stats: "dict[str, Any] | None" = None,
+    total_splats: int | None = None,
 ) -> None:
     """Score the MERGED reconstruction against the whole volume, in place.
 
@@ -525,7 +526,7 @@ def stamp_merged_quality(
     is only ever read tile-by-tile — which is what the budget below bounds.
     """
     if stats is not None:
-        parts = [merged] if isinstance(merged, GSplatData) else list(merged)
+        parts = [merged] if isinstance(merged, GSplatData) else merged
         target_stats = stats
     elif isinstance(merged, GSplatData):
         parts = [merged]
@@ -535,7 +536,10 @@ def stamp_merged_quality(
             "partition merged-quality scoring was not given a stats target"
         )
         return
-    if not parts or sum(part.n_splats for part in parts) == 0:
+    if total_splats is None:
+        parts = list(parts)
+        total_splats = sum(part.n_splats for part in parts)
+    if total_splats == 0:
         return
     _announce_missing_basis(image_min)
     over_budget = _quality_memory_guard(volume_shape, device)

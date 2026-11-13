@@ -1226,6 +1226,8 @@ def fit_tiled(
     source_dtype: Optional[str] = None,
     source_stored_bytes: Optional[int] = None,
     tile_amplitude_floor: float | None = None,
+    _output_path: Path | None = None,
+    _root_attrs: dict[str, Any] | None = None,
     **fit_kwargs: Any,
 ) -> "Any":
     """Fit Gaussian splats to a large volume using tiled decomposition.
@@ -1443,6 +1445,23 @@ def fit_tiled(
     validate_tile_amplitude_floor(tile_amplitude_floor)
 
     results: list[GSplatData] = []
+    import tempfile
+
+    staging = tempfile.TemporaryDirectory(prefix="luxar_tiled_") if _output_path else None
+
+    def _keep_tile(index: int, tile: GSplatData) -> None:
+        if staging is None:
+            results.append(tile)
+            return
+        path = Path(staging.name) / f"tile_{index}.gsplats.zarr"
+        if tile.n_splats:
+            tile.save(path, amplitude_bits="auto")
+        else:
+            count = tile.stats.get("tile_amplitude_pruned")
+            write_empty_tile_marker(
+                Path(str(path) + ".empty"),
+                int(count) if count is not None else None,
+            )
     amplitude_pruned = 0
     t0 = time.perf_counter()
 
@@ -1462,8 +1481,8 @@ def fit_tiled(
                 # "seeds as int must be positive" on any tile that does, and
                 # this in-process loop has no per-tile `allow_empty_tile`
                 # escape hatch the way a batch worker subprocess does.
-                results.append(
-                    _skipped_tile_result(spec, len(volume_shape), applied_floor)
+                _keep_tile(
+                    spec.index, _skipped_tile_result(spec, len(volume_shape), applied_floor)
                 )
                 if verbose:
                     aprint(f"{label}: zero seed budget, not fitted")
@@ -1492,7 +1511,7 @@ def fit_tiled(
                 if verbose:
                     t_tile = tile_result.stats.get("time_seconds", 0)
                     aprint(f"{n:,} splats ({t_tile:.1f}s)")
-                results.append(tile_result)
+                _keep_tile(spec.index, tile_result)
 
     elapsed = time.perf_counter() - t0
     # Resolved HERE, where the caller's array is still in hand: after the tiles
@@ -1506,6 +1525,49 @@ def fit_tiled(
         voxel_size=voxel_size,
         output_space=output_space,
     )
+    if staging is not None and _output_path is not None:
+        from luxar.gsplats.stream_tiled import stream_tile_results
+
+        def _load_tile(index: int) -> GSplatData:
+            path = Path(staging.name) / f"tile_{index}.gsplats.zarr"
+            if path.exists():
+                return GSplatData.load(path, include_stats=True)
+            marker = Path(str(path) + ".empty")
+            if not marker.exists():
+                raise RuntimeError(f"Tile {index} has no staged output")
+            return _zero_splat_tile(len(volume_shape))
+
+        try:
+            stream_tile_results(
+                _output_path,
+                _load_tile,
+                num_tiles=len(specs),
+                volume_shape=volume_shape,
+                tile_size=tile_size,
+                overlap=overlap,
+                progressive=progressive,
+                cull_retention=cull_retention,
+                elapsed=elapsed,
+                source_shape=source_shape,
+                source_dtype=merged_dtype,
+                source_itemsize=merged_itemsize,
+                source_stored_bytes=source_stored_bytes,
+                applied_floor=applied_floor,
+                floor_strategy=floor_strategy,
+                tile_amplitude_floor=tile_amplitude_floor,
+                amplitude_pruned=amplitude_pruned,
+                grid_scale=grid_scale,
+                volume=volume,
+                device=fit_kwargs.get("device"),
+                recipe=recipe,
+                recipe_params=recipe_params,
+                fold_tile_slivers=fold_tile_slivers,
+                root_attrs=_root_attrs,
+                verbose=verbose,
+            )
+        finally:
+            staging.cleanup()
+        return _output_path
     merged = merge_tile_results(
         results,
         volume_shape=volume_shape,
@@ -1535,6 +1597,15 @@ def fit_tiled(
     )
     stamp_tile_amplitude_floor(merged, tile_amplitude_floor, amplitude_pruned)
     return merged
+
+
+def fit_tiled_to_store(
+    volume: Any, output_path: Path, **kwargs: Any
+) -> Path:
+    """Fit a uniform grid to a partition store with one tile resident at a time."""
+    return fit_tiled(
+        volume, partition=True, _output_path=Path(output_path), **kwargs
+    )
 
 
 def merge_tile_results(
