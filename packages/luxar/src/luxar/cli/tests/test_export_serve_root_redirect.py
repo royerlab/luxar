@@ -83,14 +83,16 @@ def test_a_control_run_says_the_bare_address_is_view_only(
     monkeypatch.setattr(template, "SCRIPT_DIR", folder)
 
     class _NoServer:  # binds nothing: only the startup narration is under test
-        def __init__(self, *_args: object) -> None:
+        def __init__(self, address: tuple[str, int], *_args: object) -> None:
+            self.server_address = address
             self.text_scale = None
 
         def serve_forever(self) -> None:
             return None
 
     monkeypatch.setattr(template, "ControlServer", _NoServer)
-    monkeypatch.setattr(template, "print_control_qr", lambda url: None)
+    monkeypatch.setattr(template, "someone_listening", lambda *args: False)
+    monkeypatch.setattr(template, "print_control_qr", lambda url, **_: None)
     assert template.main(["--control", "--control-token", "s", "--no-open"]) == 0
     out = capsys.readouterr().out
     assert out.count("VIEW-ONLY") == 1

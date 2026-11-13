@@ -688,6 +688,17 @@ def export(
             "permissions and resource forks intact. Pass --no-zip to skip."
         ),
     ),
+    auto_advance: Optional[float] = typer.Option(
+        None,
+        "--auto-advance",
+        metavar="SECONDS",
+        help=(
+            "Bake a default into the exported serve.py's --auto-advance: the "
+            "seconds its tour rests at each stop (0 = no auto-advance), without "
+            "rebuilding the scene. serve.py --auto-advance N still overrides it. "
+            "Not with --native, which has no serve.py."
+        ),
+    ),
 ) -> None:
     """Export a zarr scene + viewer as a standalone offline folder.
 
@@ -707,10 +718,16 @@ def export(
         luxar export my_scene.luxar.zarr -o my_export/
         luxar export my_scene.luxar.zarr -o my_export/ --overwrite
         luxar export my_scene.luxar.zarr -o my_export/ --open
+        luxar export my_scene.luxar.zarr -o my_export/ --auto-advance 60
         luxar export my_scene.luxar.zarr -o out/ --native macos
         luxar export my_scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64
     """
     try:
+        if native and auto_advance is not None:
+            raise ValueError(
+                "--auto-advance sets the exported serve.py's default, and a "
+                "--native bundle has no serve.py; drop one of the two"
+            )
         if native:
             _run_native_export(
                 source=source,
@@ -729,6 +746,7 @@ def export(
                 source=source,
                 output=output,
                 overwrite=overwrite,
+                auto_advance=auto_advance,
             )
             aprint(f"Exported to {result}")
             # `python3`, not `python`: stock macOS and most Linux distros ship

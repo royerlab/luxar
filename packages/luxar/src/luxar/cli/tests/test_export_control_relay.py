@@ -574,14 +574,15 @@ def test_an_ipv6_bind_actually_serves(tmp_path: Path) -> None:
 
     port = template.find_port("::1", start=free_port())
     assert port is not None, "no IPv6 loopback port available"
-    (tmp_path / "marker.txt").write_text("served over v6")
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "marker.txt").write_text("served over v6")
 
     handler = partial(template.LuxarHandler, directory=str(tmp_path))
     server = template.ControlServer(("::1", port), handler, None)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        response = urlopen(f"http://[::1]:{port}/marker.txt", timeout=5)
+        response = urlopen(f"http://[::1]:{port}/data/marker.txt", timeout=5)
         assert response.status == 200
         assert b"served over v6" in response.read()
     finally:

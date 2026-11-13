@@ -33,7 +33,7 @@ The folder contains:
 my_export/
 ├── viewer/        # viewer bundle (index.html, assets/, wasm/) with paths rewritten relative
 ├── data/          # the zarr dataset, copied as-is
-├── serve.py       # zero-dependency Python 3 HTTP server (CORS, auto-port from 8000)
+├── serve.py       # zero-dependency Python 3 HTTP server (+ control relay; port 8000)
 └── README.txt
 ```
 Recipient just needs Python 3: `cd my_export && python3 serve.py`. Say `python3`, not
@@ -41,14 +41,24 @@ Recipient just needs Python 3: `cd my_export && python3 serve.py`. Say `python3`
 `python serve.py`. No Luxar, no Node, no pip. Options:
 
 ```bash
-python3 serve.py --port 9000        # default 8000; the next free port is used if busy
+python3 serve.py --port 9000        # default 8000; busy -> next free port (an ERROR with the relay on)
 python3 serve.py --no-open          # don't launch a browser (headless / ssh box)
+python3 serve.py --chrome           # display in Chrome full screen, WebGPU flags, prints a Display check
+python3 serve.py --auto-advance 30  # retime the scene's authored tour (?playbackPeriod=; 0 = off)
+# Bake that retiming into the package, no scene rebuild: `python3 serve.py` alone then uses it.
+# luxar export scene.luxar.zarr -o out/ --auto-advance 60
 python3 serve.py --host 0.0.0.0     # reachable from other machines (default 127.0.0.1)
 ```
 
 `--host` defaults to `127.0.0.1` (local only). A scene that declares a touch control
-panel defaults to `0.0.0.0` and starts its relay (`--control`; `--no-control`,
-`--control-token SECRET`); `--host 127.0.0.1` keeps it local. Viewing from another
+panel defaults to `0.0.0.0` and starts its relay (`--control`; `--no-control`). Off
+loopback the relay requires a token, generated on first start and saved in
+`control-token.txt` beside serve.py, so the panel URL and its QR (`control-qr.png`, and the A4 sheet `control-panel.pdf`)
+stay the same every start and can be PRINTED (`--control-token SECRET` = this run
+only, `--no-control-token` = open relay; delete the file to rotate). With the relay
+on, a busy port is an error, never a move. `--advertise-host NAME` puts a fixed name
+or reserved IP in the URLs/QR while binding every interface (the default is the
+current LAN IP, which DHCP may change). `--host 127.0.0.1` keeps it local, no token. Viewing from another
 machine over ssh without exposing a port: `ssh -L 8000:127.0.0.1:8000 host` and open
 `http://127.0.0.1:8000` locally.
 
