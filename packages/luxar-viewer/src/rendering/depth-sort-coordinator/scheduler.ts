@@ -60,7 +60,8 @@ import type { SortResult } from '../../workers/sort-worker';
  */
 const ORTHO_BSP_EYE_DISTANCE = 1e15;
 
-interface OrderingApply {
+/** @internal */
+export interface OrderingApply {
   geometry: THREE.InstancedBufferGeometry;
   result: SortResult;
   callbacks: SortedIndexApplyCallbacks;
@@ -72,7 +73,8 @@ interface OrderingApply {
   triangleSource?: Uint32Array;
 }
 
-function stageOrdering(p: OrderingApply): number {
+/** @internal — sort-result handoff, exercised with the GPU boundary stub in tests. */
+export function stageOrdering(p: OrderingApply): number {
   const { geometry, result, callbacks, builder, compactKeys, count } = p;
   if (p.triangleSource) {
     return writeSortedTriangleOrdering(
@@ -114,10 +116,14 @@ function requestWorkerSort(
   });
 }
 
-function eligibleGpuBuilder(mesh: THREE.Mesh, state: NodeSortState): WebGpuOrderBuilder | null {
+/** @internal — mesh sorts never request GPU keys from the worker. */
+export function eligibleGpuBuilder(
+  mesh: THREE.Mesh,
+  state: NodeSortState,
+  builder = getWebGpuOrderBuilder()
+): WebGpuOrderBuilder | null {
   if (state.triangleSource) return null;
-  const builder = getWebGpuOrderBuilder();
-  return builder?.canSort(mesh.geometry as THREE.InstancedBufferGeometry, state.count)
+  return builder?.canSort(mesh.geometry as THREE.InstancedBufferGeometry, state.count, mesh.uuid)
     ? builder
     : null;
 }
