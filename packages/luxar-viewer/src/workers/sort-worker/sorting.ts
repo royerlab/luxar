@@ -101,7 +101,13 @@ export function sortNode(ctx: SortWorkerCtx, params: SortParams): SortResult | n
   const kernelStart = performance.now();
   const keys = params.compactKeys ? new Uint16Array(node.count) : undefined;
   if (keys) {
-    wasm.sort_splats_by_depth_with_keys(node.centers3, params.modelView, ordering, keys, node.count);
+    wasm.sort_splats_by_depth_with_keys(
+      node.centers3,
+      params.modelView,
+      ordering,
+      keys,
+      node.count
+    );
   } else {
     wasm.sort_splats_by_depth(node.centers3, params.modelView, ordering, node.count);
   }
