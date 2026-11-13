@@ -180,6 +180,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.group.compositing import position_bounds_from_array
 from luxar.core.group.lod.group import partitioned_coverage_fractions
 from luxar.core.group.partition import bsp_leaf_parts, spatial_bsp_tree
+from luxar.core.legend import Legend, LegendEntry, hex_color
 from luxar.core.viewer_config import (
     MAX_ANIMATION_PERIOD_S,
     TEXT_SCALE_RANGE,
@@ -519,6 +520,78 @@ def backdrop_colors(universe: Universe) -> np.ndarray:
     rgb = palette[code]
     rgb[universe.dark_mask()] *= DARK_DIM
     return rgb
+
+
+#: The legend's rows, in reading order (bacteria, archaea, viruses, then the
+#: eukaryotes, then the rest): palette group, the name the legend gives it, and
+#: a colour name a reader can say. The colours themselves are not repeated
+#: here: :func:`universe_legend` reads them from ``TAXON_COLORS``, the palette
+#: the map is drawn with, and its phyla from the tables above.
+_LEGEND_ROWS = (
+    ("Proteobacteria", "Proteobacteria", "lime green"),
+    ("Firmicutes & Actino", "Firmicutes and Actinobacteria", "olive green"),
+    ("Other Bacteria", "Other bacteria", "dark green"),
+    ("Archaea", "Archaea", "orange"),
+    ("Viruses", "Viruses", "red"),
+    ("Plants", "Plants and algae", "green"),
+    ("Fungi", "Fungi", "yellow"),
+    ("Insects & Worms", "Insects, worms and molluscs", "purple"),
+    ("Other Vertebrates", "Chordates (vertebrates)", "teal"),
+    ("Other", "Other or unknown", "grey"),
+)
+
+
+#: Familiar members to name for the groups too long to list (each is checked
+#: against its group's table by the tests).
+_LEGEND_EXAMPLES = {
+    "Other Bacteria": ("Bacteroidota", "Cyanobacteriota", "Chloroflexota"),
+    "Archaea": ("Methanobacteriota", "Thermoproteota", "Nitrososphaerota"),
+}
+
+
+def _group_phyla(group: str) -> str:
+    """What falls under a palette group, from the tables :func:`phylum_group` reads."""
+    named = sorted(p for p, g in _PHYLUM_GROUPS.items() if g == group)
+    if named:
+        return "Dominant phylum " + ", ".join(named) + "."
+    if group == "Viruses":
+        return "Dominant phylum a virus (any phylum ending in -viricota)."
+    members = {"Archaea": _ARCHAEA, "Other Bacteria": _OTHER_BACTERIA}.get(group)
+    if members is not None:
+        return f"{len(members)} phyla, e.g. {', '.join(_LEGEND_EXAMPLES[group])}."
+    return "Dominant phylum unknown, or none of the groups above."
+
+
+def universe_legend() -> Legend:
+    """What the map's colours mean, written into the scene's root attributes.
+
+    Built from the palette and the phylum tables the backdrop is coloured with
+    (:func:`backdrop_colors`), so the legend cannot drift from the map:
+    ``luxar export`` prints it in the package's README, ``COLOURS.txt`` and
+    ``COLOURS.pdf``, and on the printed control-panel sheet.
+    """
+    entries = tuple(
+        LegendEntry(
+            label=label,
+            color=hex_color(TAXON_COLORS[group]),
+            color_name=color_name,
+            description=_group_phyla(group),
+        )
+        for group, label, color_name in _LEGEND_ROWS
+    )
+    return Legend(
+        title="What the colours mean",
+        entries=entries,
+        note=(
+            "Each point is one protein cluster, coloured by the branch of life "
+            "its proteins mostly come from (its dominant phylum). Clusters with no "
+            f"characterised member, the dark proteome, are drawn at "
+            f"{DARK_DIM:.0%} brightness. Light adds up where points overlap, so "
+            "dense regions look brighter and paler: the hue is what names the "
+            "group. On a story, the clusters it highlights take that story's own "
+            "colour, the accent of its panel."
+        ),
+    )
 
 
 # =============================================================================
@@ -4183,6 +4256,7 @@ def build_universe_scene(
             scene = compiler.create_scene(
                 dimensions=dims,
                 citation=DEMO_META["citation"],
+                legend=universe_legend(),
                 viewer_config=viewer_config,
             )
             backdrop_positions = np.column_stack(

@@ -878,6 +878,27 @@ with LuxarZarrCompiler('output.luxar.zarr') as compiler:
 - `from_json(string)` / `to_json()` - JSON string I/O
 - `validate()` - Validate all configuration values
 
+### 10b. Legend (`legend.py`)
+
+What a scene's colours mean, as a validated root attribute (`legend`), like the
+citation: `Legend(title, entries, note)` of `LegendEntry(label, color "#RRGGBB",
+color_name, description)`, written with `create_scene(legend=...)` and read back
+as `Scene.legend`. `hex_color(rgb)` display-encodes an authored linear [0, 1] triple as sRGB hex
+code, so a demo can build its legend from the palette it draws with (the ESM
+protein universe does: `universe_legend()`). `luxar export` prints it in the
+folder's README, COLOURS.txt and COLOURS.pdf, and on the panel sheet.
+
+```python
+from luxar.core.legend import Legend, LegendEntry, hex_color
+
+legend = Legend(
+    title="What the colours mean",
+    entries=(LegendEntry("Viruses", hex_color((0.9, 0.2, 0.2)), "red", "Any -viricota."),),
+    note="Dim points have no characterised member.",
+)
+scene = compiler.create_scene(dimensions=dims, legend=legend)
+```
+
 ### 11. Overlay (`overlay.py`)
 
 Lightweight metadata descriptor for a screen-space annotation. Overlays are
@@ -998,6 +1019,7 @@ Tests are located in `core/tests/`:
 - `test_transforms.py` - Transform utilities and functionality
 - `test_transforms_properties.py` - Property-based tests for the transform composition algebra
 - `test_viewer_config.py` - ViewerConfig, CameraConfig, and related dataclasses
+- `test_legend.py` - The colour legend: validation, round trip, root attribute
 
 The `Group` side lives one level down, in `core/tests/group/`:
 - `test_group.py` - Group class with add_* methods
