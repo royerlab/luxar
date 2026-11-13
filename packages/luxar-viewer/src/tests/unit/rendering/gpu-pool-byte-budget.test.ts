@@ -19,6 +19,7 @@ import {
   estimateGeometryBytes,
   invalidateCachedByteSize,
 } from '../../../rendering/gpu-buffer-pool';
+import { setGpuOrderScratchBytes } from '../../../rendering/gpu-buffer-pool/geometry-bytes';
 
 // selectBuffersToEvict (pure function) tests live in
 // tests/unit/rendering/gpu-buffer-pool/eviction-policy.test.ts —
@@ -100,6 +101,21 @@ describe('committed mesh byte accounting', () => {
 });
 
 describe('GPU pool getStats() byte counters', () => {
+  it('charges and releases WebGPU sort scratch in active and pooled residency', () => {
+    const pool = new GPUBufferPool(20, 300, 5, () => 0);
+    const geometry = pool.acquirePointsGeometry('p1', 100);
+    const base = pool.getResidentBytes();
+    setGpuOrderScratchBytes(geometry, 4096);
+    expect(estimateGeometryBytes(geometry)).toBe(base + 4096);
+    expect(pool.getResidentBytes()).toBe(base + 4096);
+    pool.releasePointsGeometry('p1');
+    expect(pool.getStats().pooledBytes).toBe(base + 4096);
+    setGpuOrderScratchBytes(geometry, 0);
+    expect(pool.getResidentBytes()).toBe(base);
+    expect(pool.getStats().pooledBytes).toBe(base);
+    pool.dispose();
+  });
+
   it('reports activeBytes for an acquired buffer', () => {
     const pool = new GPUBufferPool(20, 300, 5, () => 0); // byte budget disabled
     pool.acquirePointsGeometry('p1', 100);
