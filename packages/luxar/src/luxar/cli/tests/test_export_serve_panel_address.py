@@ -900,8 +900,12 @@ def test_a_chrome_that_cannot_start_falls_back(
     assert not server.display_report.pending()
 
 
-def test_chrome_exiting_into_an_existing_profile_gets_an_actionable_warning(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("profile_in_use", [False, True])
+def test_chrome_early_exit_explains_the_profile_or_display(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    profile_in_use: bool,
 ) -> None:
     checks: list[Any] = []
 
@@ -919,6 +923,11 @@ def test_chrome_exiting_into_an_existing_profile_gets_an_actionable_warning(
             return 21
 
     monkeypatch.setattr(template.threading, "Timer", Timer)
+    monkeypatch.setattr(template, "SCRIPT_DIR", tmp_path)
+    if profile_in_use:
+        profile = tmp_path / template.CHROME_PROFILE_DIR
+        profile.mkdir()
+        (profile / "SingletonLock").symlink_to("other-host-999999")
     server = object.__new__(template.ControlServer)
     server.display_report = template.DisplayReportSlot()
     server.display_report.expect()
@@ -927,8 +936,14 @@ def test_chrome_exiting_into_an_existing_profile_gets_an_actionable_warning(
         check()
     out = capsys.readouterr().out
     assert "status 21" in out
-    assert ".chrome-display/" in out
-    assert "quit" in out.lower()
+    if profile_in_use:
+        assert ".chrome-display/" in out
+        assert "quit" in out.lower()
+        assert "no display" not in out
+    else:
+        assert "no display" in out
+        assert "screen session" in out
+        assert ".chrome-display/" not in out
     assert "sent no report" in out
 
 

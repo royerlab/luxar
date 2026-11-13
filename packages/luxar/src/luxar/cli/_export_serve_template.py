@@ -2006,15 +2006,23 @@ def _watch_display(server: ControlServer, process: Any) -> None:
     def early_exit() -> None:
         code = process.poll()
         if code is not None and server.display_report.pending():
-            print(
-                f"\n  WARNING  Chrome exited at once (status {code}). It may have handed"
-            )
-            print(
-                f"           the URL to another Chrome using {CHROME_PROFILE_DIR}/. Check"
-            )
-            print(
-                "           that window; if no check arrives, quit it before restarting."
-            )
+            if os.path.lexists(SCRIPT_DIR / CHROME_PROFILE_DIR / "SingletonLock"):
+                print(
+                    f"\n  WARNING  Chrome exited at once (status {code}). It may have handed"
+                )
+                print(
+                    f"           the URL to another Chrome using {CHROME_PROFILE_DIR}/. Check"
+                )
+                print(
+                    "           that window; if no check arrives, quit it before restarting."
+                )
+            else:
+                print(
+                    f"\n  WARNING  Chrome exited at once (status {code}): no display."
+                )
+                print(
+                    "           Is there a screen session? Run it with --chrome from that session."
+                )
             sys.stdout.flush()
 
     def no_report() -> None:
