@@ -134,7 +134,6 @@ from luxar.demos import (
     robust_download,
     warn_if_no_cuda_gpu,
 )
-from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
@@ -431,60 +430,31 @@ def fit_channel_tiled(
     )
 
     cache_file.parent.mkdir(parents=True, exist_ok=True)
-    if not SHOW_ROUNDTRIP:
-        import tempfile
+    # The display comparison needs an in-memory fit; both modes publish the
+    # same streamed cache so a display flag cannot change the artifact.
+    comparison = fit_tiled(image, **fit_kwargs) if SHOW_ROUNDTRIP else None
 
-        from luxar._zarr_compat import open_group
-        from luxar.demos._lod_policy import _RECIPE_DEFAULTS
-        from luxar.gsplats.fit_tiled_gsplats import fit_tiled_to_store
-        from luxar.gsplats.io.save_gsplats import _compress_zarr
-        from luxar.gsplats.lod import RecipeParams
+    import tempfile
 
-        with tempfile.TemporaryDirectory(dir=cache_file.parent) as stage:
-            store = Path(stage) / cache_file.name.removesuffix(".zip")
-            fit_tiled_to_store(
-                image,
-                store,
-                recipe="levels",
-                recipe_params=RecipeParams(
-                    **_RECIPE_DEFAULTS["adaptive"],
-                    device="cpu" if DEVICE == "mps" else DEVICE,
-                ),
-                **fit_kwargs,
-            )
-            n_splats = int(open_group(store, mode="r")["fitting"].attrs["n_splats"])
-            _compress_zarr(store, cache_file, "zip", True, None)
-        aprint(f"  Fitted {n_splats:,} splats across all tiles")
-        return n_splats
+    from luxar._zarr_compat import open_group
+    from luxar.gsplats.fit_tiled_gsplats import fit_tiled_to_store
+    from luxar.gsplats.io.save_gsplats import _compress_zarr
+    from luxar.gsplats.lod import RecipeParams
 
-    result = fit_tiled(image, **fit_kwargs)
-
-    n_splats = len(result.amplitudes)
+    with tempfile.TemporaryDirectory(dir=cache_file.parent) as stage:
+        store = Path(stage) / cache_file.name.removesuffix(".zip")
+        fit_tiled_to_store(
+            image,
+            store,
+            recipe="stream",
+            recipe_params=RecipeParams(n_lods=1),
+            encoding_mode=EncodingMode.MEMORY,
+            **fit_kwargs,
+        )
+        n_splats = int(open_group(store, mode="r")["fitting"].attrs["n_splats"])
+        _compress_zarr(store, cache_file, "zip", True, None)
     aprint(f"  Fitted {n_splats:,} splats across all tiles")
-
-    # Cache result. `adaptive` is the recipe a 476-megapixel plane wants: the
-    # slide is panned and zoomed rather than orbited, so most of it is off
-    # screen most of the time and a per-tile level beats one global one. BSP
-    # splitting needs only two spatial axes, so a strictly 2D fit tiles the same
-    # way a volume does. What lands on disk is a `kind=partition` tree: spatial
-    # tiles, each carrying its own substitutive levels, each level carrying an
-    # additive ladder underneath.
-    aprint(f"  Caching to {cache_file.name}")
-    save_with_lod(
-        result,
-        cache_file,
-        recipe="adaptive",
-        # MPS lacks the float64 the substitutive reduction wants and warns as it
-        # falls back; CPU is the same answer without the noise. CUDA keeps the
-        # reduction on the GPU that just did the fit.
-        device="cpu" if DEVICE == "mps" else DEVICE,
-        encoding_mode=EncodingMode.MEMORY,
-        include_fitting_info=True,
-        compress="zip",
-        zip_deflate=True,
-    )
-
-    return result
+    return comparison if comparison is not None else n_splats
 
 
 def fit_all_channels(

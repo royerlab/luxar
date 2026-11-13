@@ -56,6 +56,20 @@ def test_local_tiled_refit_preserves_overlap_contributions(
     seam_mse = np.mean((reconstruction[:, 24:32] - fitted_image[:, 24:32]) ** 2)
     neighbour_mse = np.mean((reconstruction[:, 16:24] - fitted_image[:, 16:24]) ** 2)
     assert seam_mse <= neighbour_mse
+    from luxar.gsplats.io.load_gsplats import load_default_gsplats
+
+    streamed = load_default_gsplats(tmp_path / "codex.gsplats.zarr.zip")
+    streamed_pixels = streamed.transform(np.eye(2) / _demo.PIXEL_SIZE)
+    streamed_image = streamed_pixels.render_to_volume(
+        shape=fitted_image.shape, device="cpu"
+    )
+    streamed_seam_mse = np.mean(
+        (streamed_image[:, 24:32] - fitted_image[:, 24:32]) ** 2
+    )
+    streamed_neighbour_mse = np.mean(
+        (streamed_image[:, 16:24] - fitted_image[:, 16:24]) ** 2
+    )
+    assert streamed_seam_mse <= streamed_neighbour_mse
 
 
 def test_default_refit_streams_to_partition_cache(
@@ -78,9 +92,25 @@ def test_default_refit_streams_to_partition_cache(
         prefix = cache.name.removesuffix(".zip")
         root = json.loads(archive.read(f"{prefix}/zarr.json"))["attributes"]
         fitting = json.loads(archive.read(f"{prefix}/fitting/zarr.json"))["attributes"]
+        pipeline = json.loads(archive.read(f"{prefix}/pipeline/zarr.json"))[
+            "attributes"
+        ]
         assert root["kind"] == "partition"
         assert fitting["n_splats"] == count
         assert fitting["voxel_size"] == [_demo.PIXEL_SIZE, _demo.PIXEL_SIZE]
+        assert pipeline["recipe"] == "stream"
+        part_groups = [
+            name
+            for name in archive.namelist()
+            if name.startswith(f"{prefix}/part_")
+            and name.endswith("/zarr.json")
+            and name.count("/") == 2
+        ]
+        assert len(part_groups) == 2
+        diag = json.loads(
+            archive.read(f"{prefix}/part_0/cholesky_factors_diag/zarr.json")
+        )
+        assert diag["data_type"] == "uint8"
 
 
 def test_cache_version_excludes_pre_transpose_flat_artifacts(

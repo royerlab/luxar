@@ -153,7 +153,6 @@ from luxar.demos import (
     stamp_input_digests,
     warn_if_no_cuda_gpu,
 )
-from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.lod_breakpoints import (
@@ -476,7 +475,6 @@ def fit_channel_tiled(
         Stored splat count, or the in-memory fit for ``--show-roundtrip``.
     """
     from luxar.gsplats import fit_tiled
-    from luxar.gsplats.fit_tiled_gsplats import fit_tiled_to_store
 
     global DEVICE
     if DEVICE is None:
@@ -513,46 +511,31 @@ def fit_channel_tiled(
     )
 
     cache_file.parent.mkdir(parents=True, exist_ok=True)
-    if not SHOW_ROUNDTRIP:
-        import tempfile
+    # The display comparison needs an in-memory fit; both modes publish the
+    # same streamed cache so a display flag cannot change the artifact.
+    comparison = fit_tiled(image, **fit_kwargs) if SHOW_ROUNDTRIP else None
 
-        from luxar._zarr_compat import open_group
-        from luxar.demos._lod_policy import _RECIPE_DEFAULTS
-        from luxar.gsplats.io.save_gsplats import _compress_zarr
-        from luxar.gsplats.lod import RecipeParams
+    import tempfile
 
-        with tempfile.TemporaryDirectory(dir=cache_file.parent) as stage:
-            store = Path(stage) / cache_file.name.removesuffix(".zip")
-            fit_tiled_to_store(
-                image,
-                store,
-                recipe="levels",
-                recipe_params=RecipeParams(**_RECIPE_DEFAULTS["adaptive"]),
-                **fit_kwargs,
-            )
-            n_splats = int(open_group(store, mode="r")["fitting"].attrs["n_splats"])
-            _compress_zarr(store, cache_file, "zip", True, None)
-        aprint(f"  Fitted {n_splats:,} splats across all tiles")
-        return n_splats
+    from luxar._zarr_compat import open_group
+    from luxar.gsplats.fit_tiled_gsplats import fit_tiled_to_store
+    from luxar.gsplats.io.save_gsplats import _compress_zarr
+    from luxar.gsplats.lod import RecipeParams
 
-    result = fit_tiled(image, **fit_kwargs)
-
-    n_splats = len(result.amplitudes)
+    with tempfile.TemporaryDirectory(dir=cache_file.parent) as stage:
+        store = Path(stage) / cache_file.name.removesuffix(".zip")
+        fit_tiled_to_store(
+            image,
+            store,
+            recipe="stream",
+            recipe_params=RecipeParams(n_lods=1),
+            encoding_mode=EncodingMode.MEMORY,
+            **fit_kwargs,
+        )
+        n_splats = int(open_group(store, mode="r")["fitting"].attrs["n_splats"])
+        _compress_zarr(store, cache_file, "zip", True, None)
     aprint(f"  Fitted {n_splats:,} splats across all tiles")
-
-    # Cache result
-    aprint(f"  Caching to {cache_file}")
-    save_with_lod(
-        result,
-        cache_file,
-        recipe="adaptive",
-        encoding_mode=EncodingMode.MEMORY,
-        include_fitting_info=True,
-        compress="zip",
-        zip_deflate=True,
-    )
-
-    return result
+    return comparison if comparison is not None else n_splats
 
 
 def fit_all_channels(

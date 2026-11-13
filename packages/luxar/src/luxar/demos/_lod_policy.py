@@ -52,10 +52,11 @@ view the FINEST substitutive level is what shows. Coarse levels are then bytes
 nobody fetches. They earn their keep only where the object is genuinely small on
 screen. Two live exceptions in this repo, and they are different from each other:
 
-* the two 2D pathology slides author ``adaptive`` on ``--recompute`` because
-  they are panned and zoomed, so most tiles are off-screen most of the time —
-  which is what PARTS are for. Their pinned record archives currently serve
-  four-part partitions without per-tile levels;
+* the two 2D pathology slides stream their uniform fit tiles as spatial
+  partitions on ``--recompute``. Most tiles are off-screen while panning, so
+  parts still matter; one additive rung per tile keeps the node count down.
+  Their pinned record archives currently serve four-part partitions without
+  per-tile levels;
 * ``milky_way_dust`` authors ``levels`` on ``--recompute``, and its pinned
   record archive preserves those levels, because the galaxy is orbited at range
   as well as inspected close up. A coarse level really is selected and fetched
@@ -229,11 +230,14 @@ _RECIPE_DEFAULTS: dict[str, dict[str, Any]] = {
     # point is that most tiles are off screen anyway: at 6-7 per side a
     # full-screen view still holds a minority of them.
     #
-    # Shared rather than per-demo on purpose. The only two `adaptive` users are
-    # the two 2D pathology slides, which want the same thing, and this table
-    # exists so they cannot drift apart — a per-demo override would defeat that
-    # for no benefit here. Both need a REFIT for the change to reach their
-    # artifacts (they fit locally and graft their own output).
+    # The two 2D pathology refits now stream their fit tiles directly instead
+    # of building this adaptive tree. At the production 4096/512 grid,
+    # compute_tile_specs gives 35 parts/channel for CODEX and 117 for CMU-1.
+    # With one stream rung, each part is one leaf: root + fitting + pipeline
+    # + parts = up to 38 groups/channel (456 across CODEX's 12 channels) and
+    # 120 groups/channel (360 across CMU-1's 3 channels). Empty tiles reduce
+    # those counts. This is a changed
+    # published layout; these adaptive defaults still apply to other callers.
     "adaptive": {
         "n_lods": 4,
         "max_elements": 1_000_000,
