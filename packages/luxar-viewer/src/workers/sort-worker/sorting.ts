@@ -45,7 +45,8 @@ export interface SortResult {
   /** Compact GPU sort keys, present only for native WebGPU instanced draws. */
   keys?: Uint16Array;
   /**
-   * Time spent inside the backend `sort_splats_by_depth` call, in ms.
+   * Time spent inside the selected backend sort call, including compact
+   * key output when requested, in ms.
    * For compiled WASM this INCLUDES the wasm-bindgen boundary copies
    * (centers copy-in, ordering copy-in/out, mallocs) — the shim performs
    * them inside the exported function; for the TS fallback it is the pure
