@@ -490,9 +490,6 @@ def fit_channel_tiled(
 
     src_shape, src_dtype = acquisition or (None, None)
     fit_kwargs = dict(
-        # One channel of the slide page as read; the fitted image is a resized,
-        # normalized float32 copy of it. fit_tiled applies this to the MERGED
-        # result -- the tiles themselves see crops.
         tile_size=TILE_SIZE,
         overlap=OVERLAP,
         seeds=SEEDS_PER_TILE,
@@ -532,6 +529,9 @@ def fit_channel_tiled(
             recipe="stream",
             recipe_params=RecipeParams(n_lods=1),
             encoding_mode=EncodingMode.MEMORY,
+            # One channel of the slide page as read; the fitted image is a resized,
+            # normalized float32 copy of it. The tiled fit applies this to the MERGED
+            # result -- the tiles themselves see crops.
             source_shape=src_shape,
             source_dtype=src_dtype,
             **fit_kwargs,
