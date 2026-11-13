@@ -359,6 +359,8 @@ describe('captureViewerState — animation block', () => {
   function createMockAnimationManager(states: Array<Record<string, unknown> | null>) {
     return {
       getState: (i: number) => states[i] ?? null,
+      // The Speed menu's effective view; a stub state names it as `view`.
+      getSpeedView: (i: number) => states[i]?.view ?? 'fps',
     } as any;
   }
 
@@ -420,6 +422,40 @@ describe('captureViewerState — animation block', () => {
     // Auto (absent/null) must stay ABSENT — the exported shape for untouched
     // overrides is unchanged.
     expect('step_size' in state.animation![1]).toBe(false);
+  });
+
+  it('a rate the Speed menu shows as a period is written back as period_s', () => {
+    const state = buildState([
+      {
+        isPlaying: true,
+        targetFPS: 1 / 20,
+        loopMode: 'loop',
+        direction: 'forward',
+        view: 'period',
+      },
+      { isPlaying: true, targetFPS: 0.5, loopMode: 'loop', direction: 'forward', view: 'fps' },
+    ]);
+    expect(state.animation![0]).toEqual({
+      playing: true,
+      period_s: 20,
+      loop: 'loop',
+      direction: 'forward',
+    });
+    // Rounded, so an authored period is written back as authored.
+    expect(
+      buildState([
+        {
+          isPlaying: true,
+          targetFPS: 1 / 49,
+          loopMode: 'loop',
+          direction: 'forward',
+          view: 'period',
+        },
+      ]).animation![0]
+    ).toMatchObject({ period_s: 49 });
+    // Shown in fps: written as target_fps, whatever the rate.
+    expect(state.animation![1]).toMatchObject({ target_fps: 0.5 });
+    expect('period_s' in state.animation![1]).toBe(false);
   });
 
   it('omits animation entirely when NO dimension has playing/queued state (hasAnyState=false)', () => {

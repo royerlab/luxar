@@ -27,6 +27,7 @@ from luxar.demos.demo_esm3_protein_stories import (
     Story,
     story_camera,
     story_narration,
+    text_vh,
 )
 from luxar.demos.demo_esm_protein_universe import (
     BUBBLE_MIN_RADIUS,
@@ -1220,7 +1221,7 @@ def test_the_caption_sits_just_under_the_turntable(
     aspect: float, expected: float
 ) -> None:
     """The clip is sized in viewport WIDTH, so its bottom edge moves with the aspect."""
-    x, y = demo.turntable_caption_position(aspect)
+    x, y = demo.turntable_caption_position(replace(demo.DEFAULT_LAYOUT, aspect=aspect))
     assert y == pytest.approx(expected, abs=1e-3)
     # Perspective rotation can lower the silhouette ~0.01 viewport height
     # beyond the poster on a square display; leave visible room after that.
@@ -1251,3 +1252,212 @@ def test_the_kiosk_caption_hangs_from_the_clip_in_its_own_units() -> None:
     assert "var(--luxar-text-scale, 1)" in html_
     x, y = demo.kiosk_caption_anchor()
     assert (x, y) == (pytest.approx(0.06 + 0.26 / 2), demo.TURNTABLE_POSITION[1])
+
+
+# --------------------------------------------------------------------------- #
+# Screen shape (`--aspect`) and auto-advance (`--auto-advance`)
+# --------------------------------------------------------------------------- #
+
+#: The Biohub lobby wall: 7200 x 1360 px.
+LOBBY = 7200 / 1360
+
+
+def test_without_an_aspect_the_layout_is_the_one_every_build_used() -> None:
+    """No `--aspect` = today's layout: the old constants, unchanged HTML."""
+    layout = demo.DEFAULT_LAYOUT
+    assert layout.turntable_position == demo.TURNTABLE_POSITION == (0.06, 0.5)
+    assert layout.turntable_width == demo.TURNTABLE_WIDTH == 0.26
+    assert (layout.panel_position, layout.panel_anchor) == ((0.98, 0.5), "center-right")
+    assert layout.panel_width == demo.PANEL_WIDTH
+    assert layout.panel_measure_em is None
+    assert layout.logo_width == demo.BIOHUB_LOGO_WIDTH
+    # The panel box: exactly the markup the panels opened with before.
+    assert demo.panel_box_open("#ffffff") == (
+        f'<div style="font-size:{text_vh(1.3)};line-height:1.35;color:#e8e8e8;'
+        "background:rgba(0,0,0,0.62);padding:1.4vh 1.6vh;border-radius:6px;"
+        'border-left:0.5vh solid #ffffff">'
+    )
+    panel = demo.story_panel_for(STORIES[0], 100, 1, len(STORIES), unit="clusters")
+    assert "width:" not in panel.split(">", 1)[0]  # no measure on the box
+
+
+@pytest.mark.parametrize(
+    ("aspect", "text_scale"),
+    [
+        *((a, s) for a in (LOBBY, 48 / 9, 32 / 9, 16 / 9) for s in (0.8, 1.0, 1.5)),
+        (48 / 9, 4.0),  # the largest text scale still fits a wide wall
+        (1.0, 0.8),  # the square exhibit wall at its own text scale
+    ],
+)
+def test_the_wall_layout_keeps_every_box_on_screen_and_off_the_map(
+    aspect: float, text_scale: float
+) -> None:
+    layout = demo.wall_layout(aspect, text_scale)
+    tx, ty = layout.turntable_position
+    # The turntable square fits the screen height and the screen width.
+    assert layout.turntable_width * aspect <= demo.WALL_TURNTABLE_HEIGHT + 1e-9
+    assert tx >= demo.WALL_MARGIN - 1e-9
+    assert ty == 0.5
+    # The panel stays inside the margins, never wider than the default box, so
+    # it never reaches the turntable, at any shape or text scale.
+    px, _ = layout.panel_position
+    measure = layout.panel_measure_em
+    assert measure is not None
+    assert demo.WALL_MIN_MEASURE_EM <= measure <= demo.WALL_PANEL_MEASURE_EM
+    width = demo.panel_box_width_vh(measure, text_scale) / 100 / aspect
+    assert width <= demo.PANEL_WIDTH + 1e-9
+    assert px >= demo.WALL_MARGIN - 1e-9
+    assert px + width <= 1 - demo.WALL_MARGIN + 1e-9
+    assert tx + layout.turntable_width <= px
+    # Never bigger than the default boxes.
+    assert layout.turntable_width <= demo.TURNTABLE_WIDTH
+    assert layout.logo_width <= demo.BIOHUB_LOGO_WIDTH
+    assert layout.panel_width is None
+
+
+def test_on_the_lobby_wall_the_boxes_flank_the_map_at_wall_size() -> None:
+    """7200x1360: turntable 70% of the height, both boxes clear of the map."""
+    layout = demo.wall_layout(LOBBY, 1.5)
+    height_px, width_px = 1360, 7200
+    assert layout.turntable_width * width_px == pytest.approx(0.70 * height_px)
+    # The map fills the height and is about as wide as tall: keep both boxes
+    # out of the central square (half a screen height either side of centre).
+    half_map = 0.5 / LOBBY
+    tx, _ = layout.turntable_position
+    assert tx + layout.turntable_width <= 0.5 - half_map
+    assert layout.panel_position[0] >= 0.5 + half_map
+    # The logo keeps its 16:9 size in pixels per screen height.
+    assert layout.logo_width * width_px == pytest.approx(
+        demo.BIOHUB_LOGO_WIDTH * 1920 / 1080 * height_px
+    )
+    # ...and the panel measure reaches the HTML.
+    measure = layout.panel_measure_em
+    panel = demo.story_panel_for(
+        STORIES[0], 100, 1, len(STORIES), unit="clusters", measure_em=measure
+    )
+    assert f";width:{measure:g}em" in panel.split(">", 1)[0]
+    overview = overview_panel_html(7_714_508, measure_em=measure)
+    assert f";width:{measure:g}em" in overview.split(">", 1)[0]
+
+
+def test_the_wall_captions_hang_from_the_wall_turntable() -> None:
+    layout = demo.wall_layout(LOBBY, 1.5)
+    html_ = demo.kiosk_caption_html("PDB 1ABC · x", 0.70, layout)
+    expected = 100 * (layout.turntable_width * 0.20 + demo.CAPTION_GAP)
+    assert f"padding-top:{expected:.2f}vw" in html_
+    x, y = demo.kiosk_caption_anchor(layout)
+    assert x == pytest.approx(layout.turntable_position[0] + layout.turntable_width / 2)
+    assert y == layout.turntable_position[1]
+
+
+@pytest.mark.parametrize(
+    ("text", "aspect"),
+    [
+        ("48/9", 48 / 9),
+        ("7200x1360", 7200 / 1360),
+        ("16:9", 16 / 9),
+        ("1", 1.0),
+        ("5.33", 5.33),
+    ],
+)
+def test_parse_aspect_accepts_ratios_resolutions_and_numbers(
+    text: str, aspect: float
+) -> None:
+    assert demo.parse_aspect(text) == pytest.approx(aspect)
+
+
+@pytest.mark.parametrize("text", ["0", "9/0", "100", "wide", "nan", "1/-2"])
+def test_parse_aspect_rejects_nonsense(text: str) -> None:
+    with pytest.raises(ValueError):
+        demo.parse_aspect(text)
+
+
+def test_auto_advance_is_the_story_dimension_playing_slowly() -> None:
+    dims = Dimensions(
+        [
+            Dimension(
+                demo.STORY_DIM, unit="", categories=["Overview", "A"], display=False
+            ),
+            Dimension("x", unit="UMAP", display=True),
+            Dimension("y", unit="UMAP", display=True),
+            Dimension("z", unit="UMAP", display=True),
+        ]
+    )
+    animation = demo.story_auto_advance(dims, 20.0)
+    assert [a.to_dict() for a in animation] == [
+        {"playing": True, "period_s": 20.0, "loop": "loop", "direction": "forward"},
+        {},
+        {},
+        {},
+    ]
+    config = demo._viewer_config(
+        [],
+        (0.0, 0.0, 100.0),
+        auto_rotate=True,
+        audio=False,
+        kiosk=True,
+        animation=animation,
+    )
+    assert config.to_dict()["animation"][0]["period_s"] == 20.0
+
+
+@pytest.mark.parametrize(
+    ("argv", "kiosk", "expected"),
+    [
+        ([], True, {"aspect": None, "text_scale": None, "auto_advance_s": 60.0}),
+        ([], False, {"aspect": None, "text_scale": None, "auto_advance_s": None}),
+        (
+            ["--auto-advance", "0"],
+            True,
+            {"aspect": None, "text_scale": None, "auto_advance_s": None},
+        ),
+        (
+            ["--aspect", "48/9", "--text-scale", "1.5", "--auto-advance", "30"],
+            False,
+            {
+                "aspect": pytest.approx(48 / 9),
+                "text_scale": 1.5,
+                "auto_advance_s": 30.0,
+            },
+        ),
+    ],
+)
+def test_layout_flags(
+    monkeypatch: pytest.MonkeyPatch, argv: list[str], kiosk: bool, expected: dict
+) -> None:
+    monkeypatch.setattr("sys.argv", ["demo", *argv])
+    assert demo.parse_layout_args(kiosk) == expected
+
+
+@pytest.mark.parametrize("value", ["-5", "nan", "inf", "3000000"])  # > 30 days
+def test_auto_advance_flag_is_checked_before_the_build(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setattr("sys.argv", ["demo", "--auto-advance", value])
+    with pytest.raises(ValueError, match="--auto-advance"):
+        demo.parse_layout_args(True)
+
+
+@pytest.mark.parametrize(
+    ("aspect", "text_scale"),
+    [(1.0, 1.0), (4 / 3, 1.5), (0.5, 0.8), (0.2, 0.8), (16 / 9, 4.0)],
+)
+def test_a_screen_too_narrow_for_a_readable_panel_is_refused(
+    aspect: float, text_scale: float
+) -> None:
+    with pytest.raises(ValueError, match="drop --aspect"):
+        demo.wall_layout(aspect, text_scale)
+
+
+def test_a_too_narrow_aspect_fails_before_the_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("sys.argv", ["demo", "--aspect", "1:2"])
+    with pytest.raises(ValueError, match="drop --aspect"):
+        demo.parse_layout_args(True)
+
+
+def test_text_scale_flag_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sys.argv", ["demo", "--text-scale", "9"])
+    with pytest.raises(ValueError, match="--text-scale"):
+        demo.parse_layout_args(True)

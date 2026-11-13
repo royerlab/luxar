@@ -20,6 +20,12 @@ export interface DimensionAnimationConfig {
   };
   presets: {
     fps: number[];
+    /**
+     * Speed-section choices in PERIOD view, in seconds per step (the same
+     * rate as an fps, `1 / period`). See `ui/dimension-sliders.ts`.
+     */
+    periodSeconds: number[];
+    /** Slowest accepted rate, in fps (one step every `1 / customMin` s). */
     customMin: number;
     customMax: number;
     /**
@@ -36,6 +42,15 @@ export interface DimensionAnimationConfig {
   timing: {
     minFrameTimeMs: number;
     continuousTraverseSeconds: number;
+    /**
+     * Tick period (ms) at or above which playback is a SLIDESHOW rather than
+     * frame-paced: each tick is loaded like a manual step and refines to the
+     * full ladder, the playback directives (tick budget, pinned detail, t+1
+     * prefetch, LOD aspiration cap) and the cadence feedback do not apply,
+     * and the clock is held while a reveal-on-arrival waypoint flight is in
+     * the air. See `DimensionAnimationManager`.
+     */
+    slideshowPeriodMs: number;
   };
   ui: {
     showFPSFeedback: boolean;

@@ -95,8 +95,8 @@ describe('updateAllNDNodes', () => {
         getFrameBudgetMs: vi.fn(() => 60),
         getPlaybackLadderDepth: vi.fn(() => null),
         getScrubLadderDepth: vi.fn(() => null),
-        isAnyPlaying: vi.fn(() => true),
-        getPlayingDimIndices: vi.fn(() => [3]),
+        isFramePacedPlaying: vi.fn(() => true),
+        getFramePacedDimIndices: vi.fn(() => [3]),
         peekNextValue: vi.fn(() => 6),
         ...overrides,
       } as never;
@@ -154,7 +154,7 @@ describe('updateAllNDNodes', () => {
 
     it('not playing: releases prefetch resources and does not prefetch', async () => {
       const animationManager = makePlayingAnim({
-        isAnyPlaying: vi.fn(() => false),
+        isFramePacedPlaying: vi.fn(() => false),
         getFrameBudgetMs: vi.fn(() => null),
       });
       const ctx = makeCtx({ getAnimationManager: () => animationManager });
@@ -194,8 +194,8 @@ describe('scrub pinning (not playing)', () => {
       getFrameBudgetMs: vi.fn(() => null),
       getPlaybackLadderDepth: vi.fn(() => null),
       getScrubLadderDepth: vi.fn(() => scrubDepth),
-      isAnyPlaying: vi.fn(() => false),
-      getPlayingDimIndices: vi.fn(() => []),
+      isFramePacedPlaying: vi.fn(() => false),
+      getFramePacedDimIndices: vi.fn(() => []),
       peekNextValue: vi.fn(() => null),
     } as never;
   }
@@ -233,6 +233,29 @@ describe('scrub pinning (not playing)', () => {
     // through the first NON-displayed dimension (3 here), never a displayed axis.
     vi.advanceTimersByTime(SCRUB_SETTLE_MS + 1);
     expect(setValue).toHaveBeenCalledWith(3, 5, { force: true });
+  });
+
+  it('a playing SLIDESHOW takes the scrub path: pinned pass, no prefetch, then the settle pass', async () => {
+    // What a slideshow manager reports (dimension-animation-slideshow.test.ts
+    // pins this side): a dimension IS playing, but none is frame-paced.
+    const slideshow = Object.assign(makeIdleAnim(6) as object, {
+      isAnyPlaying: vi.fn(() => true),
+    }) as never;
+    const ctx = makeCtx({ getAnimationManager: () => slideshow });
+
+    await updateAllNDNodes(ctx);
+
+    expect(updateSceneForDimensions).toHaveBeenCalledWith(
+      expect.anything(),
+      dims,
+      expect.anything(),
+      undefined,
+      { frameBudgetMs: undefined, ladderDepth: 6 }
+    );
+    expect(prefetchSceneForDimensions).not.toHaveBeenCalled();
+    expect(releasePrefetchResources).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(SCRUB_SETTLE_MS + 1);
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledWith(3, 5, { force: true });
   });
 
   it('a settle pass carries no directive (the listener runs while the settle flag is set)', async () => {

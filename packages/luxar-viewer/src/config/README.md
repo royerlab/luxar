@@ -291,13 +291,15 @@ dimensionAnimation: {
     direction: 'forward'              // 'forward' | 'backward'
   },
   presets: {
-    fps: [1, 2, 5, 10, 15, 30, 60],   // Quick FPS presets
-    customMin: 0.1,                   // Minimum custom FPS
+    fps: [0.5, 1, 2, 5, 10, 15, 30, 60, 120],            // Quick FPS presets
+    periodSeconds: [1, 2, 5, 10, 20, 30, 60, 120], // Same, as s/step (one row)
+    customMin: 1 / MAX_ANIMATION_PERIOD_S, // Slowest rate: one step every 30 days
     customMax: 120                    // Maximum custom FPS
   },
   timing: {
-    minFrameTimeMs: 16,               // Minimum frame duration
-    continuousTraverseSeconds: 10     // Duration for continuous traverse mode
+    minFrameTimeMs: 8,                // Minimum frame duration (~120 fps cap)
+    continuousTraverseSeconds: 10,    // Duration for continuous traverse mode
+    slideshowPeriodMs: 2000           // Slower playback is a slideshow (loads like a manual step)
   },
   ui: {
     showFPSFeedback: true,            // Log playback cadence/committed-quality feedback

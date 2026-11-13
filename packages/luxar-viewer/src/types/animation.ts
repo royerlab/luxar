@@ -57,7 +57,18 @@ export interface DimensionAnimationState {
    * stepping stays on the dimension's own base step.
    */
   stepSize: number | null;
+  /**
+   * How the Speed control presents this dimension's rate: `'fps'` (steps per
+   * second) or `'period'` (seconds per step), or null to pick from the rate
+   * (period below 1 fps). Set by the slider's Speed toggle or by an authored
+   * `viewer_config.animation[].period_s`. Capture writes `period_s` whenever the
+   * effective view (`getSpeedView`, null resolved) is `'period'`.
+   */
+  speedView: SpeedView | null;
 }
+
+/** How a playback rate is presented: steps per second or seconds per step. */
+export type SpeedView = 'fps' | 'period';
 
 /**
  * Animation events emitted by DimensionAnimationManager

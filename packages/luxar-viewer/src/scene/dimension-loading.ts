@@ -29,7 +29,8 @@ export interface DimensionLoadingContext {
  * budget, and the playback "detail" — a pinned rung count that makes the
  * loaders load exactly that many rungs per frame (cold or not) instead of
  * whatever fits the budget, the tick waiting for it (consistent frames at an
- * adaptive rate). Both undefined outside playback.
+ * adaptive rate). Both undefined outside FRAME-PACED playback: a slideshow tick
+ * (`timing.slideshowPeriodMs`) takes the scrub path below, like a manual step.
  */
 function playbackDirectives(anim: DimensionAnimationManager | undefined): {
   frameBudgetMs: number | undefined;
@@ -40,7 +41,8 @@ function playbackDirectives(anim: DimensionAnimationManager | undefined): {
   if (frameBudgetMs !== undefined) {
     return { frameBudgetMs, ladderDepth: anim.getPlaybackLadderDepth() ?? undefined };
   }
-  // Not playing: a SCRUB (slider drag, keyboard step, pause re-trigger). Pin it
+  // Not frame-paced: a SCRUB (slider drag, keyboard step, slideshow tick, pause
+  // re-trigger). Pin it
   // to the scrub detail so a heavy time-lapse reads consistently while it is
   // dragged; the settle pass below refines to the full ladder once quiet. The
   // settle pass itself carries no directive.
@@ -63,14 +65,14 @@ let scrubSettlePassPending = false;
  * Schedule the unpinned settle pass that follows a pinned scrub pass: after
  * `SCRUB_SETTLE_MS` without another slice change, re-notify the dimension
  * listeners at the current position with no playback directive, so the normal
- * refine pass and refinement run complete the ladder. Skipped if playback has
- * started meanwhile (the pause re-trigger covers that path).
+ * refine pass and refinement run complete the ladder. Skipped if frame-paced
+ * playback has started meanwhile (the pause re-trigger covers that path).
  */
 function scheduleScrubSettle(ctx: DimensionLoadingContext): void {
   if (scrubSettleTimer !== null) clearTimeout(scrubSettleTimer);
   scrubSettleTimer = setTimeout(() => {
     scrubSettleTimer = null;
-    if (ctx.getAnimationManager()?.isAnyPlaying()) return;
+    if (ctx.getAnimationManager()?.isFramePacedPlaying()) return;
     const dims = sceneDimsManager.getDims();
     if (!dims || dims.ndim === 0) return;
     // Prefer a non-displayed dimension (the one that was scrubbed, in the common
@@ -145,10 +147,10 @@ export async function updateAllNDNodes(ctx: DimensionLoadingContext): Promise<vo
   // backward aware via peekNextValue) and warm the S-cache for it on
   // SHADOW loaders (fire-and-forget; aborted by the next foreground pass).
   const anim = ctx.getAnimationManager();
-  if (anim?.isAnyPlaying()) {
+  if (anim?.isFramePacedPlaying()) {
     const nextStep = [...dims.currentStep];
     let predictedAny = false;
-    for (const dimIndex of anim.getPlayingDimIndices()) {
+    for (const dimIndex of anim.getFramePacedDimIndices()) {
       const next = anim.peekNextValue(dimIndex);
       if (next !== null) {
         nextStep[dimIndex] = next;
@@ -166,8 +168,9 @@ export async function updateAllNDNodes(ctx: DimensionLoadingContext): Promise<vo
       );
     }
   } else {
-    // Playback ended (this branch includes the pause refine re-trigger
-    // pass): free the shadow loaders' accumulators until the next play.
+    // No frame-paced playback (ended, never started, or a slideshow; this
+    // branch includes the pause refine re-trigger pass): free the shadow
+    // loaders' accumulators until the next play.
     releasePrefetchResources(SceneLoaderManager.getInstance());
     if (pinnedScrub) scheduleScrubSettle(ctx);
   }

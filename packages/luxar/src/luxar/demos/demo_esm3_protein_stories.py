@@ -1154,13 +1154,58 @@ def text_vh(size: float) -> str:
     return f"calc({size:g}vh * var(--luxar-text-scale, 1))"
 
 
+#: The panels' body text size (vh, before the text scale) and box: padding
+#: (vertical, horizontal) and the coloured left border, in vh. One place, so
+#: the box every panel opens with (:func:`panel_box_open`) and its width
+#: estimate (:func:`panel_box_width_vh`) cannot disagree.
+PANEL_BODY_VH = 1.3
+PANEL_PADDING_VH = (1.4, 1.6)
+PANEL_BORDER_VH = 0.5
+
+
+def panel_box_open(accent: str, *, measure_em: float | None = None) -> str:
+    """The opening tag of a reading panel: a dark box with an ``accent`` border.
+
+    ``measure_em`` fixes the text column's width in ``em`` of the body text,
+    i.e. a number of characters per line that holds at any screen shape and
+    text scale. ``None`` (the default) leaves the width to the overlay box.
+    """
+    pad_v, pad_h = PANEL_PADDING_VH
+    measure = f";width:{measure_em:g}em" if measure_em is not None else ""
+    return (
+        f'<div style="font-size:{text_vh(PANEL_BODY_VH)};line-height:1.35;color:#e8e8e8;'
+        f"background:rgba(0,0,0,0.62);padding:{pad_v:g}vh {pad_h:g}vh;border-radius:6px;"
+        f'border-left:{PANEL_BORDER_VH:g}vh solid {accent}{measure}">'
+    )
+
+
+def panel_box_width_vh(measure_em: float, text_scale: float) -> float:
+    """The full width, in vh, of a panel opened with ``measure_em``."""
+    _, pad_h = PANEL_PADDING_VH
+    return measure_em * PANEL_BODY_VH * text_scale + 2 * pad_h + PANEL_BORDER_VH
+
+
+def panel_measure_for_width(width_vh: float, text_scale: float) -> float:
+    """The ``measure_em`` whose panel is ``width_vh`` wide: the inverse of
+    :func:`panel_box_width_vh`."""
+    _, pad_h = PANEL_PADDING_VH
+    return (width_vh - 2 * pad_h - PANEL_BORDER_VH) / (PANEL_BODY_VH * text_scale)
+
+
 def story_panel_html(
-    story: Story, n_members: int, index: int, total: int, *, unit: str = "proteins"
+    story: Story,
+    n_members: int,
+    index: int,
+    total: int,
+    *,
+    unit: str = "proteins",
+    measure_em: float | None = None,
 ) -> str:
     """The right-hand story panel: title, subtitle, facts, open question.
 
     ``unit`` names what the highlight count counts (``proteins`` here; the
-    protein-universe variant highlights ``clusters``).
+    protein-universe variant highlights ``clusters``); ``measure_em`` see
+    :func:`panel_box_open`.
     """
     r, g, b = (int(round(v * 255)) for v in story.color)
     colour = f"#{r:02x}{g:02x}{b:02x}"
@@ -1172,10 +1217,8 @@ def story_panel_html(
     # facts plus the question fit a 16:9 screen with room to spare and a square
     # window without spilling (checked in the browser).
     return (
-        f'<div style="font-size:{text_vh(1.3)};line-height:1.35;color:#e8e8e8;'
-        "background:rgba(0,0,0,0.62);padding:1.4vh 1.6vh;border-radius:6px;"
-        f'border-left:0.5vh solid {colour}">'
-        f'<div style="font-size:{text_vh(1.0)};color:#aaa;letter-spacing:0.15em;'
+        panel_box_open(colour, measure_em=measure_em)
+        + f'<div style="font-size:{text_vh(1.0)};color:#aaa;letter-spacing:0.15em;'
         f'text-transform:uppercase">Story {index} of {total}</div>'
         f'<div style="font-size:{text_vh(2.2)};font-weight:bold;color:{colour};'
         f'margin:{text_vh(0.3)} 0 {text_vh(0.2)}">{html.escape(story.title)}</div>'
@@ -1194,10 +1237,8 @@ def story_panel_html(
 def overview_panel_html(n_proteins: int) -> str:
     """The overview panel shown at story 0."""
     return (
-        f'<div style="font-size:{text_vh(1.3)};line-height:1.35;color:#e8e8e8;'
-        "background:rgba(0,0,0,0.62);padding:1.4vh 1.6vh;border-radius:6px;"
-        'border-left:0.5vh solid #ffffff">'
-        f'<div style="font-size:{text_vh(2.2)};font-weight:bold;margin-bottom:{text_vh(0.6)}">'
+        panel_box_open("#ffffff")
+        + f'<div style="font-size:{text_vh(2.2)};font-weight:bold;margin-bottom:{text_vh(0.6)}">'
         f"{html.escape(OVERVIEW_TITLE)}</div>"
         f"{OVERVIEW_HTML.format(n=n_proteins)}"
         f'<div style="margin-top:{text_vh(1.1)};font-size:{text_vh(1.05)};color:rgba(232,232,232,0.55)">'

@@ -1,5 +1,6 @@
 // Main application class for the Luxar scene player
 
+import { sendDisplayReport } from './app/display-report';
 import { applyTextScale, resolveTextScale } from '../ui/overlay-text-scale';
 import type { SceneManager } from '../scene/scene-manager';
 import {
@@ -167,6 +168,8 @@ export class LuxarApp {
    * `init()`, which assigns the field as its first action.
    */
   private options!: LuxarAppOptions;
+  /** Why the first dataset failed to load, for the display report; else undefined. */
+  private initialLoadError: string | undefined;
 
   /**
    * Per-app emitter for the public embedder events ({@link on}). Deliberately
@@ -351,6 +354,9 @@ export class LuxarApp {
       // cached pick buffer. `this.pickingSystem` is (re)assigned per dataset load,
       // so read it lazily rather than capturing.
       this.layersPanel?.setPickBufferInvalidator(() => this.pickingSystem?.markDirty());
+      // Slideshow playback (a slow period on a story dimension) rests for its
+      // period AFTER a waypoint flight lands, like the reveal-gated captions.
+      this.inputHandler.setSlideshowHold(() => this.isWaypointInTransit());
 
       // Dataset routing: subsystems are wired up, fields are assigned —
       // the orchestrator delegates can now safely read `this.*`.
@@ -381,6 +387,7 @@ export class LuxarApp {
       }
 
       this.isInitialized = true;
+      this.reportDisplay(options);
     } catch (error) {
       log.error(Modules.APP, `Failed to initialize Luxar app: ${getErrorMessage(error)}`, error);
       // Tear down whatever partial state was constructed before the throw.
@@ -391,6 +398,7 @@ export class LuxarApp {
       // top-level error UI; any in-progress error UI from sub-loaders
       // is wiped along with everything else.
       assignFromPartial();
+      this.reportDisplay(options, getErrorMessage(error));
       this.disposePartialInit();
       throw error;
     } finally {
@@ -477,6 +485,7 @@ export class LuxarApp {
     try {
       await this.loadDataset(src);
     } catch (error) {
+      this.initialLoadError = getErrorMessage(error);
       log.error(Modules.APP, `Initial dataset load failed: ${getErrorMessage(error)}`, error);
       notifier.error(datasetLoadErrorMessage(error), { persistent: true });
     }
@@ -805,6 +814,7 @@ export class LuxarApp {
       setTheme: (id) => ThemeManager.getInstance().setTheme(id),
       setDimensionValue: (i, v) => sceneDimsManager.setDimensionValue(i, v),
       setDocumentTitle,
+      playbackPeriodOverride: this.options?.playbackPeriod,
       startDimensionAnimation: (dim, options) => {
         // Resolved lazily: the animation manager is built when a scene with an
         // animatable dimension loads, which for the first dataset happens in
@@ -814,6 +824,7 @@ export class LuxarApp {
           targetFPS: options.targetFPS,
           loopMode: options.loopMode,
           direction: options.direction,
+          speedView: options.speedView,
         });
         // Keep the playback options together, then apply the independent step
         // override. `setStepSize` validates the value itself and rejects a
@@ -892,7 +903,16 @@ export class LuxarApp {
     // Story captions wait for the camera when a waypoint asks for it: the gate
     // reads the LIVE driver, so it holds whichever scene's waypoints are
     // installed, before or after the overlays themselves were created.
-    this.overlayManager.setTransitGate(() => this.session.waypointDriver?.inTransit === true);
+    this.overlayManager.setTransitGate(() => this.isWaypointInTransit());
+  }
+
+  /**
+   * Whether a waypoint flight that asks for an arrival reveal is in the air.
+   * Reads the LIVE driver, so it follows whichever scene's waypoints are
+   * installed. Gates the story captions and holds slideshow playback.
+   */
+  private isWaypointInTransit(): boolean {
+    return this.session.waypointDriver?.inTransit === true;
   }
 
   /**
@@ -1422,6 +1442,22 @@ export class LuxarApp {
       throw new Error('LuxarApp.setLayer called before init()');
     }
     this.layersPanel.setLayer(path, patch);
+  }
+
+  /**
+   * With `?displayReport`, tell the serving folder what this page renders with
+   * -- or, given ``error``, that it failed to start and why (fire-and-forget;
+   * see `core/app/display-report.ts`).
+   */
+  private reportDisplay(options: LuxarAppOptions, error?: string): void {
+    if (options.displayReport === undefined) return;
+    const sceneManager = this.sceneManager as SceneManager | undefined;
+    void sendDisplayReport(sceneManager?.capabilities, {
+      requested: options.renderer ?? null,
+      nonce: options.displayReport,
+      error,
+      datasetError: this.initialLoadError,
+    });
   }
 
   /**

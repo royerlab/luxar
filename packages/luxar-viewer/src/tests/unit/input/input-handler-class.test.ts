@@ -135,6 +135,25 @@ describe('InputHandler — construction', () => {
         )
     ).not.toThrow();
   });
+
+  it('passes the live slideshow hold state to dimension navigation', () => {
+    const handler = new InputHandler(
+      sceneManager,
+      animationController,
+      performanceMonitor,
+      debugConsole
+    );
+    const ctx = (
+      handler as unknown as { makeDimNavSetupCtx(): { isSlideshowHeld?: () => boolean } }
+    ).makeDimNavSetupCtx();
+    let held = false;
+    expect(ctx.isSlideshowHeld?.()).toBe(false);
+    handler.setSlideshowHold(() => held);
+    expect(ctx.isSlideshowHeld?.()).toBe(false);
+    held = true;
+    expect(ctx.isSlideshowHeld?.()).toBe(true);
+    handler.dispose();
+  });
 });
 
 describe('InputHandler — dimension selection feedback', () => {

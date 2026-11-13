@@ -486,7 +486,7 @@
 
 /* Micro-header row: the house §8.3 micro-header (uppercase from CSS —
    the header TEXT is E2E-pinned) + an optional right-aligned muted
-   readout ('fps' unit, the active step quantum). */
+   readout (the active step quantum) or the Speed unit toggle. */
 .luxar-dimension-slider__context-header-row {
   display: flex;
   align-items: baseline;
@@ -520,6 +520,42 @@
   font-variant-numeric: tabular-nums;
   font-size: var(--luxar-text-xs);
   color: var(--luxar-text-muted);
+}
+
+/* Speed unit toggle (fps | period): a two-segment micro control in the
+   Speed header's readout slot, in the readout's mono voice. The active
+   segment uses the selected-chip highlight mix (§6). */
+.luxar-dimension-slider__context-unit-toggle {
+  display: inline-flex;
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-sm);
+  overflow: hidden;
+}
+
+.luxar-dimension-slider__context-unit {
+  appearance: none;
+  padding: 0 var(--luxar-spacing-2);
+  background: transparent;
+  border: none;
+  color: var(--luxar-text-muted);
+  font-family: var(--luxar-font-mono);
+  font-size: var(--luxar-text-xs);
+  line-height: 1.6;
+  cursor: pointer;
+}
+
+.luxar-dimension-slider__context-unit:hover {
+  background: var(--luxar-interactive-hover);
+}
+
+.luxar-dimension-slider__context-unit:focus-visible {
+  outline: 1px solid var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
+  outline-offset: -1px;
+}
+
+.luxar-dimension-slider__context-unit--active {
+  background: color-mix(in srgb, var(--luxar-highlight) 22%, transparent);
+  color: var(--luxar-highlight);
 }
 
 /* One wrapping row of selectable chips per section (§6: the sanctioned
@@ -589,7 +625,8 @@
   padding: var(--luxar-spacing-1) var(--luxar-spacing-1) 0;
 }
 
-.luxar-dimension-slider__context-step-input {
+.luxar-dimension-slider__context-step-input,
+.luxar-dimension-slider__context-rate-input {
   flex: 1 1 64px;
   min-width: 64px;
   width: 64px;
@@ -603,9 +640,39 @@
   padding: 2px var(--luxar-spacing-2);
 }
 
-.luxar-dimension-slider__context-step-input:focus {
+.luxar-dimension-slider__context-step-input:focus,
+.luxar-dimension-slider__context-rate-input:focus,
+.luxar-dimension-slider__context-rate-unit:focus {
   outline: none;
   border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
+}
+
+/* The Speed section's Custom row (either view): a number and a unit, under the chips,
+   aligned to the chip padding like the Step section's custom field. */
+.luxar-dimension-slider__context-rate-custom {
+  display: flex;
+  gap: var(--luxar-spacing-1);
+  padding: var(--luxar-spacing-1) var(--luxar-spacing-1) 0;
+}
+
+.luxar-dimension-slider__context-rate-unit {
+  flex: 0 0 auto;
+  background: var(--luxar-bg-primary);
+  color: var(--luxar-text-primary);
+  border: 1px solid var(--luxar-border-subtle);
+  border-radius: var(--luxar-radius-sm);
+  font-family: var(--luxar-font-mono);
+  font-size: var(--luxar-text-sm);
+  padding: 2px var(--luxar-spacing-1);
+}
+
+/* The current rate is a custom one: mark the row as the selected choice. */
+.luxar-dimension-slider__context-rate-custom--active .luxar-dimension-slider__context-rate-input {
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
+}
+
+.luxar-dimension-slider__context-rate-input[aria-invalid='true'] {
+  border-color: var(--luxar-error);
 }
 
 /* Theme Overrides for Context Menu */

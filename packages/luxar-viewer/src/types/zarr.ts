@@ -207,6 +207,13 @@ export interface ZarrAudioConfig {
 }
 
 /**
+ * Longest `viewer_config.animation[].period_s` accepted by Python, in seconds:
+ * one step every 30 days, the slowest rate the Speed menu's custom period
+ * (seconds to days) accepts. A literal, because Python's test reads it.
+ */
+export const MAX_ANIMATION_PERIOD_S = 2592000;
+
+/**
  * Viewer configuration from Python API (stored in zarr root .zattrs).
  * All fields are optional — only set fields are present.
  * Keys use snake_case to match the Python/zarr convention.
@@ -359,6 +366,11 @@ export interface ZarrViewerConfig {
   animation?: Array<{
     playing?: boolean;
     target_fps?: number;
+    /**
+     * The rate as seconds per step (the period view); takes precedence over
+     * `target_fps` and opens the Speed control in its period view.
+     */
+    period_s?: number;
     loop?: string;
     direction?: string;
     /** Per-dimension step override (absent = Auto). */

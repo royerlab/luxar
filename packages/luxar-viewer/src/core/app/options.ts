@@ -263,6 +263,20 @@ export interface LuxarAppOptions {
   textScale?: number;
 
   /**
+   * Seconds per step for the scene's authored playback, beating every playing
+   * `viewer_config.animation` entry's rate; `0` keeps it from starting. Mirrors
+   * `UrlParams.playbackPeriod` (`?playbackPeriod=30`).
+   */
+  playbackPeriod?: number;
+
+  /**
+   * Send a one-off report of the renderer, window and first load to the
+   * serving folder's `/display-report`, echoing this nonce (the value of
+   * `?displayReport=`). Undefined: no report. Mirrors `UrlParams.displayReport`.
+   */
+  displayReport?: string;
+
+  /**
    * Axis-aligned opening view for the session (`'xy'` | `'xz'` | `'yz'`),
    * beating the scene's authored `viewer_config.camera.view_axis`. Undefined ⇒
    * the authored preset. Mirrors `UrlParams.viewAxis` (`?viewAxis=xz`). See

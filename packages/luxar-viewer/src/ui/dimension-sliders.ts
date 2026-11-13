@@ -14,6 +14,33 @@ import { EventGroup } from '../utils/cross-layer/event-group';
 import { attachLongPress } from '../utils/long-press';
 import { clampWithCyclicWrap, clampInteger } from './dimension-sliders/slider-math';
 import { fractionToThumbLeft, fractionToValue, valueToFraction } from './slider-kit';
+import {
+  PERIOD_UNITS,
+  SPEED_VIEWS,
+  customRate,
+  isPresetRate,
+  rateInBestUnit,
+  rateInUnit,
+  rateUnitLabel,
+  speedChoices,
+  type PeriodUnit,
+} from './dimension-sliders/speed-choices';
+import type { SpeedView } from '../types/animation';
+
+/**
+ * The context menu's section factory (see `showContextMenu`): a header row
+ * (`title`, plus an optional right-aligned `aside` — a muted readout string or
+ * a control element) over one row of chips; returns the chips row.
+ */
+export type ContextSection = (title: string, aside?: string | HTMLElement) => HTMLDivElement;
+
+/** The context menu's chip factory (see `showContextMenu`). */
+export type ContextChip = (
+  labelText: string,
+  selected: boolean,
+  onPick: () => void,
+  opts?: { tooltip?: string; mono?: boolean; grow?: boolean }
+) => HTMLButtonElement;
 
 function placeContextMenuVertically(
   menuHeight: number,
@@ -172,6 +199,9 @@ export class DimensionSliders {
 
   /** Active context menu element (only one can be open at a time) */
   private activeContextMenu: HTMLElement | null = null;
+
+  /** A press on a menu control may blur an input without a related target. */
+  private menuPressPending = false;
 
   /** Stored event handlers for context menu cleanup */
   private contextMenuCleanup: {
@@ -1249,6 +1279,168 @@ export class DimensionSliders {
   }
 
   /**
+   * The context menu's Speed section: one row of rate chips, read either as
+   * steps per second (`fps`: the fps presets; sub-1 rates as fractions, `1/2`)
+   * or as seconds per step (`period`: `1s` … `2m`, for slideshows and slow
+   * time-lapses). Under the chips, either view has a Custom field for any
+   * rate the viewer plays (`buildCustomRateRow`). A two-segment toggle in the header switches the
+   * view in place without closing the menu; the choice is kept per dimension
+   * by the animation manager (`setSpeedView`), which also picks the initial
+   * view. Either view sets the same `targetFPS`.
+   */
+  private buildSpeedSection(
+    dimIndex: number,
+    makeSection: ContextSection,
+    makeChip: ContextChip
+  ): void {
+    const manager = this.animationManager;
+    // Read live, not once: the rows are rebuilt when the view toggles.
+    const currentRate = (): number =>
+      manager?.getState(dimIndex)?.targetFPS ?? config.dimensionAnimation.defaults.targetFPS;
+    const pick = (fps: number): void => {
+      manager?.setTargetFPS(dimIndex, fps);
+      this.closeContextMenu();
+    };
+    const toggle = document.createElement('div');
+    toggle.className = 'luxar-dimension-slider__context-unit-toggle';
+    toggle.setAttribute('role', 'group');
+    toggle.setAttribute('aria-label', 'Speed unit');
+    const segments = SPEED_VIEWS.map(({ view, label, tooltip }) => {
+      const segment = document.createElement('button');
+      segment.type = 'button';
+      segment.className = 'luxar-dimension-slider__context-unit';
+      segment.textContent = label;
+      segment.title = tooltip;
+      segment.dataset.view = view;
+      toggle.appendChild(segment);
+      return { view, segment };
+    });
+    const chips = makeSection('Speed', toggle);
+    let custom: HTMLDivElement | null = null;
+
+    const render = (view: SpeedView): void => {
+      // makeSection() appended the chips row to its section: the field lands
+      // inside the Speed section, outside the chips' radiogroup.
+      const currentFPS = currentRate();
+      const row = this.buildCustomRateRow(dimIndex, currentFPS, view);
+      if (custom) custom.replaceWith(row);
+      else chips.parentElement?.appendChild(row);
+      custom = row;
+      for (const { view: segmentView, segment } of segments) {
+        const active = segmentView === view;
+        segment.classList.toggle('luxar-dimension-slider__context-unit--active', active);
+        segment.setAttribute('aria-pressed', String(active));
+      }
+      chips.replaceChildren(
+        ...speedChoices(view).map((choice) =>
+          makeChip(choice.label, choice.matches(currentFPS), () => pick(choice.fps), {
+            tooltip: choice.tooltip,
+            mono: true,
+          })
+        )
+      );
+    };
+    for (const { view, segment } of segments) {
+      segment.addEventListener('click', () => {
+        manager?.setSpeedView(dimIndex, view);
+        render(view);
+      });
+    }
+    render(manager?.getSpeedView(dimIndex) ?? 'fps');
+  }
+
+  /**
+   * The Speed section's Custom row, in either view: a number and a unit, for
+   * any rate the presets do not name -- seconds to days PER STEP in the period
+   * view, steps PER second to per day in the fps view -- inside the range the
+   * viewer plays. Its own row under the chips, like the Step section's custom
+   * field and for the same reasons: a number input cannot be one of a
+   * radiogroup's radios, and a focused input or select suppresses the global
+   * shortcuts while typing. Shown filled in, and marked as the current
+   * choice, when the rate is not one of the view's presets. An edited value
+   * commits on Enter, on blur leaving the menu, or on a unit change, and
+   * closes the menu. A click on another menu control takes precedence; an
+   * untouched seed never commits, and a unit change converts it in place.
+   * A value outside the range is flagged, not set.
+   */
+  private buildCustomRateRow(
+    dimIndex: number,
+    currentFPS: number,
+    view: SpeedView
+  ): HTMLDivElement {
+    const row = document.createElement('div');
+    row.className = 'luxar-dimension-slider__context-rate-custom';
+    row.dataset.view = view;
+    const amount = document.createElement('input');
+    amount.type = 'number';
+    amount.className = 'luxar-dimension-slider__context-rate-input';
+    amount.min = '0';
+    amount.step = 'any';
+    amount.placeholder = 'custom';
+    amount.setAttribute('aria-label', view === 'period' ? 'Custom period' : 'Custom rate');
+    const unit = document.createElement('select');
+    unit.className = 'luxar-dimension-slider__context-rate-unit';
+    unit.setAttribute('aria-label', 'Custom unit');
+    for (const { unit: key } of PERIOD_UNITS) {
+      unit.appendChild(new Option(rateUnitLabel(view, key), key));
+    }
+    const current = rateInBestUnit(view, currentFPS);
+    unit.value = view === 'period' ? 'min' : 's';
+    if (!isPresetRate(view, currentFPS)) {
+      amount.value = String(current.amount);
+      unit.value = current.unit;
+      row.classList.add('luxar-dimension-slider__context-rate-custom--active');
+    }
+    // Only an EDITED value commits: the seed is a display form, and
+    // committing it untouched would round the rate (as the Step field guards).
+    // Every commit that sets a rate closes the menu, as a chip does, so the
+    // menu never shows a rate it no longer has.
+    let edited = false;
+    let committed = false;
+    let shownUnit = unit.value as PeriodUnit;
+    const commit = (): void => {
+      if (committed) return; // closing blurs the input, which would commit again
+      const fps = customRate(view, parseFloat(amount.value), unit.value as PeriodUnit);
+      amount.setAttribute('aria-invalid', String(fps === null && amount.value !== ''));
+      if (fps === null) return;
+      committed = true;
+      this.animationManager?.setTargetFPS(dimIndex, fps);
+      this.closeContextMenu();
+    };
+    amount.addEventListener('input', () => {
+      edited = true;
+    });
+    amount.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      if (edited) commit();
+      else this.closeContextMenu();
+    });
+    amount.addEventListener('blur', (e) => {
+      // Let a clicked menu control receive its click before the menu closes.
+      if (
+        this.menuPressPending ||
+        (e.relatedTarget instanceof Node && this.activeContextMenu?.contains(e.relatedTarget))
+      ) {
+        return;
+      }
+      if (edited) commit();
+    });
+    unit.addEventListener('change', () => {
+      const next = unit.value as PeriodUnit;
+      if (edited) {
+        if (amount.value !== '') commit();
+      } else if (amount.value !== '') {
+        // An untouched seed keeps its RATE: rewrite the number in the new unit.
+        const fps = customRate(view, parseFloat(amount.value), shownUnit);
+        if (fps !== null) amount.value = String(rateInUnit(view, fps, next));
+      }
+      shownUnit = next;
+    });
+    row.append(amount, unit);
+    return row;
+  }
+
+  /**
    * Show context menu for animation settings (Napari-style)
    * @private
    */
@@ -1258,12 +1450,22 @@ export class DimensionSliders {
 
     // Get current animation state
     const state = this.animationManager?.getState(dimIndex);
-    const currentFPS = state?.targetFPS ?? config.dimensionAnimation.defaults.targetFPS;
     const currentLoopMode = state?.loopMode ?? config.dimensionAnimation.defaults.loop;
 
     // Create context menu
     const menu = document.createElement('div');
     menu.className = 'luxar-dimension-slider__context-menu';
+    menu.addEventListener('mousedown', (e) => {
+      if (!(e.target instanceof Element) || !e.target.closest('button, select, input')) return;
+      this.menuPressPending = true;
+      // A cancelled press must not suppress a later blur outside the menu.
+      setTimeout(() => {
+        if (this.activeContextMenu === menu) this.menuPressPending = false;
+      }, 0);
+    });
+    menu.addEventListener('click', () => {
+      this.menuPressPending = false;
+    });
 
     // Compact chip layout (UI Design Guide §6/§8): each section is one
     // micro-header row (title + an optional right-aligned muted readout)
@@ -1271,7 +1473,7 @@ export class DimensionSliders {
     // "active chip/segment" idiom — instead of a tall radio list. Header
     // TEXT stays exactly 'Speed' / 'Loop Mode' / 'Detail' / 'Step' (E2E-pinned); the
     // uppercase rendering comes from CSS.
-    const makeSection = (title: string, aside?: string): HTMLDivElement => {
+    const makeSection: ContextSection = (title, aside) => {
       const section = document.createElement('div');
       section.className = 'luxar-dimension-slider__context-section';
       const headerRow = document.createElement('div');
@@ -1280,7 +1482,9 @@ export class DimensionSliders {
       header.className = 'luxar-dimension-slider__context-header';
       header.textContent = title;
       headerRow.appendChild(header);
-      if (aside) {
+      if (aside instanceof HTMLElement) {
+        headerRow.appendChild(aside);
+      } else if (aside) {
         const asideEl = document.createElement('span');
         asideEl.className = 'luxar-dimension-slider__context-aside';
         asideEl.textContent = aside;
@@ -1296,12 +1500,7 @@ export class DimensionSliders {
       return chips;
     };
 
-    const makeChip = (
-      labelText: string,
-      selected: boolean,
-      onPick: () => void,
-      opts?: { tooltip?: string; mono?: boolean; grow?: boolean }
-    ): HTMLButtonElement => {
+    const makeChip: ContextChip = (labelText, selected, onPick, opts) => {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'luxar-dimension-slider__context-item';
@@ -1316,27 +1515,9 @@ export class DimensionSliders {
       return chip;
     };
 
-    // Speed: FPS presets as mono numeral chips; the unit rides the header
-    // as a muted aside so the chips don't each repeat 'FPS'. Sub-1 rates
-    // read as fractions ('1/2', one frame every 2 s), not decimals.
-    const speedChips = makeSection('Speed', 'fps');
-    config.dimensionAnimation.presets.fps.forEach((fps) => {
-      const label = fps >= 1 ? String(fps) : `1/${Math.round(1 / fps)}`;
-      const tooltip = fps >= 1 ? `${fps} FPS` : `1 frame every ${Math.round(1 / fps)} s`;
-      speedChips.appendChild(
-        makeChip(
-          label,
-          fps === currentFPS,
-          () => {
-            if (this.animationManager) {
-              this.animationManager.setTargetFPS(dimIndex, fps);
-              this.closeContextMenu();
-            }
-          },
-          { tooltip, mono: true }
-        )
-      );
-    });
+    // Speed: the rate as fps or as a period (seconds per step), toggled in the
+    // section header — see buildSpeedSection.
+    this.buildSpeedSection(dimIndex, makeSection, makeChip);
 
     // Loop Mode: three equal segments.
     const loopChips = makeSection('Loop Mode');
@@ -1583,10 +1764,13 @@ export class DimensionSliders {
    * Close active context menu and clean up event listeners
    */
   public closeContextMenu(): void {
-    if (this.activeContextMenu) {
-      this.activeContextMenu.remove();
-      this.activeContextMenu = null;
-    }
+    // Clear the field BEFORE removing: removing a menu whose input has focus
+    // fires that input's blur synchronously, and a blur that commits closes
+    // the menu again -- re-entering here with the node already detached.
+    const menu = this.activeContextMenu;
+    this.activeContextMenu = null;
+    this.menuPressPending = false;
+    menu?.remove();
 
     // Cancel a pending click-outside attach if the menu was closed before
     // the deferred attach fired. Otherwise the listener would be added

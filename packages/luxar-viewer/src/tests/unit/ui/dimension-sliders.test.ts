@@ -660,6 +660,8 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
       setLadderDepth: vi.fn(),
       setStepSize: vi.fn(),
       setTargetFPS: vi.fn(),
+      getSpeedView: vi.fn((): 'fps' | 'period' => 'fps'),
+      setSpeedView: vi.fn(),
       setLoopMode: vi.fn(),
       play: vi.fn(),
       pause: vi.fn(),
@@ -911,6 +913,303 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     half.click();
     expect(stub.setTargetFPS).toHaveBeenCalledWith(3, 0.5);
     sliders.dispose();
+  });
+
+  it('speed unit toggle: period view offers seconds/minutes and sets 1/period', () => {
+    const sliders = buildSliders();
+    const stub = makeAnimationManagerStub();
+    sliders.setAnimationManager(stub as never);
+    document
+      .querySelector('.luxar-dimension-slider__play-btn')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    const chipLabels = (): string[] =>
+      Array.from(
+        document.querySelectorAll('[role="radiogroup"][aria-label="Speed"] button'),
+        (c) => c.textContent ?? ''
+      );
+    const segment = (view: string): HTMLButtonElement =>
+      document.querySelector(`.luxar-dimension-slider__context-unit[data-view="${view}"]`)!;
+
+    // Opens in the manager's view (fps), header text still exactly 'Speed'.
+    expect(chipLabels()).toContain('10');
+    expect(segment('fps').getAttribute('aria-pressed')).toBe('true');
+    expect(segment('period').getAttribute('aria-pressed')).toBe('false');
+
+    // Toggling re-renders in place (menu stays open) and records the choice.
+    segment('period').click();
+    expect(stub.setSpeedView).toHaveBeenCalledWith(3, 'period');
+    expect(document.querySelector('.luxar-dimension-slider__context-menu')).not.toBeNull();
+    expect(segment('period').getAttribute('aria-pressed')).toBe('true');
+    expect(chipLabels()).toEqual(['1s', '2s', '5s', '10s', '20s', '30s', '1m', '2m']);
+
+    const twenty = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('[role="radiogroup"][aria-label="Speed"] button')
+    ).find((c) => c.textContent === '20s')!;
+    expect(twenty.title).toBe('1 step every 20 s');
+    twenty.click();
+    expect(stub.setTargetFPS).toHaveBeenCalledWith(3, 1 / 20);
+    sliders.dispose();
+  });
+
+  it('speed unit toggle: opens in period view and checks the playing period', () => {
+    const sliders = buildSliders();
+    const stub = makeAnimationManagerStub();
+    stub.getSpeedView = vi.fn(() => 'period' as const);
+    stub.getState = vi.fn(() => ({ targetFPS: 1 / 20 }) as never);
+    sliders.setAnimationManager(stub as never);
+    document
+      .querySelector('.luxar-dimension-slider__play-btn')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    const checked = Array.from(
+      document.querySelectorAll(
+        '[role="radiogroup"][aria-label="Speed"] button[aria-checked="true"]'
+      ),
+      (c) => c.textContent
+    );
+    expect(checked).toEqual(['20s']);
+    sliders.dispose();
+  });
+
+  describe('custom rate', () => {
+    const open = (): void => {
+      document
+        .querySelector('.luxar-dimension-slider__play-btn')!
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    };
+    const row = (): HTMLDivElement =>
+      document.querySelector('.luxar-dimension-slider__context-rate-custom')!;
+    const amount = (): HTMLInputElement =>
+      document.querySelector('.luxar-dimension-slider__context-rate-input')!;
+    const unit = (): HTMLSelectElement =>
+      document.querySelector('.luxar-dimension-slider__context-rate-unit')!;
+    const menuOpen = (): boolean =>
+      document.querySelector('.luxar-dimension-slider__context-menu') !== null;
+    const toPeriod = (): void =>
+      document
+        .querySelector<HTMLButtonElement>(
+          '.luxar-dimension-slider__context-unit[data-view="period"]'
+        )!
+        .click();
+    const type = (value: string): void => {
+      amount().value = value;
+      amount().dispatchEvent(new Event('input'));
+    };
+    const enter = (): void => {
+      amount().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    };
+
+    it('closes once when closing blurs the focused field (Enter, click outside)', () => {
+      // A browser fires the focused input's blur DURING menu.remove(); that
+      // blur commits and closes again. Emulate it: the second close must be
+      // a no-op, not a second remove of a detached node (a NotFoundError in Chrome).
+      const sliders = buildSliders();
+      const stub = makeAnimationManagerStub();
+      sliders.setAnimationManager(stub as never);
+      open();
+      type('24');
+      const menu = document.querySelector<HTMLElement>('.luxar-dimension-slider__context-menu')!;
+      const detach = menu.remove.bind(menu);
+      let removals = 0;
+      menu.remove = () => {
+        removals += 1;
+        if (removals === 1) amount().dispatchEvent(new Event('blur'));
+        detach();
+      };
+      enter();
+      expect(removals).toBe(1);
+      expect(stub.setTargetFPS).toHaveBeenCalledTimes(1);
+      expect(menuOpen()).toBe(false);
+    });
+
+    it('is in both views, read per unit time (fps) or per step (period)', () => {
+      const sliders = buildSliders();
+      const stub = makeAnimationManagerStub();
+      sliders.setAnimationManager(stub as never);
+      open();
+      expect(row().dataset.view).toBe('fps');
+      expect(Array.from(unit().options, (o) => o.textContent)).toEqual(['/s', '/min', '/h', '/d']);
+      // Not inside the chips' radiogroup (a number input is no radio).
+      expect(row().closest('[role="radiogroup"]')).toBeNull();
+      type('24');
+      amount().dispatchEvent(new Event('blur'));
+      expect(stub.setTargetFPS).toHaveBeenLastCalledWith(3, 24);
+      expect(menuOpen()).toBe(false); // a commit closes the menu, as a chip does
+
+      open();
+      toPeriod();
+      expect(row().dataset.view).toBe('period');
+      expect(Array.from(unit().options, (o) => o.textContent)).toEqual(['s', 'min', 'h', 'd']);
+      type('3');
+      unit().value = 'h';
+      unit().dispatchEvent(new Event('change'));
+      expect(stub.setTargetFPS).toHaveBeenLastCalledWith(3, 1 / (3 * 3600));
+      expect(menuOpen()).toBe(false);
+      sliders.dispose();
+    });
+
+    it('flags a value outside the range and sets nothing', () => {
+      const sliders = buildSliders();
+      const stub = makeAnimationManagerStub();
+      sliders.setAnimationManager(stub as never);
+      open();
+      toPeriod();
+      unit().value = 'd';
+      type('40');
+      enter();
+      expect(amount().getAttribute('aria-invalid')).toBe('true');
+      expect(stub.setTargetFPS).not.toHaveBeenCalled();
+      expect(menuOpen()).toBe(true);
+      sliders.dispose();
+    });
+
+    it('moving to the unit picker does not commit the number in the old unit', () => {
+      const sliders = buildSliders();
+      const stub = makeAnimationManagerStub();
+      sliders.setAnimationManager(stub as never);
+      open();
+      toPeriod();
+      type('45');
+      amount().dispatchEvent(new FocusEvent('blur', { relatedTarget: unit() }));
+      expect(stub.setTargetFPS).not.toHaveBeenCalled();
+      unit().value = 's';
+      unit().dispatchEvent(new Event('change'));
+      expect(stub.setTargetFPS).toHaveBeenCalledTimes(1);
+      expect(stub.setTargetFPS).toHaveBeenLastCalledWith(3, 1 / 45);
+      sliders.dispose();
+    });
+
+    it('lets a speed chip win when an edited Custom field blurs into the menu', () => {
+      const sliders = buildSliders();
+      const stub = makeAnimationManagerStub();
+      sliders.setAnimationManager(stub as never);
+      open();
+      toPeriod();
+      type('45');
+      const chip = Array.from(
+        document.querySelectorAll<HTMLButtonElement>(
+          '[role="radiogroup"][aria-label="Speed"] button'
+        )
+      ).find((button) => button.textContent === '10s')!;
+      amount().dispatchEvent(new FocusEvent('blur', { relatedTarget: chip }));
+      expect(menuOpen()).toBe(true);
+      chip.click();
+      expect(stub.setTargetFPS).toHaveBeenCalledTimes(1);
+      expect(stub.setTargetFPS).toHaveBeenLastCalledWith(3, 1 / 10);
+      expect(menuOpen()).toBe(false);
+      sliders.dispose();
+    });
+
+    it('lets a speed chip win when its mouse press blurs the field without focusing the chip', () => {
+      const sliders = buildSliders();
+      const stub = makeAnimationManagerStub();
+      sliders.setAnimationManager(stub as never);
+      open();
+      toPeriod();
+      type('45');
+      const chip = Array.from(
+        document.querySelectorAll<HTMLButtonElement>(
+          '[role="radiogroup"][aria-label="Speed"] button'
+        )
+      ).find((button) => button.textContent === '10s')!;
+      chip.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      amount().dispatchEvent(new FocusEvent('blur', { relatedTarget: null }));
+      expect(menuOpen()).toBe(true);
+      chip.click();
+      expect(stub.setTargetFPS).toHaveBeenCalledTimes(1);
+      expect(stub.setTargetFPS).toHaveBeenLastCalledWith(3, 1 / 10);
+      expect(menuOpen()).toBe(false);
+      sliders.dispose();
+    });
+
+    it('commits an edited rate when a press on a menu header blurs the field', () => {
+      const sliders = buildSliders();
+      const stub = makeAnimationManagerStub();
+      sliders.setAnimationManager(stub as never);
+      open();
+      toPeriod();
+      type('45');
+      const header = document.querySelector<HTMLElement>(
+        '.luxar-dimension-slider__context-header-row'
+      )!;
+      header.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      amount().dispatchEvent(new FocusEvent('blur', { relatedTarget: null }));
+      expect(stub.setTargetFPS).toHaveBeenCalledExactlyOnceWith(3, 1 / 45);
+      expect(menuOpen()).toBe(false);
+      sliders.dispose();
+    });
+
+    it('commits a later blur after an inside press produces no click', async () => {
+      const sliders = buildSliders();
+      const stub = makeAnimationManagerStub();
+      sliders.setAnimationManager(stub as never);
+      open();
+      toPeriod();
+      type('45');
+      row().dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      amount().dispatchEvent(new FocusEvent('blur', { relatedTarget: null }));
+      expect(stub.setTargetFPS).toHaveBeenCalledTimes(1);
+      expect(stub.setTargetFPS).toHaveBeenLastCalledWith(3, 1 / 45);
+      expect(menuOpen()).toBe(false);
+      sliders.dispose();
+    });
+
+    it('a rate that is no preset opens seeded and marked; an untouched seed never commits', () => {
+      const sliders = buildSliders();
+      const stub = makeAnimationManagerStub();
+      stub.getSpeedView = vi.fn(() => 'period' as const);
+      stub.getState = vi.fn(() => ({ targetFPS: 1 / (2 * 86400) }) as never);
+      sliders.setAnimationManager(stub as never);
+      open();
+      expect(row().classList).toContain('luxar-dimension-slider__context-rate-custom--active');
+      expect(amount().value).toBe('2');
+      expect(unit().value).toBe('d');
+      expect(
+        document.querySelectorAll('[role="radiogroup"][aria-label="Speed"] [aria-checked="true"]')
+      ).toHaveLength(0);
+      amount().dispatchEvent(new Event('blur'));
+      // A unit change converts the seed, keeping the rate: 2 d is 48 h.
+      unit().value = 'h';
+      unit().dispatchEvent(new Event('change'));
+      expect(amount().value).toBe('48');
+      enter(); // untouched: just closes
+      expect(stub.setTargetFPS).not.toHaveBeenCalled();
+      expect(menuOpen()).toBe(false);
+      sliders.dispose();
+    });
+
+    it('a seed at the range bound passes its own check (120 fps read as a period)', () => {
+      const sliders = buildSliders();
+      const stub = makeAnimationManagerStub();
+      stub.getSpeedView = vi.fn(() => 'period' as const);
+      stub.getState = vi.fn(() => ({ targetFPS: 120 }) as never);
+      sliders.setAnimationManager(stub as never);
+      open();
+      type(amount().value); // the same seed, now "edited"
+      enter();
+      expect(stub.setTargetFPS).toHaveBeenLastCalledWith(3, 120); // accepted, not flagged
+      expect(menuOpen()).toBe(false);
+      sliders.dispose();
+    });
+
+    it('the chips follow the live rate when the view is toggled', () => {
+      const sliders = buildSliders();
+      const stub = makeAnimationManagerStub();
+      let fps = 10;
+      stub.getState = vi.fn(() => ({ targetFPS: fps }) as never);
+      sliders.setAnimationManager(stub as never);
+      open();
+      fps = 1 / 20; // changed meanwhile (e.g. by a control panel)
+      toPeriod();
+      const checked = Array.from(
+        document.querySelectorAll('[role="radiogroup"][aria-label="Speed"] [aria-checked="true"]'),
+        (c) => c.textContent
+      );
+      expect(checked).toEqual(['20s']);
+      sliders.dispose();
+    });
   });
 
   it('custom step field: blur without editing never re-commits the 3-digit display form', () => {
