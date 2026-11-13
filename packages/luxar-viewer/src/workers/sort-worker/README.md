@@ -137,11 +137,11 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 3. **Stale-drop**: return `null` when `!node || node.generation !== params.generation`
 4. Allocate output to `orderingCapacity` when supplied, and sort into a `node.count`-length view of that buffer
 5. Time the backend call to `sort_splats_by_depth`. Native WebGPU camera refreshes use the texture-based `GpuDepthSorter` directly; the worker retains the CPU repair ordering for commits and fallback.
-6. Return TRANSFERRED ordering and, on the WebGPU path, keys.
+6. Return the TRANSFERRED ordering.
 
 **Timing**:
 
-- `kernelMs` — time spent inside the chosen backend sort call, including key output when requested (includes wasm-bindgen boundary copies for compiled WASM; pure kernel for TS fallback)
+- `kernelMs` — time spent inside the chosen backend sort call (includes wasm-bindgen boundary copies for compiled WASM; pure kernel for TS fallback)
 - `workerMs` — whole `sortNode` body duration (registry lookup + output allocation + kernel)
 - `boundaryMs = workerMs - kernelMs` — worker-side overhead around the backend call (computed on the main thread, in `scheduleSort`'s resolve handler)
 - `queueMs = roundTripMs - workerMs` — Comlink RPC + structured clone + event-loop queueing (computed on the main thread, in the same handler)
@@ -179,7 +179,6 @@ The worker uses the same `wasm/` module as the data workers:
 - `initWasm()` — loads compiled WASM with automatic TypeScript fallback
 - `isWasmFallback(wasm)` — true when running the TS fallback
 - `wasm.sort_splats_by_depth(centers3, modelView, ordering, count)` — the depth-sort kernel
-- `wasm.sort_splats_by_depth_with_keys(centers3, modelView, ordering, keys, count)` — the same kernel with compact key output for WebGPU
 
 **ndim-agnostic**: Input is always projected 3D centers (geometry-agnostic), so there is no `pickBackend` / 16-dimension routing here — the kernel is unconditional. The data workers route >16D operations to the TS backend; the SortWorker never sees nD data at all (projection happens on the main thread or in the data workers).
 

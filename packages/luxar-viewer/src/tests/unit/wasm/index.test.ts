@@ -309,6 +309,12 @@ describe('assertRequiredWasmExports', () => {
     expect(() => assertRequiredWasmExports(stubModule())).not.toThrow();
   });
 
+  it('accepts a module without the retired compact-key export', () => {
+    expect(() =>
+      assertRequiredWasmExports(stubModule({ sort_splats_by_depth_with_keys: undefined }))
+    ).not.toThrow();
+  });
+
   it('names the missing export AND the remediation when a kernel is absent', () => {
     // `compute_joint_codes` is the export whose absence in a stale
     // gitignored build motivated the guard — pin the message format on it.
@@ -336,12 +342,6 @@ describe('assertRequiredWasmExports', () => {
     expect(() =>
       assertRequiredWasmExports(stubModule({ compact_visible_faces: undefined }))
     ).toThrow(/missing required export "compact_visible_faces"/);
-  });
-
-  it('names sort_splats_by_depth_with_keys when only that kernel is missing', () => {
-    expect(() =>
-      assertRequiredWasmExports(stubModule({ sort_splats_by_depth_with_keys: undefined }))
-    ).toThrow(/missing required export "sort_splats_by_depth_with_keys"/);
   });
 
   it('names project_gsplats_nd_to_3d when only that kernel is missing', () => {

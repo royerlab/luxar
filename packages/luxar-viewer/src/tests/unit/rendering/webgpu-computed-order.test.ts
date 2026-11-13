@@ -27,7 +27,7 @@ describe('compute-built ordering handoff', () => {
     const version = inactive.version;
     let applied = 0;
     expect(
-      selectComputedSortedIndexOrdering(geometry, 4, null, {
+      selectComputedSortedIndexOrdering(geometry, 4, {
         onApplied: () => applied++,
       })
     ).toBe(true);
@@ -43,11 +43,11 @@ describe('compute-built ordering handoff', () => {
     geometry.dispose();
   });
 
-  it('refuses a truncated CPU mirror before changing the selected slot', () => {
+  it('refuses a count beyond the ordering buffer before changing the selected slot', () => {
     configureRendererBackendPolicy('webgpu-native');
     const geometry = new THREE.InstancedBufferGeometry();
     attachElementStorage(geometry, 4, POINT_TEXTURE_LAYOUT);
-    expect(selectComputedSortedIndexOrdering(geometry, 4, new Uint32Array([3, 2]))).toBe(false);
+    expect(selectComputedSortedIndexOrdering(geometry, 5)).toBe(false);
     expect(activeSortedIndexSlot(geometry)).toBe(0);
     geometry.dispose();
   });
@@ -58,7 +58,7 @@ describe('compute-built ordering handoff', () => {
     attachElementStorage(geometry, 4, POINT_TEXTURE_LAYOUT);
     writeSortedIndexIdentity(geometry, 4);
     const original = geometry.getAttribute('aSortedIndex') as THREE.BufferAttribute;
-    expect(selectComputedSortedIndexOrdering(geometry, 4, null)).toBe(true);
+    expect(selectComputedSortedIndexOrdering(geometry, 4)).toBe(true);
     expect(writeSortedIndexOrderingLive(geometry, new Uint32Array([2, 0, 3, 1]), 4)).toBe(4);
     expect(Array.from(original.array)).toEqual([2, 0, 3, 1]);
 

@@ -420,46 +420,6 @@ describe('WASM vs TypeScript Comparison', () => {
   // DEPTH SORT MODULE
   // ============================================================================
   describe('depth_sort: sort_splats_by_depth', () => {
-    it.skipIf(!wasmFilesExist)(
-      'returns identical keys with a rotated view, NaN and behind-camera centers',
-      () => {
-        const centers = new Float32Array([
-          4,
-          0,
-          0,
-          1,
-          0,
-          0,
-          8,
-          0,
-          0,
-          -2,
-          0,
-          0,
-          NaN,
-          0,
-          0,
-          8,
-          0,
-          0,
-          0,
-          0,
-          0,
-        ]);
-        const mv = new Float32Array([0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, -1, 1]);
-        const tsOrder = new Uint32Array(7);
-        const wasmOrder = new Uint32Array(7);
-        const tsKeys = new Uint16Array(7);
-        const wasmKeys = new Uint16Array(7);
-        tsModule.sort_splats_by_depth_with_keys(centers, mv, tsOrder, tsKeys, 7);
-        wasmModule!.sort_splats_by_depth_with_keys(centers, mv, wasmOrder, wasmKeys, 7);
-        expect(Array.from(wasmKeys)).toEqual(Array.from(tsKeys));
-        expect(Array.from(wasmOrder)).toEqual(Array.from(tsOrder));
-        expect(Array.from(wasmOrder)).toEqual(
-          Array.from({ length: 7 }, (_, i) => i).sort((a, b) => wasmKeys[a] - wasmKeys[b] || a - b)
-        );
-      }
-    );
     /**
      * Parity for a sorting kernel is EXACT-permutation equality: the TS
      * twin frounds every float step in the Rust op order, so both

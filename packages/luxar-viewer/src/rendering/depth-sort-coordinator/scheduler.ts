@@ -125,7 +125,7 @@ function stageGpuSort(
 ): boolean {
   try {
     if (!submitGpuSort(geometry, count, modelView)) return false;
-    return selectComputedSortedIndexOrdering(geometry, count, null, callbacks);
+    return selectComputedSortedIndexOrdering(geometry, count, callbacks);
   } catch (error) {
     disableGpuOrderProducer();
     log.warning(Modules.WORKER_POOL, 'WebGPU depth ordering failed; using worker order', error);
@@ -194,19 +194,6 @@ export function scheduleSort(
 ): void {
   const state = c.nodeStates.get(nodeId);
   const camera = c.getCamera?.();
-  // `api` is wrapped BEFORE `initializeWithGuard` is awaited, so a live handle
-  // is not the same thing as a usable worker: between the spawn and 'ready'
-  // there is a window in which `sort` would reject NOT_INITIALIZED worker-side
-  // (`requireWasm`). Gating here rather than at each caller keeps it a single
-  // chokepoint — the capture drain's force loop dispatches without consulting
-  // `state.registered`, and a commit stamps `nodeStates` + `committedData`
-  // synchronously, so it can reach this during startup warm-up.
-  //
-  // Skipping beats letting it reject, and not only for the error line:
-  // `recordSortPose` below runs BEFORE the RPC, so a dispatch that rejects
-  // still leaves a pose on record for a sort that never ran — which is exactly
-  // what silences the per-frame `!lastSortAxis` recovery dispatch for a node
-  // whose first real dispatch raced a null camera.
   if (!state || !camera) {
     // Nothing will sort this population, so a held append draw must not wait.
     if (state) releaseHeldDraw(c, mesh);
@@ -217,6 +204,12 @@ export function scheduleSort(
     return;
   }
   if (preferGpu && tryGpuOrdering(c, mesh, state, camera)) return;
+  // Try the GPU before requiring a ready worker, so capture can sort during
+  // worker initialization. `api` is wrapped before `initializeWithGuard`
+  // completes; a live handle alone can reject `sort` as NOT_INITIALIZED.
+  // Gate here because the capture drain dispatches without `registered`.
+  // `recordSortPose` must run only for a dispatched sort, or a failed startup
+  // dispatch would suppress the per-frame `!lastSortAxis` recovery.
   if (!workerHost.api || workerHost.workerInitState !== 'ready') return releaseHeldDraw(c, mesh);
   // NO apply-gate. Sorting and applying run CONCURRENTLY: a stream writes
   // into the inactive buffer, so the displayed ordering stays a complete

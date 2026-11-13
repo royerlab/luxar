@@ -777,20 +777,14 @@ export function pumpSortedIndexOrderingApply(
 export function selectComputedSortedIndexOrdering(
   geometry: THREE.InstancedBufferGeometry,
   count: number,
-  ordering: Uint32Array | null,
   callbacks?: SortedIndexApplyCallbacks
 ): boolean {
   const inactive = getInactiveSortedIndexAttribute(geometry);
-  if (
-    !inactive ||
-    !sortedIndexBuffersUsable(geometry) ||
-    (ordering !== null && ordering.length < count) ||
-    count > inactive.array.length
-  )
+  if (!inactive || !sortedIndexBuffersUsable(geometry) || count > inactive.array.length)
     return false;
   cancelSortedIndexOrderingApply(geometry);
   clearIdentityPrefix(inactive);
-  installComputedMirror(geometry, inactive, ordering, count);
+  installComputedMirror(geometry, inactive);
   // The compute pass wrote the GPU buffer. Deliberately leave `version`
   // unchanged, so three does not overwrite it with the CPU mirror on draw.
   setSortedIndexSlot(geometry, activeSortedIndexSlot(geometry) === 0 ? 1 : 0);
@@ -801,24 +795,15 @@ export function selectComputedSortedIndexOrdering(
 
 function installComputedMirror(
   geometry: THREE.InstancedBufferGeometry,
-  inactive: THREE.BufferAttribute,
-  ordering: Uint32Array | null,
-  count: number
+  inactive: THREE.BufferAttribute
 ): void {
-  const mirror = inactive.array as Uint32Array;
-  if (ordering === null) {
-    // GPU keys can differ by one bucket from the CPU. Keep the last CPU
-    // permutation as the repair seed without copying it on every orbit sort.
-    // The arrays now alias, so a later write through either attribute can
-    // change the other's CPU values without touching its identity memo.
-    const active = getActiveSortedIndexAttribute(geometry)!;
-    clearIdentityPrefix(active);
-    inactive.array = active.array;
-  } else if (ordering.byteOffset === 0 && ordering.buffer.byteLength === mirror.byteLength) {
-    inactive.array = new Uint32Array(ordering.buffer);
-  } else {
-    mirror.set(ordering.subarray(0, count), 0);
-  }
+  // GPU keys can differ by one bucket from the CPU. Keep the last CPU
+  // permutation as the repair seed without copying it on every orbit sort.
+  // The arrays now alias, so a later write through either attribute can
+  // change the other's CPU values without touching its identity memo.
+  const active = getActiveSortedIndexAttribute(geometry)!;
+  clearIdentityPrefix(active);
+  inactive.array = active.array;
 }
 
 /**

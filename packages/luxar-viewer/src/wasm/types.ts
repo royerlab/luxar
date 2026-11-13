@@ -65,15 +65,6 @@ export interface WasmModule {
     count: number
   ): number;
 
-  /** Sort and write the exact uint16 keys used for that permutation. */
-  sort_splats_by_depth_with_keys(
-    centers3: Float32Array,
-    modelView: Float32Array,
-    ordering: Uint32Array,
-    keys: Uint16Array,
-    count: number
-  ): number;
-
   // ============================================================================
   // DECODE FUNCTIONS - Dequantize compressed data formats
   // ============================================================================
