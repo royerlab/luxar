@@ -10,8 +10,10 @@ import {
   METRIC_DIRECTIONS,
   runSuite,
   serverMetrics,
+  suiteMarkdown,
   validateExpectations,
   validateMetricDirections,
+  validateWebGPUFirstFrameGapTargets,
 } from './suites.mjs';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -209,7 +211,7 @@ describe('manifest expectations', () => {
 });
 
 describe('hosted WebGPU cold-start target', () => {
-  async function run(webgpuCandidateMs, backends = ['webgl', 'webgpu']) {
+  async function run(webgpuCandidateMs, backends = ['webgl', 'webgpu'], webgpuBaseMs = 1160) {
     const servers = Object.fromEntries(
       ['base', 'cand'].map((arm) => [
         arm,
@@ -243,7 +245,11 @@ describe('hosted WebGPU cold-start target', () => {
             if (fn === ops.coldLoad) {
               return {
                 firstFrameMs:
-                  backend === 'webgl' ? 1000 : origin.endsWith('base') ? 1160 : webgpuCandidateMs,
+                  backend === 'webgl'
+                    ? 1000
+                    : origin.endsWith('base')
+                      ? webgpuBaseMs
+                      : webgpuCandidateMs,
               };
             }
             return {};
@@ -290,6 +296,16 @@ describe('hosted WebGPU cold-start target', () => {
       reasons: ['backend-gap'],
       failures: ['WebGPU first-frame gap is unavailable'],
     });
+  });
+
+  it('flags a baseline gap above the target as noisy without failing a passing candidate', async () => {
+    const noisy = await run(1140);
+    expect(noisy.find((r) => r.backend === 'webgpu').status).toBe('pass');
+    expect(suiteMarkdown('hosted', noisy).join('\n')).toContain(
+      'pass [max 150 ms] [baseline gap above target: noisy run]'
+    );
+    const quiet = await run(1140, ['webgl', 'webgpu'], 1140);
+    expect(suiteMarkdown('hosted', quiet).join('\n')).not.toContain('noisy run');
   });
 });
 
@@ -576,6 +592,53 @@ describe('validateMetricDirections', () => {
     c.expectations = { renders: 'quiet' };
     expect(() => validateMetricDirections({ counters: { cases: [c] } })).toThrow(
       /unknown expectation 'quiet'/
+    );
+  });
+});
+
+describe('validateWebGPUFirstFrameGapTargets', () => {
+  const validCase = () => ({
+    id: 'cold_zip_mixed',
+    maxWebGPUFirstFrameGapMs: 150,
+    metrics: [{ name: 'firstFrameMs', kind: 'timing' }],
+  });
+  const suites = (c, backends = ['webgl', 'webgpu']) => ({
+    hosted: { defaults: { backends }, cases: [c] },
+  });
+
+  it('accepts the same implicit backend default used by the runner and a zero target', () => {
+    expect(() =>
+      validateWebGPUFirstFrameGapTargets({ hosted: { cases: [validCase()] } })
+    ).not.toThrow();
+    expect(() =>
+      validateWebGPUFirstFrameGapTargets(suites({ ...validCase(), maxWebGPUFirstFrameGapMs: 0 }))
+    ).not.toThrow();
+  });
+
+  it.each(['150', NaN, Infinity, -1])('rejects invalid target %s', (target) => {
+    expect(() =>
+      validateWebGPUFirstFrameGapTargets(
+        suites({ ...validCase(), maxWebGPUFirstFrameGapMs: target })
+      )
+    ).toThrow(/cold_zip_mixed: invalid WebGPU first-frame gap target/);
+  });
+
+  it.each(['webgl', 'webgpu'])('requires %s in the configured backends', (backend) => {
+    const other = backend === 'webgl' ? 'webgpu' : 'webgl';
+    expect(() => validateWebGPUFirstFrameGapTargets(suites(validCase(), [other]))).toThrow(
+      `cold_zip_mixed: WebGPU first-frame gap requires ${backend} backend`
+    );
+  });
+
+  it('requires firstFrameMs as a timing metric', () => {
+    const c = validCase();
+    c.metrics = [{ name: 'firstFrameMs', kind: 'counter' }];
+    expect(() => validateWebGPUFirstFrameGapTargets(suites(c))).toThrow(
+      'cold_zip_mixed: WebGPU first-frame gap requires firstFrameMs timing metric'
+    );
+    c.metrics = [];
+    expect(() => validateWebGPUFirstFrameGapTargets(suites(c))).toThrow(
+      'cold_zip_mixed: WebGPU first-frame gap requires firstFrameMs timing metric'
     );
   });
 });

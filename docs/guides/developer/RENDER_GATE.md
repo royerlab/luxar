@@ -475,6 +475,11 @@ median `firstFrameMs` must be no more than 150 ms above the WebGL candidate's
 median; the report shows the baseline gap as well. This is an absolute target
 in addition to each backend's A/B regression judgment. Run it on an idle host:
 the identical-build A/A spread can be comparable to the target under load.
+The WebGPU row fails with reason `backend-gap` if the candidate gap exceeds the
+target or either first-frame median is unavailable. A baseline gap above the
+target is marked as a noisy run in the report; it does not change the verdict.
+The cross-backend check is skipped if either backend is not selected (for example,
+`--backends webgpu`) or either backend row errored; that row already fails the run.
 
 The exact and perf suites keep the unconfigured server, whose responses are
 unchanged. Every server logs its requests (`GET /__gate/requests`, cleared by

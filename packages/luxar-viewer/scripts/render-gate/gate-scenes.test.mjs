@@ -2,7 +2,12 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { perfCounterSpec } from '../../src/profiling/perf-counters';
-import { judgeMetric, METRIC_DIRECTIONS, validateMetricDirections } from './suites.mjs';
+import {
+  judgeMetric,
+  METRIC_DIRECTIONS,
+  validateMetricDirections,
+  validateWebGPUFirstFrameGapTargets,
+} from './suites.mjs';
 
 const manifest = JSON.parse(readFileSync(new URL('./gate-scenes.json', import.meta.url), 'utf8'));
 const generator = readFileSync(new URL('./generate_gate_scenes.py', import.meta.url), 'utf8');
@@ -145,6 +150,7 @@ describe('render-gate scene manifest', () => {
 
   it('declares every suite metric in its known direction', () => {
     expect(() => validateMetricDirections(manifest.suites)).not.toThrow();
+    expect(() => validateWebGPUFirstFrameGapTargets(manifest.suites)).not.toThrow();
     // Every metric the shipped manifest gates on has its direction pinned, so
     // a new metric must state which way is better before it can be declared.
     for (const suite of Object.values(manifest.suites)) {
