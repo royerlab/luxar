@@ -213,28 +213,25 @@ Enforces **at most one in-flight sort per node**; a commit landing mid-sort queu
 
 **Flow**:
 
-1. Get `state` (from THIS coordinator's node map), `camera` (from its `getCamera()`) — and return unless the worker is actually usable: `api` is wrapped BEFORE `initializeWithGuard` is awaited, so a live handle is not a ready worker, and `sort` is the one RPC that `requireWasm`s worker-side. `workerInitState === 'ready'` is therefore part of the gate, here rather than at each caller (the offline-capture force loop dispatches without consulting `registered`). Skipping also keeps `recordSortPose` below from stamping a pose for a sort that never ran, which would silence the per-frame `!lastSortAxis` recovery dispatch
-2. Return if already `inFlight` — set `resortQueued = true` and return
-3. Set `inFlight = true`
-4. Refresh `mesh.matrixWorld` and `camera.matrixWorld` (can be stale when a commit fires before the next frame)
-5. Derive `viewMatrix = inverse(camera.matrixWorld)`, `modelView = viewMatrix × mesh.matrixWorld`
-6. Record the pose (`recordSortPose(state, modelView)`) — stores the model-view z-row (axis direction + normalized offset)
-7. Begin a detached profiler pass (`getProfiler()?.beginDepthSortPass()`) — its duration is the dispatch→applied round-trip
-8. `withTimeout('depth-sort', api.sort({ nodeId, generation, modelView }), 30s)`:
-   - **Timeout**: a worker that CRASHES mid-session leaves the Comlink RPC pending forever, and a stuck `inFlight` is unrecoverable — the per-frame scheduler skips in-flight nodes and later commits only set `resortQueued`, which never drains. Routing the timeout through the existing .catch clears `inFlight` and drains the queue (bounded staleness degrade instead of a permanently unsorted node).
-9. On **resolve**:
+1. Get `state` (from THIS coordinator's node map) and `camera` (from its `getCamera()`); release a held draw and return if either is missing
+2. Refresh both world matrices, compute `modelView = inverse(camera.matrixWorld) × mesh.matrixWorld`, and clone it into a dispatch-owned job; a producer may use that pose after a later dispatch has reused the matrix scratch
+3. Select the first ready producer that accepts the job. The worker producer checks both `api` and `workerInitState === 'ready'`; a live API handle alone does not mean initialization finished. If none accepts, release a held draw without recording a sort pose
+4. If already `inFlight`, set `resortQueued = true` and return. Otherwise set `inFlight = true` and record the model-view z-row (axis direction + normalized offset)
+5. Begin a detached profiler pass (`getProfiler()?.beginDepthSortPass()`) — its duration is the dispatch→applied round-trip
+6. Call `producer.run(job)`. The worker producer applies `withTimeout('depth-sort', api.sort(...), 30s)` so a crashed worker cannot strand `inFlight`; the scheduler sends synchronous and asynchronous outcomes through the same settle path and failures through `failSort`
+7. On **settle**:
    - Clear `inFlight`
-   - **Stale-drop**: stage only when `result.generation === current.generation` AND `hasCommittedData(mesh)` (LOD demotion signal)
-   - Set profiler metadata: `splats`, `kernelMs`, `boundaryMs` (worker overhead), `queueMs` (round-trip minus worker time), and `info` with ordering bytes labeled `sched`
-   - Stage the ordering with lifecycle callbacks: `writeSortedIndexOrdering(geometry, result.ordering, count, callbacks, { adoptOrdering: true })` — `callbacks` always carries the owner hooks (`orderingApplyHooks(c)`) and, with a profiler session, `onApplied` / `onAbandoned`; the per-frame pump streams slices into the inactive buffer. On WebGPU, a result backed by the full attribute capacity becomes the inactive attribute array without a second CPU copy; orderings without that backing and WebGL still copy.
+   - **Stale-drop**: stage only when `outcome.generation === current.generation` AND `hasCommittedData(mesh)` (LOD demotion signal)
+   - Check that the outcome covers the committed count; set profiler metadata: `elements`, `kernelMs`, `boundaryMs`, `queueMs`, and `info`
+   - Stage a host array or device writer through the node's apply path with lifecycle callbacks. `callbacks` always carries the owner hooks (`orderingApplyHooks(c)`) and, with a profiler session, `onApplied` / `onAbandoned`. Instanced host orderings stream into the inactive buffer; device writers fill it in the pump; mesh triangle orderings write the index buffer atomically.
    - Transfer profiler-session ownership to those callbacks and request the bootstrap frame
    - Drain `resortQueued` if set: `scheduleSort(c, mesh, nodeId)`
-10. On **rendered application**:
-    - The final pump selects the complete buffer but does not yet report it applied
+8. On **rendered application**:
+    - The final instanced pump selects the complete buffer but does not yet report it applied
     - The mesh's chained `onAfterRender` hook acknowledges that THREE consumed the pending attribute ranges and completed a draw with the selected buffer
-    - Upgrade `info` from `sched` to `up`, record `applyMs` (resolve→draw) and the monotonic completion event, then end the profiler pass
-    - If the ordering is superseded, cancelled, demoted, released, or disposed before that draw, end the pass still labeled `sched` and do not record a completion
-11. On **reject** (timeout or worker error):
+    - Mark `info` applied, record `applyMs` (settle→draw) and the monotonic completion event, then end the profiler pass
+    - If the ordering is superseded, cancelled, demoted, released, or disposed before that draw, end the pass without a completion event
+9. On **failure** (producer throw or rejection, including a worker timeout):
     - End the profiler pass (unless ownership was already transferred to an accepted ordering)
     - Log error
     - Clear `inFlight`
