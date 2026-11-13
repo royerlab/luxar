@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { configureRendererBackendPolicy } from '../../../../rendering/renderer-backend-policy';
 import * as THREE from 'three';
 
 const mockNoteDepthSortCommit = vi.fn();
@@ -25,7 +26,6 @@ import {
   setElementIdMap,
 } from '../../../../types/committed-data';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
-import { configureRenderObjectEviction } from '../../../../data/scene-loader/commit/invalidate-render-object';
 import type { LoadedPointsData } from '../../../../data/data-loader-types';
 import type { NodeFactory } from '../../../../rendering/node-factory';
 import type { DepthSortCoordinator } from '../../../../rendering/depth-sort-coordinator';
@@ -289,8 +289,8 @@ describe('commitPointsGeometry — non-pool path against REAL factory geometry',
   // The soft-dispose assertion below is the WebGPU-only RenderObject
   // eviction, OFF by default (classic WebGL is the production default).
   // Opt into the WebGPU state for this block and reset afterward.
-  beforeEach(() => configureRenderObjectEviction(true));
-  afterEach(() => configureRenderObjectEviction(false));
+  beforeEach(() => configureRendererBackendPolicy('webgpu-native'));
+  afterEach(() => configureRendererBackendPolicy('webgl'));
 
   it('a second same-count commit does not throw and uploads the new positions', () => {
     const root = new THREE.Group();

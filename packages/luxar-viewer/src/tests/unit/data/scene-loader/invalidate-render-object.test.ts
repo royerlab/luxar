@@ -16,12 +16,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { configureRendererBackendPolicy } from '../../../../rendering/renderer-backend-policy';
 import * as THREE from 'three';
 
-import {
-  invalidateRenderObjectFor,
-  configureRenderObjectEviction,
-} from '../../../../data/scene-loader/commit/invalidate-render-object';
+import { invalidateRenderObjectFor } from '../../../../data/scene-loader/commit/invalidate-render-object';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 
 describe('invalidateRenderObjectFor', () => {
@@ -29,8 +27,8 @@ describe('invalidateRenderObjectFor', () => {
   // WebGL is the production default). These blocks assert the dispatch, so
   // opt in like splat-texture-storage.test.ts does for chunked apply, and
   // reset to the default so the module flag never leaks across files/blocks.
-  beforeEach(() => configureRenderObjectEviction(true));
-  afterEach(() => configureRenderObjectEviction(false));
+  beforeEach(() => configureRendererBackendPolicy('webgpu-native'));
+  afterEach(() => configureRendererBackendPolicy('webgl'));
 
   it('dispatches a "dispose" event on the mesh material', () => {
     const material = new THREE.MeshBasicMaterial();
@@ -108,8 +106,8 @@ describe('pick-mesh geometry resync', () => {
   // Some tests below assert the WebGPU-only dispose dispatch, so enable
   // eviction (default is OFF) and reset afterward. The geometry re-point
   // itself is unconditional, so the resync tests pass either way.
-  beforeEach(() => configureRenderObjectEviction(true));
-  afterEach(() => configureRenderObjectEviction(false));
+  beforeEach(() => configureRendererBackendPolicy('webgpu-native'));
+  afterEach(() => configureRendererBackendPolicy('webgl'));
 
   it('re-points the paired pick mesh at the new geometry (grow-swap pinning guard)', () => {
     // Geometry identity changes on grow-swap / pool swap; the picking
@@ -206,8 +204,8 @@ describe('pick-mesh geometry resync', () => {
 describe('SOFT_DISPOSE_FLAG <-> MaterialManager contract', () => {
   // These pin the soft-dispose contract that only runs when the WebGPU
   // eviction dispatch fires, so enable it (default OFF) and reset after.
-  beforeEach(() => configureRenderObjectEviction(true));
-  afterEach(() => configureRenderObjectEviction(false));
+  beforeEach(() => configureRendererBackendPolicy('webgpu-native'));
+  afterEach(() => configureRendererBackendPolicy('webgl'));
 
   // We can't reach into the private subscribedMaterials directly
   // without spinning up the full manager + a real luxar material. The
@@ -256,8 +254,8 @@ describe('eviction disabled (classic WebGL default)', () => {
   // program, forcing a per-commit shader recompile. So with eviction
   // disabled invalidateRenderObjectFor MUST dispatch NO `dispose` on either
   // material — yet still re-point the pick mesh geometry (pick correctness).
-  beforeEach(() => configureRenderObjectEviction(false));
-  afterEach(() => configureRenderObjectEviction(false));
+  beforeEach(() => configureRendererBackendPolicy('webgl'));
+  afterEach(() => configureRendererBackendPolicy('webgl'));
 
   it('dispatches NO "dispose" on the main material', () => {
     const material = new THREE.MeshBasicMaterial();

@@ -37,10 +37,9 @@ import {
   type RendererCapabilities,
 } from '../../../rendering/renderer-capabilities';
 import { configureElementTextureLayout } from '../../../rendering/element-texture-layout';
-import { configureSortedIndexChunkedApply } from '../../../rendering/element-storage';
+import { configureRendererBackendPolicy } from '../../../rendering/renderer-backend-policy';
 import { installUploadCounters } from '../../../rendering/upload-counters';
 import { installElementTextureRowUploads } from '../../../rendering/element-texture-row-upload';
-import { configureRenderObjectEviction } from '../../../data/scene-loader/commit/invalidate-render-object';
 import {
   configureHDRRenderer,
   detectDisplayCapabilities,
@@ -76,12 +75,11 @@ import {
  *   - element textures are laid out against the device's `maxTextureSize`;
  *   - both WebGPU backends ignore texture update ranges, so element textures
  *     upload only their dirty rows there (#2944) — a no-op on classic WebGL;
- *   - chunked ordering applies need honoured attribute update ranges and the
- *     `onUploadCallback` back-pressure, which neither WebGPU backend fires —
- *     classic WebGL only (see element-storage's chunked-apply note);
- *   - RenderObject eviction (dispose dispatch) flushes the stale vertexBuffers
- *     chainMap cache only WebGPU keeps; on classic WebGL the same event
- *     destroys the compiled program (a shader recompile), so WebGPU only.
+ *   - the backend policy (`rendering/renderer-backend-policy.ts`) derives the
+ *     rest from `backendKind` in one place: how depth-sort orderings upload
+ *     (chunked with back-pressure on classic WebGL only), whether a pool
+ *     rebuild evicts three's cached RenderObject (WebGPU only), and whether
+ *     WebGPU compute is available (native WebGPU only).
  *
  * Call after the renderer is initialised (WebGPU's backend exists only after
  * `init()`).
@@ -95,27 +93,26 @@ export function configureRendererBackend(
   renderer: Renderer,
   capabilities: RendererCapabilities
 ): void {
-  warnOnBackendMix(capabilities.apiSurface);
+  warnOnBackendMix(capabilities.backendKind);
   configureElementTextureLayout(capabilities.maxTextureSize);
   installElementTextureRowUploads(renderer);
-  configureSortedIndexChunkedApply(capabilities.apiSurface === 'webgl2');
-  configureRenderObjectEviction(capabilities.apiSurface === 'webgpu');
+  configureRendererBackendPolicy(capabilities.backendKind);
 }
 
 /** The backend the page-wide switches were last configured for. */
-let configuredApiSurface: RendererCapabilities['apiSurface'] | null = null;
+let configuredBackendKind: RendererCapabilities['backendKind'] | null = null;
 let warnedBackendMix = false;
 
-function warnOnBackendMix(apiSurface: RendererCapabilities['apiSurface']): void {
-  const previous = configuredApiSurface;
-  configuredApiSurface = apiSurface;
-  if (previous === null || previous === apiSurface || warnedBackendMix) return;
+function warnOnBackendMix(backendKind: RendererCapabilities['backendKind']): void {
+  const previous = configuredBackendKind;
+  configuredBackendKind = backendKind;
+  if (previous === null || previous === backendKind || warnedBackendMix) return;
   warnedBackendMix = true;
   log.warning(
     Modules.RENDERER,
-    `Renderer backend switched from ${previous} to ${apiSurface}: the backend switches are ` +
+    `Renderer backend switched from ${previous} to ${backendKind}: the backend switches are ` +
       'page-wide, so if another Luxar host on this page still renders through ' +
-      `${previous} it now runs on ${apiSurface}'s settings. Use one backend per page.`
+      `${previous} it now runs on ${backendKind}'s settings. Use one backend per page.`
   );
 }
 

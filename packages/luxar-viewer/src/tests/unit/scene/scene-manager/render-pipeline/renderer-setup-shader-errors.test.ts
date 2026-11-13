@@ -27,6 +27,7 @@ vi.mock('three', async (importOriginal) => {
 vi.mock('../../../../../rendering/renderer-capabilities', () => ({
   createRendererCapabilities: vi.fn(() => ({
     apiSurface: 'webgl2',
+    backendKind: 'webgl',
     hdr: {},
     pointSizeRange: [1, 64],
     maxTextureSize: 4096,
@@ -39,6 +40,7 @@ vi.mock('../../../../../utils/hdr/hdr-detection', () => ({
 }));
 
 import { createWebGLRenderer } from '../../../../../scene/scene-manager/render-pipeline/renderer-setup';
+import { rendererBackendPolicy } from '../../../../../rendering/renderer-backend-policy';
 
 function canvas(): HTMLCanvasElement {
   const el = document.createElement('canvas');
@@ -53,6 +55,7 @@ describe('createWebGLRenderer shader-error checking', () => {
   it('is off without debug', async () => {
     const { renderer } = await createWebGLRenderer(canvas());
     expect((renderer as unknown as WithDebug).debug.checkShaderErrors).toBe(false);
+    expect(rendererBackendPolicy().kind).toBe('webgl');
   });
 
   it('is off when debug is explicitly false', async () => {

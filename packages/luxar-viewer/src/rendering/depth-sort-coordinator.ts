@@ -101,9 +101,9 @@ import {
   cancelAllSortedIndexOrderingApplies,
   cancelSortedIndexOrderingApply,
   getActiveSortedIndexAttribute,
-  sortedIndexUsage,
 } from './element-storage';
 import { needsDepthSort } from './blending-state';
+import { rendererBackendPolicy } from './renderer-backend-policy';
 import type { BlendingMode } from '../types/blending';
 import {
   clearRenderOrderFrameState,
@@ -707,11 +707,10 @@ export class DepthSortCoordinator {
         // against. (The throw lands in the outer catch below.)
         const buffer =
           typeof centersForWorker === 'function' ? centersForWorker() : centersForWorker;
-        const orderingCapacity =
-          sortedIndexUsage() === THREE.StaticDrawUsage
-            ? getActiveSortedIndexAttribute(mesh.geometry as THREE.InstancedBufferGeometry)?.array
-                .length
-            : undefined;
+        const orderingCapacity = rendererBackendPolicy().ordering.adoptHostBuffer
+          ? getActiveSortedIndexAttribute(mesh.geometry as THREE.InstancedBufferGeometry)?.array
+              .length
+          : undefined;
         current.registered = true;
         // The register RPC is its own promise — the surrounding .catch
         // only sees synchronous throws, so a transport/transfer rejection
