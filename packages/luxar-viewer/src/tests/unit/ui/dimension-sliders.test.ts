@@ -1123,6 +1123,23 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
       sliders.dispose();
     });
 
+    it('commits an edited rate when a press on a menu header blurs the field', () => {
+      const sliders = buildSliders();
+      const stub = makeAnimationManagerStub();
+      sliders.setAnimationManager(stub as never);
+      open();
+      toPeriod();
+      type('45');
+      const header = document.querySelector<HTMLElement>(
+        '.luxar-dimension-slider__context-header-row'
+      )!;
+      header.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      amount().dispatchEvent(new FocusEvent('blur', { relatedTarget: null }));
+      expect(stub.setTargetFPS).toHaveBeenCalledExactlyOnceWith(3, 1 / 45);
+      expect(menuOpen()).toBe(false);
+      sliders.dispose();
+    });
+
     it('commits a later blur after an inside press produces no click', async () => {
       const sliders = buildSliders();
       const stub = makeAnimationManagerStub();

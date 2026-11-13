@@ -200,7 +200,7 @@ export class DimensionSliders {
   /** Active context menu element (only one can be open at a time) */
   private activeContextMenu: HTMLElement | null = null;
 
-  /** A press inside the menu may blur an input without a related target. */
+  /** A press on a menu control may blur an input without a related target. */
   private menuPressPending = false;
 
   /** Stored event handlers for context menu cleanup */
@@ -1455,7 +1455,8 @@ export class DimensionSliders {
     // Create context menu
     const menu = document.createElement('div');
     menu.className = 'luxar-dimension-slider__context-menu';
-    menu.addEventListener('mousedown', () => {
+    menu.addEventListener('mousedown', (e) => {
+      if (!(e.target instanceof Element) || !e.target.closest('button, select, input')) return;
       this.menuPressPending = true;
       // A cancelled press must not suppress a later blur outside the menu.
       setTimeout(() => {
