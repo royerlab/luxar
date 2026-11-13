@@ -635,7 +635,9 @@ def test_export_accepts_off_a_period_and_none() -> None:
 
 def test_the_readme_states_the_baked_tour_period(tmp_path: Path) -> None:
     export_module._generate_readme(tmp_path, "data", SceneFacts(auto_advance=60.0))
-    assert "tour rests at least 60 s at each stop" in (tmp_path / "README.txt").read_text()
+    assert (
+        "tour rests at least 60 s at each stop" in (tmp_path / "README.txt").read_text()
+    )
     export_module._generate_readme(tmp_path, "data", SceneFacts(auto_advance=0.0))
     assert "does not advance by itself" in (tmp_path / "README.txt").read_text()
     export_module._generate_readme(tmp_path, "data", SceneFacts())
