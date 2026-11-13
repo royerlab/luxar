@@ -38,6 +38,28 @@ export function sort_splats_by_depth(
   ordering: Uint32Array,
   count: number
 ): number {
+  return sortDepth(centers3, modelView, ordering, count);
+}
+
+/** Sort and write the same compact keys used by the CPU permutation. */
+export function sort_splats_by_depth_with_keys(
+  centers3: Float32Array,
+  modelView: Float32Array,
+  ordering: Uint32Array,
+  outputKeys: Uint16Array,
+  count: number
+): number {
+  if (outputKeys.length < count) throw new RangeError('outputKeys too small');
+  return sortDepth(centers3, modelView, ordering, count, outputKeys);
+}
+
+function sortDepth(
+  centers3: Float32Array,
+  modelView: Float32Array,
+  ordering: Uint32Array,
+  count: number,
+  outputKeys?: Uint16Array
+): number {
   if (count === 0) {
     return 0;
   }
@@ -75,6 +97,7 @@ export function sort_splats_by_depth(
   // rather than `zMax <= zMin` so NaN centers also fall through to
   // identity (matches the Rust kernel).
   if (!(zMax > zMin)) {
+    outputKeys?.fill(0, 0, count);
     for (let j = 0; j < count; j++) {
       ordering[j] = j;
     }
@@ -84,7 +107,7 @@ export function sort_splats_by_depth(
   // Pass 2: normalized uint16 keys + histogram. zMin (farthest) -> key 0,
   // zMax (nearest in-front) -> key 65535; behind-camera -> far bucket 0.
   const invRange = Math.fround(1.0 / Math.fround(zMax - zMin));
-  const keys = new Uint16Array(count);
+  const keys = outputKeys ?? new Uint16Array(count);
   const histogram = new Uint32Array(DEPTH_SORT_BUCKETS);
   for (let i = 0; i < count; i++) {
     const z = zScratch[i];

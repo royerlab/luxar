@@ -33,15 +33,20 @@ export interface SortParams {
   generation: number;
   /** Column-major 4x4 model-view matrix [16]. */
   modelView: Float32Array;
+  /** Native WebGPU builds the permutation from compact keys. */
+  compactKeys?: boolean;
 }
 
 export interface SortResult {
   /** Generation the ordering was computed for (re-checked on the main thread). */
   generation: number;
-  /** Back-to-front permutation [count] — TRANSFERRED to the main thread. */
+  /** CPU mirror for commit preservation; not uploaded on the GPU path. */
   ordering: Uint32Array;
+  /** Compact GPU sort keys, present only for native WebGPU instanced draws. */
+  keys?: Uint16Array;
   /**
-   * Time spent inside the backend `sort_splats_by_depth` call, in ms.
+   * Time spent inside the selected backend sort call, including compact
+   * key output when requested, in ms.
    * For compiled WASM this INCLUDES the wasm-bindgen boundary copies
    * (centers copy-in, ordering copy-in/out, mallocs) — the shim performs
    * them inside the exported function; for the TS fallback it is the pure
@@ -95,16 +100,28 @@ export function sortNode(ctx: SortWorkerCtx, params: SortParams): SortResult | n
   // Timing wraps the backend call generically: `ctx.wasm` is either the
   // compiled WASM module or the TypeScript fallback, so both report.
   const kernelStart = performance.now();
-  wasm.sort_splats_by_depth(node.centers3, params.modelView, ordering, node.count);
+  const keys = params.compactKeys ? new Uint16Array(node.count) : undefined;
+  if (keys) {
+    wasm.sort_splats_by_depth_with_keys(
+      node.centers3,
+      params.modelView,
+      ordering,
+      keys,
+      node.count
+    );
+  } else {
+    wasm.sort_splats_by_depth(node.centers3, params.modelView, ordering, node.count);
+  }
   const kernelEnd = performance.now();
   return transfer(
     {
       generation: node.generation,
       ordering,
+      keys,
       kernelMs: kernelEnd - kernelStart,
       workerMs: kernelEnd - bodyStart,
     },
-    [ordering.buffer]
+    keys ? [ordering.buffer, keys.buffer] : [ordering.buffer]
   );
 }
 

@@ -210,9 +210,10 @@ dims are looked up via a fixed-size `[bool; 16]` array.
 
 ### `depth_sort.rs` — back-to-front splat ordering
 
-| Function               | Purpose                                                                                                                                     |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sort_splats_by_depth` | Camera-space z per splat, min/max-normalized uint16 keys, stable 65536-bucket counting sort (back-to-front permutation for `aSortedIndex`). |
+| Function                         | Purpose                                                                                                                                     |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sort_splats_by_depth`           | Camera-space z per splat, min/max-normalized uint16 keys, stable 65536-bucket counting sort (back-to-front permutation for `aSortedIndex`). |
+| `sort_splats_by_depth_with_keys` | The same pass with the exact uint16 keys written to a caller-owned output buffer for WebGPU.                                                |
 
 Scale-invariant (per-sort normalization — nm..km units; raw f16 keys were
 deliberately rejected), stable on ties, behind-camera splats key to the far

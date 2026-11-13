@@ -10,6 +10,7 @@
  * - `compute_joint_codes` — added with the line cap-suppression kernel.
  * - `mesh_vertex_visibility_mask` / `compact_visible_faces` — added with the
  *   mesh culling kernels.
+ * - `sort_splats_by_depth_with_keys` — added with the WebGPU depth-order kernel.
  * - `project_gsplats_nd_to_3d` — present from the start, but it gained the
  *   trailing `out_source_indices` parameter, so its parameter count is checked
  *   too ({@link REQUIRED_WASM_ARITIES}).
@@ -55,6 +56,7 @@ export const REQUIRED_WASM_EXPORTS = [
   'compute_joint_codes',
   'mesh_vertex_visibility_mask',
   'compact_visible_faces',
+  'sort_splats_by_depth_with_keys',
   'project_gsplats_nd_to_3d',
   'points_slice_membership',
 ] as const satisfies readonly (keyof WasmModule)[];

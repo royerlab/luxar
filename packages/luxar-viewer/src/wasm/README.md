@@ -115,6 +115,8 @@ the shadowing build predates a kernel, or a signature, since recorded in
 - `sort_splats_by_depth()` — Back-to-front permutation of projected 3D centers
   under a model-view matrix (the `aSortedIndex` ordering the SortWorker
   computes for order-dependent blending); input is already 3D, so no ndim cap
+- `sort_splats_by_depth_with_keys()` — The same permutation plus the exact
+  uint16 keys used for native WebGPU compute ordering
 
 ### Line Clipping
 

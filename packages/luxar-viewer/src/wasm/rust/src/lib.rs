@@ -80,7 +80,7 @@ pub use decode::{
     decode_lut_scalar_u16, decode_lut_scalar_u8, decode_quantized_u16, decode_quantized_u8,
     decode_signed_log_perchannel_u16, decode_signed_log_perchannel_u8,
 };
-pub use depth_sort::sort_splats_by_depth;
+pub use depth_sort::{sort_splats_by_depth, sort_splats_by_depth_with_keys};
 pub use effective_radii::calculate_effective_radii;
 pub use gsplats_processing::{mahalanobis_distance, project_gsplats_nd_to_3d};
 pub use lines_clipping::{

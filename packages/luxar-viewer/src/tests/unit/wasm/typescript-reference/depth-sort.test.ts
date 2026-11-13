@@ -9,6 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { sort_splats_by_depth } from '../../../../wasm/typescript';
+import { sort_splats_by_depth_with_keys } from '../../../../wasm/typescript/depth-sort';
 
 /** Identity model-view: view z == world z (camera at origin looking -z). */
 const IDENTITY_MV = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -43,6 +44,27 @@ function assertIsPermutation(ordering: Uint32Array, count: number): void {
 }
 
 describe('depth_sort: sort_splats_by_depth', () => {
+  it('packs compact keys whose stable order matches the CPU permutation', () => {
+    for (const zs of [
+      [-8, -2, -8, -4, 1, -2, -1],
+      [1e6, -1e6, -1e6 + 1, -1e6 + 1],
+      [-1e-6, -3e-6, -2e-6, -3e-6],
+      [-Infinity, -3, -2, NaN, Infinity],
+      [-3, -3, -3],
+      [1, 2, 3],
+      [-4],
+      [],
+    ]) {
+      const centers = centersWithZ(zs);
+      const keys = new Uint16Array(zs.length);
+      const ordering = new Uint32Array(zs.length);
+      sort_splats_by_depth_with_keys(centers, IDENTITY_MV, ordering, keys, zs.length);
+      const byKey = Array.from({ length: zs.length }, (_, i) => i).sort(
+        (a, b) => keys[a] - keys[b] || a - b
+      );
+      expect(byKey).toEqual(Array.from(ordering));
+    }
+  });
   it('orders back-to-front (farthest = most negative view z first)', () => {
     const { ordering, sorted } = sortZs([-1, -10, -5, -2]);
     expect(sorted).toBe(4);
