@@ -171,6 +171,7 @@ function finishGpuSort(
   session: UpdateSession | null
 ): void {
   session?.setMetadata({ elements: state.count, info: 'GPU compute' });
+  // Stamp at stage time: the deferred write sorts with this captured pose.
   recordSortPose(state, modelView);
 }
 
@@ -193,7 +194,10 @@ function tryGpuOrdering(
     state.count,
     modelView,
     gpuOrderingCallbacks(c, state.count, startedAt, profiler, session),
-    () => scheduleSort(c, mesh, mesh.uuid)
+    () => {
+      state.lastSortAxis = null;
+      scheduleSort(c, mesh, mesh.uuid);
+    }
   );
   if (!selected) {
     session?.end();

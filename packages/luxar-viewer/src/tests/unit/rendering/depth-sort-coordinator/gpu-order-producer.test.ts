@@ -278,6 +278,50 @@ describe('native WebGPU ordering producer', () => {
     geometry.dispose();
   });
 
+  it('falls back once when a staged GPU write finds a stale element texture', async () => {
+    configureRendererBackendPolicy('webgpu-native');
+    const fake = fakeBackend();
+    configureGpuOrderProducer({ backend: fake.backend } as unknown as Renderer);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const { geometry, texture, mesh, state, coordinator } = scene();
+    texture.onUpdate?.(texture);
+    const sort = vi.fn().mockResolvedValue(null);
+    workerHost.api = { sort } as unknown as NonNullable<typeof workerHost.api>;
+    workerHost.workerInitState = 'ready';
+
+    scheduleSort(coordinator, mesh, mesh.uuid, true);
+    texture.needsUpdate = true;
+    expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ flipped: false });
+
+    expect(sort).toHaveBeenCalledOnce();
+    expect(fake.copies).toHaveLength(0);
+    expect(activeSortedIndexSlot(geometry)).toBe(0);
+    for (let i = 0; i < 3; i++) evaluateDepthSortPerFrame(coordinator);
+    expect(fake.copies).toHaveLength(0);
+    expect(state.lastSortAxis).not.toBeNull(); // The worker retry was dispatched.
+    geometry.dispose();
+  });
+
+  it('clears a staged sort pose when the GPU write fails without a ready worker', async () => {
+    configureRendererBackendPolicy('webgpu-native');
+    const fake = fakeBackend();
+    configureGpuOrderProducer({ backend: fake.backend } as unknown as Renderer);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const { geometry, texture, mesh, state, coordinator } = scene();
+    texture.onUpdate?.(texture);
+    workerHost.api = null;
+
+    scheduleSort(coordinator, mesh, mesh.uuid, true);
+    expect(state.lastSortAxis).not.toBeNull();
+    texture.needsUpdate = true;
+    expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ flipped: false });
+
+    expect(fake.copies).toHaveLength(0);
+    expect(activeSortedIndexSlot(geometry)).toBe(0);
+    expect(state.lastSortAxis).toBeNull();
+    geometry.dispose();
+  });
+
   it('refreshes a capture on the GPU even when no worker is available', async () => {
     configureRendererBackendPolicy('webgpu-native');
     const fake = fakeBackend();
