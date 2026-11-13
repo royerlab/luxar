@@ -38,6 +38,7 @@ import {
 } from '../../../rendering/renderer-capabilities';
 import { configureElementTextureLayout } from '../../../rendering/element-texture-layout';
 import { configureRendererBackendPolicy } from '../../../rendering/renderer-backend-policy';
+import { configureGpuOrderProducer } from '../../../rendering/depth-sort-coordinator/gpu-order-producer';
 import { installUploadCounters } from '../../../rendering/upload-counters';
 import { installElementTextureRowUploads } from '../../../rendering/element-texture-row-upload';
 import {
@@ -97,6 +98,7 @@ export function configureRendererBackend(
   configureElementTextureLayout(capabilities.maxTextureSize);
   installElementTextureRowUploads(renderer);
   configureRendererBackendPolicy(capabilities.backendKind);
+  configureGpuOrderProducer(renderer);
 }
 
 /** The backend the page-wide switches were last configured for. */

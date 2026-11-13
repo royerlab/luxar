@@ -113,7 +113,7 @@ export async function resortForCapture(c: CoordinatorState, maxWaitMs = 3000): P
         if (!isEffectivelyVisible(mesh)) continue;
         if (!hasCommittedData(mesh)) continue;
         if (!isLiveOrderDependent(liveBlendingMode(mesh))) continue;
-        scheduleSort(c, mesh, nodeId);
+        scheduleSort(c, mesh, nodeId, true);
       }
     }
 

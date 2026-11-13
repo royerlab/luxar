@@ -17,9 +17,10 @@ element's center from the element texture the geometry already uploaded, and
 writes the order into the ordering attribute's own GPU buffer, so a re-sort
 moves no data across the CPU.
 
-It is a standalone WebGPU module: it knows nothing about three.js or the
-depth-sort coordinator. A follow-up after #3305 and the element-storage change
-will wire it in as a second producer of orderings alongside the SortWorker.
+The sorter itself knows nothing about three.js. The coordinator's
+`gpu-order-producer.ts` resolves Three.js's texture and ordering buffers and
+uses it for native-WebGPU camera-motion refreshes. The SortWorker establishes
+the CPU repair seed on commits and handles unavailable GPU compute.
 
 ## File map
 
@@ -59,7 +60,8 @@ All passes run in one compute pass and one submit per sort:
 Blocks hold 4,096 elements. Scratch for N elements is four 4N-byte buffers plus
 a small histogram: about 160 MB at 10M. One sorter's scratch is shared by every
 node it sorts. Each sort writes its uniforms and submits before the next sort,
-and the queue runs them in order. Scratch grows by doubling.
+and the queue runs them in order. Scratch grows by doubling, is charged to a
+geometry's GPU residency budget, and is freed when that geometry is disposed.
 
 **Measured cost:** about 9 ms of GPU time for a 10M-element sort on an RTX 3070
 (`gpu-depth-sort.spec.ts`, back-to-back sorts), against 30–100 ms for the

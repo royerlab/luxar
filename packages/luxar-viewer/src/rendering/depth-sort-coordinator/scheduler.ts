@@ -39,7 +39,6 @@ import {
   syncSortElementLimit,
   workerHost,
   type CoordinatorState,
-  type NodeSortState,
 } from './state';
 import {
   computeModelView,
@@ -49,7 +48,7 @@ import {
   syncSortedIndexSlot,
 } from './ordering-apply';
 import { SORT_RPC_TIMEOUT_MS, maybeRetryStarvedWorkerInit } from './worker-lifecycle';
-import { getWebGpuOrderBuilder, type WebGpuOrderBuilder } from './webgpu-order';
+import { canGpuSort, disableGpuOrderProducer, submitGpuSort } from './gpu-order-producer';
 import type { SortResult } from '../../workers/sort-worker';
 
 /**
@@ -65,17 +64,12 @@ export interface OrderingApply {
   geometry: THREE.InstancedBufferGeometry;
   result: SortResult;
   callbacks: SortedIndexApplyCallbacks;
-  builder: WebGpuOrderBuilder | null;
-  compactKeys: boolean;
-  count: number;
-  coordinator: CoordinatorState;
-  mesh: THREE.Mesh;
   triangleSource?: Uint32Array;
 }
 
-/** @internal — sort-result handoff, exercised with the GPU boundary stub in tests. */
+/** @internal — worker sort-result handoff. */
 export function stageOrdering(p: OrderingApply): number {
-  const { geometry, result, callbacks, builder, compactKeys, count } = p;
+  const { geometry, result, callbacks } = p;
   if (p.triangleSource) {
     return writeSortedTriangleOrdering(
       geometry,
@@ -85,54 +79,29 @@ export function stageOrdering(p: OrderingApply): number {
       callbacks
     );
   }
-  if (compactKeys && result.keys && builder?.canSort(geometry, count)) {
-    try {
-      builder.apply(geometry, result.keys, count);
-      if (selectComputedSortedIndexOrdering(geometry, count, result.ordering, callbacks)) {
-        syncSortedIndexSlot(p.coordinator, p.mesh);
-        return count;
-      }
-    } catch (error) {
-      builder.disable();
-      log.warning(Modules.WORKER_POOL, 'WebGPU depth ordering failed; using worker order', error);
-    }
-  }
   return writeSortedIndexOrdering(geometry, result.ordering, result.ordering.length, callbacks, {
     adoptOrdering: true,
   });
 }
 
-function requestWorkerSort(
-  nodeId: string,
-  generation: number,
-  modelView: THREE.Matrix4,
-  compactKeys: boolean
-) {
+function requestWorkerSort(nodeId: string, generation: number, modelView: THREE.Matrix4) {
   return workerHost.api!.sort({
     nodeId,
     generation,
     modelView: new Float32Array(modelView.elements),
-    compactKeys,
   });
-}
-
-/** @internal — mesh sorts never request GPU keys from the worker. */
-export function eligibleGpuBuilder(
-  mesh: THREE.Mesh,
-  state: NodeSortState,
-  builder = getWebGpuOrderBuilder()
-): WebGpuOrderBuilder | null {
-  if (state.triangleSource) return null;
-  return builder?.canSort(mesh.geometry as THREE.InstancedBufferGeometry, state.count, mesh.uuid)
-    ? builder
-    : null;
 }
 
 /**
  * Request one sort for a registered node, respecting the
  * single-in-flight rule. Queues a re-sort if one is already running.
  */
-export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: string): void {
+export function scheduleSort(
+  c: CoordinatorState,
+  mesh: THREE.Mesh,
+  nodeId: string,
+  preferGpu = false
+): void {
   const state = c.nodeStates.get(nodeId);
   const camera = c.getCamera?.();
   // `api` is wrapped BEFORE `initializeWithGuard` is awaited, so a live handle
@@ -148,13 +117,38 @@ export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: stri
   // still leaves a pose on record for a sort that never ran — which is exactly
   // what silences the per-frame `!lastSortAxis` recovery dispatch for a node
   // whose first real dispatch raced a null camera.
-  if (!state || !workerHost.api || workerHost.workerInitState !== 'ready' || !camera) {
+  if (!state || !camera) {
     // Nothing will sort this population, so a held append draw must not wait.
     if (state) releaseHeldDraw(c, mesh);
     return;
   }
   if (state.inFlight) {
     state.resortQueued = true;
+    return;
+  }
+  if (preferGpu && !state.triangleSource) {
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    try {
+      if (canGpuSort(geometry, state.count)) {
+        const modelView = computeModelView(mesh, camera);
+        if (submitGpuSort(geometry, state.count, modelView)) {
+          if (
+            selectComputedSortedIndexOrdering(geometry, state.count, null, orderingApplyHooks(c))
+          ) {
+            recordSortPose(state, modelView);
+            syncSortedIndexSlot(c, mesh);
+            c.requestRender?.();
+            return;
+          }
+        }
+      }
+    } catch (error) {
+      disableGpuOrderProducer();
+      log.warning(Modules.WORKER_POOL, 'WebGPU depth ordering failed; using worker order', error);
+    }
+  }
+  if (!workerHost.api || workerHost.workerInitState !== 'ready') {
+    releaseHeldDraw(c, mesh);
     return;
   }
   // NO apply-gate. Sorting and applying run CONCURRENTLY: a stream writes
@@ -174,7 +168,6 @@ export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: stri
   state.inFlight = true;
 
   const generation = state.generation;
-  const gpuBuilder = eligibleGpuBuilder(mesh, state);
   // Fresh matrices even between frames (see computeModelView).
   const modelView = computeModelView(mesh, camera);
   recordSortPose(state, modelView);
@@ -216,7 +209,7 @@ export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: stri
   // stays unsorted until the next commit/camera trigger re-sorts it.
   void withTimeout(
     'depth-sort',
-    requestWorkerSort(nodeId, generation, modelView, gpuBuilder !== null),
+    requestWorkerSort(nodeId, generation, modelView),
     SORT_RPC_TIMEOUT_MS
   )
     .then((result) => {
@@ -261,9 +254,7 @@ export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: stri
           // width assumed from the vertex count.
           const bytes = triangleSource
             ? result.ordering.length * 3 * (geometry.index?.array.BYTES_PER_ELEMENT ?? 4)
-            : gpuBuilder && result.keys
-              ? result.keys.byteLength
-              : result.ordering.length * 4;
+            : result.ordering.length * 4;
           // Timing split (perf campaign): kernelMs = inside the backend
           // call (incl. wasm-bindgen boundary copies for compiled WASM);
           // boundaryMs = worker-side overhead around it; queueMs =
@@ -331,11 +322,6 @@ export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: stri
             geometry,
             result,
             callbacks: applyCallbacks,
-            builder: gpuBuilder,
-            compactKeys: gpuBuilder !== null,
-            count: current.count,
-            coordinator: c,
-            mesh,
             triangleSource,
           });
           if (staged > 0) {
@@ -720,7 +706,7 @@ export function evaluateDepthSortPerFrame(c: CoordinatorState): boolean {
       }
     }
 
-    if (moved) scheduleSort(c, mesh, nodeId);
+    if (moved) scheduleSort(c, mesh, nodeId, true);
   }
 
   const ordered = assignGlobalRenderOrder();

@@ -116,6 +116,7 @@ export function hasPendingElementTextureFullUpload(texture: THREE.DataTexture): 
  * storage equals a full one — what the classic renderer already does.
  */
 const uploadedOnce = new WeakSet<THREE.DataTexture>();
+const uploadedVersions = new WeakMap<THREE.DataTexture, number>();
 
 /** True once any renderer has consumed an upload of this element texture. */
 export function hasElementTextureBeenUploaded(texture: THREE.DataTexture): boolean {
@@ -211,6 +212,7 @@ export function registerElementTexelDirtyRange(
 /** `geometry.userData` slot carrying the element texture. */
 interface ElementStorageUserData {
   elementTexture?: THREE.DataTexture;
+  elementTextureLayout?: ElementTextureLayout;
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -273,15 +275,14 @@ interface ElementStorageUserData {
 // identity and never receive orderings — but that is precisely the
 // population depth sorting exists for.
 //
-// WebGPU: slicing is feature-gated to the classic WebGL backend via
-// {@link configureSortedIndexChunkedApply} (renderer-setup calls it with
-// `apiSurface === 'webgl2'`), because its back-pressure waits on the
+// WebGPU: slicing is gated to the classic WebGL backend by
+// `rendererBackendPolicy().ordering.chunked`, because its back-pressure waits on the
 // attribute's `onUploadCallback`, which neither WebGPU backend fires. The
 // WebGPU backends write the ordering in ONE slice and flip on the next
 // pump. They DO honour attribute `updateRanges` (and clear them after the
 // upload), but three's shared attribute cache re-uploads a
 // `DynamicDrawUsage` attribute on EVERY render regardless of its version,
-// so the pair is `StaticDrawUsage` there ({@link sortedIndexUsage}): it
+// so the pair is `StaticDrawUsage` there (backend policy): it
 // uploads only when a write bumps its version.
 // Double-buffering itself is unconditional — the atomic swap is a
 // correctness property, not a per-backend optimisation.
@@ -306,16 +307,6 @@ let sortedIndexChunkElements = SORTED_INDEX_CHUNK_ELEMENTS;
 export function setSortedIndexChunkElementsForTests(elements: number | null): void {
   sortedIndexChunkElements = elements ?? SORTED_INDEX_CHUNK_ELEMENTS;
 }
-
-/**
- * Session backend gate (renderer-setup, the
- * `configureElementTextureLayout` pattern): `true` on the classic
- * WebGL backend, `false` on the WebGPU backends (no `onUploadCallback`
- * for the slice back-pressure; see the module note above). It also picks
- * the ordering pair's buffer usage ({@link sortedIndexUsage}). Defaults to `true`: classic
- * WebGL is the production default and headless/unit contexts have no
- * renderer to misbehave.
- */
 
 /** True only for geometries built with storage-capable ordering buffers. */
 export function canComputeSortedIndex(geometry: THREE.InstancedBufferGeometry): boolean {
@@ -603,7 +594,7 @@ function isBackPressureBypassed(state: ChunkedOrderingApply): boolean {
  * advancing. The first slice of every stream always proceeds (the guard
  * also avoids blocking on a residual flag from a prior cancelled stream
  * on this attribute), and the WebGPU single-slice path
- * (`!rendererBackendPolicy().ordering.chunked`) never stalls.
+ * (the non-chunked backend policy) never stalls.
  *
  * Returns true when more chunks remain after this one.
  */
@@ -637,7 +628,9 @@ function applyNextSortedIndexChunk(
   // the WebGPU backends never fire the upload callback the slice
   // back-pressure waits on, so they write the ordering whole and flip next
   // frame — still atomic, still one upload.
-  const sliceEnd = rendererBackendPolicy().ordering.chunked ? start + sortedIndexChunkElements : state.count;
+  const sliceEnd = rendererBackendPolicy().ordering.chunked
+    ? start + sortedIndexChunkElements
+    : state.count;
   const end = Math.min(state.count, sliceEnd, arr.length);
   clearIdentityPrefix(attr);
   // Both WebGPURenderer backends upload from attribute.array at update time.
@@ -784,21 +777,25 @@ export function pumpSortedIndexOrderingApply(
 export function selectComputedSortedIndexOrdering(
   geometry: THREE.InstancedBufferGeometry,
   count: number,
-  ordering: Uint32Array,
+  ordering: Uint32Array | null,
   callbacks?: SortedIndexApplyCallbacks
 ): boolean {
   const inactive = getInactiveSortedIndexAttribute(geometry);
   if (
     !inactive ||
     !sortedIndexBuffersUsable(geometry) ||
-    ordering.length < count ||
+    (ordering !== null && ordering.length < count) ||
     count > inactive.array.length
   )
     return false;
   cancelSortedIndexOrderingApply(geometry);
   const mirror = inactive.array as Uint32Array;
   clearIdentityPrefix(inactive);
-  if (ordering.byteOffset === 0 && ordering.buffer.byteLength === mirror.byteLength) {
+  if (ordering === null) {
+    // GPU keys can differ by one bucket from the CPU. Keep the last CPU
+    // permutation as the repair seed without copying it on every orbit sort.
+    inactive.array = getActiveSortedIndexAttribute(geometry)!.array;
+  } else if (ordering.byteOffset === 0 && ordering.buffer.byteLength === mirror.byteLength) {
     inactive.array = new Uint32Array(ordering.buffer);
   } else {
     mirror.set(ordering.subarray(0, count), 0);
@@ -1024,11 +1021,13 @@ export function attachElementStorage(
   texture.onUpdate = () => {
     pendingFullUpload.delete(texture);
     uploadedOnce.add(texture);
+    uploadedVersions.set(texture, texture.version);
   };
   texture.needsUpdate = true;
   elementTextures.add(texture);
 
   (geometry.userData as ElementStorageUserData).elementTexture = texture;
+  (geometry.userData as ElementStorageUserData).elementTextureLayout = layout;
   geometry.addEventListener('dispose', () => texture.dispose());
   return texture;
 }
@@ -1036,6 +1035,18 @@ export function attachElementStorage(
 /** The element texture attached by `attachElementStorage`, if any. */
 export function getElementTexture(geometry: THREE.BufferGeometry): THREE.DataTexture | null {
   return (geometry.userData as ElementStorageUserData).elementTexture ?? null;
+}
+
+/** True after three has uploaded the current texture version. */
+export function isElementTextureCurrent(texture: THREE.DataTexture): boolean {
+  return uploadedVersions.get(texture) === texture.version;
+}
+
+/** The layout used to allocate a geometry's element texture. */
+export function getElementTextureLayout(
+  geometry: THREE.BufferGeometry
+): ElementTextureLayout | null {
+  return (geometry.userData as ElementStorageUserData).elementTextureLayout ?? null;
 }
 
 /**
