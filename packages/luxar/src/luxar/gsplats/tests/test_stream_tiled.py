@@ -99,7 +99,12 @@ def test_streamed_tile_parts_and_root_match_in_memory_merge(tmp_path: Path) -> N
     for i in range(3):
         a = memory_root[f"part_{i}"]
         b = stream_root[f"part_{i}"]
-        for name in ("centers", "amplitudes"):
+        for name in (
+            "centers",
+            "amplitudes",
+            "cholesky_factors_diag",
+            "cholesky_factors_offdiag",
+        ):
             np.testing.assert_array_equal(b[name][:], a[name][:])
     fitting_stats = stream_root["fitting"].attrs
     assert fitting_stats["n_splats"] == 3
@@ -242,7 +247,12 @@ def test_sequential_store_matches_fitted_tree_without_staging_loss(
     for key in ("n_splats", "mse", "psnr_db", "ssim", "foreground_psnr_db"):
         assert a["fitting"].attrs[key] == b["fitting"].attrs[key]
     for i in range(2):
-        for name in ("centers", "amplitudes"):
+        for name in (
+            "centers",
+            "amplitudes",
+            "cholesky_factors_diag",
+            "cholesky_factors_offdiag",
+        ):
             np.testing.assert_array_equal(
                 a[f"part_{i}/{name}"][:], b[f"part_{i}/{name}"][:]
             )

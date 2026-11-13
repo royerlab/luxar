@@ -1219,6 +1219,13 @@ def _keep_tile_result(
         pickle.dump(tile, file, protocol=pickle.HIGHEST_PROTOCOL)
 
 
+def _tile_staging(output_path: Path | None) -> tempfile.TemporaryDirectory[str] | None:
+    if output_path is None:
+        return None
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    return tempfile.TemporaryDirectory(prefix="luxar_tiled_", dir=output_path.parent)
+
+
 def _load_staged_tile(index: int, stage_dir: Path) -> GSplatData:
     path = stage_dir / f"tile_{index}.pkl"
     with path.open("rb") as file:
@@ -1479,9 +1486,7 @@ def fit_tiled(
     validate_tile_amplitude_floor(tile_amplitude_floor)
 
     results: list[GSplatData] = []
-    staging = (
-        tempfile.TemporaryDirectory(prefix="luxar_tiled_") if _output_path else None
-    )
+    staging = _tile_staging(_output_path)
 
     amplitude_pruned = 0
     t0 = time.perf_counter()

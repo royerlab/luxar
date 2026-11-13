@@ -33,12 +33,16 @@ from luxar.gsplats.tiling import compute_tile_specs, grid_bsp_tree
 
 @dataclass
 class _TileSummary:
+    """Only the per-tile fields needed after its splat arrays are released."""
+
     n_splats: int
     stats: dict[str, Any]
 
 
 @dataclass
 class _StreamOptions:
+    """Merge and writer settings shared by sequential and parallel tile sources."""
+
     num_tiles: int
     volume_shape: tuple[int, ...]
     tile_size: int | Sequence[int]
@@ -72,6 +76,8 @@ def _translate_node(node: Any, offset: np.ndarray) -> Any:
     from luxar.gsplats.tree import map_leaves
 
     def _leaf(leaf: Any) -> Any:
+        """Translate one leaf while preserving its fitted metadata."""
+
         moved = GSplatData.from_tree(leaf).translate(offset).tree
         return replace(moved, meta=dict(leaf.meta))
 
@@ -137,6 +143,8 @@ def _single_tile_store(
 
 @dataclass
 class _PartitionWriter:
+    """Feed ordered tile parts to the batch writer and collect root metadata."""
+
     path: Path
     load_tile: Callable[[int], GSplatData]
     options: _StreamOptions
@@ -149,6 +157,8 @@ class _PartitionWriter:
     total: int = 0
 
     def __post_init__(self) -> None:
+        """Resolve the uniform tile grid and its painter-order split tree."""
+
         o = self.options
         self.specs = compute_tile_specs(
             o.volume_shape,
@@ -161,6 +171,8 @@ class _PartitionWriter:
         self.slot_tree = grid_bsp_tree(self.specs, scale=o.grid_scale)
 
     def _cull(self, tile: GSplatData) -> GSplatData:
+        """Apply the same measured-score-preserving cull as the memory merge."""
+
         o = self.options
         if o.cull_retention is not None and 0 < o.cull_retention < 1 and tile.n_splats:
             from luxar.gsplats.fit_tiled_gsplats import _cull_keeping_measured_scores
@@ -169,6 +181,8 @@ class _PartitionWriter:
         return tile
 
     def parts(self) -> Iterator[Any]:
+        """Yield one finished nonempty part at a time to the store writer."""
+
         from luxar.gsplats.batch.merge_orchestrator import _finalize_part_node
 
         o = self.options
@@ -194,6 +208,8 @@ class _PartitionWriter:
             yield node
 
     def _floor_stats(self, stats: dict[str, Any]) -> None:
+        """Sum exact floor counts, including counts from empty tile markers."""
+
         o = self.options
         if o.tile_amplitude_floor is None:
             return
@@ -206,6 +222,8 @@ class _PartitionWriter:
             stats["tile_amplitude_pruned"] = exact_count
 
     def _frame_stats(self, stats: dict[str, Any]) -> None:
+        """Stamp the CLI crop and physical-coordinate frame on the root."""
+
         frame = self.options.frame
         if frame is None:
             return
@@ -214,6 +232,8 @@ class _PartitionWriter:
             stats["source_shape"] = list(frame.source_shape)
 
     def _quality(self, stats: dict[str, Any]) -> None:
+        """Score the whole reconstruction by loading one kept tile at a time."""
+
         o = self.options
         if o.volume is None:
             return
@@ -230,6 +250,8 @@ class _PartitionWriter:
         )
 
     def fitting_info(self) -> dict[str, Any]:
+        """Build merged fitting, provenance, and pipeline metadata after writing."""
+
         from luxar.gsplats.fit_tiled_gsplats import (
             _merged_fit_stats,
             _report_merged_min_extent,
@@ -273,6 +295,8 @@ class _PartitionWriter:
         return fitting or {}
 
     def bsp_tree(self) -> dict[str, Any] | None:
+        """Prune empty slots and move split planes into the output frame."""
+
         tree = _prune_slot_tree(self.slot_tree, self.kept_slots)
         frame = self.options.frame
         offset = frame.offset() if frame is not None else None
@@ -281,6 +305,8 @@ class _PartitionWriter:
         return _translate_slot_tree(tree, offset)
 
     def write(self) -> int:
+        """Write the partition atomically and return its total splat count."""
+
         o = self.options
         started = time.perf_counter()
         write_partition_streaming(

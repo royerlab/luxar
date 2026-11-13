@@ -1230,7 +1230,8 @@ above.
 
 #### `fit_tiled_to_store(volume, output_path, **fit_kwargs)`
 
-Fits a uniform tile grid into a `kind=partition` `.gsplats.zarr` directory. It
+Fits a uniform tile grid into a `.gsplats.zarr` directory. Multi-tile output is
+`kind=partition`; one tile keeps the existing bare-leaf form. It
 stages each sequential tile losslessly, then writes parts through the batch
 partition writer. Only one fitted tile and lightweight per-tile statistics are
 held during the write. The root carries the merged source grid, normalization,

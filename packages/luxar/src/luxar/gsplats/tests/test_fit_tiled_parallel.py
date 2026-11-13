@@ -48,7 +48,9 @@ def _pin_worker_thread_env(monkeypatch: pytest.MonkeyPatch) -> None:
 # ── A fake worker: writes a deterministic tiny gsplats per tile ──────────────
 
 
-def _fake_worker_builder(n_per_tile: int = 5, n_lods: int = 1):
+def _fake_worker_builder(
+    n_per_tile: int = 5, n_lods: int = 1, floor_count: int | None = None
+):
     """Return a worker_cmd_builder writing ``n_per_tile`` splats (x ``n_lods``)."""
 
     def builder(i: int, m: int, out_path: Path) -> list[str]:
@@ -69,6 +71,8 @@ def _fake_worker_builder(n_per_tile: int = 5, n_lods: int = 1):
 
             lods = [lod({i} * 100 + j, {n_per_tile}) for j in range({n_lods})]
             data = GSplatData.from_additive_sublods(lods)
+            if {floor_count!r} is not None:
+                data.stats['tile_amplitude_pruned'] = {floor_count!r}
             data.save(r"{out_path}")
             """
         )
@@ -186,6 +190,46 @@ def test_partition_output_streams_worker_stores(tmp_path: Path) -> None:
         "part_2",
     ]
     assert not (tmp_path / "workers").exists()
+
+
+def test_partition_output_counts_empty_worker_floor_marker(tmp_path: Path) -> None:
+    output = tmp_path / "merged.gsplats.zarr"
+    regular = _fake_worker_builder(floor_count=2)
+
+    def worker(index: int, count: int, path: Path) -> list[str]:
+        if index != 1:
+            return regular(index, count, path)
+        return [
+            sys.executable,
+            "-c",
+            f"from pathlib import Path; Path({str(path) + '.empty'!r})"
+            ".write_text('0 splats\\ntile_amplitude_pruned=7\\n')",
+        ]
+
+    fit_tiled_parallel(
+        num_tiles=3,
+        jobs=2,
+        tmp_dir=tmp_path / "workers",
+        worker_cmd_builder=worker,
+        volume_shape=(30, 10, 10),
+        tile_size=10,
+        overlap=0,
+        progressive=False,
+        cull_retention=None,
+        partition=True,
+        output_path=output,
+        tile_amplitude_floor=1e-5,
+        source_dtype="float32",
+        verbose=False,
+    )
+
+    root = open_group(output, mode="r")
+    assert root["pipeline"].attrs["tile_amplitude_pruned"] == 11
+    assert root["fitting"].attrs["n_splats"] == 10
+    assert [part["slot_id"] for part in root["fitting"].attrs["part_provenance"]] == [
+        "tile_0",
+        "tile_2",
+    ]
 
 
 class TestResolveJobs:
