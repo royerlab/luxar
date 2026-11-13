@@ -789,8 +789,23 @@ export function selectComputedSortedIndexOrdering(
   )
     return false;
   cancelSortedIndexOrderingApply(geometry);
-  const mirror = inactive.array as Uint32Array;
   clearIdentityPrefix(inactive);
+  installComputedMirror(geometry, inactive, ordering, count);
+  // The compute pass wrote the GPU buffer. Deliberately leave `version`
+  // unchanged, so three does not overwrite it with the CPU mirror on draw.
+  setSortedIndexSlot(geometry, activeSortedIndexSlot(geometry) === 0 ? 1 : 0);
+  raiseHeldDraw(geometry, count);
+  if (callbacks) awaitingDrawAcknowledgement.set(geometry, callbacks);
+  return true;
+}
+
+function installComputedMirror(
+  geometry: THREE.InstancedBufferGeometry,
+  inactive: THREE.BufferAttribute,
+  ordering: Uint32Array | null,
+  count: number
+): void {
+  const mirror = inactive.array as Uint32Array;
   if (ordering === null) {
     // GPU keys can differ by one bucket from the CPU. Keep the last CPU
     // permutation as the repair seed without copying it on every orbit sort.
@@ -800,12 +815,6 @@ export function selectComputedSortedIndexOrdering(
   } else {
     mirror.set(ordering.subarray(0, count), 0);
   }
-  // The compute pass wrote the GPU buffer. Deliberately leave `version`
-  // unchanged, so three does not overwrite it with the CPU mirror on draw.
-  setSortedIndexSlot(geometry, activeSortedIndexSlot(geometry) === 0 ? 1 : 0);
-  raiseHeldDraw(geometry, count);
-  if (callbacks) awaitingDrawAcknowledgement.set(geometry, callbacks);
-  return true;
 }
 
 /**

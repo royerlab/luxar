@@ -20,6 +20,9 @@ vi.mock('../../../../../rendering/element-texture-row-upload', () => ({
 vi.mock('../../../../../rendering/renderer-backend-policy', () => ({
   configureRendererBackendPolicy: vi.fn(),
 }));
+vi.mock('../../../../../rendering/depth-sort-coordinator/gpu-order-producer', () => ({
+  configureGpuOrderProducer: vi.fn(),
+}));
 
 const caps = (backendKind: RendererCapabilities['backendKind']): RendererCapabilities =>
   ({

@@ -39,6 +39,7 @@ import {
   syncSortElementLimit,
   workerHost,
   type CoordinatorState,
+  type NodeSortState,
 } from './state';
 import {
   computeModelView,
@@ -50,6 +51,7 @@ import {
 import { SORT_RPC_TIMEOUT_MS, maybeRetryStarvedWorkerInit } from './worker-lifecycle';
 import { canGpuSort, disableGpuOrderProducer, submitGpuSort } from './gpu-order-producer';
 import type { SortResult } from '../../workers/sort-worker';
+import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 
 /**
  * How far behind an orthographic camera the BSP eye is placed (world units):
@@ -82,6 +84,94 @@ export function stageOrdering(p: OrderingApply): number {
   return writeSortedIndexOrdering(geometry, result.ordering, result.ordering.length, callbacks, {
     adoptOrdering: true,
   });
+}
+
+/** Report a GPU ordering only after the selected slot has drawn. */
+function gpuOrderingCallbacks(
+  c: CoordinatorState,
+  count: number,
+  startedAt: number,
+  profiler: UpdateProfiler | null,
+  session: UpdateSession | null
+): SortedIndexApplyCallbacks {
+  const hooks = orderingApplyHooks(c);
+  if (!session) return hooks;
+  const generation = profiler?._currentGeneration();
+  return {
+    ...hooks,
+    onApplied: () => {
+      const appliedAt = performance.now();
+      session.setMetadata({ applyMs: Math.max(0, appliedAt - startedAt) });
+      if (profiler && profiler._currentGeneration() === generation) {
+        profiler.recordDepthSortCompletion({
+          lastMs: Math.max(0, appliedAt - startedAt),
+          kernelMs: null,
+          boundaryMs: null,
+          queueMs: null,
+          elements: count,
+        });
+      }
+      session.end();
+    },
+    onAbandoned: () => session.end(),
+  };
+}
+
+function stageGpuSort(
+  geometry: THREE.InstancedBufferGeometry,
+  count: number,
+  modelView: THREE.Matrix4,
+  callbacks: SortedIndexApplyCallbacks
+): boolean {
+  try {
+    if (!submitGpuSort(geometry, count, modelView)) return false;
+    return selectComputedSortedIndexOrdering(geometry, count, null, callbacks);
+  } catch (error) {
+    disableGpuOrderProducer();
+    log.warning(Modules.WORKER_POOL, 'WebGPU depth ordering failed; using worker order', error);
+    return false;
+  }
+}
+
+function finishGpuSort(
+  c: CoordinatorState,
+  mesh: THREE.Mesh,
+  state: NodeSortState,
+  modelView: THREE.Matrix4,
+  session: UpdateSession | null
+): void {
+  session?.setMetadata({ elements: state.count, info: 'GPU compute' });
+  recordSortPose(state, modelView);
+  syncSortedIndexSlot(c, mesh);
+  c.requestRender?.();
+}
+
+/** Select a submitted GPU sort before the next draw on the same queue. */
+function tryGpuOrdering(
+  c: CoordinatorState,
+  mesh: THREE.Mesh,
+  state: NodeSortState,
+  camera: THREE.Camera
+): boolean {
+  if (state.triangleSource) return false;
+  const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+  if (!canGpuSort(geometry, state.count)) return false;
+  const modelView = computeModelView(mesh, camera);
+  const startedAt = performance.now();
+  const profiler = c.getProfiler?.() ?? null;
+  const session = profiler?.beginDepthSortPass() ?? null;
+  const selected = stageGpuSort(
+    geometry,
+    state.count,
+    modelView,
+    gpuOrderingCallbacks(c, state.count, startedAt, profiler, session)
+  );
+  if (!selected) {
+    session?.end();
+    return false;
+  }
+  finishGpuSort(c, mesh, state, modelView, session);
+  return true;
 }
 
 function requestWorkerSort(nodeId: string, generation: number, modelView: THREE.Matrix4) {
@@ -126,31 +216,8 @@ export function scheduleSort(
     state.resortQueued = true;
     return;
   }
-  if (preferGpu && !state.triangleSource) {
-    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
-    try {
-      if (canGpuSort(geometry, state.count)) {
-        const modelView = computeModelView(mesh, camera);
-        if (submitGpuSort(geometry, state.count, modelView)) {
-          if (
-            selectComputedSortedIndexOrdering(geometry, state.count, null, orderingApplyHooks(c))
-          ) {
-            recordSortPose(state, modelView);
-            syncSortedIndexSlot(c, mesh);
-            c.requestRender?.();
-            return;
-          }
-        }
-      }
-    } catch (error) {
-      disableGpuOrderProducer();
-      log.warning(Modules.WORKER_POOL, 'WebGPU depth ordering failed; using worker order', error);
-    }
-  }
-  if (!workerHost.api || workerHost.workerInitState !== 'ready') {
-    releaseHeldDraw(c, mesh);
-    return;
-  }
+  if (preferGpu && tryGpuOrdering(c, mesh, state, camera)) return;
+  if (!workerHost.api || workerHost.workerInitState !== 'ready') return releaseHeldDraw(c, mesh);
   // NO apply-gate. Sorting and applying run CONCURRENTLY: a stream writes
   // into the inactive buffer, so the displayed ordering stays a complete
   // permutation throughout and a fresher sort is never wasted — it is

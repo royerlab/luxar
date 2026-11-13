@@ -33,8 +33,6 @@ export interface SortParams {
   generation: number;
   /** Column-major 4x4 model-view matrix [16]. */
   modelView: Float32Array;
-  /** Native WebGPU builds the permutation from compact keys. */
-  compactKeys?: boolean;
 }
 
 export interface SortResult {
@@ -42,8 +40,6 @@ export interface SortResult {
   generation: number;
   /** CPU mirror for commit preservation; not uploaded on the GPU path. */
   ordering: Uint32Array;
-  /** Compact GPU sort keys, present only for native WebGPU instanced draws. */
-  keys?: Uint16Array;
   /**
    * Time spent inside the selected backend sort call, including compact
    * key output when requested, in ms.
@@ -100,28 +96,16 @@ export function sortNode(ctx: SortWorkerCtx, params: SortParams): SortResult | n
   // Timing wraps the backend call generically: `ctx.wasm` is either the
   // compiled WASM module or the TypeScript fallback, so both report.
   const kernelStart = performance.now();
-  const keys = params.compactKeys ? new Uint16Array(node.count) : undefined;
-  if (keys) {
-    wasm.sort_splats_by_depth_with_keys(
-      node.centers3,
-      params.modelView,
-      ordering,
-      keys,
-      node.count
-    );
-  } else {
-    wasm.sort_splats_by_depth(node.centers3, params.modelView, ordering, node.count);
-  }
+  wasm.sort_splats_by_depth(node.centers3, params.modelView, ordering, node.count);
   const kernelEnd = performance.now();
   return transfer(
     {
       generation: node.generation,
       ordering,
-      keys,
       kernelMs: kernelEnd - kernelStart,
       workerMs: kernelEnd - bodyStart,
     },
-    keys ? [ordering.buffer, keys.buffer] : [ordering.buffer]
+    [ordering.buffer]
   );
 }
 

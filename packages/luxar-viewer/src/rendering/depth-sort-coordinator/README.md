@@ -1,10 +1,10 @@
 # rendering/depth-sort-coordinator
 
-> Main-thread side of the persistent depth-sort worker — camera-driven re-sorts (Phase 3) and cross-node back-to-front ordering
+> Main-thread depth-sort coordination — camera-driven re-sorts (Phase 3) and cross-node back-to-front ordering
 
 ## Purpose
 
-Depth sorting orders transparent elements back-to-front for correct order-dependent blending (normal and volumetric modes). **Within-node sorting** is driven by the `SortWorker` (Phase 2); **cross-node ordering** (THREE.js `renderOrder`) is driven here in Phase 3.
+Depth sorting orders transparent elements back-to-front for correct order-dependent blending (normal and volumetric modes). **Within-node sorting** uses the `SortWorker` on commits, for mesh, and as fallback; native WebGPU camera refreshes use `GpuDepthSorter` when the uploaded element texture and a storage-capable order buffer are ready. **Cross-node ordering** (THREE.js `renderOrder`) is driven here in Phase 3.
 
 This module is the **main-thread authority** for the depth-sort subsystem. It serves **all four geometry types** via a geometry-agnostic mechanism: projected 3D centers in, back-to-front permutation out.
 
@@ -44,8 +44,9 @@ depth-sort-coordinator/
 │                          attach/detach (the last detach terminates the worker)
 ├── ordering-apply.ts    — Slot → material sync, draw-acknowledgement hook, the
 │                          commit-time synchronous first sort, resolve helpers
-├── scheduler.ts         — scheduleSort (single in flight, resolve + apply), the
+├── scheduler.ts         — scheduleSort (GPU/worker dispatch, resolve + apply), the
 │                          chunked apply pump, the per-frame camera-motion pass
+├── gpu-order-producer.ts — Native WebGPU texture sort and ordering-buffer handoff
 ├── capture.ts           — resortForCapture / isCaptureQuiescent (offline drain)
 ├── render-order.ts      — Cross-node renderOrder assignment: BSP partition traversal +
 │                          centroid fallback, ONE global scale

@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { attachElementStorage, activeSortedIndexSlot } from '../../../../rendering/element-storage';
+import {
+  acknowledgeSortedIndexOrderingDraw,
+  attachElementStorage,
+  activeSortedIndexSlot,
+} from '../../../../rendering/element-storage';
 import { POINT_TEXTURE_LAYOUT } from '../../../../rendering/element-texture-layout';
 import { configureRendererBackendPolicy } from '../../../../rendering/renderer-backend-policy';
 import {
@@ -20,8 +24,11 @@ import {
 } from '../../../../rendering/gpu-depth-sort/gpu-types';
 import { estimateGeometryBytes } from '../../../../rendering/gpu-buffer-pool/geometry-bytes';
 import type { Renderer } from '../../../../rendering/renderer-capabilities';
+import { UpdateProfiler } from '../../../../profiling/update-profiler';
+import { setCommittedData } from '../../../../types/committed-data';
+import { resortForCapture } from '../../../../rendering/depth-sort-coordinator/capture';
 
-function fakeBackend() {
+function fakeBackend(targetUsage = BufferUsage.VERTEX | BufferUsage.COPY_DST) {
   const copies: { target: GpuBuffer; bytes: number }[] = [];
   const allocations: { size: number; destroyed: boolean }[] = [];
   const buffers = new WeakMap<THREE.BufferAttribute, GpuBuffer>();
@@ -65,7 +72,7 @@ function fakeBackend() {
     createStorageAttribute: (attribute: THREE.BufferAttribute) => {
       buffers.set(attribute, {
         size: attribute.array.byteLength,
-        usage: BufferUsage.VERTEX | BufferUsage.COPY_DST,
+        usage: targetUsage,
         destroy: () => {},
       });
     },
@@ -77,7 +84,9 @@ function scene() {
   const geometry = new THREE.InstancedBufferGeometry();
   const texture = attachElementStorage(geometry, 4, POINT_TEXTURE_LAYOUT);
   const material = new THREE.ShaderMaterial({ uniforms: { uSortedIndexSlot: { value: 0 } } });
+  material.userData.blendingMode = 'normal';
   const mesh = new THREE.Mesh(geometry, material);
+  setCommittedData(mesh, {});
   const camera = new THREE.PerspectiveCamera();
   camera.updateMatrixWorld();
   const state = {
@@ -91,20 +100,25 @@ function scene() {
     registered: true,
   } as NodeSortState;
   const requestRender = vi.fn();
+  const profiler = new UpdateProfiler();
   const coordinator = {
     nodeStates: new Map([[mesh.uuid, state]]),
     getCamera: () => camera,
     requestRender,
+    getProfiler: () => profiler,
     captureSuppressDepth: 0,
+    depthSortEnabled: true,
     drawnStateChanged: false,
   } as unknown as CoordinatorState;
-  return { geometry, texture, mesh, material, state, coordinator, requestRender };
+  return { geometry, texture, mesh, material, state, coordinator, requestRender, profiler };
 }
 
 describe('native WebGPU ordering producer', () => {
   const priorApi = workerHost.api;
+  const priorInitState = workerHost.workerInitState;
   afterEach(() => {
     workerHost.api = priorApi;
+    workerHost.workerInitState = priorInitState;
     configureRendererBackendPolicy('webgl');
     configureGpuOrderProducer({} as Renderer);
   });
@@ -114,7 +128,8 @@ describe('native WebGPU ordering producer', () => {
     const fake = fakeBackend();
     configureGpuOrderProducer({ backend: fake.backend } as unknown as Renderer);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const { geometry, texture, mesh, material, state, coordinator, requestRender } = scene();
+    const { geometry, texture, mesh, material, state, coordinator, requestRender, profiler } =
+      scene();
     workerHost.api = null;
     expect(canGpuSort(geometry, 4)).toBe(false);
     texture.onUpdate?.(texture);
@@ -130,6 +145,18 @@ describe('native WebGPU ordering producer', () => {
     expect(state.inFlight).toBe(false);
     expect(state.lastSortAxis).not.toBeNull();
     expect(requestRender).toHaveBeenCalledOnce();
+    expect(profiler.getDepthSortCompletions().total).toBe(0);
+    acknowledgeSortedIndexOrderingDraw(geometry);
+    expect(profiler.getDepthSortCompletions().events).toEqual([
+      {
+        seq: 1,
+        lastMs: expect.any(Number),
+        kernelMs: null,
+        boundaryMs: null,
+        queueMs: null,
+        elements: 4,
+      },
+    ]);
     expect(estimateGeometryBytes(geometry)).toBe(
       baseBytes + fake.allocations.reduce((sum, allocation) => sum + allocation.size, 0)
     );
@@ -148,6 +175,41 @@ describe('native WebGPU ordering producer', () => {
     expect(canGpuSort(geometry, 4)).toBe(true);
     texture.needsUpdate = true;
     expect(canGpuSort(geometry, 4)).toBe(false);
+    geometry.dispose();
+  });
+
+  it('falls back to the worker when the target lacks COPY_DST', async () => {
+    configureRendererBackendPolicy('webgpu-native');
+    const fake = fakeBackend(BufferUsage.VERTEX);
+    configureGpuOrderProducer({ backend: fake.backend } as unknown as Renderer);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const { geometry, texture, mesh, coordinator } = scene();
+    texture.onUpdate?.(texture);
+    const sort = vi.fn().mockResolvedValue(null);
+    workerHost.api = { sort } as unknown as NonNullable<typeof workerHost.api>;
+    workerHost.workerInitState = 'ready';
+
+    scheduleSort(coordinator, mesh, mesh.uuid, true);
+
+    expect(sort).toHaveBeenCalledOnce();
+    expect(activeSortedIndexSlot(geometry)).toBe(0);
+    expect(canGpuSort(geometry, 4)).toBe(false);
+    geometry.dispose();
+  });
+
+  it('refreshes a capture on the GPU even when no worker is available', async () => {
+    configureRendererBackendPolicy('webgpu-native');
+    const fake = fakeBackend();
+    configureGpuOrderProducer({ backend: fake.backend } as unknown as Renderer);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const { geometry, texture, coordinator } = scene();
+    texture.onUpdate?.(texture);
+    workerHost.api = null;
+
+    await resortForCapture(coordinator);
+
+    expect(fake.copies).toHaveLength(1);
+    expect(activeSortedIndexSlot(geometry)).toBe(1);
     geometry.dispose();
   });
 });

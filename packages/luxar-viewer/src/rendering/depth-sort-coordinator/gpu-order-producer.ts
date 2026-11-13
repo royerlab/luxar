@@ -70,19 +70,26 @@ export function configureGpuOrderProducer(renderer: Renderer): void {
 export function canGpuSort(geometry: THREE.InstancedBufferGeometry, count: number): boolean {
   if (!rendererBackendPolicy().gpuCompute || !backend || !sorter?.accepts(count)) return false;
   if (!canComputeSortedIndex(geometry)) return false;
+  try {
+    return gpuResourcesReady(geometry, count, backend);
+  } catch {
+    // A resource still being created, or a lost device, keeps the worker path.
+    return false;
+  }
+}
+
+function gpuResourcesReady(
+  geometry: THREE.InstancedBufferGeometry,
+  count: number,
+  activeBackend: NativeBackend
+): boolean {
   const texture = getElementTexture(geometry);
   const layout = getElementTextureLayout(geometry);
+  if (!texture || !layout || !isElementTextureCurrent(texture)) return false;
   const target = geometry.getAttribute(
     activeSortedIndexSlot(geometry) === 0 ? 'aSortedIndexB' : 'aSortedIndex'
   );
-  return !!(
-    texture &&
-    layout &&
-    isElementTextureCurrent(texture) &&
-    backend.get(texture).texture &&
-    target &&
-    count <= target.array.length
-  );
+  return !!(activeBackend.get(texture).texture && target && count <= target.array.length);
 }
 
 /** Submit into the inactive ordering buffer. The caller selects it only on success. */

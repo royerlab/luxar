@@ -136,7 +136,7 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 2. Lookup `node = ctx.nodes.get(nodeId)`
 3. **Stale-drop**: return `null` when `!node || node.generation !== params.generation`
 4. Allocate output to `orderingCapacity` when supplied, and sort into a `node.count`-length view of that buffer
-5. Time the backend call: `sort_splats_by_depth` for worker ordering, or `sort_splats_by_depth_with_keys` when WebGPU also needs compact keys. Both outputs come from the same key pass.
+5. Time the backend call to `sort_splats_by_depth`. Native WebGPU camera refreshes use the texture-based `GpuDepthSorter` directly; the worker retains the CPU repair ordering for commits and fallback.
 6. Return TRANSFERRED ordering and, on the WebGPU path, keys.
 
 **Timing**:
