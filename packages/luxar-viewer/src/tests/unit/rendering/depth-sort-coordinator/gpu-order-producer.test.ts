@@ -160,6 +160,14 @@ describe('native WebGPU ordering producer', () => {
     expect(estimateGeometryBytes(geometry)).toBe(
       baseBytes + fake.allocations.reduce((sum, allocation) => sum + allocation.size, 0)
     );
+    const original = geometry.getAttribute('aSortedIndex') as THREE.BufferAttribute;
+    const originalVersion = original.version;
+    scheduleSort(coordinator, mesh, mesh.uuid, true);
+    expect(fake.copies.at(-1)).toEqual({ target: fake.buffers.get(original), bytes: 16 });
+    expect(activeSortedIndexSlot(geometry)).toBe(0);
+    expect(original.version).toBe(originalVersion);
+    acknowledgeSortedIndexOrderingDraw(geometry);
+    expect(profiler.getDepthSortCompletions().total).toBe(2);
     geometry.dispose();
     expect(estimateGeometryBytes(geometry)).toBe(baseBytes);
     expect(fake.allocations.every((allocation) => allocation.destroyed)).toBe(true);
