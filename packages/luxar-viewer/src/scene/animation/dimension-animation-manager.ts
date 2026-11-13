@@ -87,6 +87,15 @@ const FRAME_EWMA_ALPHA = 0.1;
 
 /** Silence after a completed narration before the next slideshow step. */
 const NARRATION_PAD_MS = 2000;
+/** Allow a little scheduling slack before abandoning a stalled clip. */
+const NARRATION_SLACK_MS = 1000;
+
+interface NarratedStop {
+  value: number;
+  expected: Set<string>;
+  active: Map<string, number>;
+  deadline: number;
+}
 
 /** A discrete dimension's own grid step (the snap grid), else null. */
 function gridStepOf(metadata: { discrete?: boolean; step?: number } | undefined): number | null {
@@ -133,7 +142,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   private lastSteppedValues = new Map<number, number>();
 
   /** Only the current stop's on-arrival voice clips may extend each playhead. */
-  private narratedStops = new Map<number, { expected: Set<string>; active: Map<string, number> }>();
+  private narratedStops = new Map<number, NarratedStop>();
 
   /** Unsubscribe function for sceneDimsManager listener */
   private removeDimsListener: (() => void) | null = null;
@@ -252,11 +261,12 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     if (!dims) return;
     const now = performance.now();
     for (const [dimIndex, state] of this.animationStates) {
-      if (!state.isPlaying || dimIndex === this.steppingDim || dimIndex >= dims.ndim) continue;
+      if (dimIndex === this.steppingDim || dimIndex >= dims.ndim) continue;
       const value = dims.currentStep[dimIndex];
       if (value === this.lastSteppedValues.get(dimIndex)) continue;
-      this.lastSteppedValues.set(dimIndex, value);
       this.narratedStops.delete(dimIndex);
+      if (!state.isPlaying) continue;
+      this.lastSteppedValues.set(dimIndex, value);
       state.nextDue = now + this.tickPeriodMs(state);
     }
   }
@@ -306,13 +316,25 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   beginNarratedStop(dimIndex: number, paths: readonly string[]): void {
     const state = this.animationStates.get(dimIndex);
     if (!state?.isPlaying || this.isFramePaced(state)) return;
-    this.narratedStops.set(dimIndex, { expected: new Set(paths), active: new Map() });
+    const dims = this.sceneDimsManager.getDims();
+    if (!dims || dimIndex >= dims.ndim) return;
+    this.narratedStops.set(dimIndex, {
+      value: dims.currentStep[dimIndex],
+      expected: new Set(paths),
+      active: new Map(),
+      deadline: 0,
+    });
+    // A snap or camera-less landing has no held tick to restart this clock.
     state.nextDue = performance.now() + this.tickPeriodMs(state);
   }
 
-  narrationStarted(path: string): void {
+  narrationStarted(path: string, durationMs: number): void {
+    const duration = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0;
+    const deadline = performance.now() + duration + NARRATION_PAD_MS + NARRATION_SLACK_MS;
     for (const stop of this.narratedStops.values()) {
-      if (stop.expected.has(path)) stop.active.set(path, (stop.active.get(path) ?? 0) + 1);
+      if (!stop.expected.has(path)) continue;
+      stop.active.set(path, (stop.active.get(path) ?? 0) + 1);
+      stop.deadline = Math.max(stop.deadline, deadline);
     }
   }
 
@@ -321,6 +343,10 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     for (const [dimIndex, stop] of this.narratedStops) {
       const count = stop.active.get(path);
       if (count === undefined) continue;
+      if (now >= stop.deadline) {
+        this.narratedStops.delete(dimIndex);
+        continue;
+      }
       if (count > 1) stop.active.set(path, count - 1);
       else stop.active.delete(path);
       const state = this.animationStates.get(dimIndex);
@@ -328,8 +354,18 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     }
   }
 
-  private isNarrationActive(dimIndex: number): boolean {
-    return (this.narratedStops.get(dimIndex)?.active.size ?? 0) > 0;
+  private isNarrationActive(dimIndex: number, now: number): boolean {
+    const stop = this.narratedStops.get(dimIndex);
+    if (!stop) return false;
+    const dims = this.sceneDimsManager.getDims();
+    if (!dims || dims.currentStep[dimIndex] !== stop.value) {
+      this.narratedStops.delete(dimIndex);
+      return false;
+    }
+    if (stop.active.size === 0) return false;
+    if (now < stop.deadline) return true;
+    this.narratedStops.delete(dimIndex);
+    return false;
   }
 
   /**
@@ -376,7 +412,12 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
       state.nextDue = now + this.tickPeriodMs(state);
       return;
     }
-    if (!this.isNarrationActive(dimIndex)) this.updateDimension(dimIndex, now);
+    const narrated = this.narratedStops.has(dimIndex);
+    if (this.isNarrationActive(dimIndex, now)) return;
+    const stepsBefore = this.stepCount;
+    this.updateDimension(dimIndex, now);
+    // A held stop must not steal dwell time from the stop after it.
+    if (narrated && this.stepCount !== stepsBefore) state.nextDue = now + this.tickPeriodMs(state);
   }
 
   /**
@@ -718,6 +759,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
       // Start animation
       state.isPlaying = true;
+      if (this.isFramePaced(state)) this.narratedStops.delete(dimIndex);
       state.nextDue = performance.now() + this.tickPeriodMs(state);
       this.recordPlayheadValue(dimIndex);
       restartCadenceWindow(state, performance.now());
@@ -756,7 +798,6 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
     const wasFramePaced = this.isFramePaced(state);
     state.isPlaying = false;
-    this.narratedStops.delete(dimIndex);
     // The callback is `continuous`: left registered it would hold the render
     // loop awake forever after the first play (#2944 A1). play() re-arms it.
     if (!this.isAnyPlaying()) this.unregister();
@@ -911,6 +952,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
    */
   stop(dimIndex: number): void {
     this.pause(dimIndex);
+    this.narratedStops.delete(dimIndex);
     this.animationStates.delete(dimIndex);
     this.lastSteppedValues.delete(dimIndex);
     log.info(Modules.ANIMATION, `Stopped dimension ${dimIndex}`);

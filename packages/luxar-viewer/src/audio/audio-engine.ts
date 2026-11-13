@@ -68,7 +68,7 @@ export interface AudioEngineDeps {
   container(): HTMLElement;
   emit(event: 'sound-started' | 'sound-ended', payload: { name: string }): void;
   /** Private playback signal, keyed by full scene path rather than public node name. */
-  onNarrationEvent?(event: 'started' | 'ended', path: string): void;
+  onNarrationEvent?(event: 'started' | 'ended', path: string, durationMs?: number): void;
   /** Tell the UI (the rail) the engine's state changed. */
   notifyUiChanged(): void;
   /**
@@ -246,9 +246,9 @@ export class AudioEngine {
         bus: buses[attrs.bus],
         panningModel: this.panningModel,
         parent,
-        onStarted: (name) => {
+        onStarted: (name, durationMs) => {
           this.onNodeStarted(name, attrs.bus);
-          if (narration) this.deps.onNarrationEvent?.('started', desc.path);
+          if (narration) this.deps.onNarrationEvent?.('started', desc.path, durationMs);
         },
         onEnded: (name) => {
           this.onNodeEnded(name, attrs.bus);

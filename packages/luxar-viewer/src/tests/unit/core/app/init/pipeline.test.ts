@@ -533,8 +533,8 @@ describe('runInitPipeline', () => {
       expect(ports.emitEmbedderEvent).toHaveBeenCalledWith('sound-started', {
         name: 'narration',
       });
-      audio.deps.onNarrationEvent('started', '/story/narration');
-      expect(ports.onNarrationEvent).toHaveBeenCalledWith('started', '/story/narration');
+      audio.deps.onNarrationEvent('started', '/story/narration', 42_000);
+      expect(ports.onNarrationEvent).toHaveBeenCalledWith('started', '/story/narration', 42_000);
 
       const cameraChanged = vi.fn();
       const unsubscribe = audio.deps.onCameraReplaced(cameraChanged);

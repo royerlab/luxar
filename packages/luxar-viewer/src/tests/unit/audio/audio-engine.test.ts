@@ -69,7 +69,7 @@ interface Harness {
   dims: SimpleDims;
   setStep(step: number): void;
   events: Array<{ event: string; name: string }>;
-  narrationEvents: Array<{ event: string; path: string }>;
+  narrationEvents: Array<{ event: string; path: string; durationMs?: number }>;
   uiChanges: number;
 }
 
@@ -83,7 +83,7 @@ function makeHarness(state: 'running' | 'suspended' = 'running'): Harness {
     root: new THREE.Group(),
     dims: storyDims(0),
     events: [] as Array<{ event: string; name: string }>,
-    narrationEvents: [] as Array<{ event: string; path: string }>,
+    narrationEvents: [] as Array<{ event: string; path: string; durationMs?: number }>,
     uiChanges: 0,
   } as Harness;
   const deps: AudioEngineDeps = {
@@ -102,7 +102,8 @@ function makeHarness(state: 'running' | 'suspended' = 'running'): Harness {
     resolveNodeCenter: (name) => (name === 'blob' ? new THREE.Vector3(4, 5, 6) : null),
     container: () => document.body,
     emit: (event, payload) => h.events.push({ event, name: payload.name }),
-    onNarrationEvent: (event, path) => h.narrationEvents.push({ event, path }),
+    onNarrationEvent: (event, path, durationMs) =>
+      h.narrationEvents.push({ event, path, ...(durationMs === undefined ? {} : { durationMs }) }),
     notifyUiChanged: () => {
       h.uiChanges++;
     },
@@ -323,7 +324,9 @@ describe('AudioEngine — slab, ducking and buses', () => {
 
     expect(h.engine.notifyWaypoint('arrive', { story: 0 })).toEqual(['/story/voice']);
     vi.advanceTimersByTime(1);
-    expect(h.narrationEvents).toEqual([{ event: 'started', path: '/story/voice' }]);
+    expect(h.narrationEvents).toEqual([
+      { event: 'started', path: '/story/voice', durationMs: 2000 },
+    ]);
     h.engine.stop('/story/voice');
     vi.advanceTimersByTime(500);
     expect(h.narrationEvents).toContainEqual({ event: 'ended', path: '/story/voice' });

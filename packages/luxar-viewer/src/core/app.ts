@@ -334,9 +334,9 @@ export class LuxarApp {
           getPanelVisibilityStates: () => this.getPanelVisibilityStates(),
           restorePanelVisibilityStates: (states) => this.restorePanelVisibilityStates(states),
           emitEmbedderEvent: (event, payload) => this.embedderEvents.emit(event, payload),
-          onNarrationEvent: (event, path) => {
+          onNarrationEvent: (event, path, durationMs) => {
             const manager = this.inputHandler?.getAnimationManager();
-            if (event === 'started') manager?.narrationStarted(path);
+            if (event === 'started') manager?.narrationStarted(path, durationMs ?? 0);
             else manager?.narrationEnded(path);
           },
           // Read lazily: `this.pickingSystem` is (re)assigned per dataset load.

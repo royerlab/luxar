@@ -56,7 +56,7 @@ export interface SoundNodeDeps {
   panningModel: PanningModel;
   /** The node's placeholder group (carries the node transform); voices attach here. */
   parent: THREE.Object3D;
-  onStarted(name: string): void;
+  onStarted(name: string, durationMs: number): void;
   onEnded(name: string): void;
   /** World-space centre of the `attach_to` node, or null while it is unknown. */
   resolveAttachCenter?(): THREE.Vector3 | null;
@@ -445,7 +445,7 @@ export class SoundNode {
       if (v.playing) {
         v.started = true;
         v.endPending = true;
-        this.deps.onStarted(this.name);
+        this.deps.onStarted(this.name, this.buffer!.duration * 1000);
       }
     }, this.attrs.delay_ms);
     return true;
