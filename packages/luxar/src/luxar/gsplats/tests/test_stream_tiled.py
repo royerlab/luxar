@@ -225,6 +225,7 @@ def test_sequential_store_matches_fitted_tree_without_staging_loss(
         n_iters=2,
         device="cpu",
         floor="none",
+        norm_range=(0.0, 2.0),
         cull_retention=None,
         verbose=False,
     )
@@ -246,6 +247,7 @@ def test_sequential_store_matches_fitted_tree_without_staging_loss(
 
     for key in ("n_splats", "mse", "psnr_db", "ssim", "foreground_psnr_db"):
         assert a["fitting"].attrs[key] == b["fitting"].attrs[key]
+    assert a["pipeline"].attrs["image_max"] == b["pipeline"].attrs["image_max"] == 2.0
     for i in range(2):
         for name in (
             "centers",
