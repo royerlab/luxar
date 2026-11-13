@@ -22,9 +22,10 @@ never see.
 
 from __future__ import annotations
 
-import pickle
+import json
 import tempfile
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Optional, Sequence, cast
 
@@ -1213,23 +1214,85 @@ def _keep_tile_result(
     if staging is None:
         results.append(tile)
         return
-    # The final writer must see the original float arrays. A temporary gsplats
-    # store quantizes amplitudes, changing the merged score on reload.
-    with (Path(staging.name) / f"tile_{index}.pkl").open("wb") as file:
-        pickle.dump(tile, file, protocol=pickle.HIGHEST_PROTOCOL)
+    # A temporary gsplats store quantizes amplitudes. Keep the original arrays
+    # and metadata in inspectable files so the final writer sees the fitted data.
+    arrays: dict[str, np.ndarray] = {}
+    sublods = []
+    for i, lod in enumerate(tile.additive_sublods):
+        for name in (
+            "centers",
+            "amplitudes",
+            "cholesky_factors",
+            "colors",
+            "label_ids",
+        ):
+            value = getattr(lod, name)
+            if value is not None:
+                arrays[f"{i}_{name}"] = value
+        sublods.append(
+            {
+                "stats": lod.stats,
+                "truncation_radius": lod.truncation_radius,
+                "label_vocabulary": lod.label_vocabulary,
+            }
+        )
+    base = Path(staging.name) / f"tile_{index}"
+    np.savez(base.with_suffix(".npz"), **cast(Any, arrays))
+    with base.with_suffix(".json").open("w") as file:
+        json.dump({"stats": tile.stats, "sublods": sublods}, file, default=_stage_json)
+
+
+def _stage_json(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    raise TypeError(f"cannot stage {type(value).__name__}")
 
 
 def _tile_staging(output_path: Path | None) -> tempfile.TemporaryDirectory[str] | None:
     if output_path is None:
         return None
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    return tempfile.TemporaryDirectory(prefix="luxar_tiled_", dir=output_path.parent)
+    return tempfile.TemporaryDirectory(
+        prefix=f".{output_path.name}.tiles.", dir=output_path.parent
+    )
 
 
 def _load_staged_tile(index: int, stage_dir: Path) -> GSplatData:
-    path = stage_dir / f"tile_{index}.pkl"
-    with path.open("rb") as file:
-        return cast(GSplatData, pickle.load(file))
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD
+
+    base = stage_dir / f"tile_{index}"
+    with base.with_suffix(".json").open() as file:
+        metadata = json.load(file)
+    with np.load(base.with_suffix(".npz"), allow_pickle=False) as arrays:
+        lods = []
+        for i, info in enumerate(metadata["sublods"]):
+            lods.append(
+                AdditiveSubLOD(
+                    centers=arrays[f"{i}_centers"],
+                    amplitudes=arrays[f"{i}_amplitudes"],
+                    cholesky_factors=arrays[f"{i}_cholesky_factors"],
+                    colors=_staged_optional_array(arrays, i, "colors"),
+                    label_ids=_staged_optional_array(arrays, i, "label_ids"),
+                    label_vocabulary=(
+                        {
+                            int(key): value
+                            for key, value in info["label_vocabulary"].items()
+                        }
+                        if info["label_vocabulary"] is not None
+                        else None
+                    ),
+                    stats=info["stats"],
+                    truncation_radius=info["truncation_radius"],
+                )
+            )
+    return GSplatData.from_additive_sublods(lods, stats=metadata["stats"])
+
+
+def _staged_optional_array(arrays: Any, index: int, name: str) -> np.ndarray | None:
+    key = f"{index}_{name}"
+    return arrays[key] if key in arrays else None
 
 
 def _log_denoised_floor(
@@ -1251,7 +1314,7 @@ def _report_applied_floor(applied_floor: float | None, verbose: bool) -> None:
         )
 
 
-def fit_tiled(
+def _fit_tiled_impl(
     volume: Any,
     tile_size: int | Sequence[int] = 256,
     overlap: int | Sequence[int] = 32,
@@ -1275,11 +1338,250 @@ def fit_tiled(
     source_dtype: Optional[str] = None,
     source_stored_bytes: Optional[int] = None,
     tile_amplitude_floor: float | None = None,
+    encoding_mode: Any = None,
     _output_path: Path | None = None,
     _root_attrs: dict[str, Any] | None = None,
     _frame: Any | None = None,
     **fit_kwargs: Any,
 ) -> "Any":
+    """Shared tile fit and merge loop for memory and store outputs."""
+    # Propagate verbose to per-tile fit_gaussian_splats unless caller
+    # explicitly provided a different value in fit_kwargs.
+    fit_kwargs.setdefault("verbose", verbose)
+
+    # Resolve the background floor ONCE for the whole run and hand every tile
+    # the same concrete level (no tile re-scans, no per-tile drift). This is
+    # where a USER-supplied spec becomes a level, so a numeric spec is guarded
+    # against "floor >= max erases everything" too (matching the non-tiled
+    # path, which warns and ignores such a floor).
+    floor_spec = fit_kwargs.pop("floor", "auto")
+    probe_cache = fit_kwargs.setdefault("_denoise_probe_cache", {})
+    floor_already_resolved = fit_kwargs.pop("_floor_resolved", False)
+    floor_strategy = fit_kwargs.pop("_floor_strategy", None)
+    if floor_already_resolved:
+        applied_floor = None if floor_spec == "none" else float(floor_spec)
+    else:
+        _validate_floor(floor_spec)
+        # Every tile is denoised before the level is subtracted, so a
+        # volume-derived spec is resolved on the DENOISED basis (#1178) —
+        # otherwise this path removes a different pedestal than `--tiling none`
+        # does on the same input. PEEK at the denoise keys: `fit_kwargs` is
+        # forwarded to `fit_tile`, which pops them itself.
+        from luxar.gsplats.fitting.preprocessing import (
+            resolve_volume_floor_denoised_with_strategy,
+        )
+
+        applied_floor, floor_strategy = resolve_volume_floor_denoised_with_strategy(
+            volume,
+            floor_spec,
+            denoise_h=fit_kwargs.get("_denoise_h"),
+            denoise_params=fit_kwargs.get("_denoise_params"),
+            probe_cache=probe_cache,
+            guard_numeric=True,
+            # Log the DENOISED basis the level was resolved on (raw level + the
+            # measured shift) — the one number the summary line below cannot show.
+            # Gated on a VOLUME-DERIVED spec (`auto`/`pNN`) and on denoising actually
+            # being active, so `--denoise` off, and any absolute level, print exactly
+            # what they printed before #1178. `isinstance(str)` would not do: the CLI
+            # hands `--floor 110` down as the STRING "110", which is an absolute the
+            # summary line below already echoes.
+            verbose=_log_denoised_floor(verbose, floor_spec, fit_kwargs),
+        )
+    _report_applied_floor(applied_floor, verbose)
+    fit_kwargs["floor"] = applied_floor if applied_floor is not None else "none"
+
+    # Same treatment for the intensity scale: resolve ONCE here so every tile
+    # shares it, rather than letting each tile normalize by its own extremes.
+    # `fit_tile` would resolve it per tile otherwise — identical result, but a
+    # bounded volume read per tile instead of one. `_ensure_tile_norm_range`
+    # consults the already-resolved marker FIRST, which is the only way to tell a
+    # caller-DECLINED range (None, see `_tile_norm_range`) from "nobody has looked
+    # yet" — an upstream decline re-measured here would re-read the volume and
+    # re-print its own warning. The marker is then re-set for the per-tile
+    # `fit_tile` calls below (it is popped, not forwarded).
+    _ensure_tile_norm_range(volume, fit_kwargs, applied_floor, verbose=verbose)
+    fit_kwargs["_norm_range_resolved"] = True
+
+    volume_shape = tuple(volume.shape)
+    specs = compute_tile_specs(
+        volume_shape, tile_size, overlap, fold_slivers=fold_tile_slivers
+    )
+    _validate_tile_seed_counts(tile_seed_counts, len(specs))
+    _reject_nonpositive_shared_seed_budget(fit_kwargs.get("seeds"), tile_seed_counts)
+    validate_tile_amplitude_floor(tile_amplitude_floor)
+
+    results: list[GSplatData] = []
+    staging = _tile_staging(_output_path)
+
+    amplitude_pruned = 0
+    t0 = time.perf_counter()
+
+    with staging or nullcontext():
+        with asection(
+            f"Tiled fitting: {len(specs)} tiles, tile_size={tile_size}, overlap={overlap}"
+        ):
+            if verbose:
+                aprint(f"Volume shape: {volume_shape}")
+                aprint(f"Tile grid: {_grid_shape(specs, len(volume_shape))}")
+
+            for spec in specs:
+                label = f"Tile {spec.index + 1}/{len(specs)} grid={spec.grid_index}"
+                if (
+                    tile_seed_counts is not None
+                    and int(tile_seed_counts[spec.index]) == 0
+                ):
+                    # A zero budget is how the occupancy-weighted allocator says
+                    # "no signal here" — it never zeroes a tile that holds any.
+                    # Handing that 0 to `fit_tile` would reach the fitter's
+                    # "seeds as int must be positive" on any tile that does, and
+                    # this in-process loop has no per-tile `allow_empty_tile`
+                    # escape hatch the way a batch worker subprocess does.
+                    _keep_tile_result(
+                        spec.index,
+                        _skipped_tile_result(spec, len(volume_shape), applied_floor),
+                        results,
+                        staging,
+                    )
+                    if verbose:
+                        aprint(f"{label}: zero seed budget, not fitted")
+                    continue
+                with asection(label):
+                    tile_result = fit_tile(
+                        volume,
+                        spec,
+                        voxel_size=voxel_size,
+                        output_space=output_space,
+                        progressive=progressive,
+                        max_splats_per_pass=max_splats_per_pass,
+                        psnr_patience=psnr_patience,
+                        max_passes=max_passes,
+                        **_tile_fit_kwargs(fit_kwargs, tile_seed_counts, spec.index),
+                    )
+                    if floor_strategy is not None:
+                        tile_result.stats["floor_strategy"] = floor_strategy
+                    if tile_amplitude_floor is not None:
+                        n_before_floor = tile_result.n_splats
+                        tile_result = floor_tile_amplitudes(
+                            tile_result, tile_amplitude_floor
+                        )
+                        amplitude_pruned += n_before_floor - tile_result.n_splats
+                    n = tile_result.n_splats
+                    if verbose:
+                        t_tile = tile_result.stats.get("time_seconds", 0)
+                        aprint(f"{n:,} splats ({t_tile:.1f}s)")
+                    _keep_tile_result(spec.index, tile_result, results, staging)
+                    del tile_result  # Release the just-staged tile before the next one.
+
+        elapsed = time.perf_counter() - t0
+        # Resolved HERE, where the caller's array is still in hand: after the tiles
+        # are fitted only their crops remain, and the merge cannot recover the
+        # element type the volume was stored in.
+        from luxar.gsplats.fitting.validation import _resolve_source_dtype
+
+        merged_dtype, merged_itemsize = _resolve_source_dtype(volume, source_dtype)
+        grid_scale = resolve_grid_scale(
+            len(volume_shape),
+            voxel_size=voxel_size,
+            output_space=output_space,
+        )
+        if _output_path is not None:
+            from functools import partial
+
+            from luxar.gsplats.batch.stream_tiled import stream_tile_results
+
+            stream_tile_results(
+                _output_path,
+                partial(
+                    _load_staged_tile,
+                    stage_dir=Path(
+                        cast(tempfile.TemporaryDirectory[str], staging).name
+                    ),
+                ),
+                num_tiles=len(specs),
+                volume_shape=volume_shape,
+                tile_size=tile_size,
+                overlap=overlap,
+                progressive=progressive,
+                cull_retention=cull_retention,
+                elapsed=elapsed,
+                source_shape=source_shape,
+                source_dtype=merged_dtype,
+                source_itemsize=merged_itemsize,
+                source_stored_bytes=source_stored_bytes,
+                applied_floor=applied_floor,
+                floor_strategy=floor_strategy,
+                tile_amplitude_floor=tile_amplitude_floor,
+                amplitude_pruned=amplitude_pruned,
+                grid_scale=grid_scale,
+                volume=volume,
+                device=fit_kwargs.get("device"),
+                recipe=recipe,
+                recipe_params=recipe_params,
+                **(
+                    {"encoding_mode": encoding_mode}
+                    if encoding_mode is not None
+                    else {}
+                ),
+                fold_tile_slivers=fold_tile_slivers,
+                root_attrs=_root_attrs,
+                frame=_frame,
+                verbose=verbose,
+            )
+            return _output_path
+        merged = merge_tile_results(
+            results,
+            volume_shape=volume_shape,
+            source_shape=source_shape,
+            source_dtype=merged_dtype,
+            source_itemsize=merged_itemsize,
+            source_stored_bytes=source_stored_bytes,
+            tile_size=tile_size,
+            overlap=overlap,
+            num_tiles=len(specs),
+            progressive=progressive,
+            cull_retention=cull_retention,
+            elapsed=elapsed,
+            verbose=verbose,
+            partition=partition,
+            recipe=recipe,
+            recipe_params=recipe_params,
+            applied_floor=applied_floor,
+            floor_strategy=floor_strategy,
+            # The grid above is in voxels; with a voxel_size and real-space output
+            # every tile's splats were offset by `origin * voxel_size`, so the
+            # partition's split planes need the same factor (#1587).
+            grid_scale=grid_scale,
+            volume=volume,
+            device=fit_kwargs.get("device"),
+            fold_tile_slivers=fold_tile_slivers,
+        )
+        stamp_tile_amplitude_floor(merged, tile_amplitude_floor, amplitude_pruned)
+        return merged
+
+
+def fit_tiled(
+    volume: Any,
+    tile_size: int | Sequence[int] = 256,
+    overlap: int | Sequence[int] = 32,
+    voxel_size: Optional[Sequence[float] | float] = None,
+    output_space: str = "real",
+    verbose: bool = True,
+    progressive: bool = False,
+    max_splats_per_pass: int = 5000,
+    psnr_patience: float = 0.5,
+    max_passes: Optional[int] = None,
+    cull_retention: float | None = 0.999,
+    partition: bool = False,
+    recipe: Optional[str] = None,
+    recipe_params: "Optional[Any]" = None,
+    fold_tile_slivers: bool = True,
+    tile_seed_counts: "Optional[Sequence[int]]" = None,
+    source_shape: Optional[Sequence[int]] = None,
+    source_dtype: Optional[str] = None,
+    source_stored_bytes: Optional[int] = None,
+    tile_amplitude_floor: float | None = None,
+    **fit_kwargs: Any,
+) -> Any:
     """Fit Gaussian splats to a large volume using tiled decomposition.
 
     Splits the volume into overlapping tiles with cosine apodization
@@ -1420,218 +1722,46 @@ def fit_tiled(
     ``--progressive`` with ``--parallel`` to run multiple tiles concurrently
     on the same GPU and improve throughput.
     """
-    # Propagate verbose to per-tile fit_gaussian_splats unless caller
-    # explicitly provided a different value in fit_kwargs.
-    fit_kwargs.setdefault("verbose", verbose)
-
-    # Resolve the background floor ONCE for the whole run and hand every tile
-    # the same concrete level (no tile re-scans, no per-tile drift). This is
-    # where a USER-supplied spec becomes a level, so a numeric spec is guarded
-    # against "floor >= max erases everything" too (matching the non-tiled
-    # path, which warns and ignores such a floor).
-    floor_spec = fit_kwargs.pop("floor", "auto")
-    probe_cache = fit_kwargs.setdefault("_denoise_probe_cache", {})
-    floor_already_resolved = fit_kwargs.pop("_floor_resolved", False)
-    floor_strategy = fit_kwargs.pop("_floor_strategy", None)
-    if floor_already_resolved:
-        applied_floor = None if floor_spec == "none" else float(floor_spec)
-    else:
-        _validate_floor(floor_spec)
-        # Every tile is denoised before the level is subtracted, so a
-        # volume-derived spec is resolved on the DENOISED basis (#1178) —
-        # otherwise this path removes a different pedestal than `--tiling none`
-        # does on the same input. PEEK at the denoise keys: `fit_kwargs` is
-        # forwarded to `fit_tile`, which pops them itself.
-        from luxar.gsplats.fitting.preprocessing import (
-            resolve_volume_floor_denoised_with_strategy,
-        )
-
-        applied_floor, floor_strategy = resolve_volume_floor_denoised_with_strategy(
-            volume,
-            floor_spec,
-            denoise_h=fit_kwargs.get("_denoise_h"),
-            denoise_params=fit_kwargs.get("_denoise_params"),
-            probe_cache=probe_cache,
-            guard_numeric=True,
-            # Log the DENOISED basis the level was resolved on (raw level + the
-            # measured shift) — the one number the summary line below cannot show.
-            # Gated on a VOLUME-DERIVED spec (`auto`/`pNN`) and on denoising actually
-            # being active, so `--denoise` off, and any absolute level, print exactly
-            # what they printed before #1178. `isinstance(str)` would not do: the CLI
-            # hands `--floor 110` down as the STRING "110", which is an absolute the
-            # summary line below already echoes.
-            verbose=_log_denoised_floor(verbose, floor_spec, fit_kwargs),
-        )
-    _report_applied_floor(applied_floor, verbose)
-    fit_kwargs["floor"] = applied_floor if applied_floor is not None else "none"
-
-    # Same treatment for the intensity scale: resolve ONCE here so every tile
-    # shares it, rather than letting each tile normalize by its own extremes.
-    # `fit_tile` would resolve it per tile otherwise — identical result, but a
-    # bounded volume read per tile instead of one. `_ensure_tile_norm_range`
-    # consults the already-resolved marker FIRST, which is the only way to tell a
-    # caller-DECLINED range (None, see `_tile_norm_range`) from "nobody has looked
-    # yet" — an upstream decline re-measured here would re-read the volume and
-    # re-print its own warning. The marker is then re-set for the per-tile
-    # `fit_tile` calls below (it is popped, not forwarded).
-    _ensure_tile_norm_range(volume, fit_kwargs, applied_floor, verbose=verbose)
-    fit_kwargs["_norm_range_resolved"] = True
-
-    volume_shape = tuple(volume.shape)
-    specs = compute_tile_specs(
-        volume_shape, tile_size, overlap, fold_slivers=fold_tile_slivers
-    )
-    _validate_tile_seed_counts(tile_seed_counts, len(specs))
-    _reject_nonpositive_shared_seed_budget(fit_kwargs.get("seeds"), tile_seed_counts)
-    validate_tile_amplitude_floor(tile_amplitude_floor)
-
-    results: list[GSplatData] = []
-    staging = _tile_staging(_output_path)
-
-    amplitude_pruned = 0
-    t0 = time.perf_counter()
-
-    with asection(
-        f"Tiled fitting: {len(specs)} tiles, tile_size={tile_size}, overlap={overlap}"
+    if any(
+        key in fit_kwargs
+        for key in ("_output_path", "_root_attrs", "_frame", "encoding_mode")
     ):
-        if verbose:
-            aprint(f"Volume shape: {volume_shape}")
-            aprint(f"Tile grid: {_grid_shape(specs, len(volume_shape))}")
-
-        for spec in specs:
-            label = f"Tile {spec.index + 1}/{len(specs)} grid={spec.grid_index}"
-            if tile_seed_counts is not None and int(tile_seed_counts[spec.index]) == 0:
-                # A zero budget is how the occupancy-weighted allocator says
-                # "no signal here" — it never zeroes a tile that holds any.
-                # Handing that 0 to `fit_tile` would reach the fitter's
-                # "seeds as int must be positive" on any tile that does, and
-                # this in-process loop has no per-tile `allow_empty_tile`
-                # escape hatch the way a batch worker subprocess does.
-                _keep_tile_result(
-                    spec.index,
-                    _skipped_tile_result(spec, len(volume_shape), applied_floor),
-                    results,
-                    staging,
-                )
-                if verbose:
-                    aprint(f"{label}: zero seed budget, not fitted")
-                continue
-            with asection(label):
-                tile_result = fit_tile(
-                    volume,
-                    spec,
-                    voxel_size=voxel_size,
-                    output_space=output_space,
-                    progressive=progressive,
-                    max_splats_per_pass=max_splats_per_pass,
-                    psnr_patience=psnr_patience,
-                    max_passes=max_passes,
-                    **_tile_fit_kwargs(fit_kwargs, tile_seed_counts, spec.index),
-                )
-                if floor_strategy is not None:
-                    tile_result.stats["floor_strategy"] = floor_strategy
-                if tile_amplitude_floor is not None:
-                    n_before_floor = tile_result.n_splats
-                    tile_result = floor_tile_amplitudes(
-                        tile_result, tile_amplitude_floor
-                    )
-                    amplitude_pruned += n_before_floor - tile_result.n_splats
-                n = tile_result.n_splats
-                if verbose:
-                    t_tile = tile_result.stats.get("time_seconds", 0)
-                    aprint(f"{n:,} splats ({t_tile:.1f}s)")
-                _keep_tile_result(spec.index, tile_result, results, staging)
-                del tile_result  # Release the just-staged tile before the next one.
-
-    elapsed = time.perf_counter() - t0
-    # Resolved HERE, where the caller's array is still in hand: after the tiles
-    # are fitted only their crops remain, and the merge cannot recover the
-    # element type the volume was stored in.
-    from luxar.gsplats.fitting.validation import _resolve_source_dtype
-
-    merged_dtype, merged_itemsize = _resolve_source_dtype(volume, source_dtype)
-    grid_scale = resolve_grid_scale(
-        len(volume_shape),
-        voxel_size=voxel_size,
-        output_space=output_space,
-    )
-    if _output_path is not None:
-        assert staging is not None
-        from functools import partial
-
-        from luxar.gsplats.batch.stream_tiled import stream_tile_results
-
-        try:
-            stream_tile_results(
-                _output_path,
-                partial(
-                    _load_staged_tile,
-                    stage_dir=Path(staging.name),
-                ),
-                num_tiles=len(specs),
-                volume_shape=volume_shape,
-                tile_size=tile_size,
-                overlap=overlap,
-                progressive=progressive,
-                cull_retention=cull_retention,
-                elapsed=elapsed,
-                source_shape=source_shape,
-                source_dtype=merged_dtype,
-                source_itemsize=merged_itemsize,
-                source_stored_bytes=source_stored_bytes,
-                applied_floor=applied_floor,
-                floor_strategy=floor_strategy,
-                tile_amplitude_floor=tile_amplitude_floor,
-                amplitude_pruned=amplitude_pruned,
-                grid_scale=grid_scale,
-                volume=volume,
-                device=fit_kwargs.get("device"),
-                recipe=recipe,
-                recipe_params=recipe_params,
-                fold_tile_slivers=fold_tile_slivers,
-                root_attrs=_root_attrs,
-                frame=_frame,
-                verbose=verbose,
-            )
-        finally:
-            staging.cleanup()
-        return _output_path
-    merged = merge_tile_results(
-        results,
-        volume_shape=volume_shape,
-        source_shape=source_shape,
-        source_dtype=merged_dtype,
-        source_itemsize=merged_itemsize,
-        source_stored_bytes=source_stored_bytes,
+        raise TypeError("store-only options belong to fit_tiled_to_store")
+    return _fit_tiled_impl(
+        volume,
         tile_size=tile_size,
         overlap=overlap,
-        num_tiles=len(specs),
-        progressive=progressive,
-        cull_retention=cull_retention,
-        elapsed=elapsed,
+        voxel_size=voxel_size,
+        output_space=output_space,
         verbose=verbose,
+        progressive=progressive,
+        max_splats_per_pass=max_splats_per_pass,
+        psnr_patience=psnr_patience,
+        max_passes=max_passes,
+        cull_retention=cull_retention,
         partition=partition,
         recipe=recipe,
         recipe_params=recipe_params,
-        applied_floor=applied_floor,
-        floor_strategy=floor_strategy,
-        # The grid above is in voxels; with a voxel_size and real-space output
-        # every tile's splats were offset by `origin * voxel_size`, so the
-        # partition's split planes need the same factor (#1587).
-        grid_scale=grid_scale,
-        volume=volume,
-        device=fit_kwargs.get("device"),
         fold_tile_slivers=fold_tile_slivers,
+        tile_seed_counts=tile_seed_counts,
+        source_shape=source_shape,
+        source_dtype=source_dtype,
+        source_stored_bytes=source_stored_bytes,
+        tile_amplitude_floor=tile_amplitude_floor,
+        **fit_kwargs,
     )
-    stamp_tile_amplitude_floor(merged, tile_amplitude_floor, amplitude_pruned)
-    return merged
 
 
 def fit_tiled_to_store(volume: Any, output_path: Path, **kwargs: Any) -> Path:
-    """Fit a uniform grid to a partition store with one tile resident at a time."""
+    """Fit a uniform grid to a partition store with one tile resident at a time.
+
+    Until the write finishes, lossless staged tiles occupy disk beside the output.
+    """
     return cast(
         Path,
-        fit_tiled(volume, partition=True, _output_path=Path(output_path), **kwargs),
+        _fit_tiled_impl(
+            volume, partition=True, _output_path=Path(output_path), **kwargs
+        ),
     )
 
 
@@ -1804,11 +1934,9 @@ def merge_tile_results(
         _stamp_merge_normalization(
             node.meta, regions, applied_floor, floor_strategy=floor_strategy
         )
-        from luxar.gsplats.tree import total_splats
-
         fit_stats = _merged_fit_stats(
             results,
-            delivered_splats=int(total_splats(node)),
+            delivered_splats=sum(region.n_splats for region in regions),
             volume_shape=volume_shape,
             tile_size=tile_size,
             overlap=overlap,
@@ -1824,7 +1952,9 @@ def merge_tile_results(
             tile_specs=grid_specs if len(grid_specs) == num_tiles else None,
         )
         sum_population_counts(
-            [region.stats for region in regions], fit_stats, int(total_splats(node))
+            [region.stats for region in regions],
+            fit_stats,
+            sum(region.n_splats for region in regions),
         )
         sum_run_history([result.stats for result in results], fit_stats)
         _score_merged_if_reference(

@@ -10,10 +10,11 @@ from typing import Any, Callable, Iterator, Sequence, cast
 import numpy as np
 from arbol import aprint
 
+from luxar.encoding import EncodingMode
 from luxar.gsplats.batch.merge_orchestrator import (
-    _prune_slot_tree,
     _slot_cells,
     _translate_slot_tree,
+    prune_serialized_bsp_tree,
 )
 from luxar.gsplats.fit_basis import fit_image_min
 from luxar.gsplats.fitting.scale_population import (
@@ -63,6 +64,7 @@ class _StreamOptions:
     device: str | None = None
     recipe: str | None = None
     recipe_params: Any | None = None
+    encoding_mode: EncodingMode = EncodingMode.AUTO
     fold_tile_slivers: bool = True
     root_attrs: dict[str, Any] | None = None
     frame: Any | None = None
@@ -127,6 +129,9 @@ def _single_tile_store(
     fitting, config, provenance, pipeline = split_fitting_info(
         node.meta.get("fit_stats", {})
     )
+    if o.recipe is not None:
+        pipeline = {**(pipeline or {}), "recipe": o.recipe}
+    started = time.perf_counter()
     write_gsplats_tree(
         path,
         node,
@@ -136,8 +141,22 @@ def _single_tile_store(
         fitting_config=config,
         provenance_info=provenance,
         pipeline_info=pipeline,
+        encoding_mode=o.encoding_mode,
         root_attrs=o.root_attrs,
     )
+    from luxar._zarr_compat import consolidate, open_group
+    from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+    root = open_group(path, mode="r+")
+    fitting_group = root["fitting"]
+    record = fitting_group.attrs.get("fit_provenance")
+    if isinstance(record, dict):
+        record["timings"]["saving"] = time.perf_counter() - started
+        fitting_group.attrs["fit_provenance"] = record
+    else:
+        fitting_group.attrs["save_seconds"] = time.perf_counter() - started
+    _stamp_content_hash(root)
+    consolidate(root)
     return int(total_splats(node))
 
 
@@ -155,6 +174,7 @@ class _PartitionWriter:
     provenance: dict[str, Any] = field(default_factory=dict)
     pipeline: dict[str, Any] = field(default_factory=dict)
     total: int = 0
+    started: float = 0.0
 
     def __post_init__(self) -> None:
         """Resolve the uniform tile grid and its painter-order split tree."""
@@ -289,15 +309,24 @@ class _PartitionWriter:
         self._quality(stats)
         _report_merged_min_extent(stats, verbose=o.verbose)
         fitting, fit_config, prov, pipe = split_fitting_info(stats)
+        fitting = fitting or {}
+        saving = time.perf_counter() - self.started
+        record = fitting.get("fit_provenance")
+        if isinstance(record, dict):
+            record["timings"]["saving"] = saving
+        else:
+            fitting["save_seconds"] = saving
         self.fitting_config.update(fit_config or {})
         self.provenance.update(prov or {})
         self.pipeline.update(pipe or {})
-        return fitting or {}
+        if o.recipe is not None:
+            self.pipeline["recipe"] = o.recipe
+        return fitting
 
     def bsp_tree(self) -> dict[str, Any] | None:
         """Prune empty slots and move split planes into the output frame."""
 
-        tree = _prune_slot_tree(self.slot_tree, self.kept_slots)
+        tree = prune_serialized_bsp_tree(self.slot_tree, self.kept_slots)
         frame = self.options.frame
         offset = frame.offset() if frame is not None else None
         if tree is None or offset is None:
@@ -308,13 +337,14 @@ class _PartitionWriter:
         """Write the partition atomically and return its total splat count."""
 
         o = self.options
-        started = time.perf_counter()
+        self.started = time.perf_counter()
         write_partition_streaming(
             self.path,
             self.parts,
             max_elements=0,
             amplitude_bits="auto" if o.source_dtype is not None else 16,
             source_dtype=o.source_dtype,
+            encoding_mode=o.encoding_mode,
             fitting_info=self.fitting_info,
             fitting_config=self.fitting_config,
             provenance_info=self.provenance,
@@ -325,7 +355,7 @@ class _PartitionWriter:
         if o.verbose:
             aprint(
                 f"Wrote {self.total:,} splats in {len(self.kept_slots)} tile-parts "
-                f"({time.perf_counter() - started:.1f}s merge)"
+                f"({time.perf_counter() - self.started:.1f}s merge)"
             )
         return self.total
 
@@ -354,6 +384,7 @@ def stream_tile_results(
     device: str | None = None,
     recipe: str | None = None,
     recipe_params: Any | None = None,
+    encoding_mode: EncodingMode = EncodingMode.AUTO,
     fold_tile_slivers: bool = True,
     root_attrs: dict[str, Any] | None = None,
     frame: Any | None = None,
@@ -385,6 +416,7 @@ def stream_tile_results(
         device=device,
         recipe=recipe,
         recipe_params=recipe_params,
+        encoding_mode=encoding_mode,
         fold_tile_slivers=fold_tile_slivers,
         root_attrs=root_attrs,
         frame=frame,

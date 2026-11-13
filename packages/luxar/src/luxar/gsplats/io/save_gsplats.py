@@ -920,9 +920,9 @@ def _finalize_gsplat_root(
             }
         fitting_group = root.create_group("fitting")
         fitting_group.attrs.update(resolved_fitting_info)
-        if fitting_config is not None:
+        if fitting_config:
             fitting_group.create_group("config").attrs.update(fitting_config)
-    if provenance_info is not None:
+    if provenance_info:
         root.create_group("provenance").attrs.update(provenance_info)
     if pipeline_info:
         # Reduction/topology stats: everything split_fitting_info's other

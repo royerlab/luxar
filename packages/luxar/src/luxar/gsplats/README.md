@@ -318,6 +318,8 @@ fits and writes each tile without retaining the merged splat set in memory.
 It returns `output_path`; `fit_tiled` continues to return an in-memory result.
 The default directory-store CLI partition fit uses this streaming path, including
 `-j N` worker fits. Flat and compressed CLI output still use the in-memory merge.
+Until the write finishes, lossless staged tiles occupy disk beside the output;
+allow space for the whole uncompressed fit as well as the output store.
 
 **Individual tile fitting** (for Slurm or distributed workflows):
 

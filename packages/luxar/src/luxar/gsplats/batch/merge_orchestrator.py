@@ -27,7 +27,9 @@ from arbol import aprint, asection
 
 from luxar.core.group.partition import (
     map_serialized_bsp_tree,
-    prune_serialized_bsp_tree,
+)
+from luxar.core.group.partition import (
+    prune_serialized_bsp_tree as prune_serialized_bsp_tree,
 )
 from luxar.gsplats.batch.manifest import (
     BatchManifest,
@@ -849,13 +851,6 @@ def _slot_cells(
         return serialized_bsp_leaf_cells(slot_tree, ndim)
     except (KeyError, TypeError, ValueError):
         return {}
-
-
-def _prune_slot_tree(
-    tree: Optional[Dict[str, Any]], kept: Sequence[int]
-) -> Optional[Dict[str, Any]]:
-    """Renumber a streamed grid's surviving part labels."""
-    return prune_serialized_bsp_tree(tree, kept)
 
 
 def _translate_slot_tree(tree: Dict[str, Any], offset: Any) -> Optional[Dict[str, Any]]:

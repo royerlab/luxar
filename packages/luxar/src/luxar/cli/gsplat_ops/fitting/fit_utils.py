@@ -1784,7 +1784,7 @@ def fit_sequential_tiled(
     recipe_params: "Any",
 ) -> "Any":
     """Full (in-process, sequential) tiled fitting."""
-    from luxar.gsplats.fit_tiled_gsplats import fit_tiled
+    from luxar.gsplats.fit_tiled_gsplats import fit_tiled, fit_tiled_to_store
     from luxar.gsplats.tiling import compute_tile_specs
 
     # An integer --seeds is a WHOLE-VOLUME budget (what `gsplat cal` reports);
@@ -1831,8 +1831,7 @@ def fit_sequential_tiled(
             "flat leaf; use -j>1 for a downscaled partition."
         )
     stream_output = seq_partition and ctx.compress is None
-    return fit_tiled(
-        volume,
+    options = dict(
         tile_size=ctx.tile_size,
         overlap=ctx.tile_overlap,
         voxel_size=fc_voxel_size,
@@ -1843,21 +1842,26 @@ def fit_sequential_tiled(
         psnr_patience=ctx.psnr_patience,
         max_passes=ctx.max_passes,
         seeds=tile_seeds,
-        partition=seq_partition,
         recipe=ctx.recipe,
         recipe_params=recipe_params,
         fold_tile_slivers=True,
         tile_seed_counts=tile_seed_counts,
         tile_amplitude_floor=ctx.tile_amplitude_floor,
-        _output_path=ctx.output_path if stream_output else None,
-        _root_attrs=(
-            {"dimension_metadata": ctx.dimension_metadata}
-            if stream_output and ctx.dimension_metadata is not None
-            else None
-        ),
-        _frame=ctx.fit_frame if stream_output else None,
         **fit_config,
     )
+    if stream_output:
+        return fit_tiled_to_store(
+            volume,
+            ctx.output_path,
+            _root_attrs=(
+                {"dimension_metadata": ctx.dimension_metadata}
+                if ctx.dimension_metadata is not None
+                else None
+            ),
+            _frame=ctx.fit_frame,
+            **options,
+        )
+    return fit_tiled(volume, partition=seq_partition, **options)
 
 
 def fit_progressive(
