@@ -12,12 +12,9 @@
  */
 import * as THREE from 'three';
 import { afterEach, describe, expect, it } from 'vitest';
+import { configureRendererBackendPolicy } from '../../../rendering/renderer-backend-policy';
 
-import {
-  attachElementStorage,
-  configureSortedIndexChunkedApply,
-  writeSortedIndexIdentity,
-} from '../../../rendering/element-storage';
+import { attachElementStorage, writeSortedIndexIdentity } from '../../../rendering/element-storage';
 import { POINT_TEXTURE_LAYOUT } from '../../../rendering/element-texture-layout';
 
 interface AttributesLike {
@@ -58,24 +55,24 @@ function makeGeometry(): THREE.InstancedBufferGeometry {
 }
 
 describe('ordering pair buffer usage', () => {
-  afterEach(() => configureSortedIndexChunkedApply(true));
+  afterEach(() => configureRendererBackendPolicy('webgl'));
 
   it('keeps DynamicDraw on the classic WebGL backend', () => {
-    configureSortedIndexChunkedApply(true);
+    configureRendererBackendPolicy('webgl');
     const geometry = makeGeometry();
     expect(usageOf(geometry, 'aSortedIndex')).toBe(THREE.DynamicDrawUsage);
     expect(usageOf(geometry, 'aSortedIndexB')).toBe(THREE.DynamicDrawUsage);
   });
 
   it('uses StaticDraw on the WebGPU renderer backends', () => {
-    configureSortedIndexChunkedApply(false);
+    configureRendererBackendPolicy('webgpu-native');
     const geometry = makeGeometry();
     expect(usageOf(geometry, 'aSortedIndex')).toBe(THREE.StaticDrawUsage);
     expect(usageOf(geometry, 'aSortedIndexB')).toBe(THREE.StaticDrawUsage);
   });
 
   it('on WebGPU, an unchanged ordering is not re-uploaded on later frames', async () => {
-    configureSortedIndexChunkedApply(false);
+    configureRendererBackendPolicy('webgpu-native');
     const geometry = makeGeometry();
     writeSortedIndexIdentity(geometry, 1024);
     const attr = geometry.getAttribute('aSortedIndex') as THREE.BufferAttribute;
@@ -84,7 +81,7 @@ describe('ordering pair buffer usage', () => {
   });
 
   it('on WebGPU, a new ordering write still reaches the GPU', async () => {
-    configureSortedIndexChunkedApply(false);
+    configureRendererBackendPolicy('webgpu-native');
     const geometry = makeGeometry();
     const attr = geometry.getAttribute('aSortedIndex') as THREE.BufferAttribute;
     const { default: Attributes } = (await import(/* @vite-ignore */ ATTRIBUTES_MODULE)) as {

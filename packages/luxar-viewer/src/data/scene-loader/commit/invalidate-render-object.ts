@@ -48,9 +48,9 @@
  * program — forcing a full GLSL recompile on the very next frame
  * (multi-10ms hitches on every progressive / additive-ladder commit).
  * So the dispatch is not merely unnecessary on classic WebGL, it is
- * actively harmful, and is gated behind
- * {@link configureRenderObjectEviction} (renderer-setup enables it
- * only when the backend is WebGPU). On classic WebGL — and in
+ * actively harmful, and is gated behind the backend policy's
+ * `evictRenderObjects` (`rendering/renderer-backend-policy.ts`), which
+ * is true only on the WebGPU backends. On classic WebGL — and in
  * headless/unit contexts with no renderer — the dispose dispatch is
  * skipped entirely, so no compiled program is ever destroyed.
  *
@@ -69,33 +69,10 @@
 import type * as THREE from 'three';
 
 // Import the sentinel from its leaf module rather than the material-manager
-// barrel: this file is reachable from the renderer bootstrap
-// (renderer-setup -> configureRenderObjectEviction), and the barrel pulls in
-// the TSL material factories (which import `three/webgpu`).
+// barrel, which pulls in the TSL material factories (they import
+// `three/webgpu`), so this commit helper stays off that chunk.
 import { SOFT_DISPOSE_FLAG } from '../../../rendering/material-manager/soft-dispose-flag';
-
-/**
- * Session backend gate (renderer-setup, the
- * `configureSortedIndexChunkedApply` pattern): `true` on the WebGPU
- * backend, where a stale `RenderObject.vertexBuffers` cache must be
- * flushed after a pool rebuild; `false` on the classic WebGL backend,
- * where the `dispose` dispatch has no cache to flush and instead
- * destroys the compiled GL program (a costly per-commit shader
- * recompile — see the module note). Defaults to `false`: classic
- * WebGL is the production default and headless/unit contexts have no
- * renderer, so the harmful dispatch stays OFF until WebGPU opts in
- * explicitly at renderer setup.
- */
-let renderObjectEvictionEnabled = false;
-
-/**
- * Configure whether {@link invalidateRenderObjectFor} dispatches the
- * `dispose`-based RenderObject eviction (WebGPU only). Called once at
- * renderer setup with `apiSurface === 'webgpu'`.
- */
-export function configureRenderObjectEviction(enabled: boolean): void {
-  renderObjectEvictionEnabled = enabled;
-}
+import { rendererBackendPolicy } from '../../../rendering/renderer-backend-policy';
 
 /**
  * Discard Three's cached `RenderObject` for the given mesh's material
@@ -106,7 +83,7 @@ export function configureRenderObjectEviction(enabled: boolean): void {
  * **no-op on the classic WebGL backend** (the production default),
  * where dispatching `dispose` would otherwise destroy the material's
  * compiled GL program and force a per-commit shader recompile — see
- * the module note and {@link configureRenderObjectEviction}. When
+ * the module note and the backend policy's `evictRenderObjects`. When
  * eviction is disabled no `dispose` is dispatched on either the main
  * or the pick material.
  *
@@ -133,7 +110,7 @@ export function invalidateRenderObjectFor(mesh: THREE.Mesh): void {
     // UNCONDITIONAL, both backends: a pure reference update keeping the
     // pick mesh pointing at the current geometry (pick correctness).
     pickNode.geometry = mesh.geometry;
-    if (renderObjectEvictionEnabled) {
+    if (rendererBackendPolicy().evictRenderObjects) {
       // WebGPU only: the pick mesh has its OWN cached RenderObject
       // (chainMap keyed by [pickMesh, pickMaterial, …]) with the same
       // stale `vertexBuffers` problem: the pick pass binds whatever that
@@ -149,7 +126,7 @@ export function invalidateRenderObjectFor(mesh: THREE.Mesh): void {
   // WebGPU only: flush the main mesh's stale `vertexBuffers` cache. On the
   // classic WebGL backend this dispatch would destroy the compiled GL
   // program and force a per-commit shader recompile, so it stays gated.
-  if (renderObjectEvictionEnabled) {
+  if (rendererBackendPolicy().evictRenderObjects) {
     softDisposeAll(mesh.material);
   }
 }

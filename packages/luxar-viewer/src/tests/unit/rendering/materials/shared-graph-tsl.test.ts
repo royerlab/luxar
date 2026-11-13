@@ -9,6 +9,7 @@
  * with a frame whose `material` is the one being drawn.
  */
 import { describe, expect, it } from 'vitest';
+import { configureRendererBackendPolicy } from '../../../../rendering/renderer-backend-policy';
 import * as THREE from 'three';
 import { texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
@@ -20,10 +21,7 @@ import {
   type SharedTSLGraph,
 } from '../../../../rendering/materials/_shared/shared-graph-tsl';
 import { setDensityAlphaExp } from '../../../../rendering/materials/_shared/density-drop';
-import {
-  configureRenderObjectEviction,
-  invalidateRenderObjectFor,
-} from '../../../../data/scene-loader/commit/invalidate-render-object';
+import { invalidateRenderObjectFor } from '../../../../data/scene-loader/commit/invalidate-render-object';
 
 type Leaf = { value: unknown; updateBefore: (frame: { material: unknown }) => void };
 
@@ -190,11 +188,11 @@ describe('shared TSL graph forwarding (gsplat)', () => {
     expect(draw(graph, a).uSplatTex).toBe(texA);
     expect(draw(graph, b).uSplatTex).toBe(texB);
 
-    configureRenderObjectEviction(true);
+    configureRendererBackendPolicy('webgpu-native');
     try {
       invalidateRenderObjectFor(new THREE.Mesh(new THREE.BufferGeometry(), a));
     } finally {
-      configureRenderObjectEviction(false);
+      configureRendererBackendPolicy('webgl');
     }
 
     const afterEviction = draw(graph, a);

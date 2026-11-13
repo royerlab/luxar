@@ -217,9 +217,9 @@ describe('SortWorker startup (warm-up, configured deadline, guard arms)', () => 
 
   it('registers the sorted-index capacity for WebGPU worker results', async () => {
     const coord = await loadCoordinator('immediate');
-    const { configureSortedIndexChunkedApply } =
-      await import('../../../../rendering/element-storage');
-    configureSortedIndexChunkedApply(false);
+    const { configureRendererBackendPolicy } =
+      await import('../../../../rendering/renderer-backend-policy');
+    configureRendererBackendPolicy('webgpu-native');
     coord.configure({ getCamera: () => makeCamera(), requestRender: vi.fn() });
     const mesh = makeSortableMesh(2);
     mesh.geometry.setAttribute(

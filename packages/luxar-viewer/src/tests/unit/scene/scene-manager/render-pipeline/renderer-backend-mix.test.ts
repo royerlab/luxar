@@ -17,11 +17,8 @@ vi.mock('../../../../../rendering/element-texture-layout', () => ({
 vi.mock('../../../../../rendering/element-texture-row-upload', () => ({
   installElementTextureRowUploads: vi.fn(),
 }));
-vi.mock('../../../../../rendering/element-storage', () => ({
-  configureSortedIndexChunkedApply: vi.fn(),
-}));
-vi.mock('../../../../../data/scene-loader/commit/invalidate-render-object', () => ({
-  configureRenderObjectEviction: vi.fn(),
+vi.mock('../../../../../rendering/renderer-backend-policy', () => ({
+  configureRendererBackendPolicy: vi.fn(),
 }));
 
 import { configureRendererBackend } from '../../../../../scene/scene-manager/render-pipeline/renderer-setup';
@@ -31,6 +28,7 @@ const caps = (apiSurface: 'webgl2' | 'webgpu'): RendererCapabilities =>
   ({
     backend: apiSurface === 'webgl2' ? 'webgl' : 'webgpu',
     apiSurface,
+    backendKind: apiSurface === 'webgl2' ? 'webgl' : 'webgpu-native',
     maxTextureSize: 4096,
   }) as unknown as RendererCapabilities;
 const renderer = {} as Renderer;
