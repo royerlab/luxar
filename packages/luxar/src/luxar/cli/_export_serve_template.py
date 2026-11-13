@@ -2000,13 +2000,37 @@ def open_display_in_chrome(
     return True
 
 
+def _chrome_profile_may_be_in_use() -> bool:
+    """A local, live SingletonLock owner, or a lock whose owner is unknown."""
+    lock = SCRIPT_DIR / CHROME_PROFILE_DIR / "SingletonLock"
+    try:
+        owner = os.readlink(lock)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return os.path.lexists(lock)
+    host, _, pid_text = owner.rpartition("-")
+    if host != socket.gethostname():
+        return True
+    try:
+        pid = int(pid_text)
+        if pid <= 0:
+            return True
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (OSError, ValueError, OverflowError):
+        return True
+    return True
+
+
 def _watch_display(server: ControlServer, process: Any) -> None:
     """Warn when Chrome quits at once, or when no report comes in time."""
 
     def early_exit() -> None:
         code = process.poll()
         if code is not None and server.display_report.pending():
-            if os.path.lexists(SCRIPT_DIR / CHROME_PROFILE_DIR / "SingletonLock"):
+            if _chrome_profile_may_be_in_use():
                 print(
                     f"\n  WARNING  Chrome exited at once (status {code}). It may have handed"
                 )
