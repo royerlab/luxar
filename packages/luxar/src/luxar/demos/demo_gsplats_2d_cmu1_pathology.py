@@ -435,7 +435,7 @@ def resolve_data() -> list[Path]:
 def local_fit_paths() -> list[Path] | None:
     """This machine's own earlier refit, or None if it is absent/incomplete.
 
-    Paths, not ``GSplatData``: a ``--recompute`` writes the ``adaptive``
+    Paths, not ``GSplatData``: a ``--recompute`` writes a partitioned
     topology, a ``kind=partition`` tree with no flat matrix form (which is also
     why ``load_local_fit_gsplats`` cannot serve this demo — see
     ``create_luxar_scene``). Consulted only when the manifest fetch came up
@@ -493,8 +493,6 @@ def fit_channel_tiled(
         # One channel of the slide page as read; the fitted image is a resized,
         # normalized float32 copy of it. fit_tiled applies this to the MERGED
         # result -- the tiles themselves see crops.
-        source_shape=src_shape,
-        source_dtype=src_dtype,
         tile_size=TILE_SIZE,
         overlap=OVERLAP,
         seeds=SEEDS_PER_TILE,
@@ -513,7 +511,11 @@ def fit_channel_tiled(
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     # The display comparison needs an in-memory fit; both modes publish the
     # same streamed cache so a display flag cannot change the artifact.
-    comparison = fit_tiled(image, **fit_kwargs) if SHOW_ROUNDTRIP else None
+    comparison = (
+        fit_tiled(image, source_shape=src_shape, source_dtype=src_dtype, **fit_kwargs)
+        if SHOW_ROUNDTRIP
+        else None
+    )
 
     import tempfile
 
@@ -530,6 +532,8 @@ def fit_channel_tiled(
             recipe="stream",
             recipe_params=RecipeParams(n_lods=1),
             encoding_mode=EncodingMode.MEMORY,
+            source_shape=src_shape,
+            source_dtype=src_dtype,
             **fit_kwargs,
         )
         n_splats = int(open_group(store, mode="r")["fitting"].attrs["n_splats"])
@@ -583,10 +587,9 @@ def create_luxar_scene(
     """Create Luxar scene with per-channel 2D gsplats as separate layers.
 
     Each channel is handed over as a **path**, not loaded into a ``GSplatData``
-    first, because a ``--recompute`` writes the ``adaptive`` topology — spatial
-    tiles under the recipe's shared per-tile cap, each picking its own detail
-    level, which is what a 46000x33000 slide that is panned and zoomed rather
-    than orbited wants — and that is a ``kind=partition`` tree with no flat
+    first, because a ``--recompute`` writes spatial tile parts with one stream
+    rung each. That suits a 46000x33000 slide that is panned and zoomed rather
+    than orbited. The result is a ``kind=partition`` tree with no flat
     matrix form, so ``add_gsplats_from_file`` is the only entry point that takes
     one whole.
 

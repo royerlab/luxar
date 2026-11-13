@@ -4,8 +4,7 @@ The five shipped archives that had no ladder at all did not lose one: they never
 had it, because ``fit_gaussian_splats`` returns a single additive sub-LOD while
 the progressive fitter happens to return several. So the topology a demo shipped
 was decided by which fitter it called. This gate turns that into a choice: a
-demo either routes its cache write through :mod:`luxar.demos._lod_policy`, or
-appears below with a reason.
+demo names a recipe at its cache writer, or appears below with a reason.
 """
 
 from __future__ import annotations
@@ -39,6 +38,7 @@ _FIT_CALLS = {
     "fit_gaussian_splats",
     "fit_progressive_gaussian_splats",
     "fit_tiled",
+    "fit_tiled_to_store",
 }
 
 #: Demos that fit but write no cached artifact of their own, and why.
@@ -53,10 +53,10 @@ _NO_CACHED_ARTIFACT = {
 #:
 #: What qualifies is narrow: the demo names the topology it ships in its own
 #: source, with a literal ``build_recipe(data, "<recipe>", ...)`` call, instead of
-#: letting :func:`save_with_lod` make the choice. That is still a deliberate,
+#: choosing at a cache writer call. That is still a deliberate,
 #: reviewable decision — the helper simply is not the one carrying it out. A demo
 #: that keeps whatever topology its fitter happened to produce has made no choice
-#: at all and must route its cache write through :func:`save_with_lod` instead.
+#: at all and must name a recipe at its cache writer instead.
 #:
 #: This excuses a member from the *choosing* gate only. The topology it names is
 #: still put through the two round-trip gates (see :func:`_chosen_recipes`), since
@@ -469,25 +469,33 @@ def _fitting_demos() -> dict[str, str]:
 
 
 def _policy_recipes(src: str) -> list[str]:
-    """The ``recipe=`` literals passed to ``save_with_lod`` in *src*.
+    """The ``recipe=`` literals passed to a demo cache writer in *src*.
 
-    ``recipe`` is keyword-only on :func:`save_with_lod`, so a real call always
-    contributes one entry here — which makes a non-empty result the definition
-    of "routed" everywhere below. A substring test for the helper's NAME would
-    instead be satisfied by the import line alone, passing a demo that imports
-    the policy and then still writes its cache with a bare ``.save()``.
+    ``save_with_lod`` and ``fit_tiled_to_store`` both require an explicit recipe
+    for demo caches. A substring test for a writer's name would be satisfied by
+    its import alone, passing a demo that still writes a bare ``.save()``.
     """
     recipes = []
     for node in ast.walk(ast.parse(src)):
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
-            and node.func.id == "save_with_lod"
+            and node.func.id in ("save_with_lod", "fit_tiled_to_store")
         ):
             for kw in node.keywords:
                 if kw.arg == "recipe" and isinstance(kw.value, ast.Constant):
                     recipes.append(kw.value.value)
     return recipes
+
+
+def _streams_tiled_cache(src: str) -> bool:
+    """Whether the demo writes a partitioned fit with the store writer."""
+    return any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "fit_tiled_to_store"
+        for node in ast.walk(ast.parse(src))
+    )
 
 
 def _literal_recipes(src: str) -> list[str]:
@@ -587,8 +595,8 @@ def test_every_fitting_demo_chooses_a_topology_or_is_listed() -> None:
     assert unrouted <= accounted, (
         "a fitting demo writes its cache without choosing an LOD topology:\n  "
         + "\n  ".join(sorted(unrouted - accounted))
-        + "\nThere are three ways out. Route its save through "
-        "luxar.demos._lod_policy.save_with_lod; or, if it ships no artifact at "
+        + "\nThere are three ways out. Name a recipe at save_with_lod or "
+        "fit_tiled_to_store; or, if it ships no artifact at "
         "all, add it to _NO_CACHED_ARTIFACT with that reason; or, if it already "
         "names the topology of the artifact it ships in its own source with a "
         "literal build_recipe(...) call, add it to _CHOOSES_OUTSIDE_THE_POLICY "
@@ -642,7 +650,7 @@ def test_the_outside_the_policy_exemptions_still_earn_their_place() -> None:
         )
 
 
-def test_a_routed_demo_writes_every_archive_through_the_policy() -> None:
+def test_a_routed_demo_writes_every_archive_with_a_recipe() -> None:
     """One policy save does not licence a second, bare one in the same demo.
 
     A demo with several archives (cmu1's three channels, nexrad's per-frame
@@ -656,8 +664,8 @@ def test_a_routed_demo_writes_every_archive_through_the_policy() -> None:
             continue
         assert _bare_saves(src) == 0, (
             f"{name} chooses a topology but still writes {_bare_saves(src)} "
-            "archive(s) with a bare .save() — route those through "
-            "luxar.demos._lod_policy.save_with_lod too."
+            "archive(s) with a bare .save() — route those through a recipe "
+            "cache writer too."
         )
 
 
@@ -723,6 +731,10 @@ def test_the_routing_detectors_are_not_fooled_by_the_import_line() -> None:
     )
     assert _policy_recipes(routed_plus_bare) == ["stream"]
     assert _bare_saves(routed_plus_bare) == 1
+    assert _policy_recipes("fit_tiled_to_store(a, p0, recipe='stream')") == ["stream"]
+    assert _policy_recipes("fit_tiled_to_store(a, p0, recipe=choice)") == []
+    assert not _streams_tiled_cache("from x import fit_tiled_to_store")
+    assert _streams_tiled_cache("fit_tiled_to_store(a, p0, recipe='stream')")
 
 
 def test_the_literal_recipe_detector_demands_a_readable_choice() -> None:
@@ -756,14 +768,15 @@ def test_the_demo_recipe_type_and_defaults_agree() -> None:
 def test_a_demo_choosing_a_tree_recipe_does_not_read_its_cache_flat() -> None:
     """The gate the AST checks above could not see.
 
-    ``adaptive`` writes a ``kind=partition`` store, which ``GSplatData.load``
-    refuses ("node is not matrix-shaped"). A demo that picks it and still loads
-    its cache flat is broken on its DEFAULT path — the one every user takes —
-    while ``--recompute``, the path an author runs, stays green. That is exactly
-    how it shipped to review once.
+    ``fit_tiled_to_store`` writes a ``kind=partition`` store, which
+    ``GSplatData.load`` refuses ("node is not matrix-shaped"). A demo that
+    picks it and still loads its cache flat is broken on its DEFAULT path —
+    the one every user takes — while ``--recompute`` stays green.
     """
     for name, src in sorted(_fitting_demos().items()):
         tree = sorted(set(_chosen_recipes(name, src)) & TREE_RECIPES)
+        if _streams_tiled_cache(src):
+            tree.append("streamed tile partition")
         if not tree:
             continue
         for loader in _FLAT_LOADERS:
@@ -775,11 +788,24 @@ def test_a_demo_choosing_a_tree_recipe_does_not_read_its_cache_flat() -> None:
             )
 
 
+def test_a_streamed_tiled_cache_reaches_the_scene_as_a_partition() -> None:
+    """A streamed tile store has no flat matrix form and must be grafted."""
+    watched = {
+        name: src for name, src in _fitting_demos().items() if _streams_tiled_cache(src)
+    }
+    assert watched, "no demo streams a tiled cache — the gate is vacuous"
+    for name, src in watched.items():
+        assert "add_gsplats_from_file" in _scene_adders(src), (
+            f"{name} streams a partitioned tile cache but does not graft it "
+            "with add_gsplats_from_file"
+        )
+
+
 def test_a_costly_recipe_is_only_chosen_where_the_scene_can_carry_it() -> None:
     """The other half of "does the topology survive the round trip?".
 
     ``test_a_demo_choosing_a_tree_recipe_does_not_read_its_cache_flat`` catches
-    the loud failure: ``adaptive`` plus a flat READ raises. This catches the
+    the loud failure: a partition plus a flat READ raises. This catches the
     silent one. A demo can read its archive back perfectly and still throw the
     topology away at the next step, by rebuilding the scene from loose
     ``centers=``/``amplitudes=`` arrays — every one of which is a view of the

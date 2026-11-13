@@ -181,8 +181,8 @@ def test_sequential_tile_merge_keeps_fit_records_and_regions() -> None:
     assert len(json.dumps(parts)) < 3000
 
 
-def test_partition_lod_density_uses_the_persisted_total_splat_count() -> None:
-    """Root ``n_splats`` and ``voxels_per_splat`` describe the same artifact."""
+def test_partition_lod_density_uses_the_fitted_splat_count() -> None:
+    """Extra LOD copies must not inflate the fitted population or its density."""
     from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.lod.recipes import RecipeParams
@@ -219,8 +219,9 @@ def test_partition_lod_density_uses_the_persisted_total_splat_count() -> None:
     stats = node.meta["fit_stats"]
     persisted_count = total_splats(node)
     assert persisted_count > node.n_splats
-    assert stats["n_splats"] == persisted_count
-    assert stats["voxels_per_splat"] == pytest.approx(8**3 / persisted_count)
+    assert node.n_splats == 24
+    assert stats["n_splats"] == node.n_splats
+    assert stats["voxels_per_splat"] == pytest.approx(8**3 / node.n_splats)
 
 
 def test_the_merged_score_survives_the_physical_coordinate_round_trip(

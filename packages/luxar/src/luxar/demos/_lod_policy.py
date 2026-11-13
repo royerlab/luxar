@@ -18,10 +18,6 @@ of the dataset, so it is recorded here rather than buried in each demo:
     Coarse→fine replacement levels *and* a ladder per level. Worth its ~40%
     extra bytes on a large single object that is orbited, because the finest
     level still shows whenever the object fills half the screen or more.
-``adaptive``
-    Spatial tiles, each choosing its own level. For data panned and zoomed
-    rather than orbited, where most tiles are off-screen most of the time.
-
 Measured cost of ``levels`` over ``stream``, on ct_atlas (660,934 splats):
 6,966 KB → 9,635 KB, i.e. +38%. Do not extrapolate that from a small fit — the
 same comparison on a 743-splat fit reads 3.6x, which is per-zarr-group overhead
@@ -147,10 +143,9 @@ from luxar.utils.lod_breakpoints import (
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
 
-#: Recipes usable from a demo. A subset of the full recipe set on purpose: the
-#: rest need knobs (a density, a source volume, a tiled fit) that a demo's cache
-#: step does not have in hand.
-DemoRecipe = Literal["stream", "levels", "adaptive"]
+#: Recipes used by the shared demo cache writer. Other topologies are built at
+#: their demo's fit or scene step, where the required inputs are available.
+DemoRecipe = Literal["stream", "levels"]
 
 #: Recipes whose artifact is a node TREE with no flat matrix form.
 #:
@@ -161,7 +156,7 @@ DemoRecipe = Literal["stream", "levels", "adaptive"]
 #: the PATH with :meth:`~luxar.core.group.Group.add_gsplats_from_file` instead.
 #: Getting this wrong breaks the demo's DEFAULT path while leaving the
 #: ``--recompute`` path — the one an author exercises — perfectly green.
-TREE_RECIPES: frozenset[str] = frozenset({"adaptive"})
+TREE_RECIPES: frozenset[str] = frozenset()
 
 #: Scene adders that carry a stored topology into the scene.
 #:
@@ -190,7 +185,7 @@ TOPOLOGY_PRESERVING_ADDERS: frozenset[str] = frozenset(
 #: it costs essentially nothing, so it is the right floor even for a demo whose
 #: scene flattens it (the archive is still downloadable and ``luxar gsplat view``
 #: honours the ladder).
-SCENE_TOPOLOGY_RECIPES: frozenset[str] = frozenset({"levels", "adaptive"})
+SCENE_TOPOLOGY_RECIPES: frozenset[str] = frozenset({"levels"})
 
 #: Per-recipe parameters, so two demos choosing ``levels`` cannot drift apart.
 #:
@@ -200,51 +195,14 @@ SCENE_TOPOLOGY_RECIPES: frozenset[str] = frozenset({"levels", "adaptive"})
 _RECIPE_DEFAULTS: dict[str, dict[str, Any]] = {
     "stream": {"n_lods": 4},
     "levels": {"n_lods": 4, "compression_factor": 4, "levels": 3},
-    # max_elements caps splats per tile; K/L are the per-tile level ladder.
-    # L=2 rather than 3 because a tile is already a fraction of the object, so
-    # a third level would coarsen past anything a viewer requests.
-    #
-    # max_elements was 250,000, and that made `adaptive` by far the most
-    # node-expensive thing in the corpus. Measured on the built
-    # gsplats_2d_codex_pancreas store: 12 channels x 172 tiles x 3 levels x 4
-    # rungs = 12 + 172 + 516 + 2,064 = **2,764 groups**, three times the next
-    # largest store and 24% of the whole 91-store corpus's 6,924. On the
-    # published, post-`optimize --profile archive` store, hosted first paint
-    # costs roughly one request per node, and node count is what Loic named as
-    # the thing that slows loading.
-    #
-    # 1,000,000 quarters the tile count. MEASURED, by flattening two of codex's
-    # real per-channel archives and rebuilding this recipe at both values (no
-    # refit needed — `adaptive` is applied to a GSplatData at save time):
-    #
-    #   channel   splats     250k -> tiles/groups    1M -> tiles/groups
-    #   ch01        562,180        4 / 65                 1 / 17
-    #   ch05      1,114,331        8 / 129                2 / 33
-    #
-    # ch01's 4 tiles at 250k is exactly what the shipped store holds for that
-    # channel, which is what anchors the extrapolation: 172 tiles -> ~43, so
-    # 12 wrappers + 43 lod + 129 levels + 516 rungs = **~700 groups**, a 3.9x
-    # reduction. A tile stays 4x under the 4,194,304 gsplat cap. What it
-    # costs is culling granularity — ~43 tiles over a 46000x33000 slide is ~6-7
-    # per side instead of ~13 — which is the right trade for a recipe whose whole
-    # point is that most tiles are off screen anyway: at 6-7 per side a
-    # full-screen view still holds a minority of them.
-    #
-    # The two 2D pathology refits now stream their fit tiles directly instead
-    # of building this adaptive tree. At the production 4096/512 grid,
-    # compute_tile_specs gives 35 parts/channel for CODEX and 117 for CMU-1.
-    # With one stream rung, each part is one leaf: root + fitting + pipeline
-    # + parts = up to 38 groups/channel (456 across CODEX's 12 channels) and
-    # 120 groups/channel (360 across CMU-1's 3 channels). Empty tiles reduce
-    # those counts. This is a changed
-    # published layout; these adaptive defaults still apply to other callers.
-    "adaptive": {
-        "n_lods": 4,
-        "max_elements": 1_000_000,
-        "compression_factor": 4,
-        "levels": 2,
-    },
 }
+
+# The two pathology refits now stream their fit tiles directly. At the
+# production 4096/512 grid, compute_tile_specs gives 35 parts/channel for
+# CODEX and 117 for CMU-1. One stream rung makes each part one leaf: root +
+# fitting + pipeline + parts = at most 38 groups/channel (456 over CODEX's
+# 12 channels) and 120 groups/channel (360 over CMU-1's three channels).
+# Empty tiles reduce those counts.
 
 
 #: Deepest additive ladder a SLICED node may carry, as a share of its frame.
@@ -572,11 +530,8 @@ def save_with_lod(
 ) -> None:
     """Apply ``recipe`` to ``data`` and write the cached artifact.
 
-    Replaces a bare ``data.save(path, ...)`` in a demo's cache step. Handles
-    both shapes a recipe can return: the matrix recipes give back a
-    ``GSplatData`` (whose own ``save`` is used, so ``save_kwargs`` pass through
-    untouched), while ``adaptive`` gives back a node tree that needs
-    ``write_gsplats_tree`` and an explicitly split stats dict.
+    Replaces a bare ``data.save(path, ...)`` in a demo's cache step. The
+    supported recipes return ``GSplatData`` and preserve its matrix shape.
 
     The fit's ``stats`` survive the recipe unchanged, which is what keeps the
     foreground PSNR and the source-grid provenance on the artifact — a LOD step
@@ -592,7 +547,7 @@ def save_with_lod(
     recipe
         Which topology to build. See the module docstring for why each exists.
     device
-        Passed to the substitutive reduction (``levels``/``adaptive`` only).
+        Passed to the substitutive reduction (``levels`` only).
         ``None`` lets it choose; pass ``"cpu"`` on Apple silicon, where the MPS
         backend lacks the float64 support the reduction wants and warns as it
         falls back anyway.
@@ -603,37 +558,19 @@ def save_with_lod(
         ``zip_deflate``, ``ordering``, ``include_fitting_info``, ``description``.
     """
     from luxar.gsplats.gsplat_data import GSplatData
-    from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
     from luxar.gsplats.lod import RecipeParams, build_recipe
 
     params_kwargs = dict(_RECIPE_DEFAULTS[recipe])
     if device is not None:
         params_kwargs["device"] = device
     result = build_recipe(data, recipe, RecipeParams(**params_kwargs))
+    if not isinstance(result, GSplatData):
+        raise TypeError(f"demo recipe {recipe!r} did not return GSplatData")
 
     # Build provenance: which recipe made this. Distinct from the `lod_kind` the
     # builder stamps, which is the mechanism the viewer actually reads.
-    if isinstance(result, GSplatData):
-        result.stats["recipe"] = recipe
-        result.save(path, **save_kwargs)
-    else:
-        fitting_info, fitting_config, provenance_info, pipeline_info = (
-            split_fitting_info(
-                data.stats,
-                include_fitting_info=save_kwargs.pop("include_fitting_info", True),
-                include_provenance=save_kwargs.pop("include_provenance", False),
-            )
-        )
-        # `include_*` are consumed above; the rest are writer kwargs.
-        write_gsplats_tree(
-            path,
-            result,
-            fitting_info=fitting_info,
-            fitting_config=fitting_config,
-            provenance_info=provenance_info,
-            pipeline_info={**(pipeline_info or {}), "recipe": recipe},
-            **save_kwargs,
-        )
+    result.stats["recipe"] = recipe
+    result.save(path, **save_kwargs)
 
     if not quiet:
         aprint(f"  LOD topology: {recipe} ({_describe(recipe)})")
@@ -644,12 +581,7 @@ def _describe(recipe: str) -> str:
     defaults = _RECIPE_DEFAULTS[recipe]
     if recipe == "stream":
         return f"{defaults['n_lods']}-rung progressive ladder"
-    if recipe == "levels":
-        return (
-            f"{defaults['levels']} coarse levels at 1/{defaults['compression_factor']} "
-            f"each, {defaults['n_lods']}-rung ladder per level"
-        )
     return (
-        f"spatial tiles of <={defaults['max_elements']:,} splats, "
-        f"{defaults['levels']} levels per tile"
+        f"{defaults['levels']} coarse levels at 1/{defaults['compression_factor']} "
+        f"each, {defaults['n_lods']}-rung ladder per level"
     )

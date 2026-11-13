@@ -13,8 +13,7 @@ splatting on a real multiplexed immunofluorescence dataset:
 - Downloading 12-channel CODEX data from Zenodo
 - Extracting and normalising each fluorescence channel
 - Tiled fitting of 2D Gaussian splats per channel (Hann cosine apodization)
-- Building an ``adaptive`` LOD topology per channel: spatial tiles, each with
-  its own substitutive levels, each level with an additive streaming ladder
+- Writing one streamed partition per channel, with one rung per fitted tile
 - Grafting each channel into the scene as a separate layer with colormap
 - Visualising in the Luxar web viewer
 
@@ -62,8 +61,7 @@ WORKFLOW:
 2. **Extract** 12 TIFF channel files
 3. **Normalise** each channel (uint16 -> float32 [0, 1])
 4. **Tiled fit** 2D Gaussian splats per channel with GPU acceleration
-5. **Ladder** each fit with the ``adaptive`` recipe and cache it as a
-   ``kind=partition`` tree
+5. **Cache** each fit as a streamed ``kind=partition`` tree
 6. **Graft** each channel into the scene as a separate layer with colormap
 7. **Visualise** in the Luxar web viewer
 
@@ -365,7 +363,7 @@ def load_channel(tiff_dir: Path, ch_config: dict) -> np.ndarray:
 
 
 def channel_cache_path(channel_index: int) -> Path:
-    """Return the current-frame adaptive cache path for one CODEX channel."""
+    """Return the current-frame cache path for one CODEX channel."""
     return CACHE_DIR / f"codex_ch{channel_index:02d}.v2.gsplats.zarr.zip"
 
 
@@ -463,7 +461,7 @@ def fit_all_channels(
     """Load and fit all 12 channels, one at a time to save memory.
 
     Returns the per-channel cache PATHS alongside the fitted data. The paths are
-    what the scene is built from — an ``adaptive`` artifact is a
+    what the scene is built from — a partitioned artifact is a
     ``kind=partition`` tree with no flat matrix form, so it is grafted with
     :meth:`~luxar.core.group.Group.add_gsplats_from_file` rather than loaded
     into a ``GSplatData`` first.
@@ -513,9 +511,8 @@ def create_luxar_scene(
     per-channel visibility, display-range, gamma, and colormap controls.
 
     Each channel is **grafted from its artifact** rather than loaded into a
-    ``GSplatData`` first. The fit writes the ``adaptive`` topology — spatial
-    tiles, each picking its own detail level, with an additive ladder under
-    every level — which is what a 476-megapixel plane that is panned and zoomed
+    ``GSplatData`` first. The fit writes spatial tile parts with one stream
+    rung each, which is what a 476-megapixel plane that is panned and zoomed
     rather than orbited wants. That is a ``kind=partition`` tree with no flat
     matrix form, so ``add_gsplats_from_file`` is the entry point that grafts one
     whole; ``add_gsplats`` would flatten all of it back to a single leaf.
