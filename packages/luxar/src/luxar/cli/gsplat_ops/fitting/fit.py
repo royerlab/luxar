@@ -126,6 +126,46 @@ def _require_content_for_plan_only(plan_only: bool, resolved_tiling: str) -> Non
         )
 
 
+def _validate_tile_amplitude_floor_option(
+    tile_amplitude_floor: Optional[float],
+) -> None:
+    """Translate an invalid ``--tile-amplitude-floor`` into a CLI-facing error."""
+    from luxar.gsplats.fit_tiled_gsplats import validate_tile_amplitude_floor
+
+    try:
+        validate_tile_amplitude_floor(tile_amplitude_floor)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--tile-amplitude-floor") from exc
+
+
+def _require_uniform_tiling_for_amplitude_floor(
+    tile_amplitude_floor: Optional[float],
+    resolved_tiling: str,
+    tile: Optional[str],
+    tile_region: Any,
+) -> None:
+    """``--tile-amplitude-floor`` is unimplemented scope outside uniform tiling.
+
+    A ``--tile k/M`` or ``--tile-region`` worker is exempt: it fits one tile of a
+    grid a parent already resolved, so there is no whole-fit ``resolved_tiling``
+    to check here.
+    """
+    if (
+        tile_amplitude_floor is not None
+        and resolved_tiling != "uniform"
+        and tile is None
+        and tile_region is None
+    ):
+        raise typer.BadParameter(
+            # Unimplemented scope, not an incompatibility: content boxes have
+            # their own normalization span too.
+            "--tile-amplitude-floor supports only --tiling uniform "
+            f"for now (resolved --tiling {resolved_tiling}); use "
+            "--tiling uniform.",
+            param_hint="--tile-amplitude-floor",
+        )
+
+
 def _done_seconds(result: Any, is_leaf: bool, started: float) -> float:
     """Seconds to report on the final ``Done:`` line.
 
@@ -943,12 +983,7 @@ def run_fit_volume(
         plan_only=plan_only,
     )
     validate_hygiene_flags(min_extent, reseed_sigma)
-    from luxar.gsplats.fit_tiled_gsplats import _validate_tile_amplitude_floor
-
-    try:
-        _validate_tile_amplitude_floor(tile_amplitude_floor)
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc), param_hint="--tile-amplitude-floor") from exc
+    _validate_tile_amplitude_floor_option(tile_amplitude_floor)
     parsed_norm_range = _parse_norm_range(norm_range)
     parsed_voxel_size = parse_voxel_size(voxel_size)
     parsed_tile_region, parsed_tile_volume_shape = _parse_tile_worker_metadata(
@@ -1021,16 +1056,9 @@ def run_fit_volume(
                 wants_tiles=recipe is not None or str(jobs).strip() not in ("", "1"),
             )
             _require_content_for_plan_only(plan_only, resolved_tiling)
-            if (
-                tile_amplitude_floor is not None
-                and resolved_tiling != "uniform"
-                and tile is None
-                and parsed_tile_region is None
-            ):
-                raise typer.BadParameter(
-                    "--tile-amplitude-floor requires uniform tiling",
-                    param_hint="--tile-amplitude-floor",
-                )
+            _require_uniform_tiling_for_amplitude_floor(
+                tile_amplitude_floor, resolved_tiling, tile, parsed_tile_region
+            )
 
             # A calibration records the floor it subtracted, and measured its
             # density's feature_threshold on that scale — so consume it when the
@@ -1157,6 +1185,10 @@ def run_fit_volume(
                     "--denoise": denoise,
                     "--downscale": downscale is not None,
                     "--progressive": progressive,
+                    # Refused earlier unless a `--tile k/M` worker is exempt from
+                    # that check; it must be keyed here either way, or the shared
+                    # flag list would KeyError.
+                    "--tile-amplitude-floor": tile_amplitude_floor is not None,
                 }
                 _unsupported = [
                     flag

@@ -23,6 +23,7 @@ never see.
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any, Optional, Sequence
 
 import numpy as np
@@ -409,7 +410,7 @@ def _carry_measured_scores(
     return out
 
 
-def _floor_tile_amplitudes(data: GSplatData, floor: float) -> GSplatData:
+def floor_tile_amplitudes(data: GSplatData, floor: float) -> GSplatData:
     """Discard negligible splats while one tile is still the only live result."""
     if data.n_splats == 0 or floor == 0:
         return data
@@ -421,12 +422,12 @@ def _floor_tile_amplitudes(data: GSplatData, floor: float) -> GSplatData:
     return _carry_measured_scores(data, out, keep)
 
 
-def _validate_tile_amplitude_floor(floor: float | None) -> None:
+def validate_tile_amplitude_floor(floor: float | None) -> None:
     if floor is not None and (not np.isfinite(floor) or floor < 0):
         raise ValueError("tile_amplitude_floor must be finite and non-negative")
 
 
-def _stamp_tile_amplitude_floor(
+def stamp_tile_amplitude_floor(
     merged: Any, floor: float | None, pruned: int | None
 ) -> None:
     if floor is None:
@@ -437,6 +438,43 @@ def _stamp_tile_amplitude_floor(
     fit_stats["tile_amplitude_floor"] = floor
     if pruned is not None:
         fit_stats["tile_amplitude_pruned"] = pruned
+
+
+_EMPTY_MARKER_PRUNED_KEY = "tile_amplitude_pruned="
+
+
+def write_empty_tile_marker(path: Path, pruned: int | None) -> None:
+    """Write a 0-splat tile's ``.empty`` marker, keeping its exact floor count.
+
+    The first line stays ``"0 splats"`` for every existing reader; a second
+    ``tile_amplitude_pruned=<n>`` line is added only when the amplitude floor
+    ran and measured ``n``.
+    """
+    text = "0 splats\n"
+    if pruned is not None:
+        text += f"{_EMPTY_MARKER_PRUNED_KEY}{int(pruned)}\n"
+    path.write_text(text)
+
+
+def read_empty_tile_marker_pruned(path: Path) -> int | None:
+    """The floor's pruned count recorded in an ``.empty`` marker, if any.
+
+    ``None`` for a plain/legacy marker or one that does not parse, so a caller
+    reports an unknown count rather than crashing or assuming zero.
+    """
+    try:
+        lines = path.read_text().splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    for line in lines:
+        line = line.strip()
+        if line.startswith(_EMPTY_MARKER_PRUNED_KEY):
+            try:
+                value = int(line[len(_EMPTY_MARKER_PRUNED_KEY) :])
+            except ValueError:
+                return None
+            return value if value >= 0 else None
+    return None
 
 
 def _merge_flat_population_stats(
@@ -1402,7 +1440,7 @@ def fit_tiled(
     )
     _validate_tile_seed_counts(tile_seed_counts, len(specs))
     _reject_nonpositive_shared_seed_budget(fit_kwargs.get("seeds"), tile_seed_counts)
-    _validate_tile_amplitude_floor(tile_amplitude_floor)
+    validate_tile_amplitude_floor(tile_amplitude_floor)
 
     results: list[GSplatData] = []
     amplitude_pruned = 0
@@ -1446,7 +1484,7 @@ def fit_tiled(
                     tile_result.stats["floor_strategy"] = floor_strategy
                 if tile_amplitude_floor is not None:
                     n_before_floor = tile_result.n_splats
-                    tile_result = _floor_tile_amplitudes(
+                    tile_result = floor_tile_amplitudes(
                         tile_result, tile_amplitude_floor
                     )
                     amplitude_pruned += n_before_floor - tile_result.n_splats
@@ -1495,7 +1533,7 @@ def fit_tiled(
         device=fit_kwargs.get("device"),
         fold_tile_slivers=fold_tile_slivers,
     )
-    _stamp_tile_amplitude_floor(merged, tile_amplitude_floor, amplitude_pruned)
+    stamp_tile_amplitude_floor(merged, tile_amplitude_floor, amplitude_pruned)
     return merged
 
 

@@ -94,9 +94,9 @@ def build_plan_configs(
         FitConfig,
         MergeConfig,
     )
-    from luxar.gsplats.fit_tiled_gsplats import _validate_tile_amplitude_floor
+    from luxar.gsplats.fit_tiled_gsplats import validate_tile_amplitude_floor
 
-    _validate_tile_amplitude_floor(tile_amplitude_floor)
+    validate_tile_amplitude_floor(tile_amplitude_floor)
 
     fit_cfg = FitConfig(
         preset=preset,

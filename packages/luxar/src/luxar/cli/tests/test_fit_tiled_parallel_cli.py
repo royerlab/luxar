@@ -122,7 +122,9 @@ def test_tile_amplitude_floor_refuses_nonuniform_fit(tmp_path: Path) -> None:
         ],
     )
     assert result.exit_code == 2
-    assert "requires uniform tiling" in normalized_cli_output(result)
+    output = normalized_cli_output(result)
+    assert "supports only --tiling uniform for now" in output
+    assert "resolved --tiling content" in output
 
 
 @pytest.mark.slow
@@ -244,6 +246,69 @@ def test_tiled_parallel_handles_empty_tiles(tmp_path: Path) -> None:
     assert rs.exit_code == 0, rs.output
     # empty tiles skipped in both paths → identical splat count
     assert GSplatData.load(par).n_splats == GSplatData.load(seq).n_splats
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
+def test_tile_amplitude_floor_count_survives_tiles_floored_to_empty(
+    tmp_path: Path,
+) -> None:
+    """A tile the floor prunes to 0 splats keeps its exact count through `-j`.
+
+    Such a tile saves no store, only an ``.empty`` marker; the marker must carry
+    the worker's pruned count, or the merge can only report it as unknown.
+    """
+    from luxar.gsplats.fit_tiled_gsplats import read_empty_tile_marker_pruned
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    vol = tmp_path / "sparse.npy"
+    _make_sparse_volume(vol)
+    common = [
+        "--tiling",
+        "uniform",
+        "--tile-size",
+        "16",
+        "--overlap",
+        "4",
+        "--flat",
+        "--seeds",
+        "40",
+        "-n",
+        "15",
+        "--device",
+        "cpu",
+        "--cull-retention",
+        "0",
+        "--tile-amplitude-floor",
+        "0.05",
+    ]
+    par_dir = tmp_path / "par"
+    par_dir.mkdir()
+    par = par_dir / "par.gsplats.zarr"
+    seq = tmp_path / "seq.gsplats.zarr"
+    rp = runner.invoke(
+        app,
+        ["gsplat", "fit", str(vol), str(par), *common, "-j", "2", "--keep-tiles"],
+    )
+    rs = runner.invoke(app, ["gsplat", "fit", str(vol), str(seq), *common])
+    assert rp.exit_code == 0, rp.output
+    assert rs.exit_code == 0, rs.output
+
+    # At least one worker floored its tile all the way to an .empty marker
+    # and recorded a real (positive) pruned count in it.
+    marker_counts = [
+        read_empty_tile_marker_pruned(m) for m in par_dir.rglob("*.gsplats.zarr.empty")
+    ]
+    assert any(c is not None and c > 0 for c in marker_counts), marker_counts
+
+    par_data = GSplatData.load(par, include_stats=True)
+    seq_data = GSplatData.load(seq, include_stats=True)
+    assert isinstance(par_data.stats.get("tile_amplitude_pruned"), int)
+    assert (
+        par_data.stats["tile_amplitude_pruned"]
+        == seq_data.stats["tile_amplitude_pruned"]
+    )
+    assert par_data.n_splats == seq_data.n_splats
 
 
 @pytest.mark.slow

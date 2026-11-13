@@ -30,7 +30,12 @@ if TYPE_CHECKING:
 from arbol import aprint, asection
 
 from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
-from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
+from luxar.gsplats.fit_tiled_gsplats import (
+    merge_tile_results,
+    read_empty_tile_marker_pruned,
+    stamp_tile_amplitude_floor,
+    validate_tile_amplitude_floor,
+)
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.merged_quality import (
     announce_unscored_merge,
@@ -101,6 +106,13 @@ def _floor_args(floor: Optional[str], floor_resolved: bool) -> list[str]:
     if floor_resolved:
         args.append("--floor-resolved")
     return args
+
+
+def _tile_amplitude_floor_args(tile_amplitude_floor: Optional[float]) -> list[str]:
+    """Format the per-tile relative amplitude floor, when the parent sets one."""
+    if tile_amplitude_floor is None:
+        return []
+    return ["--tile-amplitude-floor", str(tile_amplitude_floor)]
 
 
 def _tile_handoff_args(
@@ -223,8 +235,7 @@ def build_worker_cmd(
     if lr is not None:
         cmd += ["--lr", str(lr)]
     cmd += _floor_args(floor, floor_resolved)
-    if tile_amplitude_floor is not None:
-        cmd += ["--tile-amplitude-floor", str(tile_amplitude_floor)]
+    cmd += _tile_amplitude_floor_args(tile_amplitude_floor)
     cmd += _norm_range_args(norm_range)
     if seed_method:
         cmd += ["--seed-method", seed_method]
@@ -372,6 +383,45 @@ def _tile_worker_env(workers: int) -> dict[str, str]:
     return env
 
 
+def _reload_tile_results(
+    tile_paths: Sequence[Path], ndim: int, tile_amplitude_floor: Optional[float]
+) -> "tuple[list[GSplatData], list[int], list[tuple[int, str]], int | None]":
+    """Reload every worker's tile: ``(results, missing, corrupt, pruned)``.
+
+    ``pruned`` sums the amplitude-floor counts the workers stamped (the worker
+    is authoritative; nothing is re-floored here). It is ``None`` when any tile
+    — a store or an ``.empty`` marker written by an older run — carries no
+    count, so the merge reports the count as unknown rather than under-counting.
+    """
+    results: list[GSplatData] = []
+    missing: list[int] = []
+    corrupt: list[tuple[int, str]] = []
+    counts: list[int | None] = []
+    for i, p in enumerate(tile_paths):
+        marker = Path(str(p) + ".empty")
+        if p.exists():
+            try:
+                tile_result = GSplatData.load(p, include_stats=True)
+            except Exception as exc:  # present but unreadable/partial store
+                corrupt.append((i, repr(exc)))
+                continue
+            results.append(tile_result)
+            pruned = tile_result.stats.get("tile_amplitude_pruned")
+            counts.append(None if pruned is None else int(pruned))
+        elif marker.exists():
+            # Legitimately-empty tile: append a 0-splat placeholder so the
+            # merged `splats_per_tile` stat stays positionally aligned with the
+            # sequential path (which keeps every tile's 0-splat result).
+            # concatenate filters empties, so the merged splats are unchanged.
+            results.append(_empty_tile(ndim))
+            counts.append(read_empty_tile_marker_pruned(marker))
+        else:
+            missing.append(i)
+    if tile_amplitude_floor is None or None in counts:
+        return results, missing, corrupt, None
+    return results, missing, corrupt, sum(c for c in counts if c is not None)
+
+
 def fit_tiled_parallel(
     *,
     num_tiles: int,
@@ -472,9 +522,7 @@ def fit_tiled_parallel(
         grid_name="tile grid",
         missing_reason="this direct parallel tiled call was not given the reference volume",
     )
-    from luxar.gsplats.fit_tiled_gsplats import _validate_tile_amplitude_floor
-
-    _validate_tile_amplitude_floor(tile_amplitude_floor)
+    validate_tile_amplitude_floor(tile_amplitude_floor)
     _announce_unscored_reason(unscored_reason)
 
     tmp_dir = Path(tmp_dir)
@@ -553,39 +601,9 @@ def fit_tiled_parallel(
     # `pipeline/` group, and reloading without stats made every tile silent, so
     # the merge stamped an affirmative `floor: null` — "no pedestal was removed"
     # — onto a store that had one removed (#1175).
-    ndim = len(volume_shape)
-    results: list[GSplatData] = []
-    missing: list[int] = []
-    corrupt: list[tuple[int, str]] = []
-    amplitude_pruned = 0
-    exact_pruned_count = True
-    for i, p in enumerate(tile_paths):
-        if p.exists():
-            try:
-                tile_result = GSplatData.load(p, include_stats=True)
-                if tile_amplitude_floor is not None:
-                    from luxar.gsplats.fit_tiled_gsplats import _floor_tile_amplitudes
-
-                    n_before = tile_result.n_splats
-                    tile_result = _floor_tile_amplitudes(
-                        tile_result, tile_amplitude_floor
-                    )
-                    amplitude_pruned += int(
-                        tile_result.stats.get("tile_amplitude_pruned", 0)
-                    )
-                    amplitude_pruned += n_before - tile_result.n_splats
-                results.append(tile_result)
-            except Exception as exc:  # present but unreadable/partial store
-                corrupt.append((i, repr(exc)))
-        elif Path(str(p) + ".empty").exists():
-            exact_pruned_count = False
-            # Legitimately-empty tile: append a 0-splat placeholder so the
-            # merged `splats_per_tile` stat stays positionally aligned with the
-            # sequential path (which keeps every tile's 0-splat result).
-            # concatenate filters empties, so the merged splats are unchanged.
-            results.append(_empty_tile(ndim))
-        else:
-            missing.append(i)
+    results, missing, corrupt, amplitude_pruned = _reload_tile_results(
+        tile_paths, len(volume_shape), tile_amplitude_floor
+    )
 
     if missing or corrupt:
         parts = []
@@ -621,14 +639,7 @@ def fit_tiled_parallel(
         device=device,
         fold_tile_slivers=fold_tile_slivers,
     )
-    if tile_amplitude_floor is not None:
-        from luxar.gsplats.fit_tiled_gsplats import _stamp_tile_amplitude_floor
-
-        _stamp_tile_amplitude_floor(
-            merged,
-            tile_amplitude_floor,
-            amplitude_pruned if exact_pruned_count else None,
-        )
+    stamp_tile_amplitude_floor(merged, tile_amplitude_floor, amplitude_pruned)
 
     if not keep_tiles:
         shutil.rmtree(tmp_dir, ignore_errors=True)

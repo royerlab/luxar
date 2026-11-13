@@ -138,9 +138,13 @@ def test_tile_amplitude_floor_reaches_shared_batch_worker_flags() -> None:
 
 def test_tile_amplitude_floor_rejects_content_batch_plan() -> None:
     from luxar.cli.gsplat_ops.batch.planning import _validate_content_fit_flags
+    from luxar.cli.gsplat_ops.fitting.fit_utils import CONTENT_UNSUPPORTED_FIT_FLAGS
 
+    # The refusal comes from the shared table, not a batch-only literal.
+    assert "--tile-amplitude-floor" in CONTENT_UNSUPPORTED_FIT_FLAGS
     with pytest.raises(typer.BadParameter, match="tile-amplitude-floor"):
         _validate_content_fit_flags("content", {"tile-amplitude-floor": "1e-5"})
+    _validate_content_fit_flags("uniform", {"tile-amplitude-floor": "1e-5"})
 
 
 def test_calls_finds_bare_and_qualified_callees() -> None:
