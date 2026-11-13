@@ -300,6 +300,13 @@ export const ASYNC_OPERATIONS: readonly AsyncOperation[] = [
     tests: ['rendering/post-processing-manager-lifecycle.test.ts'],
   },
   {
+    // Asynchronous pipeline compilation, then synchronous sorts until dispose
+    // frees the scratch; a disposed sorter refuses every request.
+    id: 'GPU depth sorter (pipeline compile, scratch lifetime)',
+    symbols: ['rendering/gpu-depth-sort/gpu-depth-sorter.ts#GpuDepthSorter'],
+    tests: ['rendering/gpu-depth-sort/gpu-depth-sorter.test.ts'],
+  },
+  {
     id: 'UI panels with async work',
     symbols: [
       'ui/data-loading-monitor.ts#DataLoadingMonitor',
