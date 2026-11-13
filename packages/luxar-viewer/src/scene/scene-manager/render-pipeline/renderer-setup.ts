@@ -93,26 +93,26 @@ export function configureRendererBackend(
   renderer: Renderer,
   capabilities: RendererCapabilities
 ): void {
-  warnOnBackendMix(capabilities.apiSurface);
+  warnOnBackendMix(capabilities.backendKind);
   configureElementTextureLayout(capabilities.maxTextureSize);
   installElementTextureRowUploads(renderer);
   configureRendererBackendPolicy(capabilities.backendKind);
 }
 
 /** The backend the page-wide switches were last configured for. */
-let configuredApiSurface: RendererCapabilities['apiSurface'] | null = null;
+let configuredBackendKind: RendererCapabilities['backendKind'] | null = null;
 let warnedBackendMix = false;
 
-function warnOnBackendMix(apiSurface: RendererCapabilities['apiSurface']): void {
-  const previous = configuredApiSurface;
-  configuredApiSurface = apiSurface;
-  if (previous === null || previous === apiSurface || warnedBackendMix) return;
+function warnOnBackendMix(backendKind: RendererCapabilities['backendKind']): void {
+  const previous = configuredBackendKind;
+  configuredBackendKind = backendKind;
+  if (previous === null || previous === backendKind || warnedBackendMix) return;
   warnedBackendMix = true;
   log.warning(
     Modules.RENDERER,
-    `Renderer backend switched from ${previous} to ${apiSurface}: the backend switches are ` +
+    `Renderer backend switched from ${previous} to ${backendKind}: the backend switches are ` +
       'page-wide, so if another Luxar host on this page still renders through ' +
-      `${previous} it now runs on ${apiSurface}'s settings. Use one backend per page.`
+      `${previous} it now runs on ${backendKind}'s settings. Use one backend per page.`
   );
 }
 
