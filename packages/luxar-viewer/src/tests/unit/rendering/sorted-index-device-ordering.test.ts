@@ -157,7 +157,7 @@ describe('device orderings', () => {
     expect(heldHost.onAbandoned).toHaveBeenCalledTimes(1);
     expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ more: true, flipped: true });
     expect(op.targets).toEqual([]);
-    geometry.getAttribute('aSortedIndex').clearUpdateRanges(); // Initial identity was drawn.
+    (geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute).clearUpdateRanges(); // Initial identity was drawn.
     getActiveSortedIndexAttribute(geometry)!.clearUpdateRanges(); // Host ordering was drawn.
     expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ more: false, flipped: true });
     expect(op.targets).toHaveLength(1);
@@ -218,6 +218,29 @@ describe('device orderings', () => {
     expect(requestFrame).toHaveBeenCalledTimes(1);
     expect(pumpSortedIndexOrderingApply(geometry).flipped).toBe(true);
     expect(next.targets).toEqual([slot0]);
+  });
+
+  it('does not clear a host upload staged by a draw callback', () => {
+    const geometry = makeGeometry(32);
+    const slot0 = getActiveSortedIndexAttribute(geometry)!;
+    slot0.clearUpdateRanges();
+    writeDeviceSortedIndexOrdering(geometry, deviceWrite(32), {
+      onApplied: () => {
+        writeSortedIndexIdentity(geometry, 48);
+        writeSortedIndexOrdering(
+          geometry,
+          new Uint32Array(48).map((_, i) => 47 - i),
+          48
+        );
+        expect(pumpSortedIndexOrderingApply(geometry).flipped).toBe(true);
+        writeDeviceSortedIndexOrdering(geometry, deviceWrite(48));
+      },
+    });
+    expect(pumpSortedIndexOrderingApply(geometry).flipped).toBe(true);
+
+    acknowledgeSortedIndexOrderingDraw(geometry);
+    expect(slot0.updateRanges).toEqual([{ start: 32, count: 16 }]);
+    expect(pumpSortedIndexOrderingApply(geometry).stalled).toBe(true);
   });
 
   it('releases a held append draw when its device writer fails without a successor', () => {
@@ -318,7 +341,7 @@ describe('a host array a device write left behind', () => {
     pumpSortedIndexOrderingApply(geometry);
     expect(activeSortedIndexSlot(geometry)).toBe(1);
     // Both attribute uploads completed in the draw after the host sort.
-    geometry.getAttribute('aSortedIndex').clearUpdateRanges();
+    (geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute).clearUpdateRanges();
     getActiveSortedIndexAttribute(geometry)!.clearUpdateRanges();
     holdSortedIndexDrawForAppend(geometry, 32, 48);
     for (let k = 0; k < 2; k++) {

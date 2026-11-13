@@ -892,20 +892,30 @@ export function pumpSortedIndexOrderingApply(
  * the callback so re-entrant disposal/cancellation cannot double-close it.
  */
 export function acknowledgeSortedIndexOrderingDraw(geometry: THREE.InstancedBufferGeometry): void {
+  const state = acknowledgeDeviceHostUpload(geometry);
   const callbacks = awaitingDrawAcknowledgement.get(geometry);
   if (callbacks) {
     awaitingDrawAcknowledgement.delete(geometry);
     callbacks.onApplied?.();
   }
+  if (state?.staged.kind === 'device' && orderingApplies.get(geometry) === state) {
+    state.callbacks?.requestFrame?.();
+  }
+}
+
+/** Clear a device writer's old host ranges only when this draw consumed them. */
+function acknowledgeDeviceHostUpload(
+  geometry: THREE.InstancedBufferGeometry
+): OrderingApply | undefined {
   // WebGPU has no attribute upload callback. An update clears ranges, but
   // first buffer creation uploads the full array and leaves them set. Both
   // ordering attributes are bound by the draw, so either path has consumed
-  // the old host data here. Clear a first-upload range and wake the writer.
+  // the old host data here. Inspect before callbacks can stage a new upload.
   const state = orderingApplies.get(geometry);
   if (state?.staged.kind === 'device') {
     getInactiveSortedIndexAttribute(geometry)?.clearUpdateRanges();
-    state.callbacks?.requestFrame?.();
   }
+  return state;
 }
 
 /**
