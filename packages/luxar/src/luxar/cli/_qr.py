@@ -723,6 +723,15 @@ def _wrap(text: str, font: str, size: float, width: float) -> list[str]:
     return lines
 
 
+def _ellipsize(text: str, font: str, size: float, width: float) -> str:
+    """Keep a visible truncation marker within a measured line width."""
+    if _text_width(text, font, size) <= width:
+        return text
+    while text and _text_width(text.rstrip() + "...", font, size) > width:
+        text = text[:-1]
+    return text.rstrip() + "..." if text else ""
+
+
 def _pdf_string(text: str) -> bytes:
     raw = text.encode("cp1252", errors="replace")
     return (
@@ -847,8 +856,12 @@ def _compact_key(
         x = _MARGIN + (index // half) * width
         y = top - (index % half + 1) * leading
         page.swatch(x, y - size * 0.15, size * 1.1, size * 1.1, _rgb(hex_code))
-        text = f"{label}  ({color_name}, {hex_code})"
-        fitted = _wrap(text, "Helvetica", size, width - size * 1.8)[0]
+        available = width - size * 1.8
+        name_width = available - _text_width(f" (, {hex_code})", "Helvetica", size)
+        color_name = _ellipsize(color_name, "Helvetica", size, name_width)
+        suffix = f" ({color_name}, {hex_code})"
+        fitted = _ellipsize(label, "Helvetica", size,
+                            available - _text_width(suffix, "Helvetica", size)) + suffix  # fmt: skip
         page.ops.append(
             f"BT 0.00 g /F1 {size:g} Tf {x + size * 1.6:.2f} {y:.2f} Td ".encode()
             + _pdf_string(fitted)
@@ -860,7 +873,13 @@ def _compact_key(
                   size, leading=leading, grey=0.3)  # fmt: skip
     if note:
         page.y -= size * 0.4
-        page.text(_wrap(note, "Helvetica", size * 0.92, column), "Helvetica",
+        lines = _wrap(note, "Helvetica", size * 0.92, column)
+        if len(lines) > 2:
+            lines = [
+                lines[0],
+                _ellipsize(lines[1] + "...", "Helvetica", size * 0.92, column),
+            ]
+        page.text(lines, "Helvetica",
                   size * 0.92, leading=size * 1.3, grey=0.3)  # fmt: skip
 
 
@@ -896,6 +915,14 @@ def qr_pdf_bytes(
         )  # fmt: skip
         if page.y >= _MARGIN + 6:
             break
+    if page.y < _MARGIN + 6 and legend:
+        for scale in (0.7, 0.68, 0.65):
+            page, link = _sheet(
+                matrix, url, heading, subheading, intro, steps, notes,
+                legend_title, legend, "", scale,
+            )  # fmt: skip
+            if page.y >= _MARGIN + 6:
+                break
     if footer:
         column = _A4[0] - 2 * _MARGIN
         page.y = _MARGIN - 6

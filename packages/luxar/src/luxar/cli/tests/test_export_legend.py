@@ -193,6 +193,76 @@ def test_a_long_key_on_the_sheet_is_capped_and_points_to_colours_pdf(
     assert min(y for y in ys if y != 50.0) >= _BOTTOM  # the footer sits at 50
 
 
+@pytest.mark.parametrize("note", ["", "A long note " * 90])
+def test_a_long_url_and_key_stay_above_the_sheet_footer(monkeypatch, note: str) -> None:
+    legend = {**_many(64).to_dict(), "note": note}
+    template = _key_template(monkeypatch, legend)
+    url = (
+        "http://"
+        + "long-advertised-host-" * 8
+        + ":8000/viewer/control.html?control&controlToken=abcdefgh12"
+    )
+    (content,) = _streams(template.panel_sheet(_qr.qr_matrix(url), url, has_token=True))
+    ys = [float(y) for y in re.findall(_TEXT_Y, content) if float(y) != 50.0]
+    assert ys and min(ys) >= _BOTTOM
+    assert b"... and 49 more: see COLOURS.pdf" in content
+    assert b"A long note" not in content  # the full note remains in COLOURS.pdf
+
+
+def test_a_long_key_label_keeps_the_colour_name_and_hex(monkeypatch) -> None:
+    legend = Legend(
+        title="Colours",
+        entries=(
+            LegendEntry(
+                "Cyanobacteria, Chloroflexota and other photosynthetic bacteria",
+                "#4CA666",
+                "dark green",
+            ),
+        ),
+    )
+    template = _key_template(monkeypatch, legend.to_dict())
+    url = "http://h:8000/viewer/control.html?control"
+    (content,) = _streams(template.panel_sheet(_qr.qr_matrix(url), url, has_token=True))
+    assert b"Cyanobacteria" in content
+    assert b"... \\(dark green, #4CA666\\)" in content
+    row = re.search(
+        rb"/F1 ([\d.]+) Tf [\d.]+ [\d.]+ Td \((Cyanobacteria.*?)\) Tj", content
+    )
+    assert row is not None
+    size = float(row.group(1))
+    text = row.group(2).decode().replace(r"\(", "(").replace(r"\)", ")")
+    assert (
+        _qr._text_width(text, "Helvetica", size)
+        <= (_qr._A4[0] - 2 * _qr._MARGIN) / 2 - size * 1.8
+    )
+
+
+def test_a_max_length_colour_name_keeps_the_sheet_hex(monkeypatch) -> None:
+    legend = Legend(
+        title="Colours",
+        entries=(LegendEntry("Group", "#4CA666", "W" * 40),),
+    )
+    template = _key_template(monkeypatch, legend.to_dict())
+    url = "http://h:8000/viewer/control.html?control"
+    (content,) = _streams(template.panel_sheet(_qr.qr_matrix(url), url, has_token=True))
+    assert b"..." in content
+    assert b", #4CA666\\)" in content
+
+
+def test_a_sheet_note_uses_at_most_two_lines(monkeypatch) -> None:
+    legend = {**_many(1).to_dict(), "note": "An unbroken sentence " * 20}
+    template = _key_template(monkeypatch, legend)
+    url = "http://h:8000/viewer/control.html?control"
+    (content,) = _streams(
+        template.panel_sheet(_qr.qr_matrix(url), url, has_token=False)
+    )
+    note_lines = re.findall(
+        rb"BT 0.30 g /F1 [\d.]+ Tf 56.00 [\d.]+ Td \((.*?)\) Tj ET", content
+    )
+    assert len(note_lines) == 2
+    assert b"..." in note_lines[-1]
+
+
 def test_the_sheet_with_a_key_still_scans(tmp_path: Path, monkeypatch) -> None:
     import shutil
     import subprocess
