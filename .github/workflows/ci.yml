@@ -468,7 +468,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: needs.changes.outputs.docs_relevant != 'false'
         with:
           package_json_file: packages/luxar-viewer/package.json
@@ -876,7 +876,7 @@ jobs:
           # Dispatched runs test the captured dev commit; empty on push/PR == default.
           ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
           package_json_file: packages/luxar-viewer/package.json
@@ -1030,7 +1030,7 @@ jobs:
           # Dispatched runs test the captured dev commit; empty on push/PR == default.
           ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
           package_json_file: packages/luxar-viewer/package.json
@@ -1134,7 +1134,7 @@ jobs:
           # Dispatched runs test the captured dev commit; empty on push/PR == default.
           ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
           # Read the exact packageManager pin used by local/Corepack installs.
@@ -1582,7 +1582,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
           package_json_file: packages/luxar-viewer/package.json
@@ -1664,7 +1664,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           package_json_file: packages/luxar-viewer/package.json
 
