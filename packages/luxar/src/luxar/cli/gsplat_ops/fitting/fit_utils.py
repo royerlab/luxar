@@ -1143,17 +1143,32 @@ def dispatch_parallel_tiled(
                 volume=reference_volume,
                 device=ctx.device,
                 fold_tile_slivers=True,
+                output_path=(
+                    ctx.output_path if not ctx.flat and ctx.compress is None else None
+                ),
+                root_attrs=(
+                    {"dimension_metadata": ctx.dimension_metadata}
+                    if ctx.dimension_metadata is not None
+                    else None
+                ),
+                frame=ctx.fit_frame,
             )
 
-        with asection(f"Saving to {ctx.output_path.name}"):
-            n_splats = save_fit_output(
-                result,
-                ctx.output_path,
-                compress=ctx.compress,
-                verbose=ctx.verbose,
-                frame=ctx.fit_frame,
-                dimension_metadata=ctx.dimension_metadata,
-            )
+        if isinstance(result, Path):
+            from luxar._zarr_compat import open_group
+
+            root = open_group(result, mode="r")
+            n_splats = int(root["fitting"].attrs["n_splats"])
+        else:
+            with asection(f"Saving to {ctx.output_path.name}"):
+                n_splats = save_fit_output(
+                    result,
+                    ctx.output_path,
+                    compress=ctx.compress,
+                    verbose=ctx.verbose,
+                    frame=ctx.fit_frame,
+                    dimension_metadata=ctx.dimension_metadata,
+                )
 
         aprint(f"\nDone: {n_splats:,} splats in {time.perf_counter() - started:.1f}s")
         return True
@@ -1815,6 +1830,7 @@ def fit_sequential_tiled(
             "Note: --downscale on the sequential tiled path writes a "
             "flat leaf; use -j>1 for a downscaled partition."
         )
+    stream_output = seq_partition and ctx.compress is None
     return fit_tiled(
         volume,
         tile_size=ctx.tile_size,
@@ -1833,6 +1849,13 @@ def fit_sequential_tiled(
         fold_tile_slivers=True,
         tile_seed_counts=tile_seed_counts,
         tile_amplitude_floor=ctx.tile_amplitude_floor,
+        _output_path=ctx.output_path if stream_output else None,
+        _root_attrs=(
+            {"dimension_metadata": ctx.dimension_metadata}
+            if stream_output and ctx.dimension_metadata is not None
+            else None
+        ),
+        _frame=ctx.fit_frame if stream_output else None,
         **fit_config,
     )
 

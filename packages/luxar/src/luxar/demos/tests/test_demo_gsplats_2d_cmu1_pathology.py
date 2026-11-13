@@ -106,6 +106,7 @@ def test_local_tiled_refit_preserves_overlap_contributions(
     monkeypatch.setattr(demo, "SEEDS_PER_TILE", 128)
     monkeypatch.setattr(demo, "N_ITERS", 20)
     monkeypatch.setattr(demo, "DEVICE", "cpu")
+    monkeypatch.setattr(demo, "SHOW_ROUNDTRIP", True)
 
     y, x = np.mgrid[:24, :48]
     image = np.exp(-((y - 12) ** 2 / 50 + (x - 24) ** 2 / 450)).astype(np.float32)
@@ -119,6 +120,31 @@ def test_local_tiled_refit_preserves_overlap_contributions(
     assert seam_mse < 0.016  # The culled fit measures about 0.019 here.
     neighbour_mse = np.mean((reconstruction[:, 16:24] - image[:, 16:24]) ** 2)
     assert seam_mse <= neighbour_mse
+
+
+def test_default_refit_streams_to_partition_cache(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(demo, "TILE_SIZE", 16)
+    monkeypatch.setattr(demo, "OVERLAP", 4)
+    monkeypatch.setattr(demo, "SEEDS_PER_TILE", 16)
+    monkeypatch.setattr(demo, "N_ITERS", 2)
+    monkeypatch.setattr(demo, "DEVICE", "cpu")
+    monkeypatch.setattr(demo, "SHOW_ROUNDTRIP", False)
+    image = np.ones((16, 28), dtype=np.float32)
+    cache = tmp_path / "cmu1_ch0.gsplats.zarr.zip"
+
+    count = demo.fit_channel_tiled(
+        image, "red", cache, acquisition=((32, 56), "uint16")
+    )
+
+    assert isinstance(count, int) and count > 0
+    with zipfile.ZipFile(cache) as archive:
+        prefix = cache.name.removesuffix(".zip")
+        root = json.loads(archive.read(f"{prefix}/zarr.json"))["attributes"]
+        fitting = json.loads(archive.read(f"{prefix}/fitting/zarr.json"))["attributes"]
+        assert root["kind"] == "partition"
+        assert fitting["n_splats"] == count
+        assert fitting["source_shape"] == [32, 56]
+        assert fitting["source_dtype"] == "uint16"
 
 
 def test_local_fit_paths_rejects_a_truncated_channel(tmp_path, monkeypatch) -> None:

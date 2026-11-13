@@ -448,6 +448,7 @@ def fit_tiled_parallel(
     fold_tile_slivers: bool = True,
     output_path: Path | None = None,
     root_attrs: dict[str, Any] | None = None,
+    frame: Any | None = None,
 ) -> "Any":  # GSplatData (flat) or a GSplatNode (partition)
     """Fit all tiles via concurrent worker subprocesses, then merge.
 
@@ -590,69 +591,107 @@ def fit_tiled_parallel(
             f"Temp outputs kept at {tmp_dir} for inspection.\n{detail}"
         )
 
+    common = dict(
+        num_tiles=num_tiles,
+        volume_shape=volume_shape,
+        tile_size=tile_size,
+        overlap=overlap,
+        progressive=progressive,
+        cull_retention=cull_retention,
+        elapsed=time.perf_counter() - t0,
+        source_shape=source_shape,
+        source_dtype=source_dtype,
+        floor_strategy=floor_strategy,
+        grid_scale=grid_scale,
+        volume=reference,
+        device=device,
+        recipe=recipe,
+        recipe_params=recipe_params,
+        fold_tile_slivers=fold_tile_slivers,
+        verbose=verbose,
+    )
     if output_path is not None and partition and num_tiles > 1:
-        from luxar.gsplats.stream_tiled import stream_tile_results
-
-        def _load_tile(index: int) -> GSplatData:
-            path = tile_paths[index]
-            if path.exists():
-                try:
-                    return GSplatData.load(path, include_stats=True)
-                except Exception as exc:
-                    raise RuntimeError(f"Tile {index} wrote an unreadable store at {path}") from exc
-            marker = Path(str(path) + ".empty")
-            if not marker.exists():
-                raise RuntimeError(f"Tile {index} wrote no output at {path}")
-            tile = _empty_tile(len(volume_shape))
-            pruned = read_empty_tile_marker_pruned(marker)
-            if pruned is not None:
-                tile.stats["tile_amplitude_pruned"] = pruned
-            return tile
-
-        stream_tile_results(
+        return _write_parallel_store(
+            tile_paths,
+            tmp_dir,
             output_path,
-            _load_tile,
-            num_tiles=num_tiles,
-            volume_shape=volume_shape,
-            tile_size=tile_size,
-            overlap=overlap,
-            progressive=progressive,
-            cull_retention=cull_retention,
-            elapsed=time.perf_counter() - t0,
-            source_shape=source_shape,
-            source_dtype=source_dtype,
-            floor_strategy=floor_strategy,
-            tile_amplitude_floor=tile_amplitude_floor,
-            grid_scale=grid_scale,
-            volume=reference,
-            device=device,
-            recipe=recipe,
-            recipe_params=recipe_params,
-            fold_tile_slivers=fold_tile_slivers,
-            root_attrs=root_attrs,
-            verbose=verbose,
+            keep_tiles,
+            tile_amplitude_floor,
+            root_attrs,
+            frame,
+            common,
         )
-        if not keep_tiles:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-        return output_path
-
-    # Reload each tile. A successful worker either wrote its .gsplats.zarr, or —
-    # for a tile windowed to near-zero signal (0 splats) — wrote a sibling
-    # ".empty" marker (the gsplats writer rejects empty stores). An empty tile
-    # contributes nothing to the merge (concatenate filters empties), exactly as
-    # in the sequential path. A path that is neither present nor marked empty
-    # after a clean exit is a silent spatial hole; a present-but-unreadable
-    # store (e.g. a worker OOM-killed mid-save) is corrupt — both are failures.
-    #
-    # `include_stats=True` because the merge has no `applied_floor` of its own on
-    # this path: the level each worker subtracted lives in its tile store's
-    # `pipeline/` group, and reloading without stats made every tile silent, so
-    # the merge stamped an affirmative `floor: null` — "no pedestal was removed"
-    # — onto a store that had one removed (#1175).
-    results, missing, corrupt, amplitude_pruned = _reload_tile_results(
-        tile_paths, len(volume_shape), tile_amplitude_floor
+    return _merge_parallel_in_memory(
+        tile_paths, tmp_dir, keep_tiles, partition, tile_amplitude_floor, common
     )
 
+
+def _load_parallel_tile(
+    index: int, tile_paths: Sequence[Path], ndim: int
+) -> GSplatData:
+    path = tile_paths[index]
+    if path.exists():
+        try:
+            return GSplatData.load(path, include_stats=True)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Tile {index} wrote an unreadable store at {path}"
+            ) from exc
+    marker = Path(str(path) + ".empty")
+    if not marker.exists():
+        raise RuntimeError(f"Tile {index} wrote no output at {path}")
+    tile = _empty_tile(ndim)
+    pruned = read_empty_tile_marker_pruned(marker)
+    if pruned is not None:
+        tile.stats["tile_amplitude_pruned"] = pruned
+    return tile
+
+
+def _write_parallel_store(
+    tile_paths: Sequence[Path],
+    tmp_dir: Path,
+    output_path: Path,
+    keep_tiles: bool,
+    tile_amplitude_floor: float | None,
+    root_attrs: dict[str, Any] | None,
+    frame: Any | None,
+    common: dict[str, Any],
+) -> Path:
+    from functools import partial
+
+    from luxar.gsplats.batch.stream_tiled import stream_tile_results
+
+    stream_tile_results(
+        output_path,
+        partial(
+            _load_parallel_tile, tile_paths=tile_paths, ndim=len(common["volume_shape"])
+        ),
+        tile_amplitude_floor=tile_amplitude_floor,
+        root_attrs=root_attrs,
+        frame=frame,
+        **common,
+    )
+    if not keep_tiles:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    else:
+        aprint(f"Kept tiles at {tmp_dir}")
+    return output_path
+
+
+def _merge_parallel_in_memory(
+    tile_paths: Sequence[Path],
+    tmp_dir: Path,
+    keep_tiles: bool,
+    partition: bool,
+    tile_amplitude_floor: float | None,
+    common: dict[str, Any],
+) -> Any:
+    # An empty worker writes a sibling marker. Missing or unreadable output is a
+    # spatial hole, not a legitimately empty tile. Keep the worker stats so the
+    # merge does not misstate its background floor (#1175).
+    results, missing, corrupt, amplitude_pruned = _reload_tile_results(
+        tile_paths, len(common["volume_shape"]), tile_amplitude_floor
+    )
     if missing or corrupt:
         parts = []
         if missing:
@@ -661,37 +700,13 @@ def fit_tiled_parallel(
             ids = ", ".join(f"{i}: {e}" for i, e in corrupt)
             parts.append(f"wrote an unreadable store (tiles: {ids})")
         raise RuntimeError(
-            f"{len(missing) + len(corrupt)} of {num_tiles} tiles exited cleanly "
+            f"{len(missing) + len(corrupt)} of {common['num_tiles']} tiles exited cleanly "
             f"but {'; '.join(parts)}. Temp outputs kept at {tmp_dir} for inspection."
         )
-
-    elapsed = time.perf_counter() - t0
-    merged = merge_tile_results(
-        results,
-        volume_shape=volume_shape,
-        tile_size=tile_size,
-        overlap=overlap,
-        num_tiles=num_tiles,
-        progressive=progressive,
-        cull_retention=cull_retention,
-        elapsed=elapsed,
-        verbose=verbose,
-        partition=partition,
-        recipe=recipe,
-        recipe_params=recipe_params,
-        grid_scale=grid_scale,
-        source_shape=source_shape,
-        source_dtype=source_dtype,
-        floor_strategy=floor_strategy,
-        volume=reference,
-        device=device,
-        fold_tile_slivers=fold_tile_slivers,
-    )
+    merged = merge_tile_results(results, partition=partition, **common)
     stamp_tile_amplitude_floor(merged, tile_amplitude_floor, amplitude_pruned)
-
     if not keep_tiles:
         shutil.rmtree(tmp_dir, ignore_errors=True)
     else:
         aprint(f"Kept tiles at {tmp_dir}")
-
     return merged

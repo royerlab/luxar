@@ -91,7 +91,7 @@ if TYPE_CHECKING:
     from luxar.gsplats.culling import CullResult, cull_by_contribution
     from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
     from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
-    from luxar.gsplats.fit_tiled_gsplats import fit_tile, fit_tiled
+    from luxar.gsplats.fit_tiled_gsplats import fit_tile, fit_tiled, fit_tiled_to_store
     from luxar.gsplats.fitting.config import FitParameters
     from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
     from luxar.gsplats.lift import (
@@ -136,7 +136,11 @@ else:
         from luxar.gsplats.fit_progressive_gsplats import (
             fit_progressive_gaussian_splats,
         )
-        from luxar.gsplats.fit_tiled_gsplats import fit_tile, fit_tiled
+        from luxar.gsplats.fit_tiled_gsplats import (
+            fit_tile,
+            fit_tiled,
+            fit_tiled_to_store,
+        )
         from luxar.gsplats.fitting.config import FitParameters
         from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
         from luxar.gsplats.lift import (
@@ -239,6 +243,10 @@ else:
 
         def fit_tiled(*_args: Any, **_kwargs: Any) -> Any:
             """Fit a large volume tile-by-tile and stitch it (needs gsplats extra)."""
+            _raise_gsplats_import_error()
+
+        def fit_tiled_to_store(*_args: Any, **_kwargs: Any) -> Any:
+            """Fit tiled splats into a partition store (needs gsplats extra)."""
             _raise_gsplats_import_error()
 
         fit_tiled_gaussian_splats = fit_tiled
@@ -358,6 +366,7 @@ __all__ = [
     "fit_tiled_gaussian_splats",
     "fit_tile",
     "fit_tiled",
+    "fit_tiled_to_store",
     "GaussianSplatFitter",
     "FitParameters",
     "GSplatData",

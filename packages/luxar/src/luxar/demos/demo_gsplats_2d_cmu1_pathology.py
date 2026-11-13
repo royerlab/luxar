@@ -461,7 +461,7 @@ def fit_channel_tiled(
     channel_name: str,
     cache_file: Path,
     acquisition: tuple | None = None,
-) -> GSplatData:
+) -> GSplatData | int:
     """Fit 2D gsplats to a single channel using tiled fitting.
 
     Uses Hann cosine apodization for seamless tile stitching across the
@@ -473,9 +473,10 @@ def fit_channel_tiled(
         cache_file: Where to cache the fitted result.
 
     Returns:
-        Fitted GSplatData with 2D centers in pixel coordinates.
+        Stored splat count, or the in-memory fit for ``--show-roundtrip``.
     """
     from luxar.gsplats import fit_tiled
+    from luxar.gsplats.fit_tiled_gsplats import fit_tiled_to_store
 
     global DEVICE
     if DEVICE is None:
@@ -490,8 +491,7 @@ def fit_channel_tiled(
     aprint(f"  Device: {DEVICE}")
 
     src_shape, src_dtype = acquisition or (None, None)
-    result = fit_tiled(
-        image,
+    fit_kwargs = dict(
         # One channel of the slide page as read; the fitted image is a resized,
         # normalized float32 copy of it. fit_tiled applies this to the MERGED
         # result -- the tiles themselves see crops.
@@ -512,11 +512,35 @@ def fit_channel_tiled(
         tile_amplitude_floor=1e-5,
     )
 
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    if not SHOW_ROUNDTRIP:
+        import tempfile
+
+        from luxar._zarr_compat import open_group
+        from luxar.demos._lod_policy import _RECIPE_DEFAULTS
+        from luxar.gsplats.io.save_gsplats import _compress_zarr
+        from luxar.gsplats.lod import RecipeParams
+
+        with tempfile.TemporaryDirectory(dir=cache_file.parent) as stage:
+            store = Path(stage) / cache_file.name.removesuffix(".zip")
+            fit_tiled_to_store(
+                image,
+                store,
+                recipe="levels",
+                recipe_params=RecipeParams(**_RECIPE_DEFAULTS["adaptive"]),
+                **fit_kwargs,
+            )
+            n_splats = int(open_group(store, mode="r")["fitting"].attrs["n_splats"])
+            _compress_zarr(store, cache_file, "zip", True, None)
+        aprint(f"  Fitted {n_splats:,} splats across all tiles")
+        return n_splats
+
+    result = fit_tiled(image, **fit_kwargs)
+
     n_splats = len(result.amplitudes)
     aprint(f"  Fitted {n_splats:,} splats across all tiles")
 
     # Cache result
-    cache_file.parent.mkdir(parents=True, exist_ok=True)
     aprint(f"  Caching to {cache_file}")
     save_with_lod(
         result,
@@ -534,7 +558,7 @@ def fit_channel_tiled(
 def fit_all_channels(
     images: list[np.ndarray],
     acquisition: tuple | None = None,
-) -> tuple[list[Path], list[GSplatData]]:
+) -> tuple[list[Path], list[GSplatData | int]]:
     """Fit 2D gsplats to all RGB channels using tiled fitting.
 
     Always fits: ``main`` has already tried the manifest fetch and this
@@ -544,8 +568,8 @@ def fit_all_channels(
     tree with no flat ``GSplatData`` form.
 
     Returns:
-        ``(cache_paths, gsplats)`` — the written artifacts, and the in-memory
-        fits the round-trip comparison renders from.
+        ``(cache_paths, fits_or_counts)`` — written artifacts and either their
+        splat counts or in-memory fits for ``--show-roundtrip``.
     """
     with asection("Tiled fitting of 2D GSplats per channel"):
         cache_paths: list[Path] = []
@@ -753,7 +777,7 @@ Controls:
 
 def show_roundtrip_comparison(
     images: list[np.ndarray],
-    gsplats_list: list[GSplatData],
+    gsplats_list: list[GSplatData | int],
 ) -> None:
     """Show original vs round-trip reconstructed 2D images side by side."""
     try:
@@ -769,6 +793,7 @@ def show_roundtrip_comparison(
         for i, (image, gsplats, ch_config) in enumerate(
             zip(images, gsplats_list, CHANNELS[:n_channels])
         ):
+            assert isinstance(gsplats, GSplatData)
             with asection(f"Rendering Ch{i}: {ch_config['name']}"):
                 recon = gsplats.render_to_volume(shape=image.shape, device=DEVICE)
                 reconstructions.append(recon)
@@ -803,7 +828,7 @@ def show_roundtrip_comparison(
 
         fig.suptitle(
             f"Round-Trip Comparison  "
-            f"({sum(len(g.amplitudes) for g in gsplats_list):,} total splats)",
+            f"({sum(g if isinstance(g, int) else g.n_splats for g in gsplats_list):,} total splats)",
             fontsize=14,
         )
         plt.tight_layout()
@@ -869,7 +894,7 @@ def main():
     # generation resolves, and a partition has no flat form (see
     # `create_luxar_scene`).
     images = None
-    gsplats_list: list[GSplatData] = []
+    gsplats_list: list[GSplatData | int] = []
 
     cache_paths = resolve_or_local()
 
@@ -901,7 +926,9 @@ def main():
 
     # Summary
     if images is not None:
-        total_splats = sum(len(g.amplitudes) for g in gsplats_list)
+        total_splats = sum(
+            g if isinstance(g, int) else g.n_splats for g in gsplats_list
+        )
         total_pixels = sum(img.size for img in images)
         pixel_bytes = total_pixels * 4  # float32
         # Floats per 2D splat: d + d*(d+1)/2 + 2 + 3 (colors) = 2 + 3 + 2 + 3 = 10

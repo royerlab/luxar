@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 import torch
 
+from luxar._zarr_compat import open_group
 from luxar.gsplats.fit_tiled_parallel import (
     build_worker_cmd,
     fit_tiled_parallel,
@@ -155,6 +156,36 @@ def _corrupt_store_builder(corrupt_on: int):
 
 
 # ── resolve_jobs ─────────────────────────────────────────────────────────────
+
+
+def test_partition_output_streams_worker_stores(tmp_path: Path) -> None:
+    output = tmp_path / "merged.gsplats.zarr"
+    result = fit_tiled_parallel(
+        num_tiles=3,
+        jobs=2,
+        tmp_dir=tmp_path / "workers",
+        worker_cmd_builder=_fake_worker_builder(n_per_tile=5),
+        volume_shape=(30, 10, 10),
+        tile_size=10,
+        overlap=0,
+        progressive=False,
+        cull_retention=None,
+        partition=True,
+        output_path=output,
+        source_dtype="float32",
+        verbose=False,
+    )
+
+    assert result == output
+    root = open_group(output, mode="r")
+    assert root.attrs["kind"] == "partition"
+    assert root["fitting"].attrs["n_splats"] == 15
+    assert sorted(name for name in root.keys() if name.startswith("part_")) == [
+        "part_0",
+        "part_1",
+        "part_2",
+    ]
+    assert not (tmp_path / "workers").exists()
 
 
 class TestResolveJobs:
