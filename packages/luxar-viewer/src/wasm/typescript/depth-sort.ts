@@ -20,6 +20,50 @@ const DEPTH_SORT_BUCKETS = 1 << 16;
 /** Maximum key value as f32 (matches Rust's `DEPTH_KEY_MAX`). */
 const DEPTH_KEY_MAX = Math.fround(DEPTH_SORT_BUCKETS - 1);
 
+/** Compact per-element depth keys for the WebGPU ordering pass. */
+export function depthSortKeys(
+  centers3: Float32Array,
+  modelView: Float32Array,
+  count: number
+): Uint16Array {
+  const keys = new Uint16Array(count);
+  if (count === 0) return keys;
+
+  const zScratch = new Float32Array(count);
+  let zMin = Infinity;
+  let zMax = -Infinity;
+  const m2 = modelView[2];
+  const m6 = modelView[6];
+  const m10 = modelView[10];
+  const m14 = modelView[14];
+  for (let i = 0; i < count; i++) {
+    const base = i * 3;
+    const z = Math.fround(
+      Math.fround(
+        Math.fround(Math.fround(m2 * centers3[base]) + Math.fround(m6 * centers3[base + 1])) +
+          Math.fround(m10 * centers3[base + 2])
+      ) + m14
+    );
+    zScratch[i] = z;
+    if (z < 0) {
+      zMin = Math.min(zMin, z);
+      zMax = Math.max(zMax, z);
+    }
+  }
+  // Equal or invalid depth ranges use all-zero keys; a stable GPU scatter
+  // then writes identity, exactly as the CPU kernel does.
+  if (!(zMax > zMin)) return keys;
+
+  const invRange = Math.fround(1 / Math.fround(zMax - zMin));
+  for (let i = 0; i < count; i++) {
+    const z = zScratch[i];
+    if (z >= 0) continue;
+    const scaled = Math.fround(Math.fround(Math.fround(z - zMin) * invRange) * DEPTH_KEY_MAX);
+    keys[i] = (scaled < DEPTH_KEY_MAX ? scaled : DEPTH_KEY_MAX) | 0;
+  }
+  return keys;
+}
+
 /**
  * Sort splats back-to-front by camera-space depth.
  *
