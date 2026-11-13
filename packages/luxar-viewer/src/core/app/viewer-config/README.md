@@ -82,7 +82,9 @@ detach the previous scene, apply `extractAudioConfig(viewer_config.audio)` (the
 listener's persisted mute / master gain win), attach the `LuxarScene` root so
 the engine finds its sound-node placeholders, re-push the Layers panel's sound
 mutes, and replay the opening waypoint's `on_arrive` — the waypoints snapped
-before any sound node existed, so that arrival would otherwise never fire.
+before any sound node existed, so that arrival would otherwise never fire. It
+returns the triggered narration paths so the opening slideshow stop can wait
+for any clip that actually starts.
 
 ## panel-visibility.ts
 

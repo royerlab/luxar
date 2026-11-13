@@ -97,9 +97,9 @@ Screen shape and pace:
     on a wide wall; a screen too narrow for a readable panel is refused. Without
     it the layout is the one tuned for 16:9. ``--text-scale`` sets the
     reading-text size for the room. A kiosk build moves on to the next story by
-    itself, resting 60 s at each stop after the camera lands, long enough for
-    the narration (clips run 20-43 s); a silent wall can use 30
-    (``--auto-advance SECONDS``; ``0`` turns it off).
+    itself, resting at least 20 s at each stop after the camera lands. A
+    narration that runs longer extends its own stop until it ends plus a
+    short pad (``--auto-advance SECONDS`` sets the minimum; ``0`` turns it off).
 
 Touch panel (off by default):
     A kiosk can be driven from a tablet — a full-screen matrix of one tile per
@@ -3362,17 +3362,13 @@ KIOSK_TEXT_SCALE = 0.8
 #: package's serve.py (they must be known before the scene loads): WebGPU, the
 #: full worker pool, the full prefetch limit.
 KIOSK_LAUNCH = LaunchConfig(renderer="webgpu", workers=16, prefetch=12)
-#: Seconds each kiosk stop RESTS before the tour moves on by itself, so the
-#: wall is never still with no one at the controls: the story dimension plays
-#: at this period, and the period counts from the camera's landing (a flight is
-#: 5-16 s). A visitor's pick restarts it. It must outlast the narration, which
-#: also starts at the landing (`on_arrive`, +0.6 s) and which the lobby kiosk
-#: does play: the openai/alloy clips run 20.3-43.3 s (mean 35.9 s; the longest,
-#: CRISPR-Cas, 43.3 s), and at 30 s the tour cut 19 of the 21 off. 60 s is the
-#: longest plus 10 s, rounded up. A silent wall can go shorter
-#: (`--auto-advance 30`, or `serve.py --auto-advance 30` on site).
+#: Minimum seconds each kiosk stop RESTS after its camera lands. The viewer
+#: extends a stop whose `on_arrive` narration starts until that clip ends plus
+#: 2 s. The 21 openai/alloy clips run 20.3-43.3 s; a fixed 60 s period left
+#: the shorter stories silent. A visitor's pick restarts the stop's clock.
+#: A silent wall uses this minimum; `--auto-advance` overrides it.
 #: Re-measure when the scripts change (`ffprobe` the store's narration_*/audio.mp3).
-KIOSK_AUTO_ADVANCE_S = 60.0
+KIOSK_AUTO_ADVANCE_S = 20.0
 #: Shape the default layout is drawn for (and its caption laid out on).
 DEFAULT_ASPECT = 16 / 9
 

@@ -517,6 +517,7 @@ describe('runInitPipeline', () => {
     it('wires every audio port to the live viewer dependencies', async () => {
       const { factories, sceneStub } = makeFactoryOverrides();
       const ports = makePorts();
+      ports.onNarrationEvent = vi.fn();
       ports.options.factories = factories as never;
       const result = await runInitPipeline(ports, {});
       const audio = result.audioEngine as unknown as {
@@ -532,6 +533,8 @@ describe('runInitPipeline', () => {
       expect(ports.emitEmbedderEvent).toHaveBeenCalledWith('sound-started', {
         name: 'narration',
       });
+      audio.deps.onNarrationEvent('started', '/story/narration');
+      expect(ports.onNarrationEvent).toHaveBeenCalledWith('started', '/story/narration');
 
       const cameraChanged = vi.fn();
       const unsubscribe = audio.deps.onCameraReplaced(cameraChanged);

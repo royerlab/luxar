@@ -352,7 +352,7 @@ export class AudioEngine {
       if (rows === undefined) continue;
       if (node.triggerFromWaypoint(kind, rows)) {
         fired++;
-        if (kind === 'arrive' && node.attrs.bus === 'voice' && !node.attrs.loop) {
+        if (this.isNarratedArrival(kind, node)) {
           narrations.push(node.path);
         }
       }
@@ -361,6 +361,10 @@ export class AudioEngine {
       log.custom('🔈', Modules.AUDIO, `waypoint ${kind}: ${fired} sound node(s) triggered`);
     }
     return narrations;
+  }
+
+  private isNarratedArrival(kind: WaypointEventKind, node: SoundNode): boolean {
+    return kind === 'arrive' && node.attrs.bus === 'voice' && !node.attrs.loop;
   }
 
   /**

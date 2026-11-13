@@ -102,6 +102,9 @@ waypoint has no camera block). A flight the visitor cancels still arrives
 stories' narrations cannot overlap. `LuxarApp` forwards both to the embedder bus
 and to `AudioEngine.notifyWaypoint(kind, when)`, and replays the load-time
 arrival after the scene's sound nodes attach (the waypoints install first).
+`notifyWaypoint` returns the full paths of one-shot `on_arrive` voice clips
+triggered there; start/end signals for those paths let the slideshow hold only
+the current stop's narration.
 
 ## Ambisonic fields
 

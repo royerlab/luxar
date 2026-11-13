@@ -201,6 +201,20 @@ describe('DimensionAnimationManager slideshow playback', () => {
     expect(value(STORY)).toBe(1);
   });
 
+  it('waits for every voice of a spatial narration to end', () => {
+    manager.play(STORY, { targetFPS: 1 / 20 });
+    manager.beginNarratedStop(STORY, ['/spatial']);
+    manager.narrationStarted('/spatial');
+    manager.narrationStarted('/spatial');
+    tick(25_000);
+    manager.narrationEnded('/spatial');
+    tick(2_000);
+    expect(value(STORY)).toBe(0);
+    manager.narrationEnded('/spatial');
+    tick(2_000);
+    expect(value(STORY)).toBe(1);
+  });
+
   it('restarts at a new landing and ignores the previous narration ending', () => {
     manager.play(STORY, { targetFPS: 1 / 20 });
     manager.beginNarratedStop(STORY, ['/old']);
@@ -209,7 +223,13 @@ describe('DimensionAnimationManager slideshow playback', () => {
     dims.setDimensionValue(STORY, 5);
     manager.beginNarratedStop(STORY, ['/new']);
     manager.narrationEnded('/old');
+    manager.narrationStarted('/new');
     tick(19_999);
+    expect(value(STORY)).toBe(5);
+    tick(1);
+    expect(value(STORY)).toBe(5);
+    manager.narrationEnded('/new');
+    tick(1_999);
     expect(value(STORY)).toBe(5);
     tick(1);
     expect(value(STORY)).toBe(6);
@@ -218,6 +238,8 @@ describe('DimensionAnimationManager slideshow playback', () => {
   it('frame-paced playback is never held', () => {
     manager.play(TIME, { targetFPS: 10 });
     held = true;
+    manager.beginNarratedStop(TIME, ['/voice']);
+    manager.narrationStarted('/voice');
     tick(150);
     expect(value(TIME)).toBe(1);
   });

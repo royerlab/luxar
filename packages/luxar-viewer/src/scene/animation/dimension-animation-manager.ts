@@ -88,11 +88,6 @@ const FRAME_EWMA_ALPHA = 0.1;
 /** Silence after a completed narration before the next slideshow step. */
 const NARRATION_PAD_MS = 2000;
 
-interface NarratedStop {
-  expected: Set<string>;
-  active: Set<string>;
-}
-
 /** A discrete dimension's own grid step (the snap grid), else null. */
 function gridStepOf(metadata: { discrete?: boolean; step?: number } | undefined): number | null {
   return metadata?.discrete ? metadata.step || 1.0 : null;
@@ -138,7 +133,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   private lastSteppedValues = new Map<number, number>();
 
   /** Only the current stop's on-arrival voice clips may extend each playhead. */
-  private narratedStops = new Map<number, NarratedStop>();
+  private narratedStops = new Map<number, { expected: Set<string>; active: Map<string, number> }>();
 
   /** Unsubscribe function for sceneDimsManager listener */
   private removeDimsListener: (() => void) | null = null;
@@ -311,23 +306,30 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   beginNarratedStop(dimIndex: number, paths: readonly string[]): void {
     const state = this.animationStates.get(dimIndex);
     if (!state?.isPlaying || this.isFramePaced(state)) return;
-    this.narratedStops.set(dimIndex, { expected: new Set(paths), active: new Set() });
+    this.narratedStops.set(dimIndex, { expected: new Set(paths), active: new Map() });
     state.nextDue = performance.now() + this.tickPeriodMs(state);
   }
 
   narrationStarted(path: string): void {
     for (const stop of this.narratedStops.values()) {
-      if (stop.expected.has(path)) stop.active.add(path);
+      if (stop.expected.has(path)) stop.active.set(path, (stop.active.get(path) ?? 0) + 1);
     }
   }
 
   narrationEnded(path: string): void {
     const now = performance.now();
     for (const [dimIndex, stop] of this.narratedStops) {
-      if (!stop.active.delete(path)) continue;
+      const count = stop.active.get(path);
+      if (count === undefined) continue;
+      if (count > 1) stop.active.set(path, count - 1);
+      else stop.active.delete(path);
       const state = this.animationStates.get(dimIndex);
       if (state?.isPlaying) state.nextDue = Math.max(state.nextDue, now + NARRATION_PAD_MS);
     }
+  }
+
+  private isNarrationActive(dimIndex: number): boolean {
+    return (this.narratedStops.get(dimIndex)?.active.size ?? 0) > 0;
   }
 
   /**
@@ -357,16 +359,24 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
     // Update each active animation
     for (const [dimIndex, state] of this.animationStates) {
-      if (!state.isPlaying) continue;
-      if (slideshowHeld && !this.isFramePaced(state)) {
-        // Held (a waypoint flight is in the air): the period starts on landing.
-        state.nextDue = currentTime + this.tickPeriodMs(state);
-        continue;
-      }
-      if (this.narratedStops.get(dimIndex)?.active.size) continue;
-      this.updateDimension(dimIndex, currentTime);
+      this.advancePlayingDimension(dimIndex, state, currentTime, slideshowHeld);
     }
     return this.stepCount !== stepsBefore;
+  }
+
+  private advancePlayingDimension(
+    dimIndex: number,
+    state: DimensionAnimationState,
+    now: number,
+    slideshowHeld: boolean
+  ): void {
+    if (!state.isPlaying) return;
+    if (slideshowHeld && !this.isFramePaced(state)) {
+      // A waypoint flight is in the air: the period starts on landing.
+      state.nextDue = now + this.tickPeriodMs(state);
+      return;
+    }
+    if (!this.isNarrationActive(dimIndex)) this.updateDimension(dimIndex, now);
   }
 
   /**

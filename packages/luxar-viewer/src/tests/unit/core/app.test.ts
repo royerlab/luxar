@@ -1922,12 +1922,16 @@ describe('LuxarApp', () => {
       } as unknown as Parameters<typeof sceneDimsManager.initFromScene>[0];
       sceneDimsManager.initFromScene(fakeScene);
       sceneDimsManager.setDimensionValue(3, 0);
+      const beginNarratedStop = vi.fn();
+      mockInputHandler.getAnimationManager.mockReturnValue({ beginNarratedStop });
       // init() only loads `src` directly when the probe says it exists;
       // otherwise it opens the dataset browser instead.
       mockFetch.mockResolvedValue({ ok: true });
 
       try {
         await app.init({ canvas: mockCanvas, src: SRC });
+
+        expect(beginNarratedStop).toHaveBeenCalledWith(3, []);
 
         // Load-time: the matched waypoint is applied as a SNAP (restoreCamera),
         // not a flight.

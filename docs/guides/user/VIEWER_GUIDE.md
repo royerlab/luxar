@@ -399,6 +399,10 @@ from the landing. Moving a playing dimension to another position yourself
 away from a view you just picked. Picking the position it is already at changes
 nothing, so the period keeps running.
 
+At a waypoint with an `on_arrive` voice narration, the slideshow waits for
+that clip to finish plus 2 s if it runs past the authored period. A short clip
+still gets the full period; if sound cannot start, the period advances normally.
+
 ### Fly Mode Movement
 
 | Key | Action |

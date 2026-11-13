@@ -1404,7 +1404,7 @@ def test_auto_advance_is_the_story_dimension_playing_slowly() -> None:
 @pytest.mark.parametrize(
     ("argv", "kiosk", "expected"),
     [
-        ([], True, {"aspect": None, "text_scale": None, "auto_advance_s": 60.0}),
+        ([], True, {"aspect": None, "text_scale": None, "auto_advance_s": 20.0}),
         ([], False, {"aspect": None, "text_scale": None, "auto_advance_s": None}),
         (
             ["--auto-advance", "0"],
