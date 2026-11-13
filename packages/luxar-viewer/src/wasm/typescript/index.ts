@@ -16,7 +16,7 @@
 
 export { calculate_effective_radii } from './effective-radii';
 export { points_slice_membership } from './points-membership';
-export { sort_splats_by_depth, sort_splats_by_depth_with_keys } from './depth-sort';
+export { sort_splats_by_depth } from './depth-sort';
 export {
   decode_quantized_u8,
   decode_quantized_u16,
