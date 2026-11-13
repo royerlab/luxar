@@ -661,6 +661,28 @@ def _write_parallel_store(
 
     from luxar.gsplats.batch.stream_tiled import stream_tile_results
 
+    missing: list[int] = []
+    corrupt: list[tuple[int, str]] = []
+    for index, path in enumerate(tile_paths):
+        if path.exists():
+            try:
+                GSplatData.load(path, include_stats=True)
+            except Exception as exc:  # noqa: BLE001 - corrupt stores fail at any decoder layer
+                corrupt.append((index, repr(exc)))
+        elif not Path(str(path) + ".empty").exists():
+            missing.append(index)
+    if missing or corrupt:
+        parts = []
+        if missing:
+            parts.append(f"wrote no output (tiles: {', '.join(map(str, missing))})")
+        if corrupt:
+            ids = ", ".join(f"{i}: {error}" for i, error in corrupt)
+            parts.append(f"wrote an unreadable store (tiles: {ids})")
+        raise RuntimeError(
+            f"{len(missing) + len(corrupt)} of {common['num_tiles']} tiles exited cleanly "
+            f"but {'; '.join(parts)}. Temp outputs kept at {tmp_dir} for inspection."
+        )
+
     stream_tile_results(
         output_path,
         partial(

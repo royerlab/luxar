@@ -767,7 +767,8 @@ class TestFitTiledParallel:
         assert "failed to build/launch" in str(exc.value).lower()
         assert tiles.exists()
 
-    def test_corrupt_store_is_curated(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_corrupt_store_is_curated(self, tmp_path: Path, stream: bool) -> None:
         """A present-but-unreadable tile store → curated error naming the tile."""
         tiles = tmp_path / "tiles"
         with pytest.raises(RuntimeError) as exc:
@@ -781,10 +782,33 @@ class TestFitTiledParallel:
                 overlap=4,
                 progressive=False,
                 cull_retention=None,
+                output_path=tmp_path / "merged.gsplats.zarr" if stream else None,
             )
         msg = str(exc.value).lower()
         assert "unreadable" in msg
         assert tiles.exists()
+        assert not (tmp_path / "merged.gsplats.zarr").exists()
+
+    def test_stream_missing_store_is_reported_before_write(
+        self, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "merged.gsplats.zarr"
+        with pytest.raises(RuntimeError, match="1 of .* tiles exited cleanly") as exc:
+            fit_tiled_parallel(
+                num_tiles=self._specs_count(),
+                jobs=2,
+                tmp_dir=tmp_path / "tiles",
+                worker_cmd_builder=_exit0_nofile_builder(silent_on=1),
+                volume_shape=(40, 40),
+                tile_size=16,
+                overlap=4,
+                progressive=False,
+                cull_retention=None,
+                output_path=output,
+            )
+        assert "tiles: 1" in str(exc.value)
+        assert not output.exists()
+        assert (tmp_path / "tiles").exists()
 
     def test_empty_marker_tile_is_skipped(self, tmp_path: Path) -> None:
         """A tile that writes only an .empty marker contributes nothing (no raise)."""
