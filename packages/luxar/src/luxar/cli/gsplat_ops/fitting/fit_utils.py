@@ -1158,7 +1158,10 @@ def dispatch_parallel_tiled(
             from luxar._zarr_compat import open_group
 
             root = open_group(result, mode="r")
-            n_splats = int(root["fitting"].attrs["n_splats"])
+            stats = dict(root["fitting"].attrs)
+            n_splats = int(stats["n_splats"])
+            if ctx.verbose:
+                _report_saved_store_summary(result, stats, n_splats)
         else:
             with asection(f"Saving to {ctx.output_path.name}"):
                 n_splats = save_fit_output(
@@ -2117,4 +2120,18 @@ def _report_saved_compression(result: Any, stored_bytes: int, n_splats: int) -> 
         n_splats=n_splats,
         source_voxels=stats.get("source_voxels"),
         source_stored_bytes=stats.get("source_stored_bytes"),
+    )
+
+
+def _report_saved_store_summary(
+    path: Path, stats: dict[str, Any], n_splats: int
+) -> None:
+    """Report the completed streamed store using its persisted fit statistics."""
+    from types import SimpleNamespace
+
+    stored = store_size(path)
+    aprint(f"Saved {n_splats:,} splats")
+    aprint(f"File size: {format_memory_size(stored)}")
+    _report_saved_compression(
+        SimpleNamespace(meta={"fit_stats": stats}), stored, n_splats
     )

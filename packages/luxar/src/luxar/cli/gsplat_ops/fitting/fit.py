@@ -113,8 +113,7 @@ def _finish_fit_result(
         from luxar._zarr_compat import consolidate, open_group
         from luxar.gsplats.io.save_gsplats import _stamp_content_hash
 
-        from ...utils import format_memory_size, store_size
-        from .fit_utils import _report_saved_compression
+        from .fit_utils import _report_saved_store_summary
 
         root = open_group(result, mode="r+")
         stats = dict(root["fitting"].attrs)
@@ -131,12 +130,7 @@ def _finish_fit_result(
         consolidate(root)
         n_splats = int(stats["n_splats"])
         if ctx.verbose:
-            stored = store_size(result)
-            aprint(f"Saved {n_splats:,} splats")
-            aprint(f"File size: {format_memory_size(stored)}")
-            _report_saved_compression(
-                SimpleNamespace(meta={"fit_stats": stats}), stored, n_splats
-            )
+            _report_saved_store_summary(result, stats, n_splats)
         return result, n_splats, False
 
     _stamp_cli_fit_provenance(

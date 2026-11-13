@@ -175,6 +175,8 @@ def test_tiled_parallel_cli_end_to_end(tmp_path: Path) -> None:
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
 def test_tiled_parallel_partition_by_default(tmp_path: Path) -> None:
     """Without --flat, a uniform tiled fit emits a kind=partition (one part/tile)."""
+    import zarr
+
     from luxar.gsplats.io.load_gsplats import load_gsplat_node
 
     vol = tmp_path / "vol.npy"
@@ -206,6 +208,10 @@ def test_tiled_parallel_partition_by_default(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     node, _ = load_gsplat_node(out)
     assert type(node).__name__ == "GSplatPartition"
+    stored_count = int(zarr.open_group(str(out), mode="r")["fitting"].attrs["n_splats"])
+    assert f"Saved {stored_count:,} splats" in result.output
+    assert "File size:" in result.output
+    assert "Compression Analysis" in result.output
 
 
 @pytest.mark.slow
