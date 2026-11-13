@@ -1,6 +1,8 @@
 /** Stable 4-bit LSD radix ordering into three's inactive vertex/storage buffer. */
 import type * as THREE from 'three';
 import { activeSortedIndexSlot, canComputeSortedIndex } from '../element-storage';
+import { setGpuOrderScratchBytes } from '../gpu-buffer-pool/geometry-bytes';
+import { log, Modules } from '../../utils/log';
 import type { Renderer } from '../renderer-capabilities';
 
 const TILE = 256;
@@ -208,6 +210,7 @@ export class WebGpuOrderBuilder {
   private pipelines: GpuPipeline[] | null = null;
   private readonly resources = new Map<THREE.InstancedBufferGeometry, GpuResources>();
   private disabled = false;
+  private readonly warnedSizeLimit = new WeakMap<THREE.InstancedBufferGeometry, Set<string>>();
 
   constructor(private readonly backend: GpuBackend) {
     const module = backend.device.createShaderModule({ code: ORDER_WGSL });
@@ -240,19 +243,40 @@ export class WebGpuOrderBuilder {
     this.disabled = true;
   }
 
-  canSort(geometry: THREE.InstancedBufferGeometry, count: number): boolean {
+  canSort(geometry: THREE.InstancedBufferGeometry, count: number, nodeId = geometry.uuid): boolean {
     const limits = this.backend.device.limits;
     const capacity = geometry.getAttribute('aSortedIndex')?.array.length ?? 0;
-    const blocks = Math.ceil(Math.ceil(count / TILE) / TILE);
+    if (!this.ready || !canComputeSortedIndex(geometry) || !(count > 0) || count > capacity)
+      return false;
+    const tiles = Math.ceil(count / TILE);
+    if (Math.ceil(tiles / TILE) > TILE || tiles > limits.maxComputeWorkgroupsPerDimension) {
+      this.warnSizeLimit(geometry, count, nodeId);
+      return false;
+    }
+    return this.capacitySupported(capacity, limits.maxStorageBufferBindingSize);
+  }
+
+  private capacitySupported(capacity: number, maxBindingSize: number): boolean {
     return (
-      this.ready &&
-      canComputeSortedIndex(geometry) &&
-      count > 0 &&
-      count <= capacity &&
-      capacity * 4 <= limits.maxStorageBufferBindingSize &&
-      Math.ceil(capacity / TILE) * RADIX * 4 <= limits.maxStorageBufferBindingSize &&
-      blocks <= TILE &&
-      Math.ceil(count / TILE) <= limits.maxComputeWorkgroupsPerDimension
+      capacity * 4 <= maxBindingSize && Math.ceil(capacity / TILE) * RADIX * 4 <= maxBindingSize
+    );
+  }
+
+  private warnSizeLimit(
+    geometry: THREE.InstancedBufferGeometry,
+    count: number,
+    nodeId: string
+  ): void {
+    let warned = this.warnedSizeLimit.get(geometry);
+    if (!warned) {
+      warned = new Set();
+      this.warnedSizeLimit.set(geometry, warned);
+    }
+    if (warned.has(nodeId)) return;
+    warned.add(nodeId);
+    log.warning(
+      Modules.WORKER_POOL,
+      `WebGPU depth ordering exceeds compute dispatch limit (${count} elements); using worker order`
     );
   }
 
@@ -290,25 +314,39 @@ export class WebGpuOrderBuilder {
       .GPUBufferUsage;
     const capacity = geometry.getAttribute('aSortedIndex').array.length;
     const blocks = Math.ceil(Math.ceil(capacity / TILE) / TILE);
-    const make = (size: number, extra = 0) =>
-      device.createBuffer({ size: Math.max(4, size), usage: usage.STORAGE | extra });
-    const resources: GpuResources = {
-      keys: make(Math.ceil(capacity / 2) * 4, usage.COPY_DST),
-      scratchA: make(capacity * 4),
-      scratchB: make(capacity * 4),
-      counts: make(Math.ceil(capacity / TILE) * RADIX * 4),
-      offsets: make(Math.ceil(capacity / TILE) * RADIX * 4),
-      blockTotals: make(blocks * RADIX * 4),
-      blockOffsets: make(blocks * RADIX * 4),
-      binTotals: make(RADIX * 4),
-      binBases: make(RADIX * 4),
-      params: Array.from({ length: PASSES }, () => make(32, usage.UNIFORM | usage.COPY_DST)),
-      onDispose: () => {
-        this.release(geometry);
-      },
+    let scratchBytes = 0;
+    const created: GpuBuffer[] = [];
+    const make = (size: number, extra = 0) => {
+      const allocatedSize = Math.max(4, size);
+      const buffer = device.createBuffer({ size: allocatedSize, usage: usage.STORAGE | extra });
+      created.push(buffer);
+      scratchBytes += allocatedSize;
+      return buffer;
     };
+    let resources: GpuResources;
+    try {
+      resources = {
+        keys: make(Math.ceil(capacity / 2) * 4, usage.COPY_DST),
+        scratchA: make(capacity * 4),
+        scratchB: make(capacity * 4),
+        counts: make(Math.ceil(capacity / TILE) * RADIX * 4),
+        offsets: make(Math.ceil(capacity / TILE) * RADIX * 4),
+        blockTotals: make(blocks * RADIX * 4),
+        blockOffsets: make(blocks * RADIX * 4),
+        binTotals: make(RADIX * 4),
+        binBases: make(RADIX * 4),
+        params: Array.from({ length: PASSES }, () => make(32, usage.UNIFORM | usage.COPY_DST)),
+        onDispose: () => {
+          this.release(geometry);
+        },
+      };
+    } catch (error) {
+      for (const buffer of created) buffer.destroy();
+      throw error;
+    }
     geometry.addEventListener('dispose', resources.onDispose);
     this.resources.set(geometry, resources);
+    setGpuOrderScratchBytes(geometry, scratchBytes);
     return resources;
   }
 
@@ -371,6 +409,7 @@ export class WebGpuOrderBuilder {
     ])
       buffer.destroy();
     this.resources.delete(geometry);
+    setGpuOrderScratchBytes(geometry, 0);
   }
 
   dispose(): void {
