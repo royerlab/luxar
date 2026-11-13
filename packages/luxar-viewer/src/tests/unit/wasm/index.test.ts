@@ -338,6 +338,12 @@ describe('assertRequiredWasmExports', () => {
     ).toThrow(/missing required export "compact_visible_faces"/);
   });
 
+  it('names sort_splats_by_depth_with_keys when only that kernel is missing', () => {
+    expect(() =>
+      assertRequiredWasmExports(stubModule({ sort_splats_by_depth_with_keys: undefined }))
+    ).toThrow(/missing required export "sort_splats_by_depth_with_keys"/);
+  });
+
   it('names project_gsplats_nd_to_3d when only that kernel is missing', () => {
     expect(() =>
       assertRequiredWasmExports(stubModule({ project_gsplats_nd_to_3d: undefined }))

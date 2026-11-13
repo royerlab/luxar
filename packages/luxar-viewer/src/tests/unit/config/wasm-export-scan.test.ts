@@ -42,6 +42,15 @@ describe('missingExportsIn', () => {
     expect(missingExportsIn(wrapperDeclaring(kept))).toEqual([dropped]);
   });
 
+  it('detects a wrapper built before the depth sort key kernel', () => {
+    const oldExports = REQUIRED_WASM_EXPORTS.filter(
+      (name) => name !== 'sort_splats_by_depth_with_keys'
+    );
+    expect(missingExportsIn(wrapperDeclaring(oldExports))).toContain(
+      'sort_splats_by_depth_with_keys'
+    );
+  });
+
   it('reports every required export for an empty/truncated wrapper', () => {
     expect(missingExportsIn('')).toEqual([...REQUIRED_WASM_EXPORTS]);
   });
