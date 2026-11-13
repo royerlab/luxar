@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { configureRendererBackendPolicy } from '../../../../rendering/renderer-backend-policy';
 import * as THREE from 'three';
 
 const mockNoteDepthSortCommit = vi.fn();
@@ -36,7 +37,6 @@ import {
 } from '../../../../rendering/element-texture-layout';
 import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
-import { configureRenderObjectEviction } from '../../../../data/scene-loader/commit/invalidate-render-object';
 import type { StagedLinesCommit } from '../../../../data/scene-loader/process/data-processor-lines';
 import type { ProcessedLinesData } from '../../../../types/lines';
 
@@ -689,8 +689,8 @@ describe('commitLinesGeometry — RenderObject invalidation on non-pool rebuild'
   // production default), so opt this block into the WebGPU state; the
   // negative test then meaningfully pins that an in-place update makes no
   // dispatch even WITH eviction enabled.
-  beforeEach(() => configureRenderObjectEviction(true));
-  afterEach(() => configureRenderObjectEviction(false));
+  beforeEach(() => configureRendererBackendPolicy('webgpu-native'));
+  afterEach(() => configureRendererBackendPolicy('webgl'));
 
   const softDisposeSeen = (mesh: THREE.Mesh): (() => boolean) => {
     let seen = false;

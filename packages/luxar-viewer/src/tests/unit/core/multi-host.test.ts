@@ -78,6 +78,7 @@ vi.mock('../../../rendering/renderer-capabilities', () => ({
   createRendererCapabilities: () => ({
     backend: 'webgl',
     apiSurface: 'webgl2',
+    backendKind: 'webgl',
     maxTextureSize: 4096,
   }),
   isWebGLRenderer: () => false,
@@ -103,6 +104,7 @@ import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { log } from '../../../utils/log';
 import { releaseWorkerPool, retainWorkerPool } from '../../../workers/worker-pool';
+import { rendererBackendPolicy } from '../../../rendering/renderer-backend-policy';
 
 function layerOptions(scene = new THREE.Scene()): LuxarLayerOptions {
   return {
@@ -136,6 +138,7 @@ describe('several Luxar hosts on one page', () => {
     const appLoader = loaders[0];
 
     const layer = new LuxarLayer(layerOptions());
+    expect(rendererBackendPolicy().kind).toBe('webgl');
     await layer.load('http://layer-b.test/layer.zarr');
 
     expect(appLoader.dispose).not.toHaveBeenCalled();

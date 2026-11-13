@@ -183,39 +183,33 @@ vi.mock('../../../rendering/environment/scene-environment', () => ({
 vi.mock('../../../rendering/renderer-capabilities', () => ({
   createRendererCapabilities: (renderer: { isWebGLRenderer?: boolean }) =>
     renderer.isWebGLRenderer === true
-      ? { backend: 'webgl', apiSurface: 'webgl2', maxTextureSize: 4096 }
-      : { backend: 'webgpu', apiSurface: 'webgpu', maxTextureSize: 8192 },
+      ? { backend: 'webgl', apiSurface: 'webgl2', backendKind: 'webgl', maxTextureSize: 4096 }
+      : {
+          backend: 'webgpu',
+          apiSurface: 'webgpu',
+          backendKind: 'webgpu-native',
+          maxTextureSize: 8192,
+        },
   isWebGLRenderer: (renderer: { isWebGLRenderer?: boolean }) => renderer.isWebGLRenderer === true,
 }));
 
 // The per-backend switches renderer-setup flips for the app's own renderer.
 // Spied rather than stubbed: the real modules hold the state materials read.
 const backendConfig = vi.hoisted(() => ({
-  chunkedApply: vi.fn(),
-  renderObjectEviction: vi.fn(),
+  policy: vi.fn(),
   textureLayout: vi.fn(),
   rowUploads: vi.fn(),
 }));
-vi.mock('../../../rendering/element-storage', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../rendering/element-storage')>();
-  return {
-    ...actual,
-    configureSortedIndexChunkedApply: (enabled: boolean) => {
-      backendConfig.chunkedApply(enabled);
-      actual.configureSortedIndexChunkedApply(enabled);
-    },
-  };
-});
-vi.mock('../../../data/scene-loader/commit/invalidate-render-object', async (importOriginal) => {
+vi.mock('../../../rendering/renderer-backend-policy', async (importOriginal) => {
   const actual =
-    await importOriginal<
-      typeof import('../../../data/scene-loader/commit/invalidate-render-object')
-    >();
+    await importOriginal<typeof import('../../../rendering/renderer-backend-policy')>();
   return {
     ...actual,
-    configureRenderObjectEviction: (enabled: boolean) => {
-      backendConfig.renderObjectEviction(enabled);
-      actual.configureRenderObjectEviction(enabled);
+    configureRendererBackendPolicy: (
+      kind: Parameters<typeof actual.configureRendererBackendPolicy>[0]
+    ) => {
+      backendConfig.policy(kind);
+      actual.configureRendererBackendPolicy(kind);
     },
   };
 });
@@ -469,8 +463,7 @@ describe('LuxarLayer', () => {
       } as unknown as LuxarLayerOptions['renderer'];
       new LuxarLayer(makeOptions({ renderer }));
 
-      expect(backendConfig.chunkedApply).toHaveBeenCalledWith(false);
-      expect(backendConfig.renderObjectEviction).toHaveBeenCalledWith(true);
+      expect(backendConfig.policy).toHaveBeenCalledWith('webgpu-native');
       expect(backendConfig.textureLayout).toHaveBeenCalledWith(8192);
       expect(backendConfig.rowUploads).toHaveBeenCalledWith(renderer);
     });
@@ -478,8 +471,7 @@ describe('LuxarLayer', () => {
     it('configures the backend switches for a host WebGL renderer', () => {
       new LuxarLayer(makeOptions());
 
-      expect(backendConfig.chunkedApply).toHaveBeenCalledWith(true);
-      expect(backendConfig.renderObjectEviction).toHaveBeenCalledWith(false);
+      expect(backendConfig.policy).toHaveBeenCalledWith('webgl');
       expect(backendConfig.textureLayout).toHaveBeenCalledWith(4096);
     });
 

@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { configureRendererBackendPolicy } from '../../../../rendering/renderer-backend-policy';
 import * as THREE from 'three';
 import {
   configureElementTextureLayout,
@@ -33,7 +34,6 @@ import { commitGSplatsGeometry } from '../../../../data/scene-loader/commit/comm
 import type { DepthSortCoordinator } from '../../../../rendering/depth-sort-coordinator';
 import type { GPUBufferPool } from '../../../../rendering/gpu-buffer-pool';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
-import { configureRenderObjectEviction } from '../../../../data/scene-loader/commit/invalidate-render-object';
 import type { StagedGSplatsCommit } from '../../../../data/scene-loader/process/data-processor-gsplats';
 import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
 import { getElementIdMap, setElementIdMap } from '../../../../types/committed-data';
@@ -922,8 +922,8 @@ describe('commitGSplatsGeometry — RenderObject invalidation on non-pool rebuil
   // production default), so opt this block into the WebGPU state; the
   // negative test then meaningfully pins that an in-place update makes no
   // dispatch even WITH eviction enabled.
-  beforeEach(() => configureRenderObjectEviction(true));
-  afterEach(() => configureRenderObjectEviction(false));
+  beforeEach(() => configureRendererBackendPolicy('webgpu-native'));
+  afterEach(() => configureRendererBackendPolicy('webgl'));
 
   const softDisposeSeen = (mesh: THREE.Mesh): (() => boolean) => {
     let seen = false;

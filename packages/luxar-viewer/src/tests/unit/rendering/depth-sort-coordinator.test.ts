@@ -900,9 +900,11 @@ describe('depth-sort coordinator', () => {
     const requestRender = vi.fn();
     coord.configure({ getCamera: () => camera, requestRender });
 
-    const { setSortedIndexChunkElementsForTests, configureSortedIndexChunkedApply } =
+    const { setSortedIndexChunkElementsForTests } =
       await import('../../../rendering/element-storage');
-    configureSortedIndexChunkedApply(true);
+    const { configureRendererBackendPolicy } =
+      await import('../../../rendering/renderer-backend-policy');
+    configureRendererBackendPolicy('webgl');
     setSortedIndexChunkElementsForTests(1);
 
     // Establish an initial drawn ordering the normal way (draws allowed here).
@@ -963,9 +965,11 @@ describe('depth-sort coordinator', () => {
     const coord = await loadCoordinator();
     const camera = makeCamera();
     coord.configure({ getCamera: () => camera, requestRender: vi.fn() });
-    const { setSortedIndexChunkElementsForTests, configureSortedIndexChunkedApply } =
+    const { setSortedIndexChunkElementsForTests } =
       await import('../../../rendering/element-storage');
-    configureSortedIndexChunkedApply(true);
+    const { configureRendererBackendPolicy } =
+      await import('../../../rendering/renderer-backend-policy');
+    configureRendererBackendPolicy('webgl');
     setSortedIndexChunkElementsForTests(1);
 
     const mesh = makeGSplatsMesh(3, 'normal');
@@ -1000,9 +1004,11 @@ describe('depth-sort coordinator', () => {
     const requestRender = vi.fn();
     coord.configure({ getCamera: () => camera, requestRender });
 
-    const { setSortedIndexChunkElementsForTests, configureSortedIndexChunkedApply } =
+    const { setSortedIndexChunkElementsForTests } =
       await import('../../../rendering/element-storage');
-    configureSortedIndexChunkedApply(true);
+    const { configureRendererBackendPolicy } =
+      await import('../../../rendering/renderer-backend-policy');
+    configureRendererBackendPolicy('webgl');
     setSortedIndexChunkElementsForTests(1);
 
     const mesh = makeGSplatsMesh(3, 'normal');
@@ -2812,9 +2818,11 @@ describe('depth-sort scheduler (Phase 3)', () => {
     // Same element-storage instance the coordinator drives (loadCoordinator
     // reset the module). A 1-index slice makes the 3-element apply span
     // three frames instead of finishing in one.
-    const { setSortedIndexChunkElementsForTests, configureSortedIndexChunkedApply } =
+    const { setSortedIndexChunkElementsForTests } =
       await import('../../../rendering/element-storage');
-    configureSortedIndexChunkedApply(true);
+    const { configureRendererBackendPolicy } =
+      await import('../../../rendering/renderer-backend-policy');
+    configureRendererBackendPolicy('webgl');
     setSortedIndexChunkElementsForTests(1);
 
     const mesh = makeGSplatsMesh(3, 'normal');

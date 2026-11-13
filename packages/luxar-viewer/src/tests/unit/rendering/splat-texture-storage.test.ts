@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { configureRendererBackendPolicy } from '../../../rendering/renderer-backend-policy';
 import * as THREE from 'three';
 import {
   SPLAT_FLOATS_PER_SPLAT,
@@ -27,7 +28,6 @@ import {
   getActiveSortedIndexAttribute,
   cancelAllSortedIndexOrderingApplies,
   cancelSortedIndexOrderingApply,
-  configureSortedIndexChunkedApply,
   elementTexelCapacity,
   hasPendingSortedIndexOrderingApply,
   holdSortedIndexDrawForAppend,
@@ -669,7 +669,7 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     // the geometry's own listener; release is the other exit from "in
     // use" and needs the same treatment.
     setSortedIndexChunkElementsForTests(2);
-    configureSortedIndexChunkedApply(true);
+    configureRendererBackendPolicy('webgl');
     const geom = pool.acquireGSplatsGeometry('tenant', 32);
     writeSortedIndexIdentity(geom, 16);
     const rev16 = Uint32Array.from({ length: 16 }, (_, i) => 15 - i);
@@ -867,7 +867,7 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
 
   it('fromInstance append cancels a partially applied ordering and holds the displayed one', () => {
     setSortedIndexChunkElementsForTests(2);
-    configureSortedIndexChunkedApply(true);
+    configureRendererBackendPolicy('webgl');
     const geom = pool.acquireGSplatsGeometry('node', 16);
     const src6 = makeSource(6);
     const packed = (count: number) => ({
@@ -1302,13 +1302,13 @@ describe('double-buffered ordering apply (atomic swap)', () => {
 
   beforeEach(() => {
     setSortedIndexChunkElementsForTests(CHUNK);
-    configureSortedIndexChunkedApply(true);
+    configureRendererBackendPolicy('webgl');
   });
 
   afterEach(() => {
     cancelAllSortedIndexOrderingApplies();
     setSortedIndexChunkElementsForTests(null);
-    configureSortedIndexChunkedApply(true);
+    configureRendererBackendPolicy('webgl');
   });
 
   function makeGeometry(capacity: number): { geometry: THREE.InstancedBufferGeometry } {
@@ -1939,7 +1939,7 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     // The WebGPU backends ignore attribute ranges and re-upload the whole
     // buffer per flush, so slicing there would multiply uploads. They
     // still double-buffer — the swap is correctness, not an optimisation.
-    configureSortedIndexChunkedApply(false);
+    configureRendererBackendPolicy('webgpu-native');
     const { geometry } = makeGeometry(16);
     const ordering = reversed(12);
     const n = writeSortedIndexOrdering(geometry, ordering, 12);
@@ -1961,7 +1961,7 @@ describe('double-buffered ordering apply (atomic swap)', () => {
   });
 
   it('adopts a worker-owned full-capacity ordering on WebGPU without a 40 MB copy', () => {
-    configureSortedIndexChunkedApply(false);
+    configureRendererBackendPolicy('webgpu-native');
     const { geometry } = makeGeometry(16);
     writeSortedIndexIdentity(geometry, 16);
     const ordering = reversed(16);
@@ -1997,7 +1997,7 @@ describe('double-buffered ordering apply (atomic swap)', () => {
   });
 
   it('adopts a worker ordering with the headroom of a pooled geometry', () => {
-    configureSortedIndexChunkedApply(false);
+    configureRendererBackendPolicy('webgpu-native');
     const pool = new GPUBufferPool(20, 300, 5, () => Infinity);
     try {
       const geometry = pool.acquireGSplatsGeometry('node', 1000);
@@ -2030,12 +2030,12 @@ describe('double-buffered ordering apply (atomic swap)', () => {
   it('keeps borrowed orderings and WebGL slices independent of their source array', () => {
     const { geometry } = makeGeometry(16);
     const borrowed = reversed(16);
-    configureSortedIndexChunkedApply(false);
+    configureRendererBackendPolicy('webgpu-native');
     writeSortedIndexOrdering(geometry, borrowed, 16);
     pumpSortedIndexOrderingApply(geometry);
     expect(activeArr(geometry)).not.toBe(borrowed);
 
-    configureSortedIndexChunkedApply(true);
+    configureRendererBackendPolicy('webgl');
     const workerOwned = Uint32Array.from({ length: 16 }, (_, i) => (i + 1) % 16);
     writeSortedIndexOrdering(geometry, workerOwned, 16, undefined, { adoptOrdering: true });
     drainSortedIndexApply(geometry);
@@ -2107,7 +2107,7 @@ describe('ordering invariant — randomized interleavings', () => {
   }
 
   it('the DRAWN ordering is a whole permutation after every operation', () => {
-    configureSortedIndexChunkedApply(true);
+    configureRendererBackendPolicy('webgl');
     const opTally: Record<string, number> = {};
     let checks = 0;
     let flips = 0;
