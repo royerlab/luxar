@@ -127,23 +127,28 @@ fn scatter(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
 }
 `;
 
-interface GpuBuffer {
+/** Minimal buffer surface used by the sorter. */
+export interface GpuBuffer {
   destroy(): void;
 }
-interface GpuPipeline {
+/** Compiled compute entry point and its bind group layout. */
+export interface GpuPipeline {
   getBindGroupLayout(index: number): unknown;
 }
-interface GpuPass {
+/** Command encoder pass operations needed by the radix stages. */
+export interface GpuPass {
   setPipeline(pipeline: GpuPipeline): void;
   setBindGroup(index: number, group: unknown): void;
   dispatchWorkgroups(count: number, y?: number): void;
   end(): void;
 }
-interface GpuEncoder {
+/** Compute command encoder surface used by the sorter. */
+export interface GpuEncoder {
   beginComputePass(): GpuPass;
   finish(): unknown;
 }
-interface GpuDevice {
+/** Native WebGPU device operations needed by the sorter. */
+export interface GpuDevice {
   limits: { maxStorageBufferBindingSize: number; maxComputeWorkgroupsPerDimension: number };
   queue: {
     writeBuffer(
@@ -167,12 +172,14 @@ interface GpuDevice {
   }): unknown;
   createCommandEncoder(): GpuEncoder;
 }
-interface GpuBackend {
+/** Three's native WebGPU backend operations needed by the sorter. */
+export interface GpuBackend {
   device: GpuDevice;
   get(attribute: THREE.BufferAttribute): { buffer?: GpuBuffer };
   createStorageAttribute(attribute: THREE.BufferAttribute): void;
 }
-interface GpuResources {
+/** Scratch buffers owned by one geometry and one renderer device. */
+export interface GpuResources {
   keys: GpuBuffer;
   scratchA: GpuBuffer;
   scratchB: GpuBuffer;
@@ -379,10 +386,11 @@ let builder: WebGpuOrderBuilder | null = null;
  * @internal
  */
 export function configureWebGpuOrderBuilder(renderer: Renderer, native: boolean): void {
-  const backend = (renderer as unknown as { backend: GpuBackend }).backend;
-  if (native && builder?.usesBackend(backend)) return;
+  const backend = (renderer as unknown as { backend?: GpuBackend }).backend;
+  const computeBackend = native && backend?.device?.createComputePipelineAsync ? backend : null;
+  if (computeBackend && builder?.usesBackend(computeBackend)) return;
   builder?.dispose();
-  builder = native ? new WebGpuOrderBuilder(backend) : null;
+  builder = computeBackend ? new WebGpuOrderBuilder(computeBackend) : null;
 }
 
 /**

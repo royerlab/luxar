@@ -19,6 +19,7 @@ vi.mock('../../../../../rendering/element-texture-row-upload', () => ({
 }));
 vi.mock('../../../../../rendering/element-storage', () => ({
   configureSortedIndexChunkedApply: vi.fn(),
+  configureSortedIndexGpuCompute: vi.fn(),
 }));
 vi.mock('../../../../../data/scene-loader/commit/invalidate-render-object', () => ({
   configureRenderObjectEviction: vi.fn(),
