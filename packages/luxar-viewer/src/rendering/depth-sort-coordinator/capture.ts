@@ -11,7 +11,8 @@ import type * as THREE from 'three';
 import { hasPendingSortedIndexOrderingApply } from '../element-storage';
 import { hasCommittedData } from '../../types/committed-data';
 import { isEffectivelyVisible } from '../../utils/object-visibility';
-import { isLiveOrderDependent, liveBlendingMode, workerHost, type CoordinatorState } from './state';
+import { isLiveOrderDependent, liveBlendingMode, type CoordinatorState } from './state';
+import { anySortProducerReady } from './sort-producers';
 import { evaluateDepthSortPerFrame, scheduleSort } from './scheduler';
 
 /**
@@ -107,7 +108,7 @@ export async function resortForCapture(c: CoordinatorState, maxWaitMs = 3000): P
     // a node that pass just put in flight would only set `resortQueued` —
     // a SECOND, identical full sort run serially after the first. Force-
     // first, the pass's in-flight skip makes the two compose to one sort.
-    if (c.depthSortEnabled && c.getCamera?.() && workerHost.api) {
+    if (c.depthSortEnabled && c.getCamera?.() && anySortProducerReady(c)) {
       for (const [nodeId, state] of c.nodeStates) {
         const mesh = state.mesh;
         if (!isEffectivelyVisible(mesh)) continue;

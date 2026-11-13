@@ -13,6 +13,7 @@ import {
   cancelSortedIndexOrderingApply,
   hasPendingSortedIndexOrderingApply,
   pumpSortedIndexOrderingApply,
+  writeDeviceSortedIndexOrdering,
   writeSortedIndexOrdering,
   type SortedIndexApplyCallbacks,
 } from '../element-storage';
@@ -27,7 +28,6 @@ import {
 } from './render-order';
 import { cancelTriangleOrderingApply, writeSortedTriangleOrdering } from './triangle-ordering';
 import { config } from '../../config';
-import { withTimeout } from '../../workers/worker-pool/timeout/with-timeout';
 import { log, Modules } from '../../utils/log';
 import { isEffectivelyVisible } from '../../utils/object-visibility';
 import {
@@ -36,8 +36,8 @@ import {
   orderingApplyHooks,
   releaseHeldDraw,
   syncSortElementLimit,
-  workerHost,
   type CoordinatorState,
+  type NodeSortState,
 } from './state';
 import {
   computeModelView,
@@ -46,7 +46,15 @@ import {
   recordSortPose,
   syncSortedIndexSlot,
 } from './ordering-apply';
-import { SORT_RPC_TIMEOUT_MS, maybeRetryStarvedWorkerInit } from './worker-lifecycle';
+import { maybeRetryStarvedWorkerInit } from './worker-lifecycle';
+import {
+  selectSortProducer,
+  type SortJob,
+  type SortOutcome,
+  type SortProducer,
+  type SortRoute,
+} from './sort-producers';
+import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 
 /**
  * How far behind an orthographic camera the BSP eye is placed (world units):
@@ -59,26 +67,35 @@ const ORTHO_BSP_EYE_DISTANCE = 1e15;
 /**
  * Request one sort for a registered node, respecting the
  * single-in-flight rule. Queues a re-sort if one is already running.
+ *
+ * The sort goes to the first ready producer that accepts the node
+ * (`sort-producers.ts`); its outcome, whenever it arrives, is settled by
+ * `settleSort` below.
  */
 export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: string): void {
   const state = c.nodeStates.get(nodeId);
   const camera = c.getCamera?.();
-  // `api` is wrapped BEFORE `initializeWithGuard` is awaited, so a live handle
-  // is not the same thing as a usable worker: between the spawn and 'ready'
-  // there is a window in which `sort` would reject NOT_INITIALIZED worker-side
-  // (`requireWasm`). Gating here rather than at each caller keeps it a single
-  // chokepoint — the capture drain's force loop dispatches without consulting
-  // `state.registered`, and a commit stamps `nodeStates` + `committedData`
-  // synchronously, so it can reach this during startup warm-up.
-  //
-  // Skipping beats letting it reject, and not only for the error line:
-  // `recordSortPose` below runs BEFORE the RPC, so a dispatch that rejects
-  // still leaves a pose on record for a sort that never ran — which is exactly
-  // what silences the per-frame `!lastSortAxis` recovery dispatch for a node
-  // whose first real dispatch raced a null camera.
-  if (!state || !workerHost.api || workerHost.workerInitState !== 'ready' || !camera) {
-    // Nothing will sort this population, so a held append draw must not wait.
+  if (!state || !camera) {
     if (state) releaseHeldDraw(c, mesh);
+    return;
+  }
+  // Fresh matrices even between frames (see computeModelView).
+  const job: SortJob = {
+    nodeId,
+    mesh,
+    state,
+    generation: state.generation,
+    modelView: computeModelView(mesh, camera),
+  };
+  // Skipping a dispatch no producer can serve beats letting it reject:
+  // `recordSortPose` below runs BEFORE the sort, so a dispatch that fails still
+  // leaves a pose on record for a sort that never ran — which is exactly what
+  // silences the per-frame `!lastSortAxis` recovery dispatch for a node whose
+  // first real dispatch raced a null camera.
+  const producer = selectSortProducer(c, job);
+  if (!producer) {
+    // Nothing will sort this population, so a held append draw must not wait.
+    releaseHeldDraw(c, mesh);
     return;
   }
   if (state.inFlight) {
@@ -100,226 +117,284 @@ export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: stri
   // point of re-sorting, so it was dropped. Sort traffic stays bounded by
   // one-in-flight-per-node.
   state.inFlight = true;
+  recordSortPose(state, job.modelView);
+  const pass = beginSortPass(c, producer.route);
+  let outcome: ReturnType<SortProducer['run']>;
+  try {
+    outcome = producer.run(job);
+  } catch (error) {
+    failSort(c, job, pass, error);
+    return;
+  }
+  if (outcome instanceof Promise) {
+    void outcome
+      .then((result) => settleSort(c, job, pass, result))
+      .catch((error: unknown) => failSort(c, job, pass, error));
+    return;
+  }
+  try {
+    settleSort(c, job, pass, outcome);
+  } catch (error) {
+    failSort(c, job, pass, error);
+  }
+}
 
-  const generation = state.generation;
-  // Fresh matrices even between frames (see computeModelView).
-  const modelView = computeModelView(mesh, camera);
-  recordSortPose(state, modelView);
+/**
+ * One dispatch's 'Depth Sort' profiler pass. Its duration is the whole
+ * dispatch→applied lifecycle the monitor's 'Depth Sort' line shows. The
+ * session opens at dispatch but ends at APPLY completion, not when the
+ * producer answers: large orderings apply CHUNKED over many later frames, so
+ * the settle hands the session to the apply's lifecycle callbacks (issue
+ * #713). It ends immediately only when nothing is staged (stale, demoted,
+ * rejected) or the sort fails.
+ *
+ * The profiler and its generation are captured at dispatch, so the dedicated
+ * completion stream records against the profiler the session merges into and
+ * honours the same reset-isolation contract (issue #711).
+ */
+interface SortPass {
+  readonly route: SortRoute;
+  readonly session: UpdateSession | null;
+  readonly profiler: UpdateProfiler | null;
+  readonly profilerGeneration: number;
+  readonly dispatchedAt: number;
+  /**
+   * Set once the staged ordering's callbacks own closing the session. Neither
+   * the settle nor the failure path may end it after that: a throw from a
+   * post-handoff step (`requestRender`, the re-sort drain) routes into
+   * {@link failSort}, and ending there would close the pass early and
+   * mislabel the eventual applied sample as scheduled (issue #713).
+   */
+  handedOff: boolean;
+}
 
-  // One detached profiler pass per dispatch — its duration is the whole
-  // dispatch→applied lifecycle the monitor's 'Depth Sort' line shows. The
-  // session is opened here at dispatch but ended at APPLY completion, not
-  // at RPC resolve: large orderings apply CHUNKED over many later frames,
-  // so the resolve handler hands the session to writeSortedIndexOrdering's
-  // lifecycle callbacks (issue #713). It ends immediately only when no
-  // ordering is staged (stale/demoted/rejected) or the RPC fails.
-  //
-  // Capture the profiler and its generation HERE too, so the dedicated
-  // completion stream records against the same profiler the session merges
-  // into and honors the same reset-isolation contract (issue #711).
+function beginSortPass(c: CoordinatorState, route: SortRoute): SortPass {
   const profiler = c.getProfiler?.() ?? null;
-  const session = profiler?.beginDepthSortPass() ?? null;
-  const profilerGeneration = profiler?._currentGeneration() ?? 0;
-  // The profiler session does not expose its elapsed time (SessionImpl's
-  // startTime is private), so time the dispatch→resolve round-trip locally
-  // for the queueMs derivation below.
-  const dispatchedAt = performance.now();
-  // Ownership latch shared by the .then/.catch handlers: once the session is
-  // handed to the chunked-apply callbacks (below), NEITHER handler may end
-  // it — the callbacks own its close. Without this, a throw from the
-  // post-handoff `requestRender()` / re-sort drain would reject the .then
-  // and route into .catch's `session?.end()`, closing the pass early and
-  // mislabeling the eventual applied sample as scheduled (issue #713).
-  let applyOwnsSession = false;
+  return {
+    route,
+    session: profiler?.beginDepthSortPass() ?? null,
+    profiler,
+    profilerGeneration: profiler?._currentGeneration() ?? 0,
+    dispatchedAt: performance.now(),
+    handedOff: false,
+  };
+}
 
-  // Timeout-raced: a worker that CRASHES mid-session leaves the Comlink
-  // RPC pending forever, and a stuck `inFlight` is unrecoverable — the
-  // per-frame scheduler skips in-flight nodes and later commits only set
-  // `resortQueued`, which never drains. Routing the timeout through the
-  // existing .catch clears `inFlight` and drains the queue (bounded
-  // staleness degrade instead of a permanently unsorted node). A merely
-  // SLOW sort that resolves after the deadline is harmless too: the race
-  // has already rejected, so its late resolve is dropped — the node just
-  // stays unsorted until the next commit/camera trigger re-sorts it.
-  void withTimeout(
-    'depth-sort',
-    workerHost.api.sort({ nodeId, generation, modelView: new Float32Array(modelView.elements) }),
-    SORT_RPC_TIMEOUT_MS
-  )
-    .then((result) => {
-      const roundTripMs = performance.now() - dispatchedAt;
-      const current = c.nodeStates.get(nodeId);
-      if (!current) {
-        session?.end();
-        return; // released mid-sort — no ordering staged
-      }
-      current.inFlight = false;
+/**
+ * Settle a producer's outcome: stage it if it still describes the node's
+ * committed population, close or hand off the profiler pass, release a held
+ * draw nothing will satisfy, and drain a queued re-sort.
+ */
+function settleSort(
+  c: CoordinatorState,
+  job: SortJob,
+  pass: SortPass,
+  outcome: SortOutcome | null
+): void {
+  const current = c.nodeStates.get(job.nodeId);
+  if (!current) {
+    pass.session?.end();
+    return; // released mid-sort — no ordering staged
+  }
+  current.inFlight = false;
 
-      // Stale-drop: apply only when the ordering matches the node's
-      // CURRENT generation (the worker re-checked its own registration;
-      // this re-check covers commits that raced the RPC). The
-      // `committedData` check additionally covers LOD demotion: a demoted
-      // level's geometry returned to the evictable pool (and may since
-      // belong to another node) — the cleared stamp is exactly the signal
-      // that the mesh's geometry no longer holds this commit's splats.
-      const stillCommitted = hasCommittedData(mesh);
-      if (
-        result &&
-        result.generation === current.generation &&
-        stillCommitted &&
-        orderingCoversCommit(result.ordering, current, nodeId)
-      ) {
-        const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
-        // Which apply path this node uses. A retained `triangleSource` is
-        // the mesh signal and it is set by the SAME commit whose generation
-        // just matched, so the two can never describe different face sets.
-        const triangleSource = current.triangleSource;
-        const applicable = !!(triangleSource ?? geometry?.getAttribute?.('aSortedIndex'));
-        if (applicable) {
-          // Ordering upload: 4 bytes/splat through the attribute
-          // update-range machinery (the architecture's headline number) on
-          // the instanced path. The indexed path uploads THREE index
-          // entries per face instead, at the index buffer's own width —
-          // Uint16 under 65536 vertices on either WebGL path (see
-          // `createMeshIndexAttribute`), but the NATIVE WebGPU backend widens
-          // that same buffer to Uint32 in place at first upload and it stays
-          // widened from then on (see `applyMeshIndices`), so this reads
-          // Uint32 there. Hence the live `BYTES_PER_ELEMENT` rather than a
-          // width assumed from the vertex count.
-          const bytes = triangleSource
-            ? result.ordering.length * 3 * (geometry.index?.array.BYTES_PER_ELEMENT ?? 4)
-            : result.ordering.length * 4;
-          // Timing split (perf campaign): kernelMs = inside the backend
-          // call (incl. wasm-bindgen boundary copies for compiled WASM);
-          // boundaryMs = worker-side overhead around it; queueMs =
-          // round-trip minus worker time (Comlink RPC + structured clone
-          // + event-loop queueing). All durations, so worker-clock vs
-          // main-clock is safe; clamped at 0 against timer granularity.
-          // These keys are LAST-WRITE on profiler metadata merge (each
-          // sort pass has its own seq, so the 'Depth Sort' root always
-          // shows the latest sort's split). The byte label starts as
-          // SCHEDULED here and is upgraded to uploaded only after THREE
-          // renders the selected buffer (issue #713).
-          session?.setMetadata({
-            elements: result.ordering.length,
-            kernelMs: result.kernelMs,
-            boundaryMs: Math.max(0, result.workerMs - result.kernelMs),
-            queueMs: Math.max(0, roundTripMs - result.workerMs),
-            info: formatOrderingBytes(bytes, false),
-          });
-          // Hand the profiler session to the apply's lifecycle so the pass
-          // spans dispatch→applied: onApplied (post-render acknowledgement)
-          // ends it as UPLOADED; onAbandoned
-          // (superseded/cancelled/demoted/released/disposed) ends it as
-          // scheduled. Neither writer invokes either unless it ACCEPTS the
-          // ordering (returns > 0) — issue #713.
-          const resolvedAt = performance.now();
-          // The owner hooks ride every staged ordering (cancel-sweep tag,
-          // slice-ack frame wake-up, capture bypass); the profiler lifecycle
-          // only when a session is open.
-          const hooks = orderingApplyHooks(c);
-          const applyCallbacks: SortedIndexApplyCallbacks = session
-            ? {
-                ...hooks,
-                onApplied: () => {
-                  const appliedAt = performance.now();
-                  session.setMetadata({
-                    applyMs: Math.max(0, appliedAt - resolvedAt),
-                    info: formatOrderingBytes(bytes, true),
-                  });
-                  // The dedicated MONOTONIC completion stream records only
-                  // orderings that actually became drawable — not merely
-                  // worker resolves that were staged and later abandoned.
-                  // It uses the dispatch-time profiler/generation, matching
-                  // the session's reset-isolation contract (issue #711).
-                  if (profiler && profiler._currentGeneration() === profilerGeneration) {
-                    profiler.recordDepthSortCompletion({
-                      lastMs: Math.max(0, appliedAt - dispatchedAt),
-                      kernelMs: result.kernelMs,
-                      boundaryMs: Math.max(0, result.workerMs - result.kernelMs),
-                      queueMs: Math.max(0, roundTripMs - result.workerMs),
-                      elements: result.ordering.length,
-                    });
-                  }
-                  session.end();
-                },
-                onAbandoned: () => session.end(),
-              }
-            : hooks;
-          // Instanced: large orderings apply CHUNKED across frames
-          // (element-storage routes internally, perf lever L8) — this call
-          // only STAGES the pending state and the per-frame pump streams
-          // the slices. Indexed: the write is atomic and complete on
-          // return, because a half-permuted index buffer is not a
-          // permutation (triangle-ordering.ts).
-          const staged = triangleSource
-            ? writeSortedTriangleOrdering(
-                geometry,
-                triangleSource,
-                result.ordering,
-                result.ordering.length,
-                applyCallbacks
-              )
-            : writeSortedIndexOrdering(
-                geometry,
-                result.ordering,
-                result.ordering.length,
-                applyCallbacks,
-                { adoptOrdering: true }
-              );
-          if (staged > 0) {
-            // Handed off BEFORE the throwing `requestRender()` below, so a
-            // throw there can't route into .catch and close the pass early.
-            applyOwnsSession = true;
-            // Instanced: bootstrap the pump's requestRender chain (the
-            // per-frame pump keeps the on-demand loop alive between
-            // slices). Indexed: the permutation is already in the buffer,
-            // so this is the one frame it needs to reach the screen.
-            c.requestRender?.();
-          }
-        }
-      }
-      // No ordering staged (stale generation, demotion, rejected write, or
-      // missing attribute): the pass is just the dispatch→resolve
-      // round-trip — close it now (issue #713).
-      if (!applyOwnsSession) session?.end();
-      // A sort for the CURRENT population that staged nothing leaves no
-      // ordering for a held append draw to wait for. (A stale generation's
-      // does not: the newer commit's own sort is queued behind this one.)
-      if (!applyOwnsSession && current.generation === generation) releaseHeldDraw(c, mesh);
+  // Stale-drop: apply only when the ordering matches the node's CURRENT
+  // generation (the producer checked its own registration; this re-check
+  // covers commits that raced the sort). The `committedData` check
+  // additionally covers LOD demotion: a demoted level's geometry returned to
+  // the evictable pool (and may since belong to another node) — the cleared
+  // stamp is exactly the signal that the mesh's geometry no longer holds this
+  // commit's elements.
+  const stillCommitted = hasCommittedData(job.mesh);
+  if (
+    outcome &&
+    outcome.generation === current.generation &&
+    stillCommitted &&
+    orderingCoversCommit(outcomeLength(outcome), current, job.nodeId)
+  ) {
+    stageOutcome(c, job, pass, current, outcome);
+  }
+  // No ordering staged (stale generation, demotion, rejected write, or missing
+  // attribute): the pass is just the dispatch→result round trip (issue #713).
+  if (!pass.handedOff) pass.session?.end();
+  // A sort for the CURRENT population that staged nothing leaves no ordering
+  // for a held append draw to wait for. (A stale generation's does not: the
+  // newer commit's own sort is queued behind this one.)
+  if (!pass.handedOff && current.generation === job.generation) releaseHeldDraw(c, job.mesh);
 
-      if (current.resortQueued) {
-        current.resortQueued = false;
-        // Demoted mid-sort (stamp cleared): the queued request describes a
-        // population the geometry no longer holds, and re-promotion always
-        // re-commits — which schedules the sort it actually needs. Dispatching
-        // here would burn worker time on an ordering the resolve path is
-        // guaranteed to discard.
-        if (stillCommitted) scheduleSort(c, mesh, nodeId);
+  if (current.resortQueued) {
+    current.resortQueued = false;
+    // Demoted mid-sort (stamp cleared): the queued request describes a
+    // population the geometry no longer holds, and re-promotion always
+    // re-commits — which schedules the sort it actually needs. Dispatching
+    // here would burn a sort on an ordering the settle is guaranteed to
+    // discard.
+    if (stillCommitted) scheduleSort(c, job.mesh, job.nodeId);
+  }
+}
+
+/** The element count an outcome orders. */
+function outcomeLength(outcome: SortOutcome): number {
+  return outcome.kind === 'host' ? outcome.ordering.length : outcome.write.count;
+}
+
+/**
+ * Stage a current outcome through the node's apply path, with the profiler
+ * pass handed to the apply's lifecycle.
+ */
+function stageOutcome(
+  c: CoordinatorState,
+  job: SortJob,
+  pass: SortPass,
+  current: NodeSortState,
+  outcome: SortOutcome
+): void {
+  const geometry = job.mesh.geometry as THREE.InstancedBufferGeometry;
+  // Which apply path this node uses. A retained `triangleSource` is the mesh
+  // signal and it is set by the SAME commit whose generation just matched, so
+  // the two can never describe different face sets.
+  const triangleSource = current.triangleSource;
+  if (!(triangleSource ?? geometry?.getAttribute?.('aSortedIndex'))) return;
+  const info = orderingInfo(outcome, triangleSource, geometry);
+  // The byte label starts as SCHEDULED and is upgraded to uploaded only after
+  // THREE renders the selected buffer (issue #713). The timing keys are
+  // LAST-WRITE on profiler metadata merge (each sort pass has its own seq, so
+  // the 'Depth Sort' root always shows the latest sort's split).
+  const { kernelMs, boundaryMs, queueMs } = outcome.timing;
+  pass.session?.setMetadata({
+    elements: outcomeLength(outcome),
+    kernelMs,
+    boundaryMs,
+    queueMs,
+    info: info(false),
+  });
+  const callbacks = sortApplyCallbacks(c, pass, outcome, info);
+  // Instanced host orderings apply CHUNKED across frames on classic WebGL
+  // (element-storage routes internally, perf lever L8) — this call only STAGES
+  // and the per-frame pump streams the slices. Indexed: the write is atomic
+  // and complete on return, because a half-permuted index buffer is not a
+  // permutation (triangle-ordering.ts). Device: the pump has the producer
+  // write the inactive buffer itself, then flips.
+  const staged = writeOutcome(geometry, triangleSource, outcome, callbacks);
+  if (staged > 0) {
+    // Handed off BEFORE the throwing `requestRender()` below, so a throw there
+    // can't route into failSort and close the pass early.
+    pass.handedOff = true;
+    // Instanced: bootstrap the pump's requestRender chain (the per-frame pump
+    // keeps the on-demand loop alive between slices). Indexed: the
+    // permutation is already in the buffer, so this is the one frame it needs
+    // to reach the screen.
+    c.requestRender?.();
+  }
+}
+
+/** Stage `outcome` into the node's ordering storage; the staged count, or 0. */
+function writeOutcome(
+  geometry: THREE.InstancedBufferGeometry,
+  triangleSource: NodeSortState['triangleSource'],
+  outcome: SortOutcome,
+  callbacks: SortedIndexApplyCallbacks
+): number {
+  if (outcome.kind === 'device') {
+    // A mesh orders its index buffer on the CPU; no device writer serves it.
+    return triangleSource ? 0 : writeDeviceSortedIndexOrdering(geometry, outcome.write, callbacks);
+  }
+  const { ordering } = outcome;
+  return triangleSource
+    ? writeSortedTriangleOrdering(geometry, triangleSource, ordering, ordering.length, callbacks)
+    : writeSortedIndexOrdering(geometry, ordering, ordering.length, callbacks, {
+        adoptOrdering: true,
+      });
+}
+
+/**
+ * The profiler's label for an ordering: the bytes it uploads, or that the GPU
+ * wrote it in place.
+ *
+ * A host ordering uploads 4 bytes/element through the attribute update-range
+ * machinery on the instanced path. The indexed path uploads THREE index entries
+ * per face instead, at the index buffer's own width — Uint16 under 65536
+ * vertices on either WebGL path (see `createMeshIndexAttribute`), but the
+ * NATIVE WebGPU backend widens that same buffer to Uint32 in place at first
+ * upload and it stays widened from then on (see `applyMeshIndices`). Hence the
+ * live `BYTES_PER_ELEMENT` rather than a width assumed from the vertex count.
+ */
+function orderingInfo(
+  outcome: SortOutcome,
+  triangleSource: NodeSortState['triangleSource'],
+  geometry: THREE.InstancedBufferGeometry
+): (uploaded: boolean) => string {
+  if (outcome.kind === 'device') return (applied) => (applied ? 'GPU sort applied' : 'GPU sort');
+  const n = outcome.ordering.length;
+  const bytes = triangleSource ? n * 3 * (geometry.index?.array.BYTES_PER_ELEMENT ?? 4) : n * 4;
+  return (uploaded) => formatOrderingBytes(bytes, uploaded);
+}
+
+/**
+ * The staged ordering's lifecycle hooks: the coordinator's owner hooks on
+ * every ordering (cancel-sweep tag, slice-ack frame wake-up, capture bypass),
+ * plus the profiler lifecycle when a session is open. `onApplied`
+ * (post-render acknowledgement) ends the pass as applied; `onAbandoned`
+ * (superseded/cancelled/demoted/released/disposed) ends it as scheduled.
+ * Neither writer invokes either unless it ACCEPTS the ordering (issue #713).
+ */
+function sortApplyCallbacks(
+  c: CoordinatorState,
+  pass: SortPass,
+  outcome: SortOutcome,
+  info: (applied: boolean) => string
+): SortedIndexApplyCallbacks {
+  const hooks = orderingApplyHooks(c);
+  const session = pass.session;
+  if (!session) return hooks;
+  const resolvedAt = performance.now();
+  return {
+    ...hooks,
+    onApplied: () => {
+      const appliedAt = performance.now();
+      session.setMetadata({ applyMs: Math.max(0, appliedAt - resolvedAt), info: info(true) });
+      // The dedicated MONOTONIC completion stream records only orderings that
+      // actually became drawable — not merely results that were staged and
+      // later abandoned. It uses the dispatch-time profiler/generation,
+      // matching the session's reset-isolation contract (issue #711).
+      const { profiler, profilerGeneration } = pass;
+      if (profiler && profiler._currentGeneration() === profilerGeneration) {
+        profiler.recordDepthSortCompletion({
+          lastMs: Math.max(0, appliedAt - pass.dispatchedAt),
+          ...outcome.timing,
+          elements: outcomeLength(outcome),
+        });
       }
-    })
-    .catch((error) => {
-      // Only close the pass here for a genuine RPC failure — NOT when the
-      // ordering was already handed to the chunked-apply callbacks and a
-      // post-handoff step (e.g. requestRender) threw: those callbacks own
-      // the close, and ending here would mislabel the applied sample (#713).
-      if (!applyOwnsSession) session?.end();
-      const current = c.nodeStates.get(nodeId);
-      log.error(Modules.WORKER_POOL, `SortWorker sort failed for ${nodeId}`, error);
-      if (!current) return;
-      current.inFlight = false;
-      if (current.generation === generation) releaseHeldDraw(c, mesh);
-      // Drain a queued re-sort even on failure — a commit landed while
-      // this sort was out, and dropping its request would leave the node
-      // stale until the NEXT commit. Bounded: only a real commit sets
-      // resortQueued, so a persistently failing worker cannot loop. Same
-      // demotion guard as the resolve path: a cleared stamp means the
-      // re-promotion commit will schedule the sort that matters.
-      if (current.resortQueued) {
-        current.resortQueued = false;
-        if (hasCommittedData(mesh)) scheduleSort(c, mesh, nodeId);
-      }
-    });
+      session.end();
+    },
+    onAbandoned: () => session.end(),
+  };
+}
+
+/**
+ * A sort that threw or rejected (a worker RPC failure or timeout, or a throw
+ * from a post-handoff step of the settle). Clears `inFlight`, releases a held
+ * draw for the current population, and drains a queued re-sort.
+ */
+function failSort(c: CoordinatorState, job: SortJob, pass: SortPass, error: unknown): void {
+  // Only close the pass for a genuine sort failure — NOT when the ordering was
+  // already handed to the apply callbacks, which own the close (#713).
+  if (!pass.handedOff) pass.session?.end();
+  const current = c.nodeStates.get(job.nodeId);
+  const who = pass.route === 'worker' ? 'SortWorker' : 'GPU';
+  log.error(Modules.WORKER_POOL, `${who} sort failed for ${job.nodeId}`, error);
+  if (!current) return;
+  current.inFlight = false;
+  if (current.generation === job.generation) releaseHeldDraw(c, job.mesh);
+  // Drain a queued re-sort even on failure — a commit landed while this sort
+  // was out, and dropping its request would leave the node stale until the NEXT
+  // commit. Bounded: only a real commit sets resortQueued, so a persistently
+  // failing producer cannot loop. Same demotion guard as the settle: a cleared
+  // stamp means the re-promotion commit will schedule the sort that matters.
+  if (current.resortQueued) {
+    current.resortQueued = false;
+    if (hasCommittedData(job.mesh)) scheduleSort(c, job.mesh, job.nodeId);
+  }
 }
 
 // Per-frame scratch (no allocation on the hot path — the

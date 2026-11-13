@@ -36,6 +36,7 @@ import { needsDepthSort } from '../blending-state';
 import { hasCommittedData, invalidateCommittedDataStamp } from '../../types/committed-data';
 import type { BlendingMode } from '../../types/blending';
 import type { UpdateProfiler } from '../../profiling/update-profiler';
+import type { SortProducer } from './sort-producers';
 import { config } from '../../config';
 import { isEffectivelyVisible } from '../../utils/object-visibility';
 
@@ -233,10 +234,16 @@ export interface CoordinatorState {
    * return value tells the render-on-change loop to redraw.
    */
   drawnStateChanged: boolean;
+  /**
+   * Who may compute this coordinator's orderings, in order of preference: a
+   * sort goes to the first that is ready and accepts the node
+   * (`sort-producers.ts`).
+   */
+  sortProducers: readonly SortProducer[];
 }
 
-/** A fresh, unconfigured {@link CoordinatorState}. */
-export function createCoordinatorState(): CoordinatorState {
+/** A fresh, unconfigured {@link CoordinatorState} sorting through `sortProducers`. */
+export function createCoordinatorState(sortProducers: readonly SortProducer[]): CoordinatorState {
   return {
     nodeStates: new Map(),
     getCamera: null,
@@ -250,6 +257,7 @@ export function createCoordinatorState(): CoordinatorState {
     requestRenderBeforeCapture: null,
     syncSortElementsRemaining: syncSortElementLimit(),
     drawnStateChanged: false,
+    sortProducers,
   };
 }
 
