@@ -328,6 +328,7 @@ func TestControlTokenDefaults(t *testing.T) {
 		{"opt out", "0.0.0.0", "", "1", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			setTestStateHome(t)
 			t.Setenv("LUXAR_LAUNCHER_CONTROL_TOKEN", tc.explicit)
 			t.Setenv("LUXAR_LAUNCHER_NO_CONTROL_TOKEN", tc.optOut)
 			token, err := controlToken(t.TempDir(), tc.host)

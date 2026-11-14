@@ -16,6 +16,18 @@ import (
 	"github.com/coder/websocket"
 )
 
+func setTestStateHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(home, "Library", "Application Support")
+	}
+	return state
+}
+
 func TestAdvertisedHostValidation(t *testing.T) {
 	for _, tc := range []struct{ input, want string }{
 		{"kiosk.local", "kiosk.local"},
@@ -68,6 +80,7 @@ func TestLocalViewerURLKeepsDataSameOrigin(t *testing.T) {
 }
 
 func TestAdvertisedHostAndFixedPort(t *testing.T) {
+	setTestStateHome(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -360,6 +373,7 @@ func TestPanelFilesOutsideMacAppAndPortableFolder(t *testing.T) {
 }
 
 func TestControlPanelTokenSurvivesRestartOutsideServedRoot(t *testing.T) {
+	setTestStateHome(t)
 	root := t.TempDir()
 	path := filepath.Join(filepath.Dir(root), filepath.Base(root)+".control-panel.txt")
 	t.Cleanup(func() { _ = os.Remove(path) })
