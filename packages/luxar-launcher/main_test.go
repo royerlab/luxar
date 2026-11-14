@@ -2,11 +2,184 @@ package main
 
 import (
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
+
+	"github.com/coder/websocket"
 )
+
+func TestAdvertisedHostValidation(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"kiosk.local", "kiosk.local"},
+		{"kiosk.local.", "kiosk.local"},
+		{"[2001:db8::1]", "2001:db8::1"},
+		{"192.0.2.10", "192.0.2.10"},
+		{"http://kiosk.local", ""},
+		{"kiosk.local:8000", ""},
+		{"a..b", ""},
+		{"0.0.0.0", ""},
+		{"[::]", ""},
+		{"224.0.0.1", ""},
+		{"123.456", ""},
+		{"kiosk.3com", "kiosk.3com"},
+		{"[127.0.0.1", ""},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			t.Setenv("LUXAR_LAUNCHER_ADVERTISE_HOST", tc.input)
+			got, err := advertisedHost("127.0.0.1")
+			if tc.want == "" {
+				if err == nil {
+					t.Fatalf("accepted invalid host %q as %q", tc.input, got)
+				}
+			} else if err != nil || got != tc.want {
+				t.Fatalf("advertisedHost = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAdvertisedHostAndFixedPort(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+	t.Setenv("LUXAR_LAUNCHER_HOST", "127.0.0.1")
+	t.Setenv("LUXAR_LAUNCHER_ADVERTISE_HOST", "kiosk.local")
+	t.Setenv("LUXAR_LAUNCHER_PORT", strconv.Itoa(port))
+	t.Setenv("LUXAR_LAUNCHER_CONTROL", "1")
+	root := t.TempDir()
+	viewer, srv, err := startServer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer shutdownServer(srv)
+	parsed, err := url.Parse(viewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Host != net.JoinHostPort("kiosk.local", strconv.Itoa(port)) {
+		t.Fatalf("viewer host = %q", parsed.Host)
+	}
+	if got := parsed.Query().Get("src"); got != "http://"+parsed.Host+"/data" {
+		t.Fatalf("data URL = %q", got)
+	}
+	panelPath, _ := panelFiles(root)
+	panel, err := os.ReadFile(panelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(panel), "http://"+parsed.Host+"/viewer/control.html?control") {
+		t.Fatalf("panel URL = %q", panel)
+	}
+	if _, _, err := startServer(root); err == nil {
+		t.Fatal("second server silently moved a configured port")
+	}
+}
+
+func TestInvalidConfiguredPortIsRejected(t *testing.T) {
+	for _, value := range []string{"0", "-1", "65536", "abc"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("LUXAR_LAUNCHER_PORT", value)
+			if _, _, err := startServer(t.TempDir()); err == nil {
+				t.Fatal("invalid configured port was accepted")
+			}
+		})
+	}
+}
+
+func TestPanelFilesOutsideMacAppAndPortableFolder(t *testing.T) {
+	for _, tc := range []struct{ root, want string }{
+		{"/opt/scene.app/Contents/Resources", "/opt/scene.app.control-panel.txt"},
+		{"/opt/scene", "/opt/scene.control-panel.txt"},
+	} {
+		panel, token := panelFiles(tc.root)
+		if panel != tc.want || token != strings.TrimSuffix(tc.want, "panel.txt")+"token.txt" {
+			t.Fatalf("panelFiles(%q) = %q, %q", tc.root, panel, token)
+		}
+	}
+}
+
+func TestControlPanelTokenSurvivesRestartOutsideServedRoot(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(filepath.Dir(root), filepath.Base(root)+".control-panel.txt")
+	t.Cleanup(func() { _ = os.Remove(path) })
+	t.Cleanup(func() { _ = os.Remove(filepath.Join(filepath.Dir(root), filepath.Base(root)+".control-token.txt")) })
+	t.Setenv("LUXAR_LAUNCHER_HOST", "0.0.0.0")
+	t.Setenv("LUXAR_LAUNCHER_CONTROL", "1")
+	t.Setenv("LUXAR_LAUNCHER_CONTROL_TOKEN", "")
+	t.Setenv("LUXAR_LAUNCHER_NO_CONTROL_TOKEN", "")
+
+	viewer, srv, err := startServer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	panelBytes, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	panel := strings.TrimSpace(string(panelBytes))
+	parsed, err := url.Parse(panel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := parsed.Query().Get("controlToken")
+	if token == "" {
+		t.Fatal("generated token missing from panel URL")
+	}
+	if !strings.Contains(viewer, "controlToken="+token) {
+		t.Fatal("viewer does not carry relay token")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("panel file mode = %o", info.Mode().Perm())
+	}
+	local := "ws://127.0.0.1:" + parsed.Port() + "/control"
+	conn := dial(t, local, "?role=controller", nil)
+	expectClose(t, conn, websocket.StatusPolicyViolation)
+	conn = dial(t, local, "?role=controller&token="+url.QueryEscape(token), nil)
+	send(t, conn, `{"jsonrpc":"2.0","id":1,"method":"getDimensions","params":[]}`)
+	if got := recv(t, conn)["id"]; got != float64(1) {
+		t.Fatalf("authenticated controller reply id = %v", got)
+	}
+	_ = conn.CloseNow()
+	resp, err := http.Get("http://127.0.0.1:" + parsed.Port() + "/control-panel.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		t.Fatal("panel file is exposed over HTTP")
+	}
+	shutdownServer(srv)
+
+	_, srv2, err := startServer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer shutdownServer(srv2)
+	again, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	againURL, err := url.Parse(strings.TrimSpace(string(again)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := againURL.Query().Get("controlToken"); got != token {
+		t.Fatalf("restart token = %q, want %q", got, token)
+	}
+}
 
 func TestCacheBudgetMBDefault(t *testing.T) {
 	t.Setenv("LUXAR_CACHE_BUDGET_MB", "")

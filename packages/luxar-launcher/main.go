@@ -19,6 +19,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -29,6 +31,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -120,8 +123,7 @@ func withCachePolicy(next http.Handler) http.Handler {
 //
 // Loopback unless LUXAR_LAUNCHER_HOST says otherwise. A native app that
 // silently started listening on the network would be a surprise nobody asked
-// for — and this app has no token of its own, so the opt-in is also the
-// operator saying they accept that.
+// for.
 func bindHost() string {
 	if v := strings.TrimSpace(os.Getenv("LUXAR_LAUNCHER_HOST")); v != "" {
 		return v
@@ -150,7 +152,129 @@ func dialHost(host string) string {
 	return "127.0.0.1"
 }
 
-// startServer binds a free port and starts the file server on it in a
+var hostLabel = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
+
+// advertisedHost validates the name embedded in the panel, viewer and data URLs.
+func advertisedHost(bind string) (string, error) {
+	value := strings.TrimSpace(os.Getenv("LUXAR_LAUNCHER_ADVERTISE_HOST"))
+	if value == "" {
+		return dialHost(bind), nil
+	}
+	if strings.HasPrefix(value, "[") != strings.HasSuffix(value, "]") {
+		return "", fmt.Errorf("invalid LUXAR_LAUNCHER_ADVERTISE_HOST %q", value)
+	}
+	bare := strings.TrimPrefix(strings.TrimSuffix(value, "]"), "[")
+	if ip := net.ParseIP(bare); ip != nil {
+		if ip.IsUnspecified() || ip.IsMulticast() || strings.Contains(bare, "%") {
+			return "", fmt.Errorf("LUXAR_LAUNCHER_ADVERTISE_HOST must name a reachable address")
+		}
+		return ip.String(), nil
+	}
+	name := strings.TrimSuffix(value, ".")
+	labels := strings.Split(name, ".")
+	if len(name) > 253 || name == "" {
+		return "", fmt.Errorf("invalid LUXAR_LAUNCHER_ADVERTISE_HOST %q", value)
+	}
+	for _, label := range labels {
+		if !hostLabel.MatchString(label) {
+			return "", fmt.Errorf("invalid LUXAR_LAUNCHER_ADVERTISE_HOST %q", value)
+		}
+	}
+	if last := labels[len(labels)-1]; strings.IndexFunc(last, func(r rune) bool { return r < '0' || r > '9' }) == -1 {
+		return "", fmt.Errorf("invalid LUXAR_LAUNCHER_ADVERTISE_HOST %q", value)
+	}
+	return name, nil
+}
+
+func listenPort() (string, error) {
+	value := strings.TrimSpace(os.Getenv("LUXAR_LAUNCHER_PORT"))
+	if value == "" {
+		return "0", nil
+	}
+	port, err := strconv.Atoi(value)
+	if err != nil || port < 1 || port > 65535 {
+		return "", fmt.Errorf("LUXAR_LAUNCHER_PORT must be between 1 and 65535")
+	}
+	return strconv.Itoa(port), nil
+}
+
+// panelFiles live beside the .app or portable folder, outside the served root.
+func panelFiles(root string) (string, string) {
+	bundle := root
+	if filepath.Base(root) == "Resources" && filepath.Base(filepath.Dir(root)) == "Contents" {
+		bundle = filepath.Dir(filepath.Dir(root))
+	}
+	base := filepath.Join(filepath.Dir(bundle), filepath.Base(bundle))
+	return base + ".control-panel.txt", base + ".control-token.txt"
+}
+
+func controlToken(root, host string) (string, error) {
+	if os.Getenv("LUXAR_LAUNCHER_NO_CONTROL_TOKEN") == "1" || os.Getenv("LUXAR_LAUNCHER_CONTROL_TOKEN") == "off" {
+		return "", nil
+	}
+	if token := os.Getenv("LUXAR_LAUNCHER_CONTROL_TOKEN"); token != "" {
+		if token != strings.TrimSpace(token) {
+			return "", fmt.Errorf("LUXAR_LAUNCHER_CONTROL_TOKEN must have no surrounding whitespace")
+		}
+		return token, nil
+	}
+	if host == "127.0.0.1" || host == "::1" || strings.EqualFold(host, "localhost") {
+		return "", nil
+	}
+	_, path := panelFiles(root)
+	if info, err := os.Lstat(path); err == nil {
+		if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+			return "", fmt.Errorf("unsafe control token file %s", path)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		if token := strings.TrimSpace(string(data)); token != "" && token == string(data) {
+			return token, nil
+		}
+		return "", fmt.Errorf("invalid control token file %s", path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	bytes := make([]byte, 24)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	token := base64.RawURLEncoding.EncodeToString(bytes)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", err
+	}
+	if _, err = f.WriteString(token); err != nil {
+		f.Close()
+		os.Remove(path)
+		return "", err
+	}
+	if err = f.Close(); err != nil {
+		os.Remove(path)
+		return "", err
+	}
+	return token, nil
+}
+
+func writePanelURL(path, panelURL string) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".luxar-panel-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err = f.WriteString(panelURL + "\n"); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
+}
+
+// startServer binds the configured port (or a free port) and starts the file server on it in a
 // background goroutine. The returned URL is what the WebView (or fallback
 // browser) should load; the returned *http.Server is the handle for graceful
 // shutdown.
@@ -160,19 +284,35 @@ func dialHost(host string) string {
 // without a Python checkout.
 func startServer(root string) (string, *http.Server, error) {
 	host := bindHost()
-	ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+	portSpec, err := listenPort()
+	if err != nil {
+		return "", nil, err
+	}
+	reachable, err := advertisedHost(host)
+	if err != nil {
+		return "", nil, err
+	}
+	control := os.Getenv("LUXAR_LAUNCHER_CONTROL") == "1"
+	token := ""
+	if control {
+		token, err = controlToken(root, host)
+		if err != nil {
+			return "", nil, err
+		}
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(host, portSpec))
 	if err != nil {
 		return "", nil, fmt.Errorf("bind %s: %w", host, err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
-	reachable := dialHost(host)
-	dataURL := fmt.Sprintf("http://%s:%d/data", reachable, port)
+	origin := "http://" + net.JoinHostPort(reachable, strconv.Itoa(port))
+	dataURL := origin + "/data"
 	// Inject a cache budget: the viewer auto-sizes its in-memory caches from
 	// `performance.memory`, which WKWebView (WebKit) does not implement — so
 	// without this the app would fall back to a tiny fixed budget and re-decode
 	// timelapse frames every loop. We know this is a desktop app, so we supply a
 	// generous default the viewer splits across its cache tiers.
-	viewerURL := fmt.Sprintf("http://%s:%d/viewer/?src=%s&cacheBudgetMB=%d", reachable, port, dataURL, cacheBudgetMB())
+	viewerURL := fmt.Sprintf("%s/viewer/?src=%s&cacheBudgetMB=%d", origin, dataURL, cacheBudgetMB())
 
 	// No CORS headers: the viewer (/viewer) and its data (/data) are served
 	// from this one origin, so same-origin fetches need none. A wildcard here
@@ -180,8 +320,8 @@ func startServer(root string) (string, *http.Server, error) {
 	// The relay shares this origin with both pages, so neither needs a URL to
 	// find the other and the same-host Origin check below is meaningful.
 	var handler http.Handler = withCachePolicy(http.FileServer(http.Dir(root)))
-	if os.Getenv("LUXAR_LAUNCHER_CONTROL") == "1" {
-		relay := newHub(strings.TrimSpace(os.Getenv("LUXAR_LAUNCHER_CONTROL_TOKEN")))
+	if control {
+		relay := newHub(token)
 		mux := http.NewServeMux()
 		// Registered BEFORE the catch-all: Go's mux prefers the longer
 		// pattern, but keeping the order explicit matches the Python side,
@@ -190,16 +330,21 @@ func startServer(root string) (string, *http.Server, error) {
 		mux.Handle("/", handler)
 		handler = mux
 		viewerURL += "&control"
-		panelURL := fmt.Sprintf("http://%s:%d/viewer/control.html?control", reachable, port)
-		if token := strings.TrimSpace(os.Getenv("LUXAR_LAUNCHER_CONTROL_TOKEN")); token != "" {
+		panelURL := origin + "/viewer/control.html?control"
+		if token != "" {
 			viewerURL += "&controlToken=" + url.QueryEscape(token)
 			panelURL += "&controlToken=" + url.QueryEscape(token)
 		} else if host != "127.0.0.1" && host != "localhost" && host != "::1" {
 			fmt.Fprintln(os.Stderr,
-				"warning: control relay reachable from the network without a token; "+
-					"set LUXAR_LAUNCHER_CONTROL_TOKEN to restrict it")
+				"warning: control relay reachable from the network without a token")
+		}
+		path, _ := panelFiles(root)
+		if err := writePanelURL(path, panelURL); err != nil {
+			ln.Close()
+			return "", nil, fmt.Errorf("write panel URL to %s: %w", path, err)
 		}
 		fmt.Fprintf(os.Stderr, "control panel: %s\n", panelURL)
+		fmt.Fprintf(os.Stderr, "control panel URL saved to %s\n", path)
 	}
 
 	srv := &http.Server{
