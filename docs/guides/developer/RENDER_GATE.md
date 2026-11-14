@@ -32,7 +32,7 @@ buffers differ in size), element counts, camera matrices, and within-page
 stability in `report.json`; the report links the control heatmaps and summarizes
 those fields.
 
-### Measuring stock Chrome on Wayland
+## Measuring stock Chrome on Wayland
 
 Use `--stock --headed` to measure the browser path users run. `--stock` omits
 the gate's GPU blocklist, unsafe WebGPU, developer feature, ANGLE/Vulkan, and
