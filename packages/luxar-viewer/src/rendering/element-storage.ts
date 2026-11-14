@@ -215,7 +215,7 @@ export function registerElementTexelDirtyRange(
   texture.needsUpdate = true;
 }
 
-/** `geometry.userData` slot carrying the element texture. */
+/** `geometry.userData` slots carrying the element texture and its layout. */
 interface ElementStorageUserData {
   elementTexture?: THREE.DataTexture;
   elementTextureLayout?: ElementTextureLayout;

@@ -1,3 +1,9 @@
+/**
+ * The GPU depth sort through the whole scheduling path: GpuSortProducer
+ * selected by the scheduler, its device writer run by the element-storage pump
+ * against a fake WebGPU backend, the slot flip, the fallbacks to the
+ * SortWorker, and capture.
+ */
 import * as THREE from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -11,29 +17,27 @@ import {
 } from '../../../../rendering/element-storage';
 import { POINT_TEXTURE_LAYOUT } from '../../../../rendering/element-texture-layout';
 import { configureRendererBackendPolicy } from '../../../../rendering/renderer-backend-policy';
-import {
-  canGpuSort,
-  configureGpuOrderProducer,
-} from '../../../../rendering/depth-sort-coordinator/gpu-order-producer';
+import { GpuSortProducer } from '../../../../rendering/depth-sort-coordinator/gpu-sort-producer';
+import { workerSortProducer } from '../../../../rendering/depth-sort-coordinator/sort-producers';
 import {
   evaluateDepthSortPerFrame,
   scheduleSort,
 } from '../../../../rendering/depth-sort-coordinator/scheduler';
 import {
+  createCoordinatorState,
   workerHost,
-  type CoordinatorState,
   type NodeSortState,
 } from '../../../../rendering/depth-sort-coordinator/state';
+import { resortForCapture } from '../../../../rendering/depth-sort-coordinator/capture';
 import {
   BufferUsage,
   type GpuBuffer,
   type GpuDevice,
 } from '../../../../rendering/gpu-depth-sort/gpu-types';
-import { estimateGeometryBytes } from '../../../../rendering/gpu-buffer-pool/geometry-bytes';
-import type { Renderer } from '../../../../rendering/renderer-capabilities';
+import { createGpuSortContext } from '../../../../rendering/gpu-depth-sort/three-webgpu-bridge';
+import { getGpuByteBudget } from '../../../../rendering/gpu-byte-budget';
 import { UpdateProfiler } from '../../../../profiling/update-profiler';
 import { setCommittedData } from '../../../../types/committed-data';
-import { resortForCapture } from '../../../../rendering/depth-sort-coordinator/capture';
 
 function fakeBackend(targetUsage = BufferUsage.VERTEX | BufferUsage.COPY_DST) {
   const copies: { target: GpuBuffer; bytes: number }[] = [];
@@ -74,6 +78,7 @@ function fakeBackend(targetUsage = BufferUsage.VERTEX | BufferUsage.COPY_DST) {
     }),
   };
   const backend = {
+    isWebGPUBackend: true,
     device,
     get: (resource: THREE.Texture | THREE.BufferAttribute) =>
       resource instanceof THREE.Texture
@@ -92,7 +97,14 @@ function fakeBackend(targetUsage = BufferUsage.VERTEX | BufferUsage.COPY_DST) {
   return { backend, buffers, contents, copies, allocations };
 }
 
-function scene(capacity = 4) {
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** A committed points node in a coordinator whose producers are the GPU sort, then the worker. */
+async function scene(capacity = 4, targetUsage?: number) {
+  configureRendererBackendPolicy('webgpu-native');
+  const fake = fakeBackend(targetUsage);
+  const context = createGpuSortContext({ backend: fake.backend })!;
+  const gpu = new GpuSortProducer(() => context);
   const geometry = new THREE.InstancedBufferGeometry();
   const texture = attachElementStorage(geometry, capacity, POINT_TEXTURE_LAYOUT);
   const material = new THREE.ShaderMaterial({ uniforms: { uSortedIndexSlot: { value: 0 } } });
@@ -101,7 +113,7 @@ function scene(capacity = 4) {
   setCommittedData(mesh, {});
   const camera = new THREE.PerspectiveCamera();
   camera.updateMatrixWorld();
-  const state = {
+  const state: NodeSortState = {
     mesh,
     generation: 1,
     count: capacity,
@@ -110,108 +122,127 @@ function scene(capacity = 4) {
     lastSortAxis: null,
     lastSortOffset: 0,
     registered: true,
-  } as NodeSortState;
+  };
+  const coordinator = createCoordinatorState([gpu, workerSortProducer]);
+  coordinator.nodeStates.set(mesh.uuid, state);
+  coordinator.getCamera = () => camera;
   const requestRender = vi.fn();
+  coordinator.requestRender = requestRender;
   const profiler = new UpdateProfiler();
-  const coordinator = {
-    nodeStates: new Map([[mesh.uuid, state]]),
-    getCamera: () => camera,
+  coordinator.getProfiler = () => profiler;
+  gpu.ready(); // starts compiling
+  await flush();
+  return {
+    fake,
+    gpu,
+    geometry,
+    texture,
+    mesh,
+    material,
+    state,
+    coordinator,
     requestRender,
-    getProfiler: () => profiler,
-    captureSuppressDepth: 0,
-    depthSortEnabled: true,
-    drawnStateChanged: false,
-  } as unknown as CoordinatorState;
-  return { geometry, texture, mesh, material, state, coordinator, requestRender, profiler };
+    profiler,
+  };
 }
 
-describe('native WebGPU ordering producer', () => {
+function ready(texture: THREE.DataTexture): void {
+  texture.onUpdate?.(texture); // three uploaded the current version
+}
+
+function workerReturning(result: unknown) {
+  const sort = vi.fn().mockResolvedValue(result);
+  workerHost.api = { sort } as unknown as NonNullable<typeof workerHost.api>;
+  workerHost.workerInitState = 'ready';
+  return sort;
+}
+
+describe('GPU depth sort scheduling', () => {
   const priorApi = workerHost.api;
   const priorInitState = workerHost.workerInitState;
   afterEach(() => {
     workerHost.api = priorApi;
     workerHost.workerInitState = priorInitState;
     configureRendererBackendPolicy('webgl');
-    configureGpuOrderProducer({} as Renderer);
   });
 
-  it('sorts from the uploaded element texture into the inactive draw buffer without the worker', async () => {
-    configureRendererBackendPolicy('webgpu-native');
-    const fake = fakeBackend();
-    configureGpuOrderProducer({ backend: fake.backend } as unknown as Renderer);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const { geometry, texture, mesh, material, state, coordinator, requestRender, profiler } =
-      scene();
+  it('re-sorts from the uploaded element texture into the inactive buffer, in the dispatching call', async () => {
+    const {
+      fake,
+      gpu,
+      geometry,
+      texture,
+      mesh,
+      material,
+      state,
+      coordinator,
+      requestRender,
+      profiler,
+    } = await scene();
     workerHost.api = null;
-    expect(canGpuSort(geometry, 4)).toBe(false);
-    texture.onUpdate?.(texture);
-    expect(canGpuSort(geometry, 4)).toBe(true);
-    const baseBytes = estimateGeometryBytes(geometry);
+    // Not before three has uploaded the texture's current version.
+    scheduleSort(coordinator, mesh, mesh.uuid, 'motion');
+    expect(fake.copies).toHaveLength(0);
+    ready(texture);
+    const budget = getGpuByteBudget();
     const inactive = geometry.getAttribute('aSortedIndexB') as THREE.BufferAttribute;
     const version = inactive.version;
-    scheduleSort(coordinator, mesh, mesh.uuid, true);
-    expect(fake.copies).toHaveLength(0);
-    expect(activeSortedIndexSlot(geometry)).toBe(0);
-    evaluateDepthSortPerFrame(coordinator);
+
+    scheduleSort(coordinator, mesh, mesh.uuid, 'motion');
     expect(fake.copies).toEqual([{ target: fake.buffers.get(inactive), bytes: 16 }]);
     expect(activeSortedIndexSlot(geometry)).toBe(1);
-    expect(inactive.version).toBe(version);
-    expect(inactive.array).not.toBe(geometry.getAttribute('aSortedIndex').array);
-    expect(isSortedIndexHostArrayCurrent(geometry)).toBe(false);
     expect(material.uniforms.uSortedIndexSlot.value).toBe(1);
+    expect(inactive.version).toBe(version); // no host upload scheduled
+    expect(isSortedIndexHostArrayCurrent(geometry)).toBe(false);
     expect(state.inFlight).toBe(false);
     expect(state.lastSortAxis).not.toBeNull();
-    expect(requestRender).toHaveBeenCalledOnce();
+    expect(requestRender).toHaveBeenCalled();
+    if (budget > 0) expect(getGpuByteBudget()).toBeLessThan(budget);
+
     expect(profiler.getDepthSortCompletions().total).toBe(0);
     acknowledgeSortedIndexOrderingDraw(geometry);
     expect(profiler.getDepthSortCompletions().events).toEqual([
-      {
-        seq: 1,
-        lastMs: expect.any(Number),
-        kernelMs: null,
-        boundaryMs: null,
-        queueMs: null,
-        elements: 4,
-      },
+      expect.objectContaining({ seq: 1, route: 'gpu', elements: 4, queueMs: 0 }),
     ]);
-    expect(estimateGeometryBytes(geometry)).toBe(
-      baseBytes + fake.allocations.reduce((sum, allocation) => sum + allocation.size, 0)
-    );
+
+    // The next re-sort lands in the other slot, again without a host upload.
     const original = geometry.getAttribute('aSortedIndex') as THREE.BufferAttribute;
     const originalVersion = original.version;
-    scheduleSort(coordinator, mesh, mesh.uuid, true);
-    evaluateDepthSortPerFrame(coordinator);
+    scheduleSort(coordinator, mesh, mesh.uuid, 'motion');
     expect(fake.copies.at(-1)).toEqual({ target: fake.buffers.get(original), bytes: 16 });
     expect(activeSortedIndexSlot(geometry)).toBe(0);
     expect(original.version).toBe(originalVersion);
-    acknowledgeSortedIndexOrderingDraw(geometry);
-    expect(profiler.getDepthSortCompletions().total).toBe(2);
-    geometry.dispose();
-    expect(estimateGeometryBytes(geometry)).toBe(baseBytes);
+    gpu.dispose();
+    expect(getGpuByteBudget()).toBe(budget);
     expect(fake.allocations.every((allocation) => allocation.destroyed)).toBe(true);
+    geometry.dispose();
+  });
+
+  it('leaves a commit sort to the worker, whose host array stays current', async () => {
+    const { fake, geometry, texture, mesh, coordinator } = await scene();
+    ready(texture);
+    const sort = workerReturning(null);
+    scheduleSort(coordinator, mesh, mesh.uuid);
+    expect(sort).toHaveBeenCalledOnce();
+    expect(fake.copies).toHaveLength(0);
+    geometry.dispose();
   });
 
   it('declines a texture version that has not reached the GPU', async () => {
-    configureRendererBackendPolicy('webgpu-native');
-    const fake = fakeBackend();
-    configureGpuOrderProducer({ backend: fake.backend } as unknown as Renderer);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const { geometry, texture } = scene();
-    texture.onUpdate?.(texture);
-    expect(canGpuSort(geometry, 4)).toBe(true);
+    const { fake, geometry, texture, mesh, coordinator } = await scene();
+    ready(texture);
     texture.needsUpdate = true;
-    expect(canGpuSort(geometry, 4)).toBe(false);
+    const sort = workerReturning(null);
+    scheduleSort(coordinator, mesh, mesh.uuid, 'motion');
+    expect(sort).toHaveBeenCalledOnce();
+    expect(fake.copies).toHaveLength(0);
     geometry.dispose();
   });
 
   it('keeps an undrawn identity tail from overwriting a later GPU ordering', async () => {
-    configureRendererBackendPolicy('webgpu-native');
-    const fake = fakeBackend();
-    configureGpuOrderProducer({ backend: fake.backend } as unknown as Renderer);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const { geometry, texture, mesh, state, coordinator } = scene(64);
+    const { fake, geometry, texture, mesh, state, coordinator } = await scene(64);
     workerHost.api = null;
-    texture.onUpdate?.(texture);
+    ready(texture);
     writeSortedIndexIdentity(geometry, 32);
     geometry.instanceCount = 32;
     const slotA = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
@@ -222,11 +253,10 @@ describe('native WebGPU ordering producer', () => {
     geometry.instanceCount = 48;
     expect(slotA.updateRanges).toEqual([{ start: 32, count: 16 }]);
 
-    scheduleSort(coordinator, mesh, mesh.uuid, true);
-    pumpSortedIndexOrderingApply(geometry);
-    scheduleSort(coordinator, mesh, mesh.uuid, true);
-    expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ stalled: true, flipped: false });
+    scheduleSort(coordinator, mesh, mesh.uuid, 'motion'); // writes B, flips to B
+    scheduleSort(coordinator, mesh, mesh.uuid, 'motion'); // A has an undrawn host tail: waits
     expect(fake.copies).toHaveLength(1);
+    expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ stalled: true, flipped: false });
 
     // The next draw flushes the old host tail on A while B remains selected.
     const slotB = geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute;
@@ -252,68 +282,56 @@ describe('native WebGPU ordering producer', () => {
     expect(Array.from(fake.contents.get(drawnBuffer)!.subarray(0, 48))).toEqual(
       Array.from({ length: 48 }, (_, i) => 47 - i)
     );
-    expect(
-      Array.from(fake.contents.get(drawnBuffer)!.subarray(0, 48)).sort((a, b) => a - b)
-    ).toEqual(Array.from({ length: 48 }, (_, i) => i));
     geometry.dispose();
   });
 
-  it('falls back to the worker when the target lacks COPY_DST', async () => {
-    configureRendererBackendPolicy('webgpu-native');
-    const fake = fakeBackend(BufferUsage.VERTEX);
-    configureGpuOrderProducer({ backend: fake.backend } as unknown as Renderer);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const { geometry, texture, mesh, coordinator } = scene();
-    texture.onUpdate?.(texture);
-    const sort = vi.fn().mockResolvedValue(null);
-    workerHost.api = { sort } as unknown as NonNullable<typeof workerHost.api>;
-    workerHost.workerInitState = 'ready';
+  it('stops using a device whose target it cannot write, re-sorting on the worker at once', async () => {
+    const { geometry, texture, mesh, gpu, coordinator } = await scene(4, BufferUsage.VERTEX);
+    ready(texture);
+    const sort = workerReturning(null);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    scheduleSort(coordinator, mesh, mesh.uuid, true);
-    expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ flipped: false });
+    scheduleSort(coordinator, mesh, mesh.uuid, 'motion');
 
     expect(sort).toHaveBeenCalledOnce();
     expect(activeSortedIndexSlot(geometry)).toBe(0);
-    expect(canGpuSort(geometry, 4)).toBe(false);
+    expect(gpu.ready()).toBe(false);
+    vi.restoreAllMocks();
     geometry.dispose();
   });
 
-  it('falls back once when a staged GPU write finds a stale element texture', async () => {
-    configureRendererBackendPolicy('webgpu-native');
-    const fake = fakeBackend();
-    configureGpuOrderProducer({ backend: fake.backend } as unknown as Renderer);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const { geometry, texture, mesh, state, coordinator } = scene();
-    texture.onUpdate?.(texture);
-    const sort = vi.fn().mockResolvedValue(null);
-    workerHost.api = { sort } as unknown as NonNullable<typeof workerHost.api>;
-    workerHost.workerInitState = 'ready';
+  it('re-sorts once on the worker when a staged GPU write finds a stale texture', async () => {
+    const { fake, geometry, texture, mesh, state, coordinator } = await scene();
+    ready(texture);
+    // A host stream holds the device write behind it until the next pump.
+    writeSortedIndexIdentity(geometry, 4);
+    (geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute).addUpdateRange(0, 4);
+    const sort = workerReturning(null);
 
-    scheduleSort(coordinator, mesh, mesh.uuid, true);
-    texture.needsUpdate = true;
-    expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ flipped: false });
-
-    expect(sort).toHaveBeenCalledOnce();
+    scheduleSort(coordinator, mesh, mesh.uuid, 'motion');
     expect(fake.copies).toHaveLength(0);
-    expect(activeSortedIndexSlot(geometry)).toBe(0);
+    texture.needsUpdate = true;
+    (geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute).clearUpdateRanges();
+    expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ flipped: false });
+
+    expect(sort).toHaveBeenCalledOnce();
     for (let i = 0; i < 3; i++) evaluateDepthSortPerFrame(coordinator);
     expect(fake.copies).toHaveLength(0);
-    expect(state.lastSortAxis).not.toBeNull(); // The worker retry was dispatched.
+    expect(state.lastSortAxis).not.toBeNull(); // the worker retry was dispatched
     geometry.dispose();
   });
 
-  it('clears a staged sort pose when the GPU write fails without a ready worker', async () => {
-    configureRendererBackendPolicy('webgpu-native');
-    const fake = fakeBackend();
-    configureGpuOrderProducer({ backend: fake.backend } as unknown as Renderer);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const { geometry, texture, mesh, state, coordinator } = scene();
-    texture.onUpdate?.(texture);
+  it('forgets the pose when a GPU write fails and no worker is ready', async () => {
+    const { fake, geometry, texture, mesh, state, coordinator } = await scene();
+    ready(texture);
     workerHost.api = null;
+    writeSortedIndexIdentity(geometry, 4);
+    (geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute).addUpdateRange(0, 4);
 
-    scheduleSort(coordinator, mesh, mesh.uuid, true);
+    scheduleSort(coordinator, mesh, mesh.uuid, 'motion');
     expect(state.lastSortAxis).not.toBeNull();
     texture.needsUpdate = true;
+    (geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute).clearUpdateRanges();
     expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ flipped: false });
 
     expect(fake.copies).toHaveLength(0);
@@ -323,12 +341,8 @@ describe('native WebGPU ordering producer', () => {
   });
 
   it('refreshes a capture on the GPU even when no worker is available', async () => {
-    configureRendererBackendPolicy('webgpu-native');
-    const fake = fakeBackend();
-    configureGpuOrderProducer({ backend: fake.backend } as unknown as Renderer);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const { geometry, texture, coordinator } = scene();
-    texture.onUpdate?.(texture);
+    const { fake, geometry, texture, coordinator } = await scene();
+    ready(texture);
     workerHost.api = null;
 
     await resortForCapture(coordinator);

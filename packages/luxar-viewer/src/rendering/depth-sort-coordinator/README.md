@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Depth sorting orders transparent elements back-to-front for correct order-dependent blending (normal and volumetric modes). **Within-node sorting** uses the `SortWorker` on commits, for mesh, and as fallback; native WebGPU camera refreshes use `GpuDepthSorter` when the uploaded element texture and a storage-capable order buffer are ready. **Cross-node ordering** (THREE.js `renderOrder`) is driven here in Phase 3.
+Depth sorting orders transparent elements back-to-front for correct order-dependent blending (normal and volumetric modes). **Within-node sorting** is computed by a `SortProducer`: the `SortWorker` on commits, for mesh, on every backend without compute, and as the fallback; on native WebGPU, camera-motion and capture re-sorts of instanced nodes go to the GPU producer (`gpu-sort-producer.ts`, #3162) once the element texture is uploaded and the ordering pair is storage-capable. **Cross-node ordering** (THREE.js `renderOrder`) is driven here in Phase 3.
 
 This module is the **main-thread authority** for the depth-sort subsystem. It serves **all four geometry types** via a geometry-agnostic mechanism: projected 3D centers in, back-to-front permutation out.
 
@@ -44,15 +44,20 @@ depth-sort-coordinator/
 │                          attach/detach (the last detach terminates the worker)
 ├── ordering-apply.ts    — Slot → material sync, draw-acknowledgement hook, the
 │                          commit-time synchronous first sort, resolve helpers
-├── scheduler.ts         — scheduleSort (GPU/worker dispatch, resolve + apply), the
+├── scheduler.ts         — scheduleSort (single in flight, settle + apply), the
 │                          chunked apply pump, the per-frame camera-motion pass
-├── gpu-order-producer.ts — Native WebGPU texture sort and ordering-buffer handoff
+├── sort-producers.ts    — Who computes an ordering: the SortProducer seam and the
+│                          SortWorker producer; selection by readiness + acceptance
+├── gpu-sort-producer.ts — The WebGPU compute sort as a producer (#3162): device
+│                          orderings for instanced nodes on native WebGPU
 ├── capture.ts           — resortForCapture / isCaptureQuiescent (offline drain)
 ├── render-order.ts      — Cross-node renderOrder assignment: BSP partition traversal +
 │                          centroid fallback, ONE global scale
 └── triangle-ordering.ts — The INDEXED (mesh) apply: face centroids + atomic index
                            permutation + the draw-acknowledgement lifecycle
 ```
+
+**Producers compute, the scheduler decides.** `scheduleSort` hands each sort to the first `SortProducer` (`sort-producers.ts`) that is ready and accepts the node, in the coordinator's preference order (`CoordinatorState.sortProducers`). Every job carries a reason (`commit`, `motion`, `capture`). A producer only computes. The SortWorker resolves later with a host array. The GPU producer (`gpu-sort-producer.ts`, one per coordinator, installed when the host passes `getGpuSortContext`: native WebGPU with `config.depthSort.gpuSort` / `?gpuSort` on) takes `motion` and `capture` sorts only, so a commit's order still comes from the worker and refreshes the host array the grow seed and repairs read. It answers synchronously with a device writer (`DeviceOrderingWrite`); the scheduler stages it and pumps at once, so the per-frame pass shows the new order in the same frame unless a host upload is still pending on the target slot (then the pump waits for the draw that flushes it). It follows the host's device: it compiles on a new one; it falls back to the worker while compiling, after a loss, after a failed build or a throwing sort; it declines a node it failed to write until the node commits again; and it reserves its scratch against the GPU byte budget. A failed device write re-sorts the node at once on the worker (`retryFailedDeviceWrite`, from the abandon hook, one level deep). Everything else is the scheduler's and is the same for every producer: the single-in-flight rule and its queued re-sort, the dispatch pose, the generation and commit checks (`settleSort`), staging into the node's apply path, the profiler pass, held-draw release, and the failure path (`failSort`).
 
 The coordinator as a whole owns:
 
@@ -210,34 +215,27 @@ Enforces **at most one in-flight sort per node**; a commit landing mid-sort queu
 
 **Flow**:
 
-1. Get `state` (from THIS coordinator's node map) and `camera` (from its `getCamera()`); return if either is missing
-2. Return if already `inFlight` — set `resortQueued = true` and return
-3. When requested, stage a texture-based GPU write through `writeDeviceSortedIndexOrdering` and record the pose without waiting for worker initialization. The per-frame pump submits it to the inactive buffer and flips only after any earlier host upload on that slot has drawn; a failed write falls back to the worker
-4. Otherwise return unless the worker is usable: `api` is wrapped BEFORE `initializeWithGuard` is awaited, so a live handle is not a ready worker. `workerInitState === 'ready'` gates the worker RPC here rather than at each caller (the offline-capture force loop dispatches without consulting `registered`). Skipping keeps `recordSortPose` below from stamping a pose for a sort that never ran, which would silence the per-frame `!lastSortAxis` recovery dispatch
-5. Set `inFlight = true`
-6. Refresh `mesh.matrixWorld` and `camera.matrixWorld` (can be stale when a commit fires before the next frame)
-7. Derive `viewMatrix = inverse(camera.matrixWorld)`, `modelView = viewMatrix × mesh.matrixWorld`
-8. Record the pose (`recordSortPose(state, modelView)`) — stores the model-view z-row (axis direction + normalized offset)
-9. Begin a detached profiler pass (`getProfiler()?.beginDepthSortPass()`) — its duration is the dispatch→applied round-trip
-10. `withTimeout('depth-sort', api.sort({ nodeId, generation, modelView }), 30s)`:
-    - **Timeout**: a worker that CRASHES mid-session leaves the Comlink RPC pending forever, and a stuck `inFlight` is unrecoverable — the per-frame scheduler skips in-flight nodes and later commits only set `resortQueued`, which never drains. Routing the timeout through the existing .catch clears `inFlight` and drains the queue (bounded staleness degrade instead of a permanently unsorted node).
-11. On **resolve**:
-    - Clear `inFlight`
-    - **Stale-drop**: stage only when `result.generation === current.generation` AND `hasCommittedData(mesh)` (LOD demotion signal)
-    - Set profiler metadata: `splats`, `kernelMs`, `boundaryMs` (worker overhead), `queueMs` (round-trip minus worker time), and `info` with ordering bytes labeled `sched`
-    - Stage the ordering with lifecycle callbacks: `writeSortedIndexOrdering(geometry, result.ordering, count, callbacks, { adoptOrdering: true })` — `callbacks` always carries the owner hooks (`orderingApplyHooks(c)`) and, with a profiler session, `onApplied` / `onAbandoned`; the per-frame pump streams slices into the inactive buffer. On WebGPU, a result backed by the full attribute capacity becomes the inactive attribute array without a second CPU copy; orderings without that backing and WebGL still copy.
-    - Transfer profiler-session ownership to those callbacks and request the bootstrap frame
-    - Drain `resortQueued` if set: `scheduleSort(c, mesh, nodeId)`
-12. On **rendered application**:
-    - The final pump selects the complete buffer but does not yet report it applied
-    - The mesh's chained `onAfterRender` hook acknowledges that THREE consumed the pending attribute ranges and completed a draw with the selected buffer
-    - Upgrade `info` from `sched` to `up`, record `applyMs` (resolve→draw) and the monotonic completion event, then end the profiler pass
-    - If the ordering is superseded, cancelled, demoted, released, or disposed before that draw, end the pass still labeled `sched` and do not record a completion
-13. On **reject** (timeout or worker error):
-    - End the profiler pass (unless ownership was already transferred to an accepted ordering)
-    - Log error
-    - Clear `inFlight`
-    - Drain `resortQueued` even on failure (bounded: only a real commit sets `resortQueued`, so a persistently failing worker cannot loop)
+1. Build the job (`sortJob`): the node's `state` (from THIS coordinator's node map), its generation, the reason, and a fresh `modelView = inverse(camera.matrixWorld) × mesh.matrixWorld` (both matrices refreshed: they can be stale when a commit fires before the next frame). No node or camera: release a held draw and return
+2. Select the first ready producer that accepts the job (`selectSortProducer`). The worker is ready only once `workerInitState === 'ready'`: `api` is wrapped BEFORE `initializeWithGuard` is awaited, so a live handle is not a ready worker. None: release a held draw and return, so `recordSortPose` never stamps a pose for a sort that never ran (which would silence the per-frame `!lastSortAxis` recovery dispatch)
+3. Already `inFlight`: set `resortQueued = true` and return
+4. Set `inFlight = true`, record the pose (`recordSortPose`, the model-view z-row), and begin a detached profiler pass whose duration is the dispatch→applied round trip
+5. Run the producer. The worker's `run` is `withTimeout('depth-sort', api.sort(...), 30s)`: a worker that CRASHES mid-session leaves the Comlink RPC pending forever, and a stuck `inFlight` is unrecoverable, so the timeout routes through `failSort`, which clears `inFlight` and drains the queue. The GPU producer answers synchronously
+6. **Settle** (`settleSort`, the same for every producer):
+   - Clear `inFlight`
+   - **Stale-drop**: stage only when the outcome's generation is the node's current one, it covers the committed count, AND `hasCommittedData(mesh)` (the LOD demotion signal)
+   - Set profiler metadata (`kernelMs`, `boundaryMs`, `queueMs`, and an `info` label: ordering bytes `sched`, or `GPU sort`)
+   - Stage through the node's apply path with lifecycle callbacks (`orderingApplyHooks(c)` plus, with a profiler session, `onApplied` / `onAbandoned`): `writeSortedIndexOrdering(..., { adoptOrdering: true })` for a host array (on WebGPU a capacity-backed result becomes the inactive array without a second CPU copy), `writeSortedTriangleOrdering` for mesh, `writeDeviceSortedIndexOrdering` for a device writer (then pumped at once)
+   - Hand the profiler session to those callbacks and request the bootstrap frame; with nothing staged, end the pass and release a held draw for the current population (`closeUnstagedPass`)
+   - Drain `resortQueued` (`drainQueuedResort`), except for a demoted node
+7. On **rendered application**:
+   - The final pump selects the complete buffer but does not yet report it applied
+   - The mesh's chained `onAfterRender` hook acknowledges that THREE consumed the pending attribute ranges and completed a draw with the selected buffer
+   - Upgrade `info` from `sched` to `up`, record `applyMs` (resolve→draw) and the monotonic completion event, then end the profiler pass
+   - If the ordering is superseded, cancelled, demoted, released, or disposed before that draw, end the pass still labeled `sched` and do not record a completion
+8. On **reject** (`failSort`: a timeout, a worker error, or a throw from a post-handoff step):
+   - Log the error and clear `inFlight`
+   - Close the pass and release a held draw unless an ordering was already staged (it owns both then)
+   - Drain `resortQueued` even on failure (bounded: only a real commit sets `resortQueued`, so a persistently failing producer cannot loop)
 
 ### Chunked Ordering Apply (Perf Lever L8)
 

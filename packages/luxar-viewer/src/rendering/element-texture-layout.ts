@@ -78,6 +78,13 @@ export interface ElementTextureLayout {
   readonly widthDefine: string;
   /** Remediation hint appended to the capacity-clamp warning. */
   readonly clampHint: string;
+  /**
+   * Where an element's depth-sort center sits in its texels: the xyz of texel
+   * 0, or the midpoint of texels 0 and 1 (a line segment's endpoints). The
+   * commit paths hand the SortWorker the same centers, and the GPU depth sort
+   * (`rendering/gpu-depth-sort/`) reads them from the texture by this rule.
+   */
+  readonly sortCenter: 'texel0' | 'midpoint01';
 }
 
 /** Preferred (and maximum) element-texture width in texels. */
@@ -346,6 +353,7 @@ export const SPLAT_TEXTURE_LAYOUT: ElementTextureLayout = {
   widthDefine: 'LUXAR_SPLAT_TEX_W',
   clampHint:
     'Repartition the dataset (e.g. `luxar gsplat lod --recipe tiles`) to render every splat.',
+  sortCenter: 'texel0',
 };
 
 /** Floats per splat row in the texture's backing store. */
@@ -368,6 +376,7 @@ export const POINT_TEXTURE_LAYOUT: ElementTextureLayout = {
   label: 'point',
   widthDefine: 'LUXAR_POINT_TEX_W',
   clampHint: 'Split the dataset into multiple nodes to render every point.',
+  sortCenter: 'texel0',
 };
 
 /** Floats per point row in the texture's backing store. */
@@ -390,6 +399,7 @@ export const LINE_TEXTURE_LAYOUT: ElementTextureLayout = {
   label: 'segment',
   widthDefine: 'LUXAR_LINE_TEX_W',
   clampHint: 'Split the dataset into multiple nodes to render every segment.',
+  sortCenter: 'midpoint01',
 };
 
 /** Floats per segment row in the texture's backing store. */

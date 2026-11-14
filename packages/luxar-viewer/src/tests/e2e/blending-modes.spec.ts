@@ -8,6 +8,7 @@
  */
 
 import { test, expect } from './fixtures';
+import { allNodesBackToFront, anyNodeSorted, drawnOrderingStates } from './drawn-ordering';
 import {
   waitForLuxarReady,
   waitForPointsLoaded,
@@ -749,83 +750,16 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
 
     // The sort lands asynchronously after the commit: wait until the
     // permutation departs from identity.
-    await page.waitForFunction(
-      () => {
-        const debug = (window as unknown as { __luxarDebug?: { scene?: unknown } }).__luxarDebug;
-        if (!debug?.scene) return false;
-        let sorted = false;
-        (debug.scene as { traverse: (cb: (obj: unknown) => void) => void }).traverse((obj) => {
-          const o = obj as {
-            userData?: { nodeType?: string; visibleSplatCount?: number };
-            geometry?: {
-              attributes?: {
-                aSortedIndex?: { array?: ArrayLike<number> };
-                aSortedIndexB?: { array?: ArrayLike<number> };
-              };
-              userData?: { sortedIndexSlot?: 0 | 1 };
-            };
-          };
-          if (o.userData?.nodeType !== 'gsplats') return;
-          const arr =
-            o.geometry?.userData?.sortedIndexSlot === 1
-              ? o.geometry?.attributes?.aSortedIndexB?.array
-              : o.geometry?.attributes?.aSortedIndex?.array;
-          const count = o.userData?.visibleSplatCount ?? 0;
-          if (!arr || count < 2) return;
-          for (let i = 0; i < count; i++) {
-            if (arr[i] !== i) {
-              sorted = true;
-              return;
-            }
-          }
-        });
-        return sorted;
-      },
-      undefined,
-      { timeout: 30000 }
-    );
+    await expect.poll(() => anyNodeSorted(page, 'gsplats'), { timeout: 30000 }).toBe(true);
 
     // Assert the applied permutation is back-to-front: view z of the
     // drawn splats (splat-texture centers under modelView) never
     // decreases along the instance order.
-    const monotone = await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      const results: Array<{ ordering: number[]; viewZs: number[]; ok: boolean }> = [];
-      debug.scene.traverse((obj: any) => {
-        if (obj.userData?.nodeType !== 'gsplats') return;
-        const count = obj.userData?.visibleSplatCount ?? 0;
-        const arr =
-          obj.geometry?.userData?.sortedIndexSlot === 1
-            ? obj.geometry?.attributes?.aSortedIndexB?.array
-            : obj.geometry?.attributes?.aSortedIndex?.array;
-        const texData = obj.geometry?.userData?.elementTexture?.image?.data;
-        if (!arr || !texData || count < 2) return;
-        const mwi = debug.camera.matrixWorldInverse.elements;
-        const mw = obj.matrixWorld.elements;
-        // modelView = matrixWorldInverse × matrixWorld (column-major).
-        const viewZof = (x: number, y: number, z: number) => {
-          const wx = mw[0] * x + mw[4] * y + mw[8] * z + mw[12];
-          const wy = mw[1] * x + mw[5] * y + mw[9] * z + mw[13];
-          const wz = mw[2] * x + mw[6] * y + mw[10] * z + mw[14];
-          return mwi[2] * wx + mwi[6] * wy + mwi[10] * wz + mwi[14];
-        };
-        const ordering: number[] = [];
-        const viewZs: number[] = [];
-        let ok = true;
-        let prev = -Infinity;
-        for (let j = 0; j < count; j++) {
-          const idx = arr[j];
-          ordering.push(idx);
-          const zv = viewZof(texData[idx * 16], texData[idx * 16 + 1], texData[idx * 16 + 2]);
-          viewZs.push(zv);
-          // Small epsilon: equal-depth splats share a key bucket.
-          if (zv < prev - 1e-4) ok = false;
-          prev = Math.max(prev, zv);
-        }
-        results.push({ ordering, viewZs, ok });
-      });
-      return results;
-    });
+    const monotone = (await drawnOrderingStates(page, 'gsplats')).map((s) => ({
+      ordering: s.ordering,
+      viewZs: s.viewZs,
+      ok: s.backToFront,
+    }));
     expect(monotone.length).toBeGreaterThan(0);
     for (const r of monotone) {
       expect(r.ok, `ordering ${r.ordering} viewZs ${r.viewZs} not back-to-front`).toBe(true);
@@ -889,44 +823,6 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
     expect(greenOverRed).toBeGreaterThan(redOverGreen);
   });
 
-  /** In-page predicate: every gsplats node's applied `aSortedIndex`
-   *  permutation is view-z monotone (back-to-front) under the CURRENT
-   *  camera pose. Serialized into waitForFunction, so it must be
-   *  self-contained. */
-  const orderingIsBackToFront = () => {
-    const debug = (window as unknown as { __luxarDebug?: any }).__luxarDebug;
-    if (!debug?.scene) return false;
-    let checked = 0;
-    let allOk = true;
-    debug.scene.traverse((obj: any) => {
-      if (obj.userData?.nodeType !== 'gsplats') return;
-      const count = obj.userData?.visibleSplatCount ?? 0;
-      const arr =
-        obj.geometry?.userData?.sortedIndexSlot === 1
-          ? obj.geometry?.attributes?.aSortedIndexB?.array
-          : obj.geometry?.attributes?.aSortedIndex?.array;
-      const texData = obj.geometry?.userData?.elementTexture?.image?.data;
-      if (!arr || !texData || count < 2) return;
-      checked++;
-      const mwi = debug.camera.matrixWorldInverse.elements;
-      const mw = obj.matrixWorld.elements;
-      let prev = -Infinity;
-      for (let j = 0; j < count; j++) {
-        const idx = arr[j];
-        const x = texData[idx * 16];
-        const y = texData[idx * 16 + 1];
-        const z = texData[idx * 16 + 2];
-        const wx = mw[0] * x + mw[4] * y + mw[8] * z + mw[12];
-        const wy = mw[1] * x + mw[5] * y + mw[9] * z + mw[13];
-        const wz = mw[2] * x + mw[6] * y + mw[10] * z + mw[14];
-        const zv = mwi[2] * wx + mwi[6] * wy + mwi[10] * wz + mwi[14];
-        if (zv < prev - 1e-4) allOk = false;
-        prev = Math.max(prev, zv);
-      }
-    });
-    return checked > 0 && allOk;
-  };
-
   test('camera orbit re-sorts — ordering settles back-to-front from every angle (Phase 3)', async ({
     page,
   }) => {
@@ -934,7 +830,7 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
     await waitForLuxarReady(page);
     await waitForGSplatsCommitted(page);
     // Settle the commit-time sort first (the Phase-2 behavior).
-    await page.waitForFunction(orderingIsBackToFront, undefined, { timeout: 30000 });
+    await expect.poll(() => allNodesBackToFront(page, 'gsplats'), { timeout: 30000 }).toBe(true);
 
     // Orbit in three large steps (each far past the 3° threshold). For
     // each: the profiler's Depth Sort pass count MUST increase (a
@@ -975,7 +871,7 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
         sortsBefore,
         { timeout: 15000 }
       );
-      await page.waitForFunction(orderingIsBackToFront, undefined, { timeout: 15000 });
+      await expect.poll(() => allNodesBackToFront(page, 'gsplats'), { timeout: 15000 }).toBe(true);
     }
 
     const errors = await getWebGLErrors(page);
@@ -991,27 +887,19 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
     // Give any (buggy) async sort a chance to land before asserting.
     await waitForNextRender(page, 10);
 
-    const readState = () =>
-      page.evaluate(() => {
-        const debug = (window as unknown as { __luxarDebug?: any }).__luxarDebug;
-        const nodes: Array<{ identity: boolean; count: number }> = [];
-        debug.scene.traverse((obj: any) => {
-          if (obj.userData?.nodeType !== 'gsplats') return;
-          const count = obj.userData?.visibleSplatCount ?? 0;
-          const arr =
-            obj.geometry?.userData?.sortedIndexSlot === 1
-              ? obj.geometry?.attributes?.aSortedIndexB?.array
-              : obj.geometry?.attributes?.aSortedIndex?.array;
-          if (!arr || count < 1) return;
-          let identity = true;
-          for (let i = 0; i < count; i++) {
-            if (arr[i] !== i) identity = false;
-          }
-          nodes.push({ identity, count });
-        });
-        const sorts = debug.getSceneLoader().getProfiler().getDepthSortTimings().count;
-        return { nodes, sorts };
-      });
+    const readState = async () => ({
+      nodes: (await drawnOrderingStates(page, 'gsplats', 1)).map((s) => ({
+        identity: s.identity,
+        count: s.count,
+      })),
+      sorts: await page.evaluate(
+        () =>
+          (window as unknown as { __luxarDebug?: any }).__luxarDebug
+            .getSceneLoader()
+            .getProfiler()
+            .getDepthSortTimings().count as number
+      ),
+    });
 
     const afterLoad = await readState();
     expect(afterLoad.nodes.length).toBeGreaterThan(0);
@@ -1110,84 +998,17 @@ test.describe('Points normal mode depth sorting', () => {
 
     // The sort lands asynchronously after the commit: wait until the
     // permutation departs from identity.
-    await page.waitForFunction(
-      () => {
-        const debug = (window as unknown as { __luxarDebug?: { scene?: unknown } }).__luxarDebug;
-        if (!debug?.scene) return false;
-        let sorted = false;
-        (debug.scene as { traverse: (cb: (obj: unknown) => void) => void }).traverse((obj) => {
-          const o = obj as {
-            userData?: { nodeType?: string; visiblePointCount?: number };
-            geometry?: {
-              attributes?: {
-                aSortedIndex?: { array?: ArrayLike<number> };
-                aSortedIndexB?: { array?: ArrayLike<number> };
-              };
-              userData?: { sortedIndexSlot?: 0 | 1 };
-            };
-          };
-          if (o.userData?.nodeType !== 'points') return;
-          const arr =
-            o.geometry?.userData?.sortedIndexSlot === 1
-              ? o.geometry?.attributes?.aSortedIndexB?.array
-              : o.geometry?.attributes?.aSortedIndex?.array;
-          const count = o.userData?.visiblePointCount ?? 0;
-          if (!arr || count < 2) return;
-          for (let i = 0; i < count; i++) {
-            if (arr[i] !== i) {
-              sorted = true;
-              return;
-            }
-          }
-        });
-        return sorted;
-      },
-      undefined,
-      { timeout: 30000 }
-    );
+    await expect.poll(() => anyNodeSorted(page, 'points'), { timeout: 30000 }).toBe(true);
 
     // Assert the applied permutation is back-to-front: view z of the
     // drawn points (point-texture positions under modelView) never
     // decreases along the instance order. Point texel layout: 3 texels
     // (12 floats) per point, texel0.xyz = position.
-    const monotone = await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      const results: Array<{ ordering: number[]; viewZs: number[]; ok: boolean }> = [];
-      debug.scene.traverse((obj: any) => {
-        if (obj.userData?.nodeType !== 'points') return;
-        const count = obj.userData?.visiblePointCount ?? 0;
-        const arr =
-          obj.geometry?.userData?.sortedIndexSlot === 1
-            ? obj.geometry?.attributes?.aSortedIndexB?.array
-            : obj.geometry?.attributes?.aSortedIndex?.array;
-        const texData = obj.geometry?.userData?.elementTexture?.image?.data;
-        if (!arr || !texData || count < 2) return;
-        const mwi = debug.camera.matrixWorldInverse.elements;
-        const mw = obj.matrixWorld.elements;
-        // modelView = matrixWorldInverse × matrixWorld (column-major).
-        const viewZof = (x: number, y: number, z: number) => {
-          const wx = mw[0] * x + mw[4] * y + mw[8] * z + mw[12];
-          const wy = mw[1] * x + mw[5] * y + mw[9] * z + mw[13];
-          const wz = mw[2] * x + mw[6] * y + mw[10] * z + mw[14];
-          return mwi[2] * wx + mwi[6] * wy + mwi[10] * wz + mwi[14];
-        };
-        const ordering: number[] = [];
-        const viewZs: number[] = [];
-        let ok = true;
-        let prev = -Infinity;
-        for (let j = 0; j < count; j++) {
-          const idx = arr[j];
-          ordering.push(idx);
-          const zv = viewZof(texData[idx * 12], texData[idx * 12 + 1], texData[idx * 12 + 2]);
-          viewZs.push(zv);
-          // Small epsilon: equal-depth points share a key bucket.
-          if (zv < prev - 1e-4) ok = false;
-          prev = Math.max(prev, zv);
-        }
-        results.push({ ordering, viewZs, ok });
-      });
-      return results;
-    });
+    const monotone = (await drawnOrderingStates(page, 'points')).map((s) => ({
+      ordering: s.ordering,
+      viewZs: s.viewZs,
+      ok: s.backToFront,
+    }));
     expect(monotone.length).toBeGreaterThan(0);
     for (const r of monotone) {
       expect(r.ok, `points ordering ${r.ordering} viewZs ${r.viewZs} not back-to-front`).toBe(true);
@@ -1281,18 +1102,16 @@ test.describe('Points and Lines volumetric depth sorting', () => {
    * back-to-front ordering: the applied permutation departs from identity
    * AND view z is non-decreasing along it.
    *
-   * `stride` is the node's element-texture stride in floats: 12 for points,
-   * 24 for lines. The monotonicity check must run on the SAME key the
-   * SortWorker was handed, so it reconstructs that key from the texture —
-   * texel0.xyz (position) for points, and the mean of texel0.xyz (segment
-   * start) and texel1.xyz (segment end) for lines, which is the midpoint the
-   * lines centers provider registers.
+   * The monotonicity check runs on the SAME key the sort was handed
+   * (`drawnOrderingStates` reconstructs it from the texture): texel0.xyz
+   * (position) for points, and the mean of texel0.xyz (segment start) and
+   * texel1.xyz (segment end) for lines, the midpoint the lines centers
+   * provider registers.
    */
   async function expectVolumetricBackToFront(
     page: import('@playwright/test').Page,
     fixture: string,
-    nodeType: 'points' | 'lines',
-    stride: number
+    nodeType: 'points' | 'lines'
   ): Promise<void> {
     await page.goto(`/?src=${fixture}&debug&dpr=1`);
     await waitForLuxarReady(page);
@@ -1334,93 +1153,14 @@ test.describe('Points and Lines volumetric depth sorting', () => {
 
     // Non-identity: times out against a coordinator that treats volumetric
     // as order-INDEPENDENT for this node type (the regression this guards).
-    await page.waitForFunction(
-      (t) => {
-        const debug = (window as unknown as { __luxarDebug?: { scene?: unknown } }).__luxarDebug;
-        if (!debug?.scene) return false;
-        let sorted = false;
-        (debug.scene as { traverse: (cb: (obj: unknown) => void) => void }).traverse((obj) => {
-          const o = obj as {
-            userData?: {
-              nodeType?: string;
-              visiblePointCount?: number;
-              visibleSegmentCount?: number;
-            };
-            geometry?: {
-              attributes?: {
-                aSortedIndex?: { array?: ArrayLike<number> };
-                aSortedIndexB?: { array?: ArrayLike<number> };
-              };
-              userData?: { sortedIndexSlot?: 0 | 1 };
-            };
-          };
-          if (o.userData?.nodeType !== t) return;
-          const arr =
-            o.geometry?.userData?.sortedIndexSlot === 1
-              ? o.geometry?.attributes?.aSortedIndexB?.array
-              : o.geometry?.attributes?.aSortedIndex?.array;
-          const count = o.userData?.visiblePointCount ?? o.userData?.visibleSegmentCount ?? 0;
-          if (!arr || count < 2) return;
-          for (let i = 0; i < count; i++) {
-            if (arr[i] !== i) {
-              sorted = true;
-              return;
-            }
-          }
-        });
-        return sorted;
-      },
-      nodeType,
-      { timeout: 30000 }
-    );
+    await expect.poll(() => anyNodeSorted(page, nodeType), { timeout: 30000 }).toBe(true);
 
     // …and the permutation it settled on is genuinely back-to-front.
-    const monotone = await page.evaluate(
-      ({ t, s, mid }) => {
-        const debug = (window as any).__luxarDebug;
-        const results: Array<{ ordering: number[]; viewZs: number[]; ok: boolean }> = [];
-        debug.scene.traverse((obj: any) => {
-          if (obj.userData?.nodeType !== t) return;
-          const count = obj.userData?.visiblePointCount ?? obj.userData?.visibleSegmentCount ?? 0;
-          const arr =
-            obj.geometry?.userData?.sortedIndexSlot === 1
-              ? obj.geometry?.attributes?.aSortedIndexB?.array
-              : obj.geometry?.attributes?.aSortedIndex?.array;
-          const texData = obj.geometry?.userData?.elementTexture?.image?.data;
-          if (!arr || !texData || count < 2) return;
-          const mwi = debug.camera.matrixWorldInverse.elements;
-          const mw = obj.matrixWorld.elements;
-          const viewZof = (x: number, y: number, z: number) => {
-            const wx = mw[0] * x + mw[4] * y + mw[8] * z + mw[12];
-            const wy = mw[1] * x + mw[5] * y + mw[9] * z + mw[13];
-            const wz = mw[2] * x + mw[6] * y + mw[10] * z + mw[14];
-            return mwi[2] * wx + mwi[6] * wy + mwi[10] * wz + mwi[14];
-          };
-          const ordering: number[] = [];
-          const viewZs: number[] = [];
-          let ok = true;
-          let prev = -Infinity;
-          for (let j = 0; j < count; j++) {
-            const idx = arr[j];
-            ordering.push(idx);
-            const b = idx * s;
-            // The registered sort key: texel0.xyz, or the texel0/texel1
-            // midpoint for lines (see the doc comment above).
-            const kx = mid ? (texData[b] + texData[b + 4]) / 2 : texData[b];
-            const ky = mid ? (texData[b + 1] + texData[b + 5]) / 2 : texData[b + 1];
-            const kz = mid ? (texData[b + 2] + texData[b + 6]) / 2 : texData[b + 2];
-            const zv = viewZof(kx, ky, kz);
-            viewZs.push(zv);
-            // Small epsilon: equal-depth elements share a key bucket.
-            if (zv < prev - 1e-4) ok = false;
-            prev = Math.max(prev, zv);
-          }
-          results.push({ ordering, viewZs, ok });
-        });
-        return results;
-      },
-      { t: nodeType, s: stride, mid: nodeType === 'lines' }
-    );
+    const monotone = (await drawnOrderingStates(page, nodeType)).map((s) => ({
+      ordering: s.ordering,
+      viewZs: s.viewZs,
+      ok: s.backToFront,
+    }));
     expect(monotone.length).toBeGreaterThan(0);
     for (const r of monotone) {
       expect(
@@ -1434,11 +1174,11 @@ test.describe('Points and Lines volumetric depth sorting', () => {
   }
 
   test('volumetric POINTS settle on a back-to-front ordering', async ({ page }) => {
-    await expectVolumetricBackToFront(page, POINTS_VOLUMETRIC_REVERSED_FIXTURE, 'points', 12);
+    await expectVolumetricBackToFront(page, POINTS_VOLUMETRIC_REVERSED_FIXTURE, 'points');
   });
 
   test('volumetric LINES settle on a back-to-front ordering', async ({ page }) => {
-    await expectVolumetricBackToFront(page, LINES_VOLUMETRIC_REVERSED_FIXTURE, 'lines', 24);
+    await expectVolumetricBackToFront(page, LINES_VOLUMETRIC_REVERSED_FIXTURE, 'lines');
   });
 });
 
@@ -1652,76 +1392,13 @@ test.describe('GSplat volumetric mode (emission–absorption)', () => {
     await waitForLuxarReady(page);
     await waitCommitted(page);
 
-    await page.waitForFunction(
-      () => {
-        const debug = (window as unknown as { __luxarDebug?: { scene?: unknown } }).__luxarDebug;
-        if (!debug?.scene) return false;
-        let sorted = false;
-        (debug.scene as { traverse: (cb: (obj: unknown) => void) => void }).traverse((obj) => {
-          const o = obj as {
-            userData?: { nodeType?: string; visibleSplatCount?: number };
-            geometry?: {
-              attributes?: {
-                aSortedIndex?: { array?: ArrayLike<number> };
-                aSortedIndexB?: { array?: ArrayLike<number> };
-              };
-              userData?: { sortedIndexSlot?: 0 | 1 };
-            };
-          };
-          if (o.userData?.nodeType !== 'gsplats') return;
-          const arr =
-            o.geometry?.userData?.sortedIndexSlot === 1
-              ? o.geometry?.attributes?.aSortedIndexB?.array
-              : o.geometry?.attributes?.aSortedIndex?.array;
-          const count = o.userData?.visibleSplatCount ?? 0;
-          if (!arr || count < 2) return;
-          for (let i = 0; i < count; i++) {
-            if (arr[i] !== i) {
-              sorted = true;
-              return;
-            }
-          }
-        });
-        return sorted;
-      },
-      undefined,
-      { timeout: 30000 }
-    );
+    await expect.poll(() => anyNodeSorted(page, 'gsplats'), { timeout: 30000 }).toBe(true);
 
-    const monotone = await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      const results: Array<{ ordering: number[]; ok: boolean }> = [];
-      debug.scene.traverse((obj: any) => {
-        if (obj.userData?.nodeType !== 'gsplats') return;
-        const count = obj.userData?.visibleSplatCount ?? 0;
-        const arr =
-          obj.geometry?.userData?.sortedIndexSlot === 1
-            ? obj.geometry?.attributes?.aSortedIndexB?.array
-            : obj.geometry?.attributes?.aSortedIndex?.array;
-        const texData = obj.geometry?.userData?.elementTexture?.image?.data;
-        if (!arr || !texData || count < 2) return;
-        const mwi = debug.camera.matrixWorldInverse.elements;
-        const mw = obj.matrixWorld.elements;
-        const ordering: number[] = [];
-        let ok = true;
-        let prev = -Infinity;
-        for (let j = 0; j < count; j++) {
-          const idx = arr[j];
-          ordering.push(idx);
-          const x = texData[idx * 16];
-          const y = texData[idx * 16 + 1];
-          const z = texData[idx * 16 + 2];
-          const wx = mw[0] * x + mw[4] * y + mw[8] * z + mw[12];
-          const wy = mw[1] * x + mw[5] * y + mw[9] * z + mw[13];
-          const wz = mw[2] * x + mw[6] * y + mw[10] * z + mw[14];
-          const zv = mwi[2] * wx + mwi[6] * wy + mwi[10] * wz + mwi[14];
-          if (zv < prev - 1e-4) ok = false;
-          prev = Math.max(prev, zv);
-        }
-        results.push({ ordering, ok });
-      });
-      return results;
-    });
+    const monotone = (await drawnOrderingStates(page, 'gsplats')).map((s) => ({
+      ordering: s.ordering,
+      viewZs: s.viewZs,
+      ok: s.backToFront,
+    }));
     expect(monotone.length).toBeGreaterThan(0);
     for (const r of monotone) {
       expect(r.ok, `volumetric ordering ${r.ordering} not back-to-front`).toBe(true);
