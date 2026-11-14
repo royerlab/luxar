@@ -343,6 +343,36 @@ describe('native WebGPU ordering producer', () => {
     geometry.dispose();
   });
 
+  it('disables a GPU producer that throws during dispatch and uses the worker thereafter', async () => {
+    configureRendererBackendPolicy('webgpu-native');
+    const fake = fakeBackend();
+    configureGpuOrderProducer({ backend: fake.backend } as unknown as Renderer);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const { geometry, texture, mesh, state, coordinator } = scene();
+    texture.onUpdate?.(texture);
+    const sort = vi.fn().mockResolvedValue(null);
+    workerHost.api = { sort } as unknown as NonNullable<typeof workerHost.api>;
+    workerHost.workerInitState = 'ready';
+
+    // The resource was valid when accepts() ran, but a geometry lookup fails
+    // while run() checks it again.
+    const getAttribute = geometry.getAttribute.bind(geometry);
+    let lookups = 0;
+    vi.spyOn(geometry, 'getAttribute').mockImplementation((name) => {
+      if (name === 'aSortedIndex' && ++lookups === 2) throw new Error('device lost');
+      return getAttribute(name);
+    });
+
+    scheduleSort(coordinator, mesh, mesh.uuid, true);
+    expect(sort).toHaveBeenCalledOnce();
+    expect(gpuSortProducer.ready(coordinator)).toBe(false);
+    await vi.waitFor(() => expect(state.inFlight).toBe(false));
+
+    scheduleSort(coordinator, mesh, mesh.uuid, true);
+    expect(sort).toHaveBeenCalledTimes(2);
+    geometry.dispose();
+  });
+
   it('clears a staged sort pose when the GPU write fails without a ready worker', async () => {
     configureRendererBackendPolicy('webgpu-native');
     const fake = fakeBackend();
