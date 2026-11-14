@@ -315,6 +315,36 @@ func TestDialHostResolvesAWildcardBind(t *testing.T) {
 	}
 }
 
+func TestControlTokenDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name, host, explicit, optOut string
+		wantToken                    bool
+	}{
+		{"loopback", "127.0.0.1", "", "", false},
+		{"wildcard", "0.0.0.0", "", "", true},
+		{"interface", "192.0.2.10", "", "", true},
+		{"explicit", "0.0.0.0", "chosen", "", true},
+		{"off", "0.0.0.0", "off", "", false},
+		{"opt out", "0.0.0.0", "", "1", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setTestStateHome(t)
+			t.Setenv("LUXAR_LAUNCHER_CONTROL_TOKEN", tc.explicit)
+			t.Setenv("LUXAR_LAUNCHER_NO_CONTROL_TOKEN", tc.optOut)
+			token, err := controlToken(t.TempDir(), tc.host)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (token != "") != tc.wantToken {
+				t.Fatalf("token = %q, wantToken %v", token, tc.wantToken)
+			}
+			if tc.explicit == "chosen" && token != "chosen" {
+				t.Fatalf("explicit token = %q", token)
+			}
+		})
+	}
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 func expectClose(t *testing.T, conn *websocket.Conn, want websocket.StatusCode) {

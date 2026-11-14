@@ -31,17 +31,41 @@ started listening would be a surprise nobody asked for:
 # Loopback only — useful for a second browser window on the same machine.
 LUXAR_LAUNCHER_CONTROL=1 ./luxar-launcher
 
-# A tablet on the LAN. The token is strongly advised: without one, anything
-# that can reach this machine can drive the display.
+# A tablet on the LAN. The launcher generates a token and keeps it across starts.
 LUXAR_LAUNCHER_CONTROL=1 \
   LUXAR_LAUNCHER_HOST=0.0.0.0 \
-  LUXAR_LAUNCHER_CONTROL_TOKEN=$(openssl rand -hex 8) \
+  LUXAR_LAUNCHER_ADVERTISE_HOST=kiosk.local \
+  LUXAR_LAUNCHER_PORT=8123 \
   ./luxar-launcher
 ```
 
-The app prints the touch-panel URL on stderr. `LUXAR_LAUNCHER_HOST` resolves a
-wildcard bind to a concrete address before printing, because `http://0.0.0.0:PORT`
-is not something a tablet can dial.
+The touch-panel URL is printed on stderr and written to a private
+`<app>.control-panel.txt` file beside the `.app` or portable folder. The generated
+token is saved in `<app>.control-token.txt`. If that location is read-only (for
+example, a mounted DMG or a translocated macOS app), the launcher writes under
+`~/Library/Application Support/luxar/<app>/` on macOS or
+`$XDG_STATE_HOME/luxar/<app>/` on Linux (default `~/.local/state`). It prints the
+location actually used. If neither location is writable, the relay still starts
+with an ephemeral token and prints the panel URL; save that URL for this launch.
+Deleting the token file rotates the token on the next launch. Keep both files
+private: the panel URL grants control of the display. Neither file is inside
+the HTTP-served `viewer` or `data` directory. Programmatic clients such as
+`luxar.control.Viewer` must pass the saved token when connecting off loopback.
+
+`LUXAR_LAUNCHER_HOST` chooses the bind address; a wildcard bind resolves to a
+concrete address in the URLs. `LUXAR_LAUNCHER_ADVERTISE_HOST` instead puts a
+validated hostname or IP address in the panel, viewer and data URLs while the
+listener still uses `LUXAR_LAUNCHER_HOST`. `LUXAR_LAUNCHER_PORT` pins the port;
+without it, the launcher chooses a free port. A busy pinned port is an error.
+With both a pinned port and a persisted token, the panel URL survives restarts.
+The embedded viewer and browser fallback use a local address to load the scene,
+so a tablet-only hostname does not stop the kiosk display from starting.
+
+Loopback control has no token by default. To set a token explicitly, use
+`LUXAR_LAUNCHER_CONTROL_TOKEN=<secret>`. To disable the token on a LAN bind,
+use `LUXAR_LAUNCHER_CONTROL_TOKEN=off` or
+`LUXAR_LAUNCHER_NO_CONTROL_TOKEN=1`; anyone who can reach the relay can then
+control the display. The URL file is still written for Finder launches.
 
 `hub.go` is the relay, and it is the **second** implementation of one — the
 first is `luxar.cli.control_hub`. Everything the two must agree on (roles, the
