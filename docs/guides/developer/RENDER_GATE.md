@@ -36,7 +36,10 @@ those fields.
 
 Use `--stock --headed` to measure the browser path users run. `--stock` omits
 the gate's GPU blocklist, unsafe WebGPU, developer feature, ANGLE/Vulkan, and
-Linux headless helper flags. Headed mode is needed for stock Linux Chrome:
+Linux `--no-sandbox` and `--disable-dev-shm-usage` launch-stability flags.
+On hosts that need those flags to launch Chrome, restore them with
+`--chrome-args --no-sandbox,--disable-dev-shm-usage`. Headed mode is needed
+for stock Linux Chrome:
 headless Chrome otherwise uses SwiftShader, which the gate refuses to measure.
 On Linux with NVIDIA, stock WebGPU requires Chrome 147 or newer, Wayland, and
 the proprietary driver; stock WebGL uses ANGLE on OpenGL. Chrome chooses the
