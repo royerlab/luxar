@@ -7,8 +7,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/coder/websocket"
@@ -45,22 +47,21 @@ func TestAdvertisedHostValidation(t *testing.T) {
 }
 
 func TestLocalViewerURLKeepsDataSameOrigin(t *testing.T) {
-	public := "http://kiosk.local:8123/viewer/?src=http://kiosk.local:8123/data&control&controlToken=abc"
 	for _, tc := range []struct{ bind, want string }{
 		{"0.0.0.0", "127.0.0.1"},
 		{"::", "[::1]"},
 		{"192.0.2.10", "192.0.2.10"},
 	} {
-		got := localViewerURL(public, tc.bind)
+		got := viewerURLForOrigin("http://"+net.JoinHostPort(localHost(tc.bind), "8123"), 2048, true, "abcdefgh")
 		parsed, err := url.Parse(got)
 		if err != nil {
 			t.Fatal(err)
 		}
 		origin := "http://" + net.JoinHostPort(strings.Trim(tc.want, "[]"), "8123")
 		if parsed.Scheme+"://"+parsed.Host != origin || parsed.Query().Get("src") != origin+"/data" {
-			t.Fatalf("localViewerURL(%q) = %q; want same-origin %s", tc.bind, got, origin)
+			t.Fatalf("local URL for %q = %q; want same-origin %s", tc.bind, got, origin)
 		}
-		if parsed.Query().Get("controlToken") != "abc" {
+		if parsed.Query().Get("controlToken") != "abcdefgh" {
 			t.Fatalf("token lost: %q", got)
 		}
 	}
@@ -80,7 +81,7 @@ func TestAdvertisedHostAndFixedPort(t *testing.T) {
 	t.Setenv("LUXAR_LAUNCHER_CONTROL_TOKEN", "")
 	t.Setenv("LUXAR_LAUNCHER_NO_CONTROL_TOKEN", "")
 	root := t.TempDir()
-	viewer, srv, err := startServer(root)
+	viewer, local, srv, err := startServer(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,6 +96,14 @@ func TestAdvertisedHostAndFixedPort(t *testing.T) {
 	if got := parsed.Query().Get("src"); got != "http://"+parsed.Host+"/data" {
 		t.Fatalf("data URL = %q", got)
 	}
+	localParsed, err := url.Parse(local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if localParsed.Host != net.JoinHostPort("127.0.0.1", strconv.Itoa(port)) ||
+		localParsed.Query().Get("src") != "http://"+localParsed.Host+"/data" {
+		t.Fatalf("local viewer URL is not same-origin: %q", local)
+	}
 	panelPath, _ := panelFiles(root)
 	panel, err := os.ReadFile(panelPath)
 	if err != nil {
@@ -106,7 +115,7 @@ func TestAdvertisedHostAndFixedPort(t *testing.T) {
 	if token := parsed.Query().Get("controlToken"); token == "" {
 		t.Fatal("viewer URL has no generated token")
 	}
-	if _, _, err := startServer(root); err == nil {
+	if _, _, _, err := startServer(root); err == nil {
 		t.Fatal("second server silently moved a configured port")
 	}
 	resp, err := http.Get("http://127.0.0.1:" + strconv.Itoa(port) + "/viewer/")
@@ -115,7 +124,7 @@ func TestAdvertisedHostAndFixedPort(t *testing.T) {
 	}
 	resp.Body.Close()
 	shutdownServer(srv)
-	_, restarted, err := startServer(root)
+	_, _, restarted, err := startServer(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,14 +142,14 @@ func TestInvalidConfiguredPortIsRejected(t *testing.T) {
 	for _, value := range []string{"0", "-1", "65536", "abc"} {
 		t.Run(value, func(t *testing.T) {
 			t.Setenv("LUXAR_LAUNCHER_PORT", value)
-			if _, _, err := startServer(t.TempDir()); err == nil {
+			if _, _, _, err := startServer(t.TempDir()); err == nil {
 				t.Fatal("invalid configured port was accepted")
 			}
 		})
 	}
 }
 
-func TestPanelWriteFailureClosesListener(t *testing.T) {
+func TestPanelWriteFailureUsesStateDirectory(t *testing.T) {
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -150,19 +159,192 @@ func TestPanelWriteFailureClosesListener(t *testing.T) {
 	t.Setenv("LUXAR_LAUNCHER_HOST", "127.0.0.1")
 	t.Setenv("LUXAR_LAUNCHER_PORT", strconv.Itoa(port))
 	t.Setenv("LUXAR_LAUNCHER_CONTROL", "1")
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
 	panel, _ := panelFiles(root)
 	if err := os.Mkdir(panel, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := startServer(root); err == nil {
-		t.Fatal("accepted an unwritable panel URL path")
-	}
-	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	_, _, srv, err := startServer(root)
 	if err != nil {
-		t.Fatalf("listener leaked after panel write failure: %v", err)
+		t.Fatal(err)
 	}
-	listener.Close()
+	defer shutdownServer(srv)
+	fallbackPanel, _, err := statePanelFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.ReadFile(fallbackPanel); err != nil {
+		t.Fatalf("panel URL not saved in state directory: %v", err)
+	}
+	resp, err := http.Get("http://127.0.0.1:" + strconv.Itoa(port) + "/viewer/")
+	if err != nil {
+		t.Fatalf("server stopped after panel write failure: %v", err)
+	}
+	resp.Body.Close()
+}
+
+func TestReadOnlyAppParentKeepsControlAvailable(t *testing.T) {
+	for _, host := range []string{"127.0.0.1", "0.0.0.0"} {
+		t.Run(host, func(t *testing.T) {
+			t.Setenv("LUXAR_LAUNCHER_HOST", host)
+			t.Setenv("LUXAR_LAUNCHER_CONTROL", "1")
+			t.Setenv("LUXAR_LAUNCHER_CONTROL_TOKEN", "")
+			t.Setenv("LUXAR_LAUNCHER_NO_CONTROL_TOKEN", "")
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			t.Setenv("HOME", t.TempDir())
+			parent := t.TempDir()
+			root := filepath.Join(parent, "scene")
+			if err := os.Mkdir(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(parent, 0o555); err != nil {
+				t.Fatal(err)
+			}
+			defer os.Chmod(parent, 0o700)
+			viewer, _, srv, err := startServer(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			shutdownServer(srv)
+			panel, tokenPath, err := statePanelFiles(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.ReadFile(panel); err != nil {
+				t.Fatalf("panel URL missing from state directory: %v", err)
+			}
+			if host == "0.0.0.0" {
+				token := mustReadToken(t, tokenPath)
+				if got := mustParseURL(t, viewer).Query().Get("controlToken"); got != token {
+					t.Fatalf("viewer token = %q, saved token = %q", got, token)
+				}
+				_, _, restarted, err := startServer(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				shutdownServer(restarted)
+				if got := mustReadToken(t, tokenPath); got != token {
+					t.Fatalf("token changed across restart: %q to %q", token, got)
+				}
+			}
+		})
+	}
+}
+
+func TestStateDirectoryCannotBeServed(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	t.Setenv("HOME", root)
+	if _, _, err := statePanelFiles(root); err == nil {
+		t.Fatal("accepted a control token path inside the served root")
+	}
+	if runtime.GOOS != "darwin" {
+		outside := t.TempDir()
+		link := filepath.Join(outside, "state")
+		if err := os.Symlink(root, link); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("XDG_STATE_HOME", link)
+		if _, _, err := statePanelFiles(root); err == nil {
+			t.Fatal("accepted a symlinked control token path inside the served root")
+		}
+	}
+}
+
+func mustReadToken(t *testing.T, path string) string {
+	t.Helper()
+	token, err := readControlToken(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
+}
+
+func mustParseURL(t *testing.T, value string) *url.URL {
+	t.Helper()
+	parsed, err := url.Parse(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed
+}
+
+func TestControlTokenFileValidation(t *testing.T) {
+	t.Setenv("LUXAR_LAUNCHER_CONTROL_TOKEN", "")
+	t.Setenv("LUXAR_LAUNCHER_NO_CONTROL_TOKEN", "")
+	for _, tc := range []struct {
+		name, contents string
+		mode           os.FileMode
+		want           string
+	}{
+		{"read-only file with newline", "\ufeffabcdefgh12345678\n", 0o400, "abcdefgh12345678"},
+		{"ordinary copied file", "abcdefgh12345678\n", 0o644, ""},
+		{"invalid punctuation", "abc defgh12345678", 0o600, ""},
+		{"short token", "abc", 0o600, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			_, path := panelFiles(root)
+			t.Cleanup(func() { _ = os.Remove(path) })
+			if err := os.WriteFile(path, []byte(tc.contents), tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(path, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			got, err := controlToken(root, "0.0.0.0")
+			if tc.want == "" {
+				if err == nil {
+					t.Fatalf("accepted unsafe or invalid token %q", got)
+				}
+			} else if err != nil || got != tc.want {
+				t.Fatalf("controlToken = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestConcurrentTokenCreationReusesExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token.txt")
+	type result struct {
+		token string
+		err   error
+	}
+	results := make(chan result, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	start := make(chan struct{})
+	for _, candidate := range []string{"abcdefgh12345678", "other-token"} {
+		go func(candidate string) {
+			ready.Done()
+			<-start
+			token, err := createControlToken(path, candidate)
+			results <- result{token, err}
+		}(candidate)
+	}
+	ready.Wait()
+	close(start)
+	first, second := <-results, <-results
+	if first.err != nil || second.err != nil || first.token == "" || first.token != second.token {
+		t.Fatalf("concurrent creation = %q, %v and %q, %v", first.token, first.err, second.token, second.err)
+	}
+	if saved := mustReadToken(t, path); saved != first.token {
+		t.Fatalf("saved token = %q, returned token = %q", saved, first.token)
+	}
+}
+
+func TestBracketedIPv6LoopbackNeedsNoToken(t *testing.T) {
+	t.Setenv("LUXAR_LAUNCHER_HOST", "[::1]")
+	t.Setenv("LUXAR_LAUNCHER_CONTROL_TOKEN", "")
+	t.Setenv("LUXAR_LAUNCHER_NO_CONTROL_TOKEN", "")
+	if got := bindHost(); got != "::1" {
+		t.Fatalf("bind host = %q", got)
+	}
+	if token, err := controlToken(t.TempDir(), bindHost()); err != nil || token != "" {
+		t.Fatalf("loopback token = %q, %v", token, err)
+	}
 }
 
 func TestPanelFilesOutsideMacAppAndPortableFolder(t *testing.T) {
@@ -187,7 +369,7 @@ func TestControlPanelTokenSurvivesRestartOutsideServedRoot(t *testing.T) {
 	t.Setenv("LUXAR_LAUNCHER_CONTROL_TOKEN", "")
 	t.Setenv("LUXAR_LAUNCHER_NO_CONTROL_TOKEN", "")
 
-	viewer, srv, err := startServer(root)
+	viewer, _, srv, err := startServer(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +423,7 @@ func TestControlPanelTokenSurvivesRestartOutsideServedRoot(t *testing.T) {
 	}
 	shutdownServer(srv)
 
-	_, srv2, err := startServer(root)
+	_, _, srv2, err := startServer(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +523,7 @@ func TestStartServerServesSameOriginNoCORS(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	viewerURL, srv, err := startServer(root)
+	viewerURL, _, srv, err := startServer(root)
 	if err != nil {
 		t.Fatalf("startServer: %v", err)
 	}

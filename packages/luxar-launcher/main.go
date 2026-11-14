@@ -126,7 +126,7 @@ func withCachePolicy(next http.Handler) http.Handler {
 // for.
 func bindHost() string {
 	if v := strings.TrimSpace(os.Getenv("LUXAR_LAUNCHER_HOST")); v != "" {
-		return v
+		return strings.TrimPrefix(strings.TrimSuffix(v, "]"), "[")
 	}
 	return "127.0.0.1"
 }
@@ -152,21 +152,18 @@ func dialHost(host string) string {
 	return "127.0.0.1"
 }
 
-// localViewerURL keeps the embedded display independent of DNS used by tablets.
-// The advertised origin occurs twice: in the page URL and its src data URL.
-func localViewerURL(viewerURL, bind string) string {
-	parsed, err := url.Parse(viewerURL)
-	if err != nil {
-		return viewerURL
+func isLoopbackHost(host string) bool {
+	return host == "127.0.0.1" || host == "::1" || host == "[::1]" || strings.EqualFold(host, "localhost")
+}
+
+func localHost(bind string) string {
+	if bind == "::" {
+		return "::1"
 	}
-	if bind == "0.0.0.0" || bind == "" {
-		bind = "127.0.0.1"
-	} else if bind == "::" {
-		bind = "::1"
+	if bind == "" || bind == "0.0.0.0" {
+		return "127.0.0.1"
 	}
-	from := parsed.Scheme + "://" + parsed.Host
-	to := "http://" + net.JoinHostPort(bind, parsed.Port())
-	return strings.Replace(viewerURL, from, to, 2)
+	return bind
 }
 
 var hostLabel = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
@@ -225,41 +222,88 @@ func panelFiles(root string) (string, string) {
 	return base + ".control-panel.txt", base + ".control-token.txt"
 }
 
-func controlToken(root, host string) (string, error) {
-	if os.Getenv("LUXAR_LAUNCHER_NO_CONTROL_TOKEN") == "1" || os.Getenv("LUXAR_LAUNCHER_CONTROL_TOKEN") == "off" {
-		return "", nil
+// statePanelFiles is used when a mounted or translocated app cannot write
+// beside its bundle. Keep the files outside the served resource tree.
+func statePanelFiles(root string) (string, string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", "", err
 	}
-	if token := os.Getenv("LUXAR_LAUNCHER_CONTROL_TOKEN"); token != "" {
-		if token != strings.TrimSpace(token) {
-			return "", fmt.Errorf("LUXAR_LAUNCHER_CONTROL_TOKEN must have no surrounding whitespace")
+	var state string
+	if runtime.GOOS == "darwin" {
+		state = filepath.Join(home, "Library", "Application Support")
+	} else {
+		state = os.Getenv("XDG_STATE_HOME")
+		if state == "" || !filepath.IsAbs(state) {
+			state = filepath.Join(home, ".local", "state")
 		}
-		return token, nil
 	}
-	if host == "127.0.0.1" || host == "::1" || strings.EqualFold(host, "localhost") {
-		return "", nil
+	bundle := root
+	if filepath.Base(root) == "Resources" && filepath.Base(filepath.Dir(root)) == "Contents" {
+		bundle = filepath.Dir(filepath.Dir(root))
 	}
-	_, path := panelFiles(root)
-	if info, err := os.Lstat(path); err == nil {
-		if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
-			return "", fmt.Errorf("unsafe control token file %s", path)
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return "", err
-		}
-		if token := strings.TrimSpace(string(data)); token != "" && token == string(data) {
-			return token, nil
-		}
-		return "", fmt.Errorf("invalid control token file %s", path)
-	} else if !errors.Is(err, os.ErrNotExist) {
+	dir := filepath.Join(state, "luxar", filepath.Base(bundle))
+	// An overridden state home must not put the token under the HTTP-served root.
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", "", err
+	}
+	if rel, err := filepath.Rel(rootAbs, dir); err == nil && (rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))) {
+		return "", "", fmt.Errorf("control state directory %s is inside the served root", dir)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", "", err
+	}
+	resolvedRoot, rootErr := filepath.EvalSymlinks(rootAbs)
+	resolvedDir, dirErr := filepath.EvalSymlinks(dir)
+	if rootErr != nil || dirErr != nil {
+		return "", "", fmt.Errorf("resolve control state directory: %v, %v", rootErr, dirErr)
+	}
+	if rel, err := filepath.Rel(resolvedRoot, resolvedDir); err == nil && (rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))) {
+		return "", "", fmt.Errorf("control state directory %s is inside the served root", dir)
+	}
+	return filepath.Join(dir, "control-panel.txt"), filepath.Join(dir, "control-token.txt"), nil
+}
+
+var tokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{8,128}$`)
+var errInvalidControlToken = errors.New("invalid control token file")
+
+func readControlToken(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
 		return "", err
 	}
-	bytes := make([]byte, 24)
-	if _, err := rand.Read(bytes); err != nil {
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		return "", fmt.Errorf("unsafe control token file %s; chmod 600 or delete it to rotate the token", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return "", err
 	}
-	token := base64.RawURLEncoding.EncodeToString(bytes)
+	token := strings.TrimSpace(strings.TrimPrefix(string(data), "\ufeff"))
+	if !tokenPattern.MatchString(token) {
+		return "", fmt.Errorf("%w %s; fix it or delete it to issue a new token", errInvalidControlToken, path)
+	}
+	return token, nil
+}
+
+func createControlToken(path, token string) (string, error) {
+	if info, err := os.Stat(filepath.Dir(path)); err == nil && info.Mode().Perm()&0o222 == 0 {
+		return "", fmt.Errorf("directory %s is read-only", filepath.Dir(path))
+	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		// The other launch may still be writing; wait for its complete token.
+		for i := 0; i < 20; i++ {
+			if existing, readErr := readControlToken(path); readErr == nil {
+				return existing, nil
+			} else if !errors.Is(readErr, errInvalidControlToken) {
+				return "", readErr
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		return readControlToken(path)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -275,7 +319,67 @@ func controlToken(root, host string) (string, error) {
 	return token, nil
 }
 
+func controlToken(root, host string) (string, error) {
+	if os.Getenv("LUXAR_LAUNCHER_NO_CONTROL_TOKEN") == "1" || os.Getenv("LUXAR_LAUNCHER_CONTROL_TOKEN") == "off" {
+		return "", nil
+	}
+	if token := os.Getenv("LUXAR_LAUNCHER_CONTROL_TOKEN"); token != "" {
+		if token != strings.TrimSpace(token) {
+			return "", fmt.Errorf("LUXAR_LAUNCHER_CONTROL_TOKEN must have no surrounding whitespace")
+		}
+		return token, nil
+	}
+	if isLoopbackHost(host) {
+		return "", nil
+	}
+	_, path := panelFiles(root)
+	if token, err := readControlToken(path); err == nil {
+		fmt.Fprintf(os.Stderr, "control token saved to %s\n", path)
+		return token, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	// A prior launch may have used the per-user directory while the app was
+	// translocated. Reuse that token even if the bundle has since moved.
+	_, fallback, fallbackErr := statePanelFiles(root)
+	if fallbackErr == nil {
+		if token, err := readControlToken(fallback); err == nil {
+			fmt.Fprintf(os.Stderr, "control token saved to %s\n", fallback)
+			return token, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+	}
+	bytes := make([]byte, 24)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	token := base64.RawURLEncoding.EncodeToString(bytes)
+	if saved, err := createControlToken(path, token); err == nil {
+		fmt.Fprintf(os.Stderr, "control token saved to %s\n", path)
+		return saved, nil
+	} else {
+		if _, statErr := os.Lstat(path); statErr == nil {
+			return "", err
+		}
+		fmt.Fprintf(os.Stderr, "could not save control token to %s: %v\n", path, err)
+	}
+	if fallbackErr == nil {
+		if saved, err := createControlToken(fallback, token); err == nil {
+			fmt.Fprintf(os.Stderr, "control token saved to %s\n", fallback)
+			return saved, nil
+		} else {
+			fmt.Fprintf(os.Stderr, "could not save control token to %s: %v\n", fallback, err)
+		}
+	}
+	fmt.Fprintln(os.Stderr, "warning: control token is ephemeral; save the panel URL for this launch")
+	return token, nil
+}
+
 func writePanelURL(path, panelURL string) error {
+	if info, err := os.Stat(filepath.Dir(path)); err == nil && info.Mode().Perm()&0o222 == 0 {
+		return fmt.Errorf("directory %s is read-only", filepath.Dir(path))
+	}
 	f, err := os.CreateTemp(filepath.Dir(path), ".luxar-panel-*")
 	if err != nil {
 		return err
@@ -291,45 +395,57 @@ func writePanelURL(path, panelURL string) error {
 	return os.Rename(f.Name(), path)
 }
 
+func viewerURLForOrigin(origin string, budget int, control bool, token string) string {
+	query := url.Values{"src": {origin + "/data"}, "cacheBudgetMB": {strconv.Itoa(budget)}}
+	if control {
+		query.Set("control", "")
+		if token != "" {
+			query.Set("controlToken", token)
+		}
+	}
+	return origin + "/viewer/?" + query.Encode()
+}
+
 // startServer binds the configured port (or a free port) and serves files in a
-// background goroutine. The returned URL is shareable; the embedded display
-// uses localViewerURL to reach the same server without relying on tablet DNS.
+// background goroutine. It returns both the shareable and local display URLs.
 // The returned *http.Server is the handle for graceful shutdown.
 //
 // With LUXAR_LAUNCHER_CONTROL=1 it also mounts the remote-control relay at
 // /control and prints the touch-panel URL, so an exported app can run a kiosk
 // without a Python checkout.
-func startServer(root string) (string, *http.Server, error) {
+func startServer(root string) (string, string, *http.Server, error) {
 	host := bindHost()
 	portSpec, err := listenPort()
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	reachable, err := advertisedHost(host)
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	control := os.Getenv("LUXAR_LAUNCHER_CONTROL") == "1"
 	token := ""
 	if control {
 		token, err = controlToken(root, host)
 		if err != nil {
-			return "", nil, err
+			return "", "", nil, err
 		}
 	}
 	ln, err := net.Listen("tcp", net.JoinHostPort(host, portSpec))
 	if err != nil {
-		return "", nil, fmt.Errorf("bind %s: %w", host, err)
+		return "", "", nil, fmt.Errorf("bind %s: %w", host, err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 	origin := "http://" + net.JoinHostPort(reachable, strconv.Itoa(port))
-	dataURL := origin + "/data"
+	localOrigin := "http://" + net.JoinHostPort(localHost(host), strconv.Itoa(port))
 	// Inject a cache budget: the viewer auto-sizes its in-memory caches from
 	// `performance.memory`, which WKWebView (WebKit) does not implement — so
 	// without this the app would fall back to a tiny fixed budget and re-decode
 	// timelapse frames every loop. We know this is a desktop app, so we supply a
 	// generous default the viewer splits across its cache tiers.
-	viewerURL := fmt.Sprintf("%s/viewer/?src=%s&cacheBudgetMB=%d", origin, dataURL, cacheBudgetMB())
+	budget := cacheBudgetMB()
+	viewerURL := viewerURLForOrigin(origin, budget, control, token)
+	localURL := viewerURLForOrigin(localOrigin, budget, control, token)
 
 	// No CORS headers: the viewer (/viewer) and its data (/data) are served
 	// from this one origin, so same-origin fetches need none. A wildcard here
@@ -346,22 +462,32 @@ func startServer(root string) (string, *http.Server, error) {
 		mux.HandleFunc("/control", relay.handler())
 		mux.Handle("/", handler)
 		handler = mux
-		viewerURL += "&control"
 		panelURL := origin + "/viewer/control.html?control"
 		if token != "" {
-			viewerURL += "&controlToken=" + url.QueryEscape(token)
 			panelURL += "&controlToken=" + url.QueryEscape(token)
-		} else if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		} else if !isLoopbackHost(host) {
 			fmt.Fprintln(os.Stderr,
 				"warning: control relay reachable from the network without a token")
 		}
 		path, _ := panelFiles(root)
+		saved := true
 		if err := writePanelURL(path, panelURL); err != nil {
-			ln.Close()
-			return "", nil, fmt.Errorf("write panel URL to %s: %w", path, err)
+			saved = false
+			fmt.Fprintf(os.Stderr, "could not save control panel URL to %s: %v\n", path, err)
+			fallback, _, fallbackErr := statePanelFiles(root)
+			if fallbackErr != nil {
+				fmt.Fprintf(os.Stderr, "could not create control panel state directory: %v\n", fallbackErr)
+			} else if err := writePanelURL(fallback, panelURL); err != nil {
+				fmt.Fprintf(os.Stderr, "could not save control panel URL to %s: %v\n", fallback, err)
+			} else {
+				path = fallback
+				saved = true
+			}
 		}
 		fmt.Fprintf(os.Stderr, "control panel: %s\n", panelURL)
-		fmt.Fprintf(os.Stderr, "control panel URL saved to %s\n", path)
+		if saved {
+			fmt.Fprintf(os.Stderr, "control panel URL saved to %s\n", path)
+		}
 	}
 
 	srv := &http.Server{
@@ -373,7 +499,7 @@ func startServer(root string) (string, *http.Server, error) {
 			log.Printf("luxar-launcher: server error: %v", err)
 		}
 	}()
-	return viewerURL, srv, nil
+	return viewerURL, localURL, srv, nil
 }
 
 // cacheBudgetMB is the total in-memory cache pool (MB) the launcher tells the
@@ -414,8 +540,7 @@ func newViewerWindow(viewerURL string) webview.WebView {
 // runBrowserFallback opens the system browser at viewerURL and blocks
 // until SIGINT/SIGTERM is received. Selected by setting
 // LUXAR_LAUNCHER_NO_WEBVIEW=1.
-func runBrowserFallback(viewerURL string) {
-	localURL := localViewerURL(viewerURL, bindHost())
+func runBrowserFallback(viewerURL, localURL string) {
 	if err := openSystemBrowser(localURL); err != nil {
 		log.Printf("luxar-launcher: could not open browser (%v); navigate manually to %s", err, localURL)
 	}
@@ -437,7 +562,7 @@ func main() {
 		log.Fatalf("luxar-launcher: %v", err)
 	}
 
-	viewerURL, srv, err := startServer(root)
+	viewerURL, localURL, srv, err := startServer(root)
 	if err != nil {
 		log.Fatalf("luxar-launcher: %v", err)
 	}
@@ -448,11 +573,11 @@ func main() {
 	// Note this cannot rescue a system missing libwebkit2gtk — cgo links
 	// the runtime at build time, so the loader aborts before we get here.
 	if os.Getenv("LUXAR_LAUNCHER_NO_WEBVIEW") == "1" {
-		runBrowserFallback(viewerURL)
+		runBrowserFallback(viewerURL, localURL)
 		return
 	}
 
-	w := newViewerWindow(localViewerURL(viewerURL, bindHost()))
+	w := newViewerWindow(localURL)
 	defer w.Destroy()
 
 	// SIGINT / SIGTERM → break out of the WebView's run loop the same
