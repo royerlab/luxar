@@ -42,20 +42,19 @@ export function caseUrl(origin, c, backend, dsf, urlParams) {
 /**
  * Browser helpers bound to the run's options.
  *
- * @param {{ channel: string, headless: boolean, chromeArgs: string[],
+ * @param {{ channel: string, executable?: string, headless: boolean, stock?: boolean,
+ *   vsync?: boolean, chromeArgs: string[],
  *   log: (m: string) => void }} cfg
  */
-export function browserKit({ channel, headless, chromeArgs, log }) {
+export function browserKit({ channel, executable, headless, stock, vsync, chromeArgs, log }) {
   /** Every adapter string a page reported, for the report header. */
   const seenGpus = new Set();
 
   function browserArgs(perf, extraArgs = []) {
-    const a = [
-      '--ignore-gpu-blocklist',
-      '--enable-unsafe-webgpu',
-      '--enable-webgpu-developer-features',
-    ];
-    if (process.platform === 'linux') {
+    const a = stock
+      ? []
+      : ['--ignore-gpu-blocklist', '--enable-unsafe-webgpu', '--enable-webgpu-developer-features'];
+    if (!stock && process.platform === 'linux') {
       // ANGLE on Vulkan puts WebGL on the discrete GPU (the default is
       // SwiftShader headless). Do NOT add the `Vulkan` feature: it moves
       // Chrome's own compositor onto Skia-Vulkan, which has no window surface
@@ -72,7 +71,7 @@ export function browserKit({ channel, headless, chromeArgs, log }) {
         '--disable-dev-shm-usage'
       );
     }
-    if (perf) a.push('--disable-gpu-vsync', '--disable-frame-rate-limit');
+    if (perf && !vsync) a.push('--disable-gpu-vsync', '--disable-frame-rate-limit');
     return [...a, ...extraArgs, ...chromeArgs];
   }
 
@@ -89,7 +88,12 @@ export function browserKit({ channel, headless, chromeArgs, log }) {
   function browserSession(perf, extraArgs = []) {
     let browser = null;
     let relaunches = 0;
-    const launch = () => chromium.launch({ channel, headless, args: browserArgs(perf, extraArgs) });
+    const launch = () =>
+      chromium.launch({
+        ...(executable ? { executablePath: executable } : { channel }),
+        headless,
+        args: browserArgs(perf, extraArgs),
+      });
     const live = async () => {
       if (!browser?.isConnected()) {
         if (browser) {

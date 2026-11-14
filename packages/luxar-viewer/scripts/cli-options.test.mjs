@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { optionHelp, parseOptions } from './cli-options.mjs';
 
 const specs = [
-  { name: 'chrome-args', takesValue: true, defaultValue: '' },
+  { name: 'chrome-args', takesValue: true, defaultValue: '', allowLeadingDashes: true },
   { name: 'suite', takesValue: true, defaultValue: 'exact' },
   { name: 'headed', takesValue: false, defaultValue: false },
 ];
@@ -17,6 +17,15 @@ it('accepts equals-form values, including values that begin with dashes or conta
     headed: false,
   });
   expect(optionHelp('gate.mjs', specs)).toContain('--name=value');
+});
+
+it('accepts Chrome flags as the following value without swallowing a known option', () => {
+  expect(
+    parseOptions(specs, ['--chrome-args', '--disable-domain-blocking-for-3d-apis'], fail)
+  ).toMatchObject({ 'chrome-args': '--disable-domain-blocking-for-3d-apis' });
+  expect(() => parseOptions(specs, ['--chrome-args', '--headed'], fail)).toThrow(
+    /--chrome-args requires a value/
+  );
 });
 
 it.each([

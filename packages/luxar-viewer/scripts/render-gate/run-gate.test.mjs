@@ -24,6 +24,9 @@ const cacheEntries = () => (existsSync(buildCache) ? readdirSync(buildCache).sor
 
 it.each([
   { args: ['--help'], status: 0, output: /--backends <value>/ },
+  { args: ['--help'], status: 0, output: /--stock/ },
+  { args: ['--help'], status: 0, output: /--executable <value>/ },
+  { args: ['--help'], status: 0, output: /--vsync/ },
   { args: ['--bogus'], status: 2, output: /unknown option --bogus/ },
   { args: ['--suites', 'exact'], status: 2, output: /unknown option --suites/ },
   { args: ['--suite'], status: 2, output: /--suite requires a value/ },

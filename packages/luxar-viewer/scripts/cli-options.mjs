@@ -17,7 +17,11 @@ export function parseOptions(specs, argv, configError) {
     seen.add(name);
     if (spec.takesValue) {
       const value = equals < 0 ? argv[++i] : arg.slice(equals + 1);
-      if (value === undefined || value === '' || (equals < 0 && value.startsWith('--'))) {
+      if (
+        value === undefined ||
+        value === '' ||
+        (equals < 0 && value.startsWith('--') && (!spec.allowLeadingDashes || known.has(value)))
+      ) {
         fail(`${name} requires a value`);
       }
       options[spec.name] = value;
@@ -34,5 +38,5 @@ export function optionHelp(command, specs) {
     const flag = `--${name}${takesValue ? ' <value>' : ''}`;
     return `  ${flag}${defaultValue == null || defaultValue === false || defaultValue === '' ? '' : ` (default: ${defaultValue})`}`;
   });
-  return `Usage: node ${command} [options]\nValue options also accept --name=value (required for values starting with --).\nOptions:\n${lines.join('\n')}\n`;
+  return `Usage: node ${command} [options]\nValue options also accept --name=value.\nOptions:\n${lines.join('\n')}\n`;
 }
