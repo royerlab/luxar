@@ -124,6 +124,11 @@ export function scheduleSort(
   // one-in-flight-per-node.
   state.inFlight = true;
   recordSortPose(state, job.modelView);
+  runSortProducer(c, job, producer);
+}
+
+/** Dispatch one producer and route both sync and async results to the same settle. */
+function runSortProducer(c: CoordinatorState, job: SortJob, producer: SortProducer): void {
   const pass = beginSortPass(c, producer);
   let outcome: ReturnType<SortProducer['run']>;
   try {
@@ -136,10 +141,10 @@ export function scheduleSort(
     // Resources can change between accepts() and run(). Use the worker for
     // this dispatch without retiring a healthy GPU producer.
     pass.session?.end();
-    state.inFlight = false;
-    state.lastSortAxis = null;
-    state.resortQueued = false;
-    scheduleSort(c, mesh, nodeId);
+    job.state.inFlight = false;
+    job.state.lastSortAxis = null;
+    job.state.resortQueued = false;
+    scheduleSort(c, job.mesh, job.nodeId);
     return;
   }
   if (outcome instanceof Promise) {
@@ -281,7 +286,7 @@ function stageOutcome(
   // signal and it is set by the SAME commit whose generation just matched, so
   // the two can never describe different face sets.
   const triangleSource = current.triangleSource;
-  if (!(triangleSource ?? geometry?.getAttribute?.('aSortedIndex'))) return;
+  if (!triangleSource && !geometry.getAttribute('aSortedIndex')) return;
   const info = orderingInfo(outcome, triangleSource, geometry);
   // The byte label starts as SCHEDULED and is upgraded to uploaded only after
   // THREE renders the selected buffer (issue #713). The timing keys are
@@ -469,11 +474,7 @@ function failSort(c: CoordinatorState, job: SortJob, pass: SortPass, error: unkn
   if (!current) return;
   current.inFlight = false;
   if (pass.gpuFallback && !pass.handedOff) {
-    disableGpuOrderProducer();
-    current.lastSortAxis = null;
-    current.resortQueued = false;
-    if (hasCommittedData(job.mesh)) scheduleSort(c, job.mesh, job.nodeId);
-    else if (current.generation === job.generation) releaseHeldDraw(c, job.mesh);
+    retryAfterGpuFailure(c, job, current);
     return;
   }
   if (current.generation === job.generation) releaseHeldDraw(c, job.mesh);
@@ -486,6 +487,15 @@ function failSort(c: CoordinatorState, job: SortJob, pass: SortPass, error: unkn
     current.resortQueued = false;
     if (hasCommittedData(job.mesh)) scheduleSort(c, job.mesh, job.nodeId);
   }
+}
+
+/** Retire a failed device and retry this population through the worker once. */
+function retryAfterGpuFailure(c: CoordinatorState, job: SortJob, current: NodeSortState): void {
+  disableGpuOrderProducer();
+  current.lastSortAxis = null;
+  current.resortQueued = false;
+  if (hasCommittedData(job.mesh)) scheduleSort(c, job.mesh, job.nodeId);
+  else if (current.generation === job.generation) releaseHeldDraw(c, job.mesh);
 }
 
 // Per-frame scratch (no allocation on the hot path — the
