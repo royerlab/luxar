@@ -498,7 +498,7 @@ def serve(
 
         api = FastAPI(title="Luxar static server", docs_url=None, redoc_url=None)
         viewer_origin = (
-            f"http://{url_host(advertise_host)}:{actual_viewer_port}"
+            f"http://{url_host(advertise_host).lower()}:{actual_viewer_port}"
             if viewer and advertise_host
             else None
         )

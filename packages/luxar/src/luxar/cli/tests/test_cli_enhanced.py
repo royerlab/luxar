@@ -119,8 +119,6 @@ class TestViewerCommand:
             with client.websocket_connect(f"/control?token={first[0]}"):
                 pass
         assert opted_out[0] is None
-        # _serve_viewer is replaced above, so its warning is asserted in the
-        # direct serving test instead of this command plumbing test.
         assert explicit[0] == "chosen"
 
         result = runner.invoke(
@@ -179,8 +177,9 @@ class TestViewerCommand:
             assert result.exit_code != 0
             assert not seen
 
+    @pytest.mark.parametrize("advertise_host", ["kiosk.local", "Kiosk.Local"])
     def test_serve_with_data_passes_token_and_advertised_url_to_viewer(
-        self, monkeypatch, runner, sample_scene
+        self, monkeypatch, runner, sample_scene, advertise_host
     ) -> None:
         from luxar.cli import main as cli_main
 
@@ -226,14 +225,18 @@ class TestViewerCommand:
                 "--host",
                 "0.0.0.0",
                 "--advertise-host",
-                "kiosk.local",
+                advertise_host,
             ],
         )
         assert result.exit_code == 0, result.output
         assert len(seen) == 1
         host, port, data_url, options = seen[0]
-        assert (host, port, data_url) == ("0.0.0.0", 5174, "http://kiosk.local:8001")
-        assert options["advertise_host"] == "kiosk.local"
+        assert (host, port, data_url) == (
+            "0.0.0.0",
+            5174,
+            f"http://{advertise_host}:8001",
+        )
+        assert options["advertise_host"] == advertise_host
         assert options["control_token"]
         assert opened == [
             f"http://127.0.0.1:5174/?src=http://127.0.0.1:8001&title=test_scene&control&controlToken={options['control_token']}"
@@ -245,12 +248,35 @@ class TestViewerCommand:
                 ("http://other.local:5174", False),
             ):
                 response = client.get(
-                    "/.zattrs",
+                    "/zarr.json",
                     headers={"host": "kiosk.local:8001", "origin": origin},
                 )
+                assert response.status_code == 200
                 assert response.headers.get("access-control-allow-origin") == (
                     origin if allowed else None
                 )
+                preflight = client.options(
+                    "/zarr.json",
+                    headers={
+                        "host": "kiosk.local:8001",
+                        "origin": origin,
+                        "access-control-request-method": "GET",
+                    },
+                )
+                assert preflight.headers.get("access-control-allow-origin") == (
+                    origin if allowed else None
+                )
+            ip_response = client.get(
+                "/zarr.json",
+                headers={
+                    "host": "192.0.2.10:8001",
+                    "origin": "http://192.0.2.10:5174",
+                },
+            )
+            assert ip_response.status_code == 200
+            assert ip_response.headers["access-control-allow-origin"] == (
+                "http://192.0.2.10:5174"
+            )
 
     def test_viewer_auto_build(self, runner) -> None:
         """Viewer auto-builds when missing in a dev tree.

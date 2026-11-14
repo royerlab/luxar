@@ -160,8 +160,8 @@ class _SameHostCORSMiddleware(CORSMiddleware):
     from ``Host`` would make DNS rebinding look same-host: an attacker-controlled
     name can resolve to the kiosk after serving the page. A concrete IP bind is
     compared directly; a wildcard bind accepts whichever IP-literal address the
-    request actually reached. Hostname deployments use ``--cors-origin`` to name
-    their viewer origin explicitly.
+    request actually reached. Hostname deployments use ``--advertise-host`` or
+    ``--cors-origin`` to name their viewer origin explicitly.
 
     The ``Host`` is carried in a :class:`~contextvars.ContextVar` because
     Starlette's ``is_allowed_origin`` hook receives only the origin, while
@@ -235,8 +235,8 @@ def _add_cors(
             ``cors_origin="local"`` a non-loopback IP bind also allows that
             address as an origin on any port. A wildcard bind accepts any
             IP-literal address it actually receives; hostname binds require an
-            explicit ``cors_origin``. Omitted (or loopback) keeps the
-            loopback-only default.
+            explicit ``cors_origin`` or ``viewer_origin``. Omitted (or
+            loopback) keeps the loopback-only default.
         viewer_origin: An operator-declared viewer origin to allow exactly,
             including when its advertised host is a DNS name.
     """
@@ -371,7 +371,7 @@ def _loopback_viewer_url(
     if data_url:
         parts = urlsplit(data_url)
         if (
-            parts.hostname == (advertise_host or advertised_host(host))
+            parts.hostname == (advertise_host or advertised_host(host)).lower()
             and parts.port is not None
         ):
             local_data = urlunsplit(parts._replace(netloc=f"127.0.0.1:{parts.port}"))
