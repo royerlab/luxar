@@ -492,10 +492,19 @@ _NEUTRAL_FLAGS = frozenset(
         "--keep-stale",
         "--no-open",
         "--control",
+        "--no-control-token",
     }
 )
 _NEUTRAL_VALUED_FLAGS = frozenset(
-    {"--host", "--port", "--viewer-port", "--control-token", "--cache-dir", "--czi"}
+    {
+        "--host",
+        "--port",
+        "--viewer-port",
+        "--control-token",
+        "--advertise-host",
+        "--cache-dir",
+        "--czi",
+    }
 )
 
 
