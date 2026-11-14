@@ -470,13 +470,17 @@ function failSort(c: CoordinatorState, job: SortJob, pass: SortPass, error: unkn
   if (!pass.handedOff) pass.session?.end();
   const current = c.nodeStates.get(job.nodeId);
   const who = pass.route === 'worker' ? 'SortWorker' : 'GPU';
-  log.error(Modules.WORKER_POOL, `${who} sort failed for ${job.nodeId}`, error);
-  if (!current) return;
+  if (!current) {
+    log.error(Modules.WORKER_POOL, `${who} sort failed for ${job.nodeId}`, error);
+    return;
+  }
   current.inFlight = false;
   if (pass.gpuFallback && !pass.handedOff) {
+    log.warning(Modules.WORKER_POOL, 'WebGPU depth ordering failed; using worker order', error);
     retryAfterGpuFailure(c, job, current);
     return;
   }
+  log.error(Modules.WORKER_POOL, `${who} sort failed for ${job.nodeId}`, error);
   if (current.generation === job.generation) releaseHeldDraw(c, job.mesh);
   // Drain a queued re-sort even on failure — a commit landed while this sort
   // was out, and dropping its request would leave the node stale until the NEXT

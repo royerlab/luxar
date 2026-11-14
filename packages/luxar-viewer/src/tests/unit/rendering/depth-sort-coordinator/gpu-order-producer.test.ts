@@ -131,6 +131,7 @@ describe('native WebGPU ordering producer', () => {
   const priorApi = workerHost.api;
   const priorInitState = workerHost.workerInitState;
   afterEach(() => {
+    vi.restoreAllMocks();
     workerHost.api = priorApi;
     workerHost.workerInitState = priorInitState;
     configureRendererBackendPolicy('webgl');
@@ -353,6 +354,8 @@ describe('native WebGPU ordering producer', () => {
     const sort = vi.fn().mockResolvedValue(null);
     workerHost.api = { sort } as unknown as NonNullable<typeof workerHost.api>;
     workerHost.workerInitState = 'ready';
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     // The resource was valid when accepts() ran, but a geometry lookup fails
     // while run() checks it again.
@@ -366,6 +369,11 @@ describe('native WebGPU ordering producer', () => {
     scheduleSort(coordinator, mesh, mesh.uuid, true);
     expect(sort).toHaveBeenCalledOnce();
     expect(gpuSortProducer.ready(coordinator)).toBe(false);
+    expect(errors).not.toHaveBeenCalled();
+    expect(warnings).toHaveBeenCalledWith(
+      expect.stringContaining('WebGPU depth ordering failed; using worker order'),
+      expect.any(Error)
+    );
     await vi.waitFor(() => expect(state.inFlight).toBe(false));
 
     scheduleSort(coordinator, mesh, mesh.uuid, true);
