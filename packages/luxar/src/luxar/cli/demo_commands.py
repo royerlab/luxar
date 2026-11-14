@@ -221,6 +221,9 @@ _COMMON_DEMO_FLAGS: tuple[tuple[str, str], ...] = (
     ("--recompute", "Rebuild cached intermediate results (GSplat demos)."),
     ("--serve-only", "Serve the existing output without rebuilding (GSplat demos)."),
     ("--control", "Expose the remote-control panel (demos that offer one)."),
+    ("--control-token TOKEN", "Require TOKEN (generated on LAN if omitted)."),
+    ("--no-control-token", "Leave the control hub open, including on a network bind."),
+    ("--advertise-host NAME", "Use NAME in the printed viewer and panel URLs."),
 )
 
 

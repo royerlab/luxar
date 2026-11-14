@@ -194,7 +194,14 @@ class TestRun:
         out = result.stdout
         assert "lorenz" in out
         assert "Common demo flags" in out
-        for common in ("--no-serve", "--host", "--no-open"):
+        for common in (
+            "--no-serve",
+            "--host",
+            "--no-open",
+            "--control-token TOKEN",
+            "--no-control-token",
+            "--advertise-host NAME",
+        ):
             assert common in out
         # The demo's own docstring (where its specific flags live) is shown too.
         assert "--points" in out
