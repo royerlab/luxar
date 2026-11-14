@@ -15,6 +15,7 @@ cancel itself out and the test would pass on a relay no browser could talk to.
 from __future__ import annotations
 
 import argparse
+import base64
 import io
 import json
 import socket
@@ -88,7 +89,8 @@ def test_export_token_default_follows_contract(
         and not opt_out
     )
     if token is not None:
-        assert len(token) == len(template.secrets.token_urlsafe(contract.TOKEN_BYTES))
+        padded = token + "=" * (-len(token) % 4)
+        assert len(base64.urlsafe_b64decode(padded)) == contract.TOKEN_BYTES
 
 
 def test_contract_covers_every_shared_name() -> None:

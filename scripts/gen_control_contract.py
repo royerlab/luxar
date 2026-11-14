@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Generate the remote-control wire constants for Python, TypeScript and Go.
+"""Generate the remote-control contract constants for Python, TypeScript and Go.
 
 ``control-contract/contract.yaml`` is the single source of truth for everything
-a control hub and a control client must agree on: roles, query-parameter names,
-the close code for a refused handshake, the JSON-RPC error codes, and the limits
-that bound what an untrusted peer can make the relay hold. This script projects
+a control hub and a control client must agree on, plus the relays' shared token
+policy: roles, query-parameter names, the close code for a refused handshake,
+JSON-RPC error codes, and limits on what an untrusted peer can make the relay
+hold. This script projects
 it into:
 
     packages/luxar/src/luxar/cli/_control_contract.py      (constants)
@@ -183,7 +184,9 @@ def render_typescript(c: Dict[str, Any]) -> str:
 
     required, token_bytes = _token_policy(c)
     lines.append("/** Default authentication for network-exposed control relays. */")
+    lines.append("/** @internal */")
     lines.append(f"export const TOKEN_REQUIRED_OFF_LOOPBACK = {str(required).lower()};")
+    lines.append("/** @internal */")
     lines.append(f"export const TOKEN_BYTES = {token_bytes};")
     lines.append("")
 

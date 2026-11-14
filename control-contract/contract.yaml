@@ -1,14 +1,14 @@
 # The remote-control wire contract: one source, three implementations.
 #
-# Every value here is something a hub and a client must AGREE on to interoperate
-# at all. They are projected mechanically into Python, TypeScript and Go, and a
+# Values here define the wire protocol and the relays' shared security defaults.
+# They are projected mechanically into Python, TypeScript and Go, and a
 # drift gate fails the build if a committed projection stops matching this file
 # — because the alternative is a security policy maintained in three places, one
 # of which is a shipped native binary nobody rebuilds when the Python changes.
 #
-# What belongs here: values that appear on the wire, or that bound what the wire
-# may carry. What does NOT: anything one side decides alone (reconnect backoff,
-# UI timings, which methods a particular viewer exposes).
+# What belongs here: wire values, limits on untrusted peers, and policy shared
+# by the relays. What does NOT: local choices such as reconnect backoff,
+# UI timings, or which methods a particular viewer exposes.
 #
 # Edit this file, then run `hatch run gen-control-contract`.
 
