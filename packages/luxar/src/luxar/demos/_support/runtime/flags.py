@@ -175,9 +175,12 @@ def control_serve_args(argv: Optional[list[str]] = None) -> list[str]:
     ``--control``
         Expose the hub and the touch panel.
     ``--control-token TOKEN``
-        Require ``TOKEN`` on every control socket. Strongly advised with
-        ``--host``, which is the only configuration reachable from another
-        machine.
+        Require ``TOKEN`` on every control socket. A non-loopback bind
+        generates a token when none is supplied.
+    ``--no-control-token``
+        Explicitly leave the hub open, including on a network bind.
+    ``--advertise-host NAME``
+        Use ``NAME`` in the printed viewer and panel URLs.
     ``--host HOST``
         Bind address. Defaults to loopback, which no tablet can reach; pass
         ``0.0.0.0`` for a kiosk on a LAN.
@@ -190,16 +193,19 @@ def control_serve_args(argv: Optional[list[str]] = None) -> list[str]:
     token = parse_str_arg("control-token", args)
     if token:
         serve_args.extend(["--control-token", token])
+    no_control_token = "--no-control-token" in args
+    if no_control_token:
+        serve_args.append("--no-control-token")
+    advertise_host = parse_str_arg("advertise-host", args)
+    if advertise_host:
+        serve_args.extend(["--advertise-host", advertise_host])
     host = parse_str_arg("host", args)
     if host:
         serve_args.extend(["--host", host])
-        # Only when the bind actually reaches the network. Warning on
-        # `--host 127.0.0.1` would be a false alarm, and a warning that cries
-        # wolf is one a kiosk operator learns to scroll past.
-        if not token and not is_loopback_host(host):
+        if no_control_token and not is_loopback_host(host):
             aprint(
-                "⚠️  --control with --host and no --control-token: anything that "
+                "⚠️  --no-control-token with a network bind: anything that "
                 "can reach this machine on the network can drive the display. "
-                "Pass --control-token to restrict it."
+                "Omit --no-control-token to require a generated token."
             )
     return serve_args

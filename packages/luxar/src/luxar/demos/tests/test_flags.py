@@ -128,6 +128,8 @@ class TestControlServeArgs:
         # `--control-token` is a modifier, not a switch. Treating it as one
         # would turn a half-typed command into an exposed display.
         assert flag_utils.control_serve_args(["--control-token", "s3cret"]) == []
+        assert flag_utils.control_serve_args(["--no-control-token"]) == []
+        assert flag_utils.control_serve_args(["--advertise-host", "kiosk.local"]) == []
 
     def test_the_flag_enables_it(self):
         assert flag_utils.control_serve_args(["--control"]) == ["--control"]
@@ -137,14 +139,29 @@ class TestControlServeArgs:
             ["--control", "--control-token=s3cret", "--host=0.0.0.0"]
         ) == ["--control", "--control-token", "s3cret", "--host", "0.0.0.0"]
 
-    def test_a_network_bind_without_a_token_warns(self, capsys):
-        # The one dangerous combination: reachable from the network, with
-        # nothing asked of whoever connects.
+    def test_a_network_bind_generates_a_token_without_warning(self, capsys):
         args = flag_utils.control_serve_args(["--control", "--host", "0.0.0.0"])
         assert args == ["--control", "--host", "0.0.0.0"]
-        warning = _plain(capsys.readouterr().out)
-        assert "can drive the display" in warning
-        assert "Pass --control-token to restrict it" in warning
+        assert "can drive the display" not in _plain(capsys.readouterr().out)
+
+    def test_opt_out_and_advertised_host_are_forwarded(self, capsys):
+        args = flag_utils.control_serve_args(
+            [
+                "--control",
+                "--host=0.0.0.0",
+                "--no-control-token",
+                "--advertise-host=kiosk.local",
+            ]
+        )
+        assert args == [
+            "--control",
+            "--no-control-token",
+            "--advertise-host",
+            "kiosk.local",
+            "--host",
+            "0.0.0.0",
+        ]
+        assert "can drive the display" in _plain(capsys.readouterr().out)
 
     def test_a_network_bind_with_a_token_is_quiet(self, capsys):
         flag_utils.control_serve_args(
