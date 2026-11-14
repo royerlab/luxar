@@ -27,6 +27,8 @@ DATA SOURCE & CITATIONS:
     Research Campus. CC BY 4.0.
     figshare DOI 10.25378/janelia.13622819 (file ``LHA3_R3_medium.czi``,
     34.9 GB, two tiles x 4 channels x 591 x 1920 x 1920, uint16).
+    We thank Janelia Scientific Computing and Konrad Rokicki for permission
+    to bundle this sample.
 
     Please cite:
 

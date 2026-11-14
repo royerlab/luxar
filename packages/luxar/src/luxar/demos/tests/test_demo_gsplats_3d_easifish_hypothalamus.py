@@ -40,6 +40,20 @@ def _load_demo_module():
 _demo = _load_demo_module()
 
 
+def test_permission_acknowledgment_accompanies_demo_source() -> None:
+    acknowledgments = (
+        Path(__file__).resolve().parents[6] / "ACKNOWLEDGMENTS.md"
+    ).read_text(encoding="utf-8")
+    credit = acknowledgments.split("- **EASI-FISH Mouse Lateral Hypothalamus**", 1)[
+        1
+    ].split("\n", 1)[0]
+    for text in (credit, _demo.__doc__ or ""):
+        text = " ".join(text.split())
+        assert "Janelia Scientific Computing" in text
+        assert "Konrad Rokicki" in text
+        assert "permission to bundle" in text
+
+
 # =============================================================================
 # A synthetic two-view acquisition
 # =============================================================================
