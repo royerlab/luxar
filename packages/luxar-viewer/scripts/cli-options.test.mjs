@@ -26,6 +26,9 @@ it('accepts Chrome flags as the following value without swallowing a known optio
   expect(() => parseOptions(specs, ['--chrome-args', '--headed'], fail)).toThrow(
     /--chrome-args requires a value/
   );
+  expect(() => parseOptions(specs, ['--chrome-args', '--suite=perf'], fail)).toThrow(
+    /--chrome-args requires a value/
+  );
 });
 
 it.each([

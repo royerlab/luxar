@@ -20,7 +20,9 @@ export function parseOptions(specs, argv, configError) {
       if (
         value === undefined ||
         value === '' ||
-        (equals < 0 && value.startsWith('--') && (!spec.allowLeadingDashes || known.has(value)))
+        (equals < 0 &&
+          value.startsWith('--') &&
+          (!spec.allowLeadingDashes || known.has(value.split('=', 1)[0])))
       ) {
         fail(`${name} requires a value`);
       }

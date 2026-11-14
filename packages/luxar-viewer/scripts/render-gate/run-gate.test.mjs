@@ -104,6 +104,36 @@ it('reports the A/A buffers and scene state for an excluded view', () => {
   expect(markdown).toContain('[A/A LDR heatmap](heatmaps/glass-control-ldr.png)');
 });
 
+it('records the stock browser configuration in a saved report', () => {
+  const report = {
+    meta: {
+      label: 'stock',
+      base: { ref: 'HEAD', sha: '1234567890' },
+      cand: { ref: 'HEAD', sha: '1234567890' },
+      host: 'test',
+      gpu: 'test',
+      verdict: 'PASS',
+      browserRelaunches: 0,
+      options: {
+        executable: '/tmp/chrome',
+        headless: false,
+        stock: true,
+        vsync: true,
+        chromeArgs: ['--disable-domain-blocking-for-3d-apis'],
+      },
+    },
+    exact: null,
+    perf: null,
+    suites: {},
+  };
+  const jsonPath = join(dir, 'report.json');
+  writeFileSync(jsonPath, JSON.stringify(report));
+  execFileSync(process.execPath, [gateScript, '--from-json', jsonPath]);
+  const markdown = readFileSync(join(dir, 'report.md'), 'utf8');
+  expect(markdown).toContain('browser: executable `/tmp/chrome`; headed; stock; perf vsync on');
+  expect(markdown).toContain('Chrome args: --disable-domain-blocking-for-3d-apis');
+});
+
 it.each([
   {
     high: true,

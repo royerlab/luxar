@@ -539,6 +539,14 @@ function markdown(meta, exact, perf, suites) {
     `- class: ${opts.cls}; intended: ${opts.intended.join(', ') || '-'}`
   );
   lines.push(`- host: ${meta.host}; GPU: ${meta.gpu ?? '?'}`);
+  if (meta.options) {
+    const o = meta.options;
+    lines.push(
+      `- browser: ${o.executable ? `executable \`${o.executable}\`` : `channel \`${o.channel}\``}; ` +
+        `${o.headless ? 'headless' : 'headed'}; ${o.stock ? 'stock' : 'forced GPU flags'}; ` +
+        `perf ${o.vsync ? 'vsync on' : 'vsync off'}; Chrome args: ${o.chromeArgs?.join(', ') || '-'}`
+    );
+  }
   const load = meta.hostLoad;
   if (load) {
     const arms = Object.entries(load.arms)
