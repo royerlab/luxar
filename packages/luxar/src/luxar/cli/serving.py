@@ -217,6 +217,7 @@ def _add_cors(
     cors_origin: str = _DEFAULT_CORS_ORIGIN,
     *,
     bind_host: Optional[str] = None,
+    viewer_origin: Optional[str] = None,
 ) -> None:
     """Add CORS middleware to a FastAPI application.
 
@@ -236,6 +237,8 @@ def _add_cors(
             IP-literal address it actually receives; hostname binds require an
             explicit ``cors_origin``. Omitted (or loopback) keeps the
             loopback-only default.
+        viewer_origin: An operator-declared viewer origin to allow exactly,
+            including when its advertised host is a DNS name.
     """
     origin = cors_origin.strip() or _DEFAULT_CORS_ORIGIN
     allow_origins: list[str]
@@ -255,6 +258,9 @@ def _add_cors(
         allow_credentials = False
     else:
         allow_origins = [item.strip() for item in origin.split(",") if item.strip()]
+
+    if viewer_origin is not None:
+        allow_origins.append(viewer_origin)
 
     if same_host_bind is not None:
         api.add_middleware(

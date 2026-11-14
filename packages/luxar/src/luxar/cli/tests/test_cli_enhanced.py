@@ -118,6 +118,8 @@ class TestViewerCommand:
             with client.websocket_connect(f"/control?token={first[0]}"):
                 pass
         assert opted_out[0] is None
+        # _serve_viewer is replaced above, so its warning is asserted in the
+        # direct serving test instead of this command plumbing test.
         assert explicit[0] == "chosen"
 
         result = runner.invoke(
@@ -181,6 +183,7 @@ class TestViewerCommand:
 
         seen = []
         opened = []
+        data_apps = []
 
         class ImmediateThread:
             def __init__(self, target, args=(), kwargs=None, **_other):
@@ -195,7 +198,9 @@ class TestViewerCommand:
             cli_main, "pick_port", lambda port, host, **kwargs: port + 1
         )
         monkeypatch.setattr(cli_main, "wait_for_server", lambda *args, **kwargs: True)
-        monkeypatch.setattr(cli_main.uvicorn, "run", lambda *args, **kwargs: None)
+        monkeypatch.setattr(
+            cli_main.uvicorn, "run", lambda api, **kwargs: data_apps.append(api)
+        )
         monkeypatch.setattr(
             cli_main, "open_browser_func", lambda url, **kwargs: opened.append(url)
         )
@@ -230,6 +235,19 @@ class TestViewerCommand:
         assert opened == [
             f"http://127.0.0.1:5174/?src=http://127.0.0.1:8001&title=test_scene&control&controlToken={options['control_token']}"
         ]
+        with TestClient(data_apps[0]) as client:
+            for origin, allowed in (
+                ("http://kiosk.local:5174", True),
+                ("http://kiosk.local:5175", False),
+                ("http://other.local:5174", False),
+            ):
+                response = client.get(
+                    "/.zattrs",
+                    headers={"host": "kiosk.local:8001", "origin": origin},
+                )
+                assert response.headers.get("access-control-allow-origin") == (
+                    origin if allowed else None
+                )
 
     def test_viewer_auto_build(self, runner) -> None:
         """Viewer auto-builds when missing in a dev tree.

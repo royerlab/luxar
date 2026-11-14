@@ -496,7 +496,12 @@ def serve(
             )
 
         api = FastAPI(title="Luxar static server", docs_url=None, redoc_url=None)
-        _add_cors(api, cors_origin, bind_host=host)
+        viewer_origin = (
+            f"http://{url_host(advertise_host)}:{actual_viewer_port}"
+            if viewer and advertise_host
+            else None
+        )
+        _add_cors(api, cors_origin, bind_host=host, viewer_origin=viewer_origin)
 
         # `host` may be a wildcard bind, which is not a destination. Everything
         # that goes into a URL — printed, opened, or handed to the viewer as
