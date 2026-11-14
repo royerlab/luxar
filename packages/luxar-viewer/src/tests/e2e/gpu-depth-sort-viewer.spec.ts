@@ -152,5 +152,17 @@ test('a capture refresh flips the order buffer on the GPU, without a host upload
   }, node.uuid);
   expect(state.after.slot).toBe(1 - state.before.slot);
   expect(state.after.versions).toEqual(state.before.versions);
+  // A completion is recorded once the new ordering is drawn, and the capture
+  // drain never draws: render the frame it was refreshed for.
+  const before = (await completions(page)).total;
+  await page.evaluate(() =>
+    (window as unknown as { __luxarDebug?: any }).__luxarDebug.renderOnce()
+  );
+  await expect
+    .poll(async () => (await completions(page)).total, { timeout: 15_000 })
+    .toBeGreaterThan(before);
   expect((await completions(page)).route).toBe('gpu');
+  await expect
+    .poll(() => drawnBackToFront(page, node.uuid, node.count), { timeout: 15_000 })
+    .toBe(true);
 });
