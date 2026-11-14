@@ -7,6 +7,7 @@ here is about ROUTING: which party receives a frame, and with which id.
 
 from __future__ import annotations
 
+import base64
 import json
 from typing import Any, Dict
 
@@ -14,12 +15,44 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from luxar.cli import _control_contract as contract
 from luxar.cli.control_hub import (
     CLOSE_POLICY_VIOLATION,
     MAX_PENDING_PER_CONTROLLER,
     ControlHub,
 )
 from luxar.cli.serving import _add_control_hub
+
+
+@pytest.mark.parametrize(
+    ("host", "network_bind", "opt_out"),
+    [
+        ("127.0.0.1", False, False),
+        ("[::1]", False, False),
+        ("0.0.0.0", True, False),
+        ("192.0.2.10", True, False),
+        ("0.0.0.0", True, True),
+    ],
+)
+def test_serve_token_default_follows_contract(
+    host: str, network_bind: bool, opt_out: bool
+) -> None:
+    from luxar.cli.main import _serve_control_options
+
+    token, _ = _serve_control_options(
+        host=host,
+        control=True,
+        viewer_enabled=True,
+        control_token=None,
+        no_control_token=opt_out,
+        advertise_host=None,
+    )
+    assert (token is not None) == (
+        contract.TOKEN_REQUIRED_OFF_LOOPBACK and network_bind and not opt_out
+    )
+    if token is not None:
+        padded = token + "=" * (-len(token) % 4)
+        assert len(base64.urlsafe_b64decode(padded)) == contract.TOKEN_BYTES
 
 
 def _app(token: str | None = None) -> tuple[FastAPI, ControlHub]:

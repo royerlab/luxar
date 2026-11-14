@@ -631,7 +631,8 @@ and they are three implementations of one protocol:
 Three implementations of a protocol is three chances to drift, and the third
 one ships inside artifacts nobody rebuilds: a native binary, and a folder that
 gets zipped and emailed. So everything they must agree on — the roles, the
-close code for a refused handshake, the JSON-RPC error codes, the pending cap —
+close code for a refused handshake, the JSON-RPC error codes, the pending cap,
+the off-loopback token default and generated-token byte count —
 lives in `control-contract/contract.yaml` and is projected into Python,
 TypeScript and Go by `scripts/gen_control_contract.py`, with
 `hatch run check-control-contract` failing the build on drift. The exported
