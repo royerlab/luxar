@@ -108,6 +108,7 @@ import { buildInfo, buildInfoLine } from '../../../config/build-info';
 import { VIEWER_VERSION } from '../../../version';
 import { config } from '../../../config';
 import { bootstrapStandalone } from '../../../core/bootstrap';
+import { GpuContextUnavailableError } from '../../../scene/scene-manager/render-pipeline/renderer-setup';
 import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
 import { ArchiveFaultError } from '../../../cache/chunk-source';
 import { UnsupportedFormatVersionError } from '../../../data/format-version';
@@ -1024,6 +1025,25 @@ describe('bootstrapStandalone', () => {
       });
       expect(resolveShortcut(shortcutActions.help)).toBe('F1');
       expect(mocks.showError.mock.calls[0][3]).toEqual({ autoDismiss: false });
+    });
+
+    it('surfaces a GPU-access failure through startup wrappers', async () => {
+      const gpuError = new GpuContextUnavailableError();
+      mocks.init.mockRejectedValueOnce(
+        new Error('Scene initialization failed', { cause: gpuError })
+      );
+
+      await expect(
+        bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS })
+      ).rejects.toThrow('Scene initialization failed');
+
+      expect(mocks.showError).toHaveBeenCalledWith(
+        gpuError.message,
+        expect.any(Function),
+        expect.any(Object),
+        { autoDismiss: false }
+      );
+      expect(gpuError.message).toMatch(/GPU access.*Reload.*restart.*chrome:\/\/gpu/i);
     });
 
     it('surfaces a refused format version verbatim in the persistent startup dialog', async () => {

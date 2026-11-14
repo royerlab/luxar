@@ -44,14 +44,29 @@ import { rendererBackendPolicy } from '../../../../../rendering/renderer-backend
 
 function canvas(): HTMLCanvasElement {
   const el = document.createElement('canvas');
-  // jsdom has no WebGL; the helper tolerates a null context.
-  el.getContext = vi.fn(() => null) as unknown as HTMLCanvasElement['getContext'];
+  el.getContext = vi.fn(() => ({})) as unknown as HTMLCanvasElement['getContext'];
   return el;
 }
 
 type WithDebug = { debug: { checkShaderErrors: boolean } };
 
 describe('createWebGLRenderer shader-error checking', () => {
+  it('refuses to construct a renderer when WebGL2 is unavailable', async () => {
+    const el = canvas();
+    el.getContext = vi.fn(() => null) as unknown as HTMLCanvasElement['getContext'];
+    await expect(createWebGLRenderer(el)).rejects.toThrow(/GPU access/i);
+    expect(el.getContext).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses default context options when the configured options fail', async () => {
+    const el = canvas();
+    const context = {};
+    el.getContext = vi.fn().mockReturnValueOnce(null).mockReturnValueOnce(context);
+    const { renderer } = await createWebGLRenderer(el);
+    expect(renderer).toBeDefined();
+    expect(el.getContext).toHaveBeenCalledTimes(2);
+  });
+
   it('is off without debug', async () => {
     const { renderer } = await createWebGLRenderer(canvas());
     expect((renderer as unknown as WithDebug).debug.checkShaderErrors).toBe(false);

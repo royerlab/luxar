@@ -2,9 +2,8 @@
 /**
  * Unit tests for the renderer-setup helpers used by SceneManager.
  *
- * `createWebGLRenderer` is intentionally NOT unit-tested: mocking the
- * WebGL2 context surface (getContext / getExtension / getParameter /
- * getShaderPrecisionFormat) would test the mock, not the GL contract.
+ * `createWebGLRenderer` is only unit-tested for the context acquisition
+ * boundary and debug flag. Its full WebGL contract needs a real browser;
  * E2E coverage via `basic-rendering.spec.ts` is the safety net there.
  *
  * `selectBackend` is the pure-fn precedence ladder.
@@ -236,8 +235,40 @@ describe('createWebGPURenderer', () => {
   }
 
   function makeCanvas(): HTMLCanvasElement {
-    return document.createElement('canvas');
+    const canvas = document.createElement('canvas');
+    canvas.getContext = vi.fn(() => ({})) as unknown as HTMLCanvasElement['getContext'];
+    return canvas;
   }
+
+  it('refuses the WebGL fallback when no GPU context is available', async () => {
+    stubNavigatorGpu(undefined);
+    const canvas = makeCanvas();
+    canvas.getContext = vi.fn(() => null) as unknown as HTMLCanvasElement['getContext'];
+
+    await expect(createWebGPURenderer(canvas, { rendererOverride: 'webgpu' })).rejects.toThrow(
+      /GPU access/i
+    );
+    expect(webgpuConstructorArgs).toHaveLength(0);
+  });
+
+  it('refuses the forced WebGL backend when no GPU context is available', async () => {
+    const canvas = makeCanvas();
+    canvas.getContext = vi.fn(() => null) as unknown as HTMLCanvasElement['getContext'];
+
+    await expect(createWebGPURenderer(canvas, { webgpuForceWebGL: true })).rejects.toThrow(
+      /GPU access/i
+    );
+    expect(webgpuConstructorArgs).toHaveLength(0);
+  });
+
+  it('does not require WebGL2 when a native WebGPU device is available', async () => {
+    stubNavigatorGpu(vi.fn().mockResolvedValue(makeAdapter({ maxVertexBuffers: 16 })));
+    const canvas = makeCanvas();
+    canvas.getContext = vi.fn(() => null) as unknown as HTMLCanvasElement['getContext'];
+
+    expect(await createWebGPURenderer(canvas)).toMatchObject({ fallback: false });
+    expect(canvas.getContext).not.toHaveBeenCalled();
+  });
 
   function makeAdapter(opts: {
     maxVertexBuffers?: number;
