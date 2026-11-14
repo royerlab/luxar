@@ -663,6 +663,8 @@ URLs and `LUXAR_LAUNCHER_PORT` for a fixed listener port; with both a fixed port
 and the saved token, its panel URL survives restarts. Its explicit opt-outs are
 `LUXAR_LAUNCHER_CONTROL_TOKEN=off` and
 `LUXAR_LAUNCHER_NO_CONTROL_TOKEN=1`. A busy fixed port fails instead of moving.
+The embedded viewer uses a local address even when the shared URLs advertise a
+tablet-facing name.
 Unlike the exported folder, the launcher does not create a QR or PDF.
 
 The exported script is also **threaded**, which is not a detail: a WebSocket

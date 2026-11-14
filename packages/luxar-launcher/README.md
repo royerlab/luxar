@@ -54,6 +54,8 @@ validated hostname or IP address in the panel, viewer and data URLs while the
 listener still uses `LUXAR_LAUNCHER_HOST`. `LUXAR_LAUNCHER_PORT` pins the port;
 without it, the launcher chooses a free port. A busy pinned port is an error.
 With both a pinned port and a persisted token, the panel URL survives restarts.
+The embedded viewer and browser fallback use a local address to load the scene,
+so a tablet-only hostname does not stop the kiosk display from starting.
 
 Loopback control has no token by default. To set a token explicitly, use
 `LUXAR_LAUNCHER_CONTROL_TOKEN=<secret>`. To disable the token on a LAN bind,

@@ -152,6 +152,23 @@ func dialHost(host string) string {
 	return "127.0.0.1"
 }
 
+// localViewerURL keeps the embedded display independent of DNS used by tablets.
+// The advertised origin occurs twice: in the page URL and its src data URL.
+func localViewerURL(viewerURL, bind string) string {
+	parsed, err := url.Parse(viewerURL)
+	if err != nil {
+		return viewerURL
+	}
+	if bind == "0.0.0.0" || bind == "" {
+		bind = "127.0.0.1"
+	} else if bind == "::" {
+		bind = "::1"
+	}
+	from := parsed.Scheme + "://" + parsed.Host
+	to := "http://" + net.JoinHostPort(bind, parsed.Port())
+	return strings.Replace(viewerURL, from, to, 2)
+}
+
 var hostLabel = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
 
 // advertisedHost validates the name embedded in the panel, viewer and data URLs.
@@ -274,10 +291,10 @@ func writePanelURL(path, panelURL string) error {
 	return os.Rename(f.Name(), path)
 }
 
-// startServer binds the configured port (or a free port) and starts the file server on it in a
-// background goroutine. The returned URL is what the WebView (or fallback
-// browser) should load; the returned *http.Server is the handle for graceful
-// shutdown.
+// startServer binds the configured port (or a free port) and serves files in a
+// background goroutine. The returned URL is shareable; the embedded display
+// uses localViewerURL to reach the same server without relying on tablet DNS.
+// The returned *http.Server is the handle for graceful shutdown.
 //
 // With LUXAR_LAUNCHER_CONTROL=1 it also mounts the remote-control relay at
 // /control and prints the touch-panel URL, so an exported app can run a kiosk
@@ -398,8 +415,9 @@ func newViewerWindow(viewerURL string) webview.WebView {
 // until SIGINT/SIGTERM is received. Selected by setting
 // LUXAR_LAUNCHER_NO_WEBVIEW=1.
 func runBrowserFallback(viewerURL string) {
-	if err := openSystemBrowser(viewerURL); err != nil {
-		log.Printf("luxar-launcher: could not open browser (%v); navigate manually to %s", err, viewerURL)
+	localURL := localViewerURL(viewerURL, bindHost())
+	if err := openSystemBrowser(localURL); err != nil {
+		log.Printf("luxar-launcher: could not open browser (%v); navigate manually to %s", err, localURL)
 	}
 	fmt.Printf("Luxar viewer: %s\n", viewerURL)
 	fmt.Println("Press Ctrl+C to stop the server.")
@@ -434,7 +452,7 @@ func main() {
 		return
 	}
 
-	w := newViewerWindow(viewerURL)
+	w := newViewerWindow(localViewerURL(viewerURL, bindHost()))
 	defer w.Destroy()
 
 	// SIGINT / SIGTERM → break out of the WebView's run loop the same
