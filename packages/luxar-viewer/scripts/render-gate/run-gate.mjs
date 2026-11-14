@@ -135,6 +135,11 @@ const opts = {
   serverProfile: cli['server-profile'],
 };
 if (!['IDENTICAL', 'ULP'].includes(opts.cls)) configError(`bad --class ${opts.cls}`);
+if (opts.stock && opts.headless && process.platform === 'linux') {
+  configError(
+    '--stock on Linux needs --headed: headless stock Chrome renders on SwiftShader, which the gate refuses'
+  );
+}
 
 const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
   cwd: viewerRoot,

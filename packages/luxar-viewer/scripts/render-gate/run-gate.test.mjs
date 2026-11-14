@@ -8,7 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 
@@ -38,6 +38,9 @@ it.each([
   { args: ['--suite', '--heavy'], status: 2, output: /--suite requires a value/ },
   { args: ['--headed=x'], status: 2, output: /--headed does not take a value/ },
   { args: ['--chrome-args='], status: 2, output: /--chrome-args requires a value/ },
+  ...(platform() === 'linux'
+    ? [{ args: ['--stock'], status: 2, output: /--stock on Linux needs --headed/ }]
+    : []),
 ])('validates $args before any build', ({ args, status, output }) => {
   const cacheExisted = existsSync(buildCache);
   const before = cacheEntries();
