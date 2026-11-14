@@ -34,9 +34,7 @@ from luxar.cli.serving import _add_control_hub
         ("0.0.0.0", True, False),
     ],
 )
-def test_serve_token_default(
-    host: str, opt_out: bool, want_token: bool
-) -> None:
+def test_serve_token_default(host: str, opt_out: bool, want_token: bool) -> None:
     from luxar.cli.main import _serve_control_options
 
     token, _ = _serve_control_options(
