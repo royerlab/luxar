@@ -385,6 +385,8 @@ function retryFailedDeviceWrite(
       write: {
         count: write.count,
         write: (target) => {
+          // Failed until the write says otherwise, so a throw counts too.
+          failed = true;
           failed = !write.write(target);
           return !failed;
         },

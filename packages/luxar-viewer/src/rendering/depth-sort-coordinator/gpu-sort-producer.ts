@@ -111,6 +111,17 @@ export class GpuSortProducer implements SortProducer {
     return { kind: 'device', generation: job.generation, write, timing };
   }
 
+  /**
+   * Free the sorter's scratch (16 B per element of the largest node it sorted)
+   * while keeping its pipelines; the next sort allocates it again at that
+   * node's size. The host calls this when its scene is torn down, so a large
+   * scene's scratch does not outlive it.
+   */
+  releaseScratch(): void {
+    this.sorter?.releaseScratch();
+    setGpuByteReservation(this, 0);
+  }
+
   /** Free the sorter's GPU resources. */
   dispose(): void {
     this.release();
@@ -144,13 +155,17 @@ export class GpuSortProducer implements SortProducer {
     modelView: Float32Array,
     target: THREE.InstancedBufferAttribute
   ): number | null {
-    const request = this.request(job, count, modelView, target);
-    if (!request || !this.sorter) return null;
     try {
+      // Resolving the resources is inside the try too: three creates the
+      // target's buffer on demand here, and a throw from that says the same
+      // about the device as one from the sort.
+      const request = this.request(job, count, modelView, target);
+      if (!request || !this.sorter) return null;
       return this.sorter.sort(request)?.encodeMs ?? null;
     } catch (error) {
-      // A throw (a target the sorter refuses, a device in a bad state) says
-      // more about the device than the node: stop using it.
+      // A throw (a resource three cannot create, a target the sorter refuses,
+      // a device in a bad state) says more about the device than the node:
+      // stop using it.
       log.warning(Modules.WORKER_POOL, 'GPU depth sort failed; sorting on the CPU worker', error);
       if (this.device) this.failed.add(this.device);
       this.release();

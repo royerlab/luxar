@@ -73,8 +73,10 @@ All passes run in one compute pass and one submit per sort:
 Blocks hold 4,096 elements. Scratch for N elements is four 4N-byte buffers plus
 a small histogram: about 160 MB at 10M. One sorter's scratch is shared by every
 node it sorts. Each sort writes its uniforms and submits before the next sort,
-and the queue runs them in order. Scratch grows by doubling, is charged to a
-geometry's GPU residency budget, and is freed when that geometry is disposed.
+and the queue runs them in order. Scratch grows by doubling and is reserved from
+the GPU byte budget (`setGpuByteReservation`) while it exists. The coordinator's
+producer frees it when the host's scene is torn down (`releaseAllNodes`, a
+dataset switch), so the next sort allocates it again at the new scene's size.
 
 **Measured cost:** about 9 ms of GPU time for a 10M-element sort on an RTX 3070
 (`gpu-depth-sort.spec.ts`, back-to-back sorts), against 30–100 ms for the

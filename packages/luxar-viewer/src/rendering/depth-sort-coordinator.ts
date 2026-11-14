@@ -552,6 +552,8 @@ export class DepthSortCoordinator {
     // tears all of this host's content down anyway).
     cancelAllSortedIndexOrderingApplies(c);
     cancelAllTriangleOrderingApplies(c);
+    // The GPU sorter's scratch is sized for the scene that just left.
+    this.gpuProducer?.releaseScratch();
   }
 
   /**

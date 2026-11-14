@@ -18,7 +18,10 @@ import {
 import { POINT_TEXTURE_LAYOUT } from '../../../../rendering/element-texture-layout';
 import { configureRendererBackendPolicy } from '../../../../rendering/renderer-backend-policy';
 import { GpuSortProducer } from '../../../../rendering/depth-sort-coordinator/gpu-sort-producer';
-import { workerSortProducer } from '../../../../rendering/depth-sort-coordinator/sort-producers';
+import {
+  workerSortProducer,
+  type SortProducer,
+} from '../../../../rendering/depth-sort-coordinator/sort-producers';
 import {
   evaluateDepthSortPerFrame,
   scheduleSort,
@@ -286,17 +289,99 @@ describe('GPU depth sort scheduling', () => {
   });
 
   it('stops using a device whose target it cannot write, re-sorting on the worker at once', async () => {
-    const { geometry, texture, mesh, gpu, coordinator } = await scene(4, BufferUsage.VERTEX);
+    const { fake, geometry, texture, mesh, gpu, coordinator } = await scene(4, BufferUsage.VERTEX);
     ready(texture);
     const sort = workerReturning(null);
     vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const compile = vi.spyOn(fake.backend.device, 'createComputePipelineAsync');
 
     scheduleSort(coordinator, mesh, mesh.uuid, 'motion');
 
     expect(sort).toHaveBeenCalledOnce();
     expect(activeSortedIndexSlot(geometry)).toBe(0);
     expect(gpu.ready()).toBe(false);
+    // The device is not merely released but given up on: no recompile on it.
+    await flush();
+    expect(gpu.ready()).toBe(false);
+    expect(compile).not.toHaveBeenCalled();
     vi.restoreAllMocks();
+    geometry.dispose();
+  });
+
+  it('gives up on a device whose backend throws while resolving the sort resources', async () => {
+    const { fake, geometry, texture, mesh, gpu, coordinator } = await scene();
+    ready(texture);
+    const sort = workerReturning(null);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fake.backend.createStorageAttribute = () => {
+      throw new Error('cannot create the buffer');
+    };
+
+    scheduleSort(coordinator, mesh, mesh.uuid, 'motion');
+
+    expect(sort).toHaveBeenCalledOnce(); // retried on the worker at once
+    expect(fake.copies).toHaveLength(0);
+    expect(activeSortedIndexSlot(geometry)).toBe(0);
+    await flush();
+    expect(gpu.ready()).toBe(false);
+    // The next camera-motion re-sort goes to the worker without trying the GPU.
+    scheduleSort(coordinator, mesh, mesh.uuid, 'motion');
+    expect(sort).toHaveBeenCalledTimes(2);
+    vi.restoreAllMocks();
+    geometry.dispose();
+  });
+
+  it('re-sorts on the worker when a device writer throws instead of returning false', async () => {
+    const { geometry, texture, mesh, coordinator } = await scene();
+    ready(texture);
+    const sort = workerReturning(null);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const throwing: SortProducer = {
+      route: 'gpu',
+      ready: () => true,
+      accepts: (job) => job.reason !== 'commit',
+      run: (job) => ({
+        kind: 'device',
+        generation: job.generation,
+        write: {
+          count: 4,
+          write: () => {
+            throw new Error('writer threw');
+          },
+        },
+        timing: { route: 'gpu', kernelMs: 0, boundaryMs: 0, queueMs: 0 },
+      }),
+    };
+    coordinator.sortProducers = [throwing, workerSortProducer];
+
+    scheduleSort(coordinator, mesh, mesh.uuid, 'motion');
+
+    expect(sort).toHaveBeenCalledOnce();
+    expect(activeSortedIndexSlot(geometry)).toBe(0);
+    vi.restoreAllMocks();
+    geometry.dispose();
+  });
+
+  it('frees the scratch on releaseScratch and allocates it again for the next sort', async () => {
+    const { fake, geometry, texture, mesh, gpu, coordinator } = await scene();
+    ready(texture);
+    workerHost.api = null;
+    const budget = getGpuByteBudget();
+    scheduleSort(coordinator, mesh, mesh.uuid, 'motion');
+    expect(fake.copies).toHaveLength(1);
+    const allocated = fake.allocations.length;
+    expect(fake.allocations.some((allocation) => !allocation.destroyed)).toBe(true);
+
+    gpu.releaseScratch();
+    expect(fake.allocations.every((allocation) => allocation.destroyed)).toBe(true);
+    expect(getGpuByteBudget()).toBe(budget);
+    expect(gpu.ready()).toBe(true); // the pipelines stay
+
+    scheduleSort(coordinator, mesh, mesh.uuid, 'motion');
+    expect(fake.copies).toHaveLength(2);
+    expect(fake.allocations.length).toBeGreaterThan(allocated);
+    gpu.dispose();
     geometry.dispose();
   });
 

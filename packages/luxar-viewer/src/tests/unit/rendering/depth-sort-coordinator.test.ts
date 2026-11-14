@@ -3186,6 +3186,38 @@ describe('depth-sort coordinator — points integration', () => {
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
   });
 
+  it('invalidateSortPoses re-sorts every node at the next frame, without moving the camera', async () => {
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    const requestRender = vi.fn();
+    coord.configure({ getCamera: () => camera, requestRender });
+    const meshes = [makePointsMesh(2, 'normal'), makePointsMesh(2, 'normal')];
+    for (const mesh of meshes) {
+      coord.noteCommit(mesh, () => new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+    for (let i = 0; i < 2; i++) {
+      sortResolvers[i]({
+        generation: mockApi.sort.mock.calls[i][0].generation as number,
+        ordering: new Uint32Array([0, 1]),
+      });
+    }
+    await flush();
+    coord.evaluatePerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2); // the pose is fresh: nothing to do
+    requestRender.mockClear();
+
+    coord.invalidateSortPoses();
+    expect(requestRender).toHaveBeenCalled();
+    const sortedBefore = mockApi.sort.mock.calls.length;
+    coord.evaluatePerFrame();
+    const resorted = mockApi.sort.mock.calls.slice(sortedBefore).map((call) => call[0].nodeId);
+    expect(resorted.sort()).toEqual(meshes.map((mesh) => mesh.uuid).sort());
+    // Still registered: the re-sort reused the worker's registration.
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(2);
+  });
+
   it('a zero-count points commit releases instead of registering (empty slice)', async () => {
     const coord = await loadCoordinator();
     coord.configure({ getCamera: () => makeCamera(), requestRender: vi.fn() });
@@ -3887,6 +3919,25 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     expect(storage.hasPendingSortedIndexOrderingApply(secondGeometry)).toBe(true);
     coord.dispose();
     expect(storage.hasPendingSortedIndexOrderingApply(secondGeometry)).toBe(false);
+  });
+
+  it("releaseAllNodes frees the GPU sorter's scratch, keeping the producer", async () => {
+    const coord = await loadCoordinator();
+    const { GpuSortProducer } =
+      await import('../../../rendering/depth-sort-coordinator/gpu-sort-producer');
+    const releaseScratch = vi.spyOn(GpuSortProducer.prototype, 'releaseScratch');
+    const dispose = vi.spyOn(GpuSortProducer.prototype, 'dispose');
+    coord.configure({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getGpuSortContext: () => null,
+    });
+
+    coord.releaseAllNodes();
+
+    expect(releaseScratch).toHaveBeenCalledOnce();
+    expect(dispose).not.toHaveBeenCalled();
+    coord.dispose();
   });
 
   // === Profiler lifecycle across the chunked apply (issue #713) ===
