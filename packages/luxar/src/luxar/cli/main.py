@@ -54,6 +54,7 @@ from .serving import (
     _add_cors,
     _build_viewer_url,
     _is_sensitive_serve_path,
+    _loopback_viewer_url,
     _serve_data,
     _serve_viewer,
     _validate_serve_path,
@@ -554,7 +555,16 @@ def serve(
                     control_token=control_token,
                     advertise_host=advertise_host,
                 )
-                open_browser_func(viewer_url, explicit=explicit_open)
+                local_url = _loopback_viewer_url(
+                    host,
+                    actual_viewer_port,
+                    data_url,
+                    title=dataset_title(serve_path),
+                    control=control,
+                    control_token=control_token,
+                    advertise_host=advertise_host,
+                )
+                open_browser_func(local_url or viewer_url, explicit=explicit_open)
 
         # Wrap the complete ASGI app with network simulation (if enabled)
         asgi_app: ASGIApp = api

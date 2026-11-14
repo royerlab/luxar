@@ -141,6 +141,7 @@ class TestViewerCommand:
     def test_serve_advertise_host_validation(
         self, name, valid, monkeypatch, runner
     ) -> None:
+        from luxar.cli import _export_serve_template as exported
         from luxar.cli import main as cli_main
 
         seen = []
@@ -168,7 +169,7 @@ class TestViewerCommand:
         if valid:
             assert result.exit_code == 0, result.output
             assert seen[0][0:2] == ("0.0.0.0", 5174)
-            assert seen[0][2]["advertise_host"] == name.strip("[]")
+            assert seen[0][2]["advertise_host"] == exported._advertise_host(name)
         else:
             assert result.exit_code != 0
             assert not seen
@@ -179,6 +180,7 @@ class TestViewerCommand:
         from luxar.cli import main as cli_main
 
         seen = []
+        opened = []
 
         class ImmediateThread:
             def __init__(self, target, args=(), kwargs=None, **_other):
@@ -195,6 +197,9 @@ class TestViewerCommand:
         monkeypatch.setattr(cli_main, "wait_for_server", lambda *args, **kwargs: True)
         monkeypatch.setattr(cli_main.uvicorn, "run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
+            cli_main, "open_browser_func", lambda url, **kwargs: opened.append(url)
+        )
+        monkeypatch.setattr(
             cli_main,
             "_serve_viewer",
             lambda host, port, data_url, *args, **kwargs: seen.append(
@@ -208,6 +213,7 @@ class TestViewerCommand:
                 "serve",
                 str(sample_scene),
                 "--viewer",
+                "--open",
                 "--control",
                 "--host",
                 "0.0.0.0",
@@ -221,6 +227,9 @@ class TestViewerCommand:
         assert (host, port, data_url) == ("0.0.0.0", 5174, "http://kiosk.local:8001")
         assert options["advertise_host"] == "kiosk.local"
         assert options["control_token"]
+        assert opened == [
+            f"http://127.0.0.1:5174/?src=http://127.0.0.1:8001&title=test_scene&control&controlToken={options['control_token']}"
+        ]
 
     def test_viewer_auto_build(self, runner) -> None:
         """Viewer auto-builds when missing in a dev tree.

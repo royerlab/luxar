@@ -464,13 +464,26 @@ class TestViewerAppWiring:
         assert captured["host"] == "0.0.0.0"
 
     def test_control_panel_url_quotes_the_token(self) -> None:
-        from luxar.cli.serving import _build_control_panel_url
+        from luxar.cli.serving import _build_control_panel_url, _build_viewer_url
 
         assert _build_control_panel_url("kiosk.local", 5173) == (
             "http://kiosk.local:5173/control.html?control"
         )
         assert _build_control_panel_url("kiosk.local", 5173, "space & slash/") == (
             "http://kiosk.local:5173/control.html?control&controlToken=space%20%26%20slash%2F"
+        )
+        assert _build_control_panel_url("2001:db8::1", 5173, "secret") == (
+            "http://[2001:db8::1]:5173/control.html?control&controlToken=secret"
+        )
+        assert (
+            _build_viewer_url(
+                "0.0.0.0",
+                5173,
+                control=True,
+                control_token="secret",
+                advertise_host="2001:db8::1",
+            )
+            == "http://[2001:db8::1]:5173/?control&controlToken=secret"
         )
 
 
