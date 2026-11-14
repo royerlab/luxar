@@ -194,7 +194,14 @@ class TestRun:
         out = result.stdout
         assert "lorenz" in out
         assert "Common demo flags" in out
-        for common in ("--no-serve", "--host", "--no-open"):
+        for common in (
+            "--no-serve",
+            "--host",
+            "--no-open",
+            "--control-token TOKEN",
+            "--no-control-token",
+            "--advertise-host NAME",
+        ):
             assert common in out
         # The demo's own docstring (where its specific flags live) is shown too.
         assert "--points" in out
@@ -344,6 +351,28 @@ class TestRun:
         assert argv[-4:] == ["--port", "9100", "--viewer-port", "9200"]
         assert "env" not in mock_run.call_args.kwargs
         assert _custom_build_args(["--port", "1", "--viewer-port=2"]) == []
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            [
+                "--control",
+                "--host",
+                "0.0.0.0",
+                "--no-control-token",
+                "--advertise-host",
+                "kiosk.local",
+            ],
+            ["--control", "--no-control-token", "--advertise-host=kiosk.local"],
+        ],
+    )
+    def test_control_serving_flags_keep_the_default_build(self, runner, args) -> None:
+        assert _custom_build_args(args) == []
+        with patch("luxar.cli.demo_commands.run_child_process", return_value=0) as run:
+            result = runner.invoke(app, ["demo", "run", "lorenz", "--", *args])
+        assert result.exit_code == 0
+        assert "env" not in run.call_args.kwargs
+        assert run.call_args.args[0][-len(args) :] == args
 
     def test_serving_flags_after_the_double_dash_keep_the_default_build(
         self, runner

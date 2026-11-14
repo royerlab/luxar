@@ -429,16 +429,85 @@ class TestViewerAppWiring:
         serving._serve_viewer("0.0.0.0", 5173, control=True, open_browser_flag=False)
 
         output = capsys.readouterr().out
-        assert "reachable from the network without a token" in output
+        assert "--no-control-token" in output
+        assert "can drive the display" in output
+
+    def test_loopback_bind_with_advertised_host_warns(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from luxar.cli import serving
+
+        monkeypatch.setattr(serving, "get_viewer_dist_path", lambda: "viewer")
+        monkeypatch.setattr(
+            serving, "_build_viewer_app", lambda *args, **kwargs: object()
+        )
+        monkeypatch.setattr(serving.uvicorn, "run", lambda *args, **kwargs: None)
+
+        serving._serve_viewer(
+            "127.0.0.1",
+            5173,
+            control=True,
+            advertise_host="kiosk.local",
+            open_browser_flag=False,
+        )
+
+        output = capsys.readouterr().out
+        assert "--host 127.0.0.1 listens on this machine only" in output
+        assert "no other device can open the kiosk.local URLs" in output
+
+    def test_advertised_address_changes_printed_urls_not_the_bind(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from luxar.cli import serving
+
+        captured: dict[str, object] = {}
+        monkeypatch.setattr(serving, "get_viewer_dist_path", lambda: "viewer")
+        monkeypatch.setattr(
+            serving, "_build_viewer_app", lambda *args, **kwargs: object()
+        )
+        monkeypatch.setattr(
+            serving.uvicorn,
+            "run",
+            lambda *args, **kwargs: captured.update(kwargs),
+        )
+
+        serving._serve_viewer(
+            "0.0.0.0",
+            5173,
+            control=True,
+            control_token="secret",
+            advertise_host="kiosk.local",
+            open_browser_flag=False,
+        )
+
+        output = capsys.readouterr().out
+        assert "http://kiosk.local:5173/?control&controlToken=secret" in output
+        assert (
+            "http://kiosk.local:5173/control.html?control&controlToken=secret" in output
+        )
+        assert captured["host"] == "0.0.0.0"
 
     def test_control_panel_url_quotes_the_token(self) -> None:
-        from luxar.cli.serving import _build_control_panel_url
+        from luxar.cli.serving import _build_control_panel_url, _build_viewer_url
 
         assert _build_control_panel_url("kiosk.local", 5173) == (
             "http://kiosk.local:5173/control.html?control"
         )
         assert _build_control_panel_url("kiosk.local", 5173, "space & slash/") == (
             "http://kiosk.local:5173/control.html?control&controlToken=space%20%26%20slash%2F"
+        )
+        assert _build_control_panel_url("2001:db8::1", 5173, "secret") == (
+            "http://[2001:db8::1]:5173/control.html?control&controlToken=secret"
+        )
+        assert (
+            _build_viewer_url(
+                "0.0.0.0",
+                5173,
+                control=True,
+                control_token="secret",
+                advertise_host="2001:db8::1",
+            )
+            == "http://[2001:db8::1]:5173/?control&controlToken=secret"
         )
 
 

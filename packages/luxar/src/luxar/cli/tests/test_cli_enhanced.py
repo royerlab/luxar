@@ -2,15 +2,19 @@
 Tests for the enhanced luxar CLI commands.
 """
 
+import argparse
 import json
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 import numpy as np
 import pytest
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.cli import app
+from luxar.cli.control_hub import CLOSE_POLICY_VIOLATION
 
 
 @pytest.fixture
@@ -72,6 +76,207 @@ class TestViewerCommand:
         assert result.exit_code == 0, result.output
         mock_check.assert_called_once()
         mock_serve.assert_called_once()
+
+    def test_serve_control_token_defaults_and_opt_out(
+        self, monkeypatch, runner, tmp_path
+    ) -> None:
+        from luxar.cli import main as cli_main
+        from luxar.cli.serving import _build_viewer_app, _build_viewer_url
+
+        viewer_dist = tmp_path / "viewer"
+        viewer_dist.mkdir()
+        (viewer_dist / "index.html").write_text("viewer")
+        seen = []
+
+        def capture(host, port, *args, **kwargs):
+            token = kwargs["control_token"]
+            api = _build_viewer_app(viewer_dist, control=True, control_token=token)
+            url = _build_viewer_url(
+                host,
+                port,
+                control=True,
+                control_token=token,
+            )
+            seen.append((token, url, api))
+
+        monkeypatch.setattr(cli_main, "ensure_viewer_built", lambda: True)
+        monkeypatch.setattr(cli_main, "pick_port", lambda port, host, **kwargs: port)
+        monkeypatch.setattr(cli_main, "_serve_viewer", capture)
+
+        for flags in ([], [], ["--no-control-token"], ["--control-token", "chosen"]):
+            result = runner.invoke(
+                app,
+                ["serve", "--viewer-only", "--control", "--host", "0.0.0.0", *flags],
+            )
+            assert result.exit_code == 0, result.output
+
+        first, second, opted_out, explicit = seen
+        assert first[0] and first[0] != second[0]
+        assert parse_qs(urlsplit(first[1]).query)["controlToken"] == [first[0]]
+        with TestClient(first[2]) as client:
+            with client.websocket_connect("/control") as socket:
+                assert socket.receive()["code"] == CLOSE_POLICY_VIOLATION
+            with client.websocket_connect(f"/control?token={first[0]}"):
+                pass
+        assert opted_out[0] is None
+        assert explicit[0] == "chosen"
+
+        result = runner.invoke(
+            app, ["serve", "--viewer-only", "--control", "--host", "127.0.0.1"]
+        )
+        assert result.exit_code == 0, result.output
+        assert seen[-1][0] is None
+
+    @pytest.mark.parametrize(
+        "name,valid",
+        [
+            ("kiosk.local", True),
+            ("[2001:db8::1]", True),
+            ("https://kiosk.local", False),
+            ("kiosk.local:8000", False),
+            ("0.0.0.0", False),
+            ("224.0.0.1", False),
+            ("999.1.1.1", False),
+        ],
+    )
+    def test_serve_advertise_host_validation(
+        self, name, valid, monkeypatch, runner
+    ) -> None:
+        from luxar.cli import _export_serve_template as exported
+        from luxar.cli import main as cli_main
+
+        seen = []
+        monkeypatch.setattr(cli_main, "ensure_viewer_built", lambda: True)
+        monkeypatch.setattr(
+            cli_main, "pick_port", lambda port, host, **kwargs: port + 1
+        )
+        monkeypatch.setattr(
+            cli_main,
+            "_serve_viewer",
+            lambda host, port, *args, **kwargs: seen.append((host, port, kwargs)),
+        )
+        result = runner.invoke(
+            app,
+            [
+                "serve",
+                "--viewer-only",
+                "--control",
+                "--host",
+                "0.0.0.0",
+                "--advertise-host",
+                name,
+            ],
+        )
+        if valid:
+            assert result.exit_code == 0, result.output
+            assert seen[0][0:2] == ("0.0.0.0", 5174)
+            assert seen[0][2]["advertise_host"] == exported._advertise_host(name)
+        else:
+            with pytest.raises(argparse.ArgumentTypeError):
+                exported._advertise_host(name)
+            assert result.exit_code != 0
+            assert not seen
+
+    @pytest.mark.parametrize("advertise_host", ["kiosk.local", "Kiosk.Local"])
+    def test_serve_with_data_passes_token_and_advertised_url_to_viewer(
+        self, monkeypatch, runner, sample_scene, advertise_host
+    ) -> None:
+        from luxar.cli import main as cli_main
+
+        seen = []
+        opened = []
+        data_apps = []
+
+        class ImmediateThread:
+            def __init__(self, target, args=(), kwargs=None, **_other):
+                self.target, self.args, self.kwargs = target, args, kwargs or {}
+
+            def start(self):
+                self.target(*self.args, **self.kwargs)
+
+        monkeypatch.setattr(cli_main.threading, "Thread", ImmediateThread)
+        monkeypatch.setattr(cli_main, "ensure_viewer_built", lambda: True)
+        monkeypatch.setattr(
+            cli_main, "pick_port", lambda port, host, **kwargs: port + 1
+        )
+        monkeypatch.setattr(cli_main, "wait_for_server", lambda *args, **kwargs: True)
+        monkeypatch.setattr(
+            cli_main.uvicorn, "run", lambda api, **kwargs: data_apps.append(api)
+        )
+        monkeypatch.setattr(
+            cli_main, "open_browser_func", lambda url, **kwargs: opened.append(url)
+        )
+        monkeypatch.setattr(
+            cli_main,
+            "_serve_viewer",
+            lambda host, port, data_url, *args, **kwargs: seen.append(
+                (host, port, data_url, kwargs)
+            ),
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "serve",
+                str(sample_scene),
+                "--viewer",
+                "--open",
+                "--control",
+                "--host",
+                "0.0.0.0",
+                "--advertise-host",
+                advertise_host,
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert len(seen) == 1
+        host, port, data_url, options = seen[0]
+        assert (host, port, data_url) == (
+            "0.0.0.0",
+            5174,
+            f"http://{advertise_host}:8001",
+        )
+        assert options["advertise_host"] == advertise_host
+        assert options["control_token"]
+        assert opened == [
+            f"http://127.0.0.1:5174/?src=http://127.0.0.1:8001&title=test_scene&control&controlToken={options['control_token']}"
+        ]
+        with TestClient(data_apps[0]) as client:
+            for origin, allowed in (
+                ("http://kiosk.local:5174", True),
+                ("http://kiosk.local:5175", False),
+                ("http://other.local:5174", False),
+            ):
+                response = client.get(
+                    "/zarr.json",
+                    headers={"host": "kiosk.local:8001", "origin": origin},
+                )
+                assert response.status_code == 200
+                assert response.headers.get("access-control-allow-origin") == (
+                    origin if allowed else None
+                )
+                preflight = client.options(
+                    "/zarr.json",
+                    headers={
+                        "host": "kiosk.local:8001",
+                        "origin": origin,
+                        "access-control-request-method": "GET",
+                    },
+                )
+                assert preflight.headers.get("access-control-allow-origin") == (
+                    origin if allowed else None
+                )
+            ip_response = client.get(
+                "/zarr.json",
+                headers={
+                    "host": "192.0.2.10:8001",
+                    "origin": "http://192.0.2.10:5174",
+                },
+            )
+            assert ip_response.status_code == 200
+            assert ip_response.headers["access-control-allow-origin"] == (
+                "http://192.0.2.10:5174"
+            )
 
     def test_viewer_auto_build(self, runner) -> None:
         """Viewer auto-builds when missing in a dev tree.

@@ -92,13 +92,14 @@ class Viewer:
 
     Use as a context manager, or call :meth:`close` yourself::
 
-        with Viewer("ws://kiosk.local:5173/control") as viewer:
+        with Viewer("ws://kiosk.local:5173/control", token="TOKEN_FROM_PANEL_URL") as viewer:
             viewer.recenter_camera()
 
     Args:
         url: The hub's WebSocket URL, as ``luxar serve --control`` prints it.
-        token: Shared secret, when the hub was started with
-            ``--control-token``.
+        token: Shared secret. A non-loopback ``luxar serve --control`` generates
+            one unless explicitly opted out; read its ``controlToken=`` value
+            from the printed panel URL, or supply ``--control-token`` yourself.
         timeout_s: Per-call reply timeout. See :data:`DEFAULT_TIMEOUT_S`.
     """
 

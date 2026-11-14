@@ -55,6 +55,7 @@ from .utils import (
     get_viewer_dist_path,
     is_loopback_host,
     origin_hostname,
+    url_host,
 )
 from .utils import (
     open_browser as open_browser_func,
@@ -159,8 +160,8 @@ class _SameHostCORSMiddleware(CORSMiddleware):
     from ``Host`` would make DNS rebinding look same-host: an attacker-controlled
     name can resolve to the kiosk after serving the page. A concrete IP bind is
     compared directly; a wildcard bind accepts whichever IP-literal address the
-    request actually reached. Hostname deployments use ``--cors-origin`` to name
-    their viewer origin explicitly.
+    request actually reached. Hostname deployments use ``--advertise-host`` or
+    ``--cors-origin`` to name their viewer origin explicitly.
 
     The ``Host`` is carried in a :class:`~contextvars.ContextVar` because
     Starlette's ``is_allowed_origin`` hook receives only the origin, while
@@ -216,6 +217,7 @@ def _add_cors(
     cors_origin: str = _DEFAULT_CORS_ORIGIN,
     *,
     bind_host: Optional[str] = None,
+    viewer_origin: Optional[str] = None,
 ) -> None:
     """Add CORS middleware to a FastAPI application.
 
@@ -233,8 +235,10 @@ def _add_cors(
             ``cors_origin="local"`` a non-loopback IP bind also allows that
             address as an origin on any port. A wildcard bind accepts any
             IP-literal address it actually receives; hostname binds require an
-            explicit ``cors_origin``. Omitted (or loopback) keeps the
-            loopback-only default.
+            explicit ``cors_origin`` or ``viewer_origin``. Omitted (or
+            loopback) keeps the loopback-only default.
+        viewer_origin: An operator-declared viewer origin to allow exactly,
+            including when its advertised host is a DNS name.
     """
     origin = cors_origin.strip() or _DEFAULT_CORS_ORIGIN
     allow_origins: list[str]
@@ -254,6 +258,9 @@ def _add_cors(
         allow_credentials = False
     else:
         allow_origins = [item.strip() for item in origin.split(",") if item.strip()]
+
+    if viewer_origin is not None:
+        allow_origins.append(viewer_origin)
 
     if same_host_bind is not None:
         api.add_middleware(
@@ -312,6 +319,7 @@ def _build_viewer_url(
     title: Optional[str] = None,
     control: bool = False,
     control_token: Optional[str] = None,
+    advertise_host: Optional[str] = None,
 ) -> str:
     """Build the browser URL shared by viewer serving and ``serve --open``.
 
@@ -319,7 +327,7 @@ def _build_viewer_url(
     bind address, not a destination, so a URL containing it is not reachable
     from the tablet the kiosk panel is meant to run on.
     """
-    host = advertised_host(host)
+    host = url_host(advertise_host or advertised_host(host))
     if data_url:
         viewer_url = append_title_param(
             f"http://{host}:{port}/?src={data_url.rstrip('/')}", title
@@ -344,6 +352,7 @@ def _loopback_viewer_url(
     title: Optional[str] = None,
     control: bool = False,
     control_token: Optional[str] = None,
+    advertise_host: Optional[str] = None,
 ) -> Optional[str]:
     """The viewer URL as seen from THIS machine, for a wildcard bind only.
 
@@ -361,7 +370,10 @@ def _loopback_viewer_url(
     local_data = data_url
     if data_url:
         parts = urlsplit(data_url)
-        if parts.hostname == advertised_host(host) and parts.port is not None:
+        if (
+            parts.hostname == (advertise_host or advertised_host(host)).lower()
+            and parts.port is not None
+        ):
             local_data = urlunsplit(parts._replace(netloc=f"127.0.0.1:{parts.port}"))
     return _build_viewer_url(
         "127.0.0.1",
@@ -379,7 +391,7 @@ def _build_control_panel_url(
     """Build the tablet control-panel URL printed by ``serve --control``."""
     from urllib.parse import quote
 
-    panel_url = f"http://{host}:{port}/control.html?control"
+    panel_url = f"http://{url_host(host)}:{port}/control.html?control"
     if control_token:
         panel_url += f"&controlToken={quote(control_token, safe='')}"
     return panel_url
@@ -639,6 +651,7 @@ def _serve_viewer(
     control: bool = False,
     control_token: Optional[str] = None,
     open_explicit: bool = False,
+    advertise_host: Optional[str] = None,
 ) -> None:
     """Internal function to serve the viewer.
 
@@ -660,6 +673,7 @@ def _serve_viewer(
             hand the viewer ``&control`` so the display attaches to it.
         control_token: Shared secret every control socket must present as
             ``?token=``. ``None`` leaves the hub open to the bound interface.
+        advertise_host: Optional address used in printed URLs instead of the bind.
         open_explicit: The user ASKED for the browser (an explicit ``--open``),
             so it opens even where the no-display heuristic would skip it.
     """
@@ -680,6 +694,7 @@ def _serve_viewer(
         title=title,
         control=control,
         control_token=control_token,
+        advertise_host=advertise_host,
     )
 
     aprint(f"🌐 Viewer available at: {viewer_url}")
@@ -690,21 +705,29 @@ def _serve_viewer(
         title=title,
         control=control,
         control_token=control_token,
+        advertise_host=advertise_host,
     )
     if local_url and local_url != viewer_url:
         aprint(f"💻 On this machine or through a port forward: {local_url}")
+    if advertise_host and is_loopback_host(host):
+        aprint(
+            f"⚠️  --host {host} listens on this machine only, so no other "
+            f"device can open the {advertise_host} URLs above."
+        )
     if control:
         # Same resolution as the viewer URL: a tablet cannot dial 0.0.0.0.
-        reachable = advertised_host(host)
-        aprint(f"🎛️  Control hub listening at: ws://{reachable}:{port}/control")
+        reachable = advertise_host or advertised_host(host)
+        aprint(
+            f"🎛️  Control hub listening at: ws://{url_host(reachable)}:{port}/control"
+        )
         # The touch panel is a second page in the same bundle, so it shares this
         # origin and needs no address of its own — `?control` is a bare flag.
         panel_url = _build_control_panel_url(reachable, port, control_token)
         aprint(f"📱 Control panel for a tablet: {panel_url}")
         if not is_loopback_host(host) and not control_token:
             aprint(
-                "⚠️  The control hub is reachable from the network without a token. "
-                "Pass --control-token if remote control should be restricted."
+                "⚠️  --no-control-token leaves the control hub open to anyone "
+                "who can reach this machine on the network and can drive the display."
             )
 
     if open_browser_flag:
@@ -717,7 +740,7 @@ def _serve_viewer(
             from .utils import wait_for_server
 
             if wait_for_server(host, port, timeout=15.0):
-                open_browser_func(viewer_url, explicit=open_explicit)
+                open_browser_func(local_url or viewer_url, explicit=open_explicit)
             else:
                 aprint(
                     "⚠️  Viewer server did not become ready within 15s — "
