@@ -227,15 +227,15 @@ Enforces **at most one in-flight sort per node**; a commit landing mid-sort queu
    - Transfer profiler-session ownership to those callbacks and request the bootstrap frame
    - Drain `resortQueued` if set: `scheduleSort(c, mesh, nodeId)`
 8. On **rendered application**:
-    - The final instanced pump selects the complete buffer but does not yet report it applied
-    - The mesh's chained `onAfterRender` hook acknowledges that THREE consumed the pending attribute ranges and completed a draw with the selected buffer
-    - Mark `info` applied, record `applyMs` (settle→draw) and the monotonic completion event, then end the profiler pass
-    - If the ordering is superseded, cancelled, demoted, released, or disposed before that draw, end the pass without a completion event
+   - The final instanced pump selects the complete buffer but does not yet report it applied
+   - The mesh's chained `onAfterRender` hook acknowledges that THREE consumed the pending attribute ranges and completed a draw with the selected buffer
+   - Mark `info` applied, record `applyMs` (settle→draw) and the monotonic completion event, then end the profiler pass
+   - If the ordering is superseded, cancelled, demoted, released, or disposed before that draw, end the pass without a completion event
 9. On **failure** (producer throw or rejection, including a worker timeout):
-    - End the profiler pass (unless ownership was already transferred to an accepted ordering)
-    - Log error
-    - Clear `inFlight`
-    - Drain `resortQueued` even on failure (bounded: only a real commit sets `resortQueued`, so a persistently failing worker cannot loop)
+   - End the profiler pass (unless ownership was already transferred to an accepted ordering)
+   - Log error
+   - Clear `inFlight`
+   - Drain `resortQueued` even on failure (bounded: only a real commit sets `resortQueued`, so a persistently failing worker cannot loop)
 
 ### Chunked Ordering Apply (Perf Lever L8)
 
