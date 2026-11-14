@@ -132,12 +132,13 @@ export function scheduleSort(
     failSort(c, job, pass, error);
     return;
   }
-  if (outcome === null && producer.captureOnly) {
+  if (outcome === null && producer.route === 'gpu' && producer.captureOnly) {
     // Resources can change between accepts() and run(). Use the worker for
     // this dispatch without retiring a healthy GPU producer.
     pass.session?.end();
     state.inFlight = false;
     state.lastSortAxis = null;
+    state.resortQueued = false;
     scheduleSort(c, mesh, nodeId);
     return;
   }
@@ -188,7 +189,7 @@ function beginSortPass(c: CoordinatorState, producer: SortProducer): SortPass {
   const profiler = c.getProfiler?.() ?? null;
   return {
     route: producer.route,
-    gpuFallback: producer.captureOnly === true,
+    gpuFallback: producer.route === 'gpu' && producer.captureOnly === true,
     session: profiler?.beginDepthSortPass() ?? null,
     profiler,
     profilerGeneration: profiler?._currentGeneration() ?? 0,
@@ -235,6 +236,7 @@ function settleSort(
       // as for a GPU resource that vanished before dispatch.
       pass.session?.end();
       current.lastSortAxis = null;
+      current.resortQueued = false;
       scheduleSort(c, job.mesh, job.nodeId);
       return;
     }
@@ -469,7 +471,9 @@ function failSort(c: CoordinatorState, job: SortJob, pass: SortPass, error: unkn
   if (pass.gpuFallback && !pass.handedOff) {
     disableGpuOrderProducer();
     current.lastSortAxis = null;
+    current.resortQueued = false;
     if (hasCommittedData(job.mesh)) scheduleSort(c, job.mesh, job.nodeId);
+    else if (current.generation === job.generation) releaseHeldDraw(c, job.mesh);
     return;
   }
   if (current.generation === job.generation) releaseHeldDraw(c, job.mesh);
