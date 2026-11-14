@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
+
 import pytest
 
-from scripts.gen_control_contract import _token_policy
+_SCRIPT = Path(__file__).resolve().parents[1] / "gen_control_contract.py"
+_SPEC = importlib.util.spec_from_file_location("gen_control_contract", _SCRIPT)
+assert _SPEC is not None and _SPEC.loader is not None
+_MODULE = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_MODULE)
+_token_policy = _MODULE._token_policy
 
 
 @pytest.mark.parametrize("token_bytes", [6, 24, 96])
