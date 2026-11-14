@@ -38,6 +38,16 @@ it.each([
   { args: ['--suite', '--heavy'], status: 2, output: /--suite requires a value/ },
   { args: ['--headed=x'], status: 2, output: /--headed does not take a value/ },
   { args: ['--chrome-args='], status: 2, output: /--chrome-args requires a value/ },
+  {
+    args: ['--executable', '/tmp/chrome', '--channel', 'chrome-beta'],
+    status: 2,
+    output: /--executable.*--channel/,
+  },
+  {
+    args: ['--executable', '/tmp/chrome', '--channel=chrome'],
+    status: 2,
+    output: /--executable.*--channel/,
+  },
   ...(platform() === 'linux'
     ? [{ args: ['--stock'], status: 2, output: /--stock on Linux needs --headed/ }]
     : []),

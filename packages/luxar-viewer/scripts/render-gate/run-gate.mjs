@@ -140,6 +140,12 @@ if (opts.stock && opts.headless && process.platform === 'linux') {
     '--stock on Linux needs --headed: headless stock Chrome renders on SwiftShader, which the gate refuses'
   );
 }
+if (
+  opts.executable &&
+  process.argv.slice(2).some((arg) => arg === '--channel' || arg.startsWith('--channel='))
+) {
+  configError('--executable and --channel cannot be used together');
+}
 
 const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
   cwd: viewerRoot,
