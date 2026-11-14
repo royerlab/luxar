@@ -14,6 +14,8 @@ cancel itself out and the test would pass on a relay no browser could talk to.
 
 from __future__ import annotations
 
+import argparse
+import base64
 import io
 import json
 import socket
@@ -53,6 +55,8 @@ def test_contract_values_match_the_contract() -> None:
         "ROLE_CONTROLLER",
         "PARAM_ROLE",
         "PARAM_TOKEN",
+        "TOKEN_REQUIRED_OFF_LOOPBACK",
+        "TOKEN_BYTES",
         "CLOSE_POLICY_VIOLATION",
         "JSONRPC_VERSION",
         "EVENT_METHOD",
@@ -66,6 +70,30 @@ def test_contract_values_match_the_contract() -> None:
     assert {name: getattr(template, name) for name in shared} == {
         name: getattr(contract, name) for name in shared
     }
+
+
+@pytest.mark.parametrize(
+    ("host", "opt_out", "want_token"),
+    [
+        ("127.0.0.1", False, False),
+        ("[::1]", False, False),
+        ("0.0.0.0", False, True),
+        ("192.0.2.10", False, True),
+        ("0.0.0.0", True, False),
+    ],
+)
+def test_export_token_default(
+    tmp_path: Path, host: str, opt_out: bool, want_token: bool
+) -> None:
+    args = argparse.Namespace(
+        control=True, control_token=None, no_control_token=opt_out, host=host
+    )
+    token = template.resolve_control_token(args, tmp_path).value
+    assert (token is not None) is want_token
+    if token is not None:
+        assert template._TOKEN_PATTERN.fullmatch(token)
+        padded = token + "=" * (-len(token) % 4)
+        assert len(base64.urlsafe_b64decode(padded)) == contract.TOKEN_BYTES
 
 
 def test_contract_covers_every_shared_name() -> None:

@@ -16,6 +16,10 @@ ROLES = frozenset({ROLE_VIEWER, ROLE_CONTROLLER})
 PARAM_ROLE = "role"
 PARAM_TOKEN = "token"
 
+# Default authentication for network-exposed control relays.
+TOKEN_REQUIRED_OFF_LOOPBACK = True
+TOKEN_BYTES = 24
+
 # WebSocket close codes.
 CLOSE_POLICY_VIOLATION = 1008
 

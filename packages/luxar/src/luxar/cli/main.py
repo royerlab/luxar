@@ -27,7 +27,7 @@ from luxar.utils.arbol_warnings import install_arbol_warnings
 from luxar.utils.color_output import apply_arbol_color_policy
 
 from . import demo_runs
-from ._export_serve_template import _TOKEN_BYTES
+from ._control_contract import TOKEN_BYTES
 from ._traceback import exit_with_error
 from .common_options import (
     AllowSensitivePathOption,
@@ -320,7 +320,7 @@ def _serve_control_options(
         and control_token is None
         and not is_loopback_host(host)
     ):
-        control_token = secrets.token_urlsafe(_TOKEN_BYTES)
+        control_token = secrets.token_urlsafe(TOKEN_BYTES)
     return control_token, advertise_host
 
 

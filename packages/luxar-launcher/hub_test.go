@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -321,6 +322,7 @@ func TestControlTokenDefaults(t *testing.T) {
 		wantToken                    bool
 	}{
 		{"loopback", "127.0.0.1", "", "", false},
+		{"IPv6 loopback", "[::1]", "", "", false},
 		{"wildcard", "0.0.0.0", "", "", true},
 		{"interface", "192.0.2.10", "", "", true},
 		{"explicit", "0.0.0.0", "chosen", "", true},
@@ -338,10 +340,33 @@ func TestControlTokenDefaults(t *testing.T) {
 			if (token != "") != tc.wantToken {
 				t.Fatalf("token = %q, wantToken %v", token, tc.wantToken)
 			}
+			if tc.explicit == "" && token != "" {
+				decoded, err := base64.RawURLEncoding.DecodeString(token)
+				if err != nil || len(decoded) != TokenBytes {
+					t.Fatalf("generated token has %d bytes, want %d (decode error %v)", len(decoded), TokenBytes, err)
+				}
+			}
 			if tc.explicit == "chosen" && token != "chosen" {
 				t.Fatalf("explicit token = %q", token)
 			}
 		})
+	}
+}
+
+func TestGeneratedTokenBoundsMatchSavedTokenPattern(t *testing.T) {
+	for _, tc := range []struct {
+		bytes int
+		want  bool
+	}{
+		{5, false},
+		{6, true},
+		{96, true},
+		{97, false},
+	} {
+		token := base64.RawURLEncoding.EncodeToString(make([]byte, tc.bytes))
+		if got := tokenPattern.MatchString(token); got != tc.want {
+			t.Errorf("%d-byte token matches saved-token pattern: %v, want %v", tc.bytes, got, tc.want)
+		}
 	}
 }
 

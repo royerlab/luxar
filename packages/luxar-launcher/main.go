@@ -361,7 +361,7 @@ func controlToken(root, host string) (string, error) {
 			return "", err
 		}
 	}
-	bytes := make([]byte, 24)
+	bytes := make([]byte, TokenBytes)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", err
 	}

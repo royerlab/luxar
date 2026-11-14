@@ -123,8 +123,6 @@ SHEET_FILE = "control-panel.pdf"
 #: The tokens this script writes and accepts from that file: URL-safe as they
 #: stand, so a QR carries the token verbatim.
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{8,128}")
-#: Bytes of randomness in a generated token (16 URL-safe characters).
-_TOKEN_BYTES = 12
 #: Socket defaults differ on Windows (see `ControlServer.allow_reuse_address`).
 _IS_WINDOWS = os.name == "nt"
 #: One DNS label; `--advertise-host` is dot-joined labels or an IP literal.
@@ -146,6 +144,9 @@ ROLE_CONTROLLER = "controller"
 #: Query-parameter names on the socket URL.
 PARAM_ROLE = "role"
 PARAM_TOKEN = "token"
+#: Default policy for a relay exposed beyond loopback.
+TOKEN_REQUIRED_OFF_LOOPBACK = True
+TOKEN_BYTES = 24
 #: RFC 6455 "policy violation" -- an unknown role, a bad token, a foreign
 #: origin. Sent AFTER the handshake completes, so the client sees a code it can
 #: report rather than a bare HTTP error it cannot tell from "no relay here".
@@ -1726,7 +1727,7 @@ def resolve_control_token(args: argparse.Namespace, folder: Path) -> ControlToke
             f"  Control token from {path.name}: the same every start, so a printed\n"
             "  QR keeps working. Delete the file to issue a new one (retires printed QRs).",
         )
-    token = create_token_file(path, secrets.token_urlsafe(_TOKEN_BYTES))
+    token = create_token_file(path, secrets.token_urlsafe(TOKEN_BYTES))
     if token is not None:
         return ControlToken(
             token,
@@ -1734,7 +1735,7 @@ def resolve_control_token(args: argparse.Namespace, folder: Path) -> ControlToke
             "  printed QR keeps working. Delete the file to issue a new one.",
         )
     return ControlToken(
-        secrets.token_urlsafe(_TOKEN_BYTES),
+        secrets.token_urlsafe(TOKEN_BYTES),
         f"  Note: could not save the control token in {path.name} (read-only folder?).\n"
         "  It is new on every start, so do not print this QR.",
         printable=False,
