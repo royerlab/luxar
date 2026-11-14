@@ -644,8 +644,7 @@ All three refuse the same three things, for the reasons in §3.5: an unknown
 would attach with authority), a wrong token (compared in constant time), and a
 cross-origin browser handshake.
 
-Where they deliberately differ is the defaults around the *panel URL*, because
-only the exported folder turns it into something meant to be printed: a QR in
+The exported folder turns its *panel URL* into something meant to be printed: a QR in
 the terminal, `control-qr.png` and an A4 sheet `control-panel.pdf` beside
 `serve.py`. A printed QR is only worth
 having if it keeps working, so `serve.py` keeps all three parts of the URL
@@ -655,10 +654,20 @@ default, generated on the first start and saved in `control-token.txt`
 deleting the file rotates it and retires printed QRs). With the relay on, a
 busy port is an error rather than a move to the next port. And
 `--advertise-host` puts a fixed name or reserved address in the URLs while the
-server listens on every interface. `luxar serve --control` and the native
-launcher still default to no token, and print the address they bind (the
-launcher's port is random), which is fine for a URL read off a terminal but
-not for one printed on a poster.
+server listens on every interface. The native launcher now also generates a
+token by default when control is enabled off loopback, saving it beside the
+`.app` or portable folder or in per-user state storage when that location is
+read-only. It writes the panel URL to a private file in the same locations, so a
+Finder launch has a usable delivery path without stdout. `luxar serve --control`
+still defaults to no token; #3317 tracks changing that default. The
+launcher accepts `LUXAR_LAUNCHER_ADVERTISE_HOST` for the panel, viewer and data
+URLs and `LUXAR_LAUNCHER_PORT` for a fixed listener port; with both a fixed port
+and the saved token, its panel URL survives restarts. Its explicit opt-outs are
+`LUXAR_LAUNCHER_CONTROL_TOKEN=off` and
+`LUXAR_LAUNCHER_NO_CONTROL_TOKEN=1`. A busy fixed port fails instead of moving.
+The embedded viewer uses a local address even when the shared URLs advertise a
+tablet-facing name.
+Unlike the exported folder, the launcher does not create a QR or PDF.
 
 The exported script is also **threaded**, which is not a detail: a WebSocket
 occupies its thread for as long as the kiosk runs, so on the single-threaded
