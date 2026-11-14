@@ -25,6 +25,13 @@ query_params:
   role: role
   token: token
 
+# ── Token policy ─────────────────────────────────────────────────────────────
+# A relay exposed beyond loopback requires a token unless explicitly opted out.
+# Generated tokens use 24 random bytes (192 bits) before URL-safe encoding.
+token_policy:
+  required_off_loopback: true
+  bytes: 24
+
 # ── Close codes ──────────────────────────────────────────────────────────────
 # 1008 is RFC 6455's "policy violation", which is what a refused handshake is:
 # a bad role, a bad token, or a cross-origin browser page.

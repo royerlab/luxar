@@ -14,6 +14,7 @@ cancel itself out and the test would pass on a relay no browser could talk to.
 
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import socket
@@ -53,6 +54,7 @@ def test_contract_values_match_the_contract() -> None:
         "ROLE_CONTROLLER",
         "PARAM_ROLE",
         "PARAM_TOKEN",
+        "TOKEN_REQUIRED_OFF_LOOPBACK",
         "CLOSE_POLICY_VIOLATION",
         "JSONRPC_VERSION",
         "EVENT_METHOD",
@@ -66,6 +68,27 @@ def test_contract_values_match_the_contract() -> None:
     assert {name: getattr(template, name) for name in shared} == {
         name: getattr(contract, name) for name in shared
     }
+    assert template._TOKEN_BYTES == contract.TOKEN_BYTES
+
+
+@pytest.mark.parametrize(
+    ("host", "opt_out"),
+    [("127.0.0.1", False), ("[::1]", False), ("0.0.0.0", False), ("0.0.0.0", True)],
+)
+def test_export_token_default_follows_contract(
+    tmp_path: Path, host: str, opt_out: bool
+) -> None:
+    args = argparse.Namespace(
+        control=True, control_token=None, no_control_token=opt_out, host=host
+    )
+    token = template.resolve_control_token(args, tmp_path).value
+    assert (token is not None) == (
+        contract.TOKEN_REQUIRED_OFF_LOOPBACK
+        and not template.is_loopback_host(host)
+        and not opt_out
+    )
+    if token is not None:
+        assert len(token) == len(template.secrets.token_urlsafe(contract.TOKEN_BYTES))
 
 
 def test_contract_covers_every_shared_name() -> None:

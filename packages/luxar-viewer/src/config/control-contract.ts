@@ -21,6 +21,10 @@ export const CONTROL_PARAMS = {
   token: 'token',
 } as const;
 
+/** Default authentication for network-exposed control relays. */
+export const TOKEN_REQUIRED_OFF_LOOPBACK = true;
+export const TOKEN_BYTES = 24;
+
 /** WebSocket close codes. */
 export const CLOSE_POLICY_VIOLATION = 1008;
 

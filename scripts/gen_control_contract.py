@@ -100,6 +100,21 @@ def _str_items(contract: Dict[str, Any], *path: str) -> List[tuple[str, str]]:
     return items
 
 
+def _token_policy(contract: Dict[str, Any]) -> tuple[bool, int]:
+    policy = _section(contract, "token_policy")
+    required = policy.get("required_off_loopback")
+    token_bytes = policy.get("bytes")
+    if not isinstance(required, bool):
+        raise TypeError("token_policy.required_off_loopback must be a bool")
+    if (
+        isinstance(token_bytes, bool)
+        or not isinstance(token_bytes, int)
+        or token_bytes < 1
+    ):
+        raise TypeError("token_policy.bytes must be a positive int")
+    return required, token_bytes
+
+
 # ─────────────────────────────── Python ─────────────────────────────────────
 
 
@@ -115,6 +130,12 @@ def render_python(c: Dict[str, Any]) -> str:
     lines.append("# Query-parameter names on the socket URL.")
     for key, value in _str_items(c, "query_params"):
         lines.append(f'PARAM_{key.upper()} = "{value}"')
+    lines.append("")
+
+    required, token_bytes = _token_policy(c)
+    lines.append("# Default authentication for network-exposed control relays.")
+    lines.append(f"TOKEN_REQUIRED_OFF_LOOPBACK = {required}")
+    lines.append(f"TOKEN_BYTES = {token_bytes}")
     lines.append("")
 
     lines.append("# WebSocket close codes.")
@@ -159,6 +180,12 @@ def render_typescript(c: Dict[str, Any]) -> str:
     for key, value in _str_items(c, "query_params"):
         lines.append(f"  {key}: '{value}',")
     lines += ["} as const;", ""]
+
+    required, token_bytes = _token_policy(c)
+    lines.append("/** Default authentication for network-exposed control relays. */")
+    lines.append(f"export const TOKEN_REQUIRED_OFF_LOOPBACK = {str(required).lower()};")
+    lines.append(f"export const TOKEN_BYTES = {token_bytes};")
+    lines.append("")
 
     lines.append("/** WebSocket close codes. */")
     for key, int_value in _int_items(c, "close_codes"):
@@ -226,6 +253,13 @@ def render_go(c: Dict[str, Any]) -> str:
             [
                 (f"Param{_go_name(k)}", f'"{v}"')
                 for k, v in _str_items(c, "query_params")
+            ],
+        ),
+        (
+            "// Default authentication for network-exposed control relays.",
+            [
+                ("TokenRequiredOffLoopback", str(_token_policy(c)[0]).lower()),
+                ("TokenBytes", str(_token_policy(c)[1])),
             ],
         ),
         (

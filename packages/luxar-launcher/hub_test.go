@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -335,8 +336,18 @@ func TestControlTokenDefaults(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if (token != "") != tc.wantToken {
+			wantToken := tc.wantToken
+			if tc.explicit == "" && tc.optOut == "" && !isLoopbackHost(tc.host) {
+				wantToken = TokenRequiredOffLoopback
+			}
+			if (token != "") != wantToken {
 				t.Fatalf("token = %q, wantToken %v", token, tc.wantToken)
+			}
+			if tc.explicit == "" && token != "" {
+				decoded, err := base64.RawURLEncoding.DecodeString(token)
+				if err != nil || len(decoded) != TokenBytes {
+					t.Fatalf("generated token has %d bytes, want %d (decode error %v)", len(decoded), TokenBytes, err)
+				}
 			}
 			if tc.explicit == "chosen" && token != "chosen" {
 				t.Fatalf("explicit token = %q", token)

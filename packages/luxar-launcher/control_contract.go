@@ -19,6 +19,12 @@ const (
 	ParamToken = "token"
 )
 
+// Default authentication for network-exposed control relays.
+const (
+	TokenRequiredOffLoopback = true
+	TokenBytes               = 24
+)
+
 // WebSocket close codes.
 const (
 	ClosePolicyViolation = 1008

@@ -123,8 +123,6 @@ SHEET_FILE = "control-panel.pdf"
 #: The tokens this script writes and accepts from that file: URL-safe as they
 #: stand, so a QR carries the token verbatim.
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{8,128}")
-#: Bytes of randomness in a generated token (16 URL-safe characters).
-_TOKEN_BYTES = 12
 #: Socket defaults differ on Windows (see `ControlServer.allow_reuse_address`).
 _IS_WINDOWS = os.name == "nt"
 #: One DNS label; `--advertise-host` is dot-joined labels or an IP literal.
@@ -146,6 +144,10 @@ ROLE_CONTROLLER = "controller"
 #: Query-parameter names on the socket URL.
 PARAM_ROLE = "role"
 PARAM_TOKEN = "token"
+#: Default policy for a relay exposed beyond loopback.
+TOKEN_REQUIRED_OFF_LOOPBACK = True
+TOKEN_BYTES = 24
+_TOKEN_BYTES = TOKEN_BYTES
 #: RFC 6455 "policy violation" -- an unknown role, a bad token, a foreign
 #: origin. Sent AFTER the handshake completes, so the client sees a code it can
 #: report rather than a bare HTTP error it cannot tell from "no relay here".
@@ -1716,7 +1718,11 @@ def resolve_control_token(args: argparse.Namespace, folder: Path) -> ControlToke
             "  Control token from --control-token: for this run only.",
             printable=False,
         )
-    if args.no_control_token or is_loopback_host(args.host):
+    if (
+        args.no_control_token
+        or not TOKEN_REQUIRED_OFF_LOOPBACK
+        or is_loopback_host(args.host)
+    ):
         return ControlToken(None)
     path = folder / CONTROL_TOKEN_FILE
     saved = read_saved_token(path)
