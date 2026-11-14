@@ -251,18 +251,29 @@ func statePanelFiles(root string) (string, string, error) {
 	if rel, err := filepath.Rel(rootAbs, dir); err == nil && (rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))) {
 		return "", "", fmt.Errorf("control state directory %s is inside the served root", dir)
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", "", err
-	}
 	resolvedRoot, rootErr := filepath.EvalSymlinks(rootAbs)
 	resolvedDir, dirErr := filepath.EvalSymlinks(dir)
-	if rootErr != nil || dirErr != nil {
+	if rootErr != nil || dirErr != nil && !errors.Is(dirErr, os.ErrNotExist) {
 		return "", "", fmt.Errorf("resolve control state directory: %v, %v", rootErr, dirErr)
 	}
-	if rel, err := filepath.Rel(resolvedRoot, resolvedDir); err == nil && (rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))) {
-		return "", "", fmt.Errorf("control state directory %s is inside the served root", dir)
+	if dirErr == nil {
+		if rel, err := filepath.Rel(resolvedRoot, resolvedDir); err == nil && (rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))) {
+			return "", "", fmt.Errorf("control state directory %s is inside the served root", dir)
+		}
 	}
 	return filepath.Join(dir, "control-panel.txt"), filepath.Join(dir, "control-token.txt"), nil
+}
+
+func prepareStatePanelFiles(root string) (string, string, error) {
+	panel, _, err := statePanelFiles(root)
+	if err != nil {
+		return "", "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(panel), 0o700); err != nil {
+		return "", "", err
+	}
+	// Recheck after creation, including a state-home symlink into the served root.
+	return statePanelFiles(root)
 }
 
 var tokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{8,128}$`)
@@ -363,6 +374,9 @@ func controlToken(root, host string) (string, error) {
 			return "", err
 		}
 		fmt.Fprintf(os.Stderr, "could not save control token to %s: %v\n", path, err)
+	}
+	if fallbackErr == nil {
+		_, fallback, fallbackErr = prepareStatePanelFiles(root)
 	}
 	if fallbackErr == nil {
 		if saved, err := createControlToken(fallback, token); err == nil {
@@ -474,7 +488,7 @@ func startServer(root string) (string, string, *http.Server, error) {
 		if err := writePanelURL(path, panelURL); err != nil {
 			saved = false
 			fmt.Fprintf(os.Stderr, "could not save control panel URL to %s: %v\n", path, err)
-			fallback, _, fallbackErr := statePanelFiles(root)
+			fallback, _, fallbackErr := prepareStatePanelFiles(root)
 			if fallbackErr != nil {
 				fmt.Fprintf(os.Stderr, "could not create control panel state directory: %v\n", fallbackErr)
 			} else if err := writePanelURL(fallback, panelURL); err != nil {

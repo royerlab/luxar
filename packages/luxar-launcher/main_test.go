@@ -198,6 +198,26 @@ func TestPanelWriteFailureUsesStateDirectory(t *testing.T) {
 	resp.Body.Close()
 }
 
+func TestWritableAppDoesNotCreateStateDirectory(t *testing.T) {
+	state := setTestStateHome(t)
+	t.Setenv("LUXAR_LAUNCHER_HOST", "0.0.0.0")
+	t.Setenv("LUXAR_LAUNCHER_CONTROL", "1")
+	t.Setenv("LUXAR_LAUNCHER_CONTROL_TOKEN", "")
+	t.Setenv("LUXAR_LAUNCHER_NO_CONTROL_TOKEN", "")
+	root := t.TempDir()
+	panel, token := panelFiles(root)
+	t.Cleanup(func() { _ = os.Remove(panel) })
+	t.Cleanup(func() { _ = os.Remove(token) })
+	_, _, srv, err := startServer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer shutdownServer(srv)
+	if _, err := os.Stat(filepath.Join(state, "luxar", filepath.Base(root))); !os.IsNotExist(err) {
+		t.Fatalf("unused state directory was created: %v", err)
+	}
+}
+
 func TestReadOnlyAppParentKeepsControlAvailable(t *testing.T) {
 	for _, host := range []string{"127.0.0.1", "0.0.0.0"} {
 		t.Run(host, func(t *testing.T) {
@@ -260,7 +280,7 @@ func TestStateDirectoryCannotBeServed(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Setenv("XDG_STATE_HOME", link)
-		if _, _, err := statePanelFiles(root); err == nil {
+		if _, _, err := prepareStatePanelFiles(root); err == nil {
 			t.Fatal("accepted a symlinked control token path inside the served root")
 		}
 	}
