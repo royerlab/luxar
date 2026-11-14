@@ -102,6 +102,8 @@ for (const gpuSort of [1, 0] as const) {
     page,
   }, testInfo) => {
     test.skip(!isWebGPUProject(testInfo), 'needs a native WebGPU device');
+    // Load + first sort (2 x 30 s polls), then three orbit steps (2 x 15 s each).
+    test.setTimeout(180_000);
     await page.goto(`/?src=${FIXTURE}&debug&dpr=1&gpuSort=${gpuSort}`);
     await waitForLuxarReady(page);
     await expect.poll(() => gsplatNode(page), { timeout: 30_000 }).not.toBeNull();
@@ -128,6 +130,8 @@ test('a capture refresh flips the order buffer on the GPU, without a host upload
   page,
 }, testInfo) => {
   test.skip(!isWebGPUProject(testInfo), 'needs a native WebGPU device');
+  // Load + first sort (2 x 30 s polls), then the capture's draw (2 x 15 s polls).
+  test.setTimeout(120_000);
   await page.goto(`/?src=${FIXTURE}&debug&dpr=1`);
   await waitForLuxarReady(page);
   await expect.poll(() => gsplatNode(page), { timeout: 30_000 }).not.toBeNull();
