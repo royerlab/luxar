@@ -17,6 +17,7 @@ import {
 } from '../../../../rendering/element-storage';
 import { POINT_TEXTURE_LAYOUT } from '../../../../rendering/element-texture-layout';
 import { configureRendererBackendPolicy } from '../../../../rendering/renderer-backend-policy';
+import { DepthSortCoordinator } from '../../../../rendering/depth-sort-coordinator';
 import { GpuSortProducer } from '../../../../rendering/depth-sort-coordinator/gpu-sort-producer';
 import {
   workerSortProducer,
@@ -29,6 +30,7 @@ import {
 import {
   createCoordinatorState,
   workerHost,
+  type CoordinatorState,
   type NodeSortState,
 } from '../../../../rendering/depth-sort-coordinator/state';
 import { resortForCapture } from '../../../../rendering/depth-sort-coordinator/capture';
@@ -331,6 +333,27 @@ describe('GPU depth sort scheduling', () => {
     geometry.dispose();
   });
 
+  it('uses the worker when the bridge cannot inspect an element texture', async () => {
+    const { fake, gpu, geometry, texture, mesh, coordinator } = await scene();
+    ready(texture);
+    const sort = workerReturning(null);
+    vi.spyOn(fake.backend, 'get').mockImplementationOnce(() => {
+      throw new Error('texture still being created');
+    });
+
+    scheduleSort(coordinator, mesh, mesh.uuid, 'motion');
+    expect(sort).toHaveBeenCalledOnce();
+    expect(gpu.ready()).toBe(true);
+    expect(activeSortedIndexSlot(geometry)).toBe(0);
+    await flush();
+    scheduleSort(coordinator, mesh, mesh.uuid, 'motion');
+    expect(sort).toHaveBeenCalledOnce();
+    expect(fake.copies).toHaveLength(1);
+    vi.restoreAllMocks();
+    gpu.dispose();
+    geometry.dispose();
+  });
+
   it('re-sorts on the worker when a device writer throws instead of returning false', async () => {
     const { geometry, texture, mesh, coordinator } = await scene();
     ready(texture);
@@ -381,6 +404,36 @@ describe('GPU depth sort scheduling', () => {
     scheduleSort(coordinator, mesh, mesh.uuid, 'motion');
     expect(fake.copies).toHaveLength(2);
     expect(fake.allocations.length).toBeGreaterThan(allocated);
+    gpu.dispose();
+    geometry.dispose();
+  });
+
+  it('restores the GPU byte budget when a sorted scene is released', async () => {
+    const { fake, gpu, geometry, texture, mesh, state } = await scene();
+    ready(texture);
+    const context = createGpuSortContext({ backend: fake.backend })!;
+    const coord = new DepthSortCoordinator();
+    coord.configure({
+      getCamera: () => new THREE.PerspectiveCamera(),
+      requestRender: vi.fn(),
+      getGpuSortContext: () => context,
+    });
+    const internal = (coord as unknown as { state: CoordinatorState }).state;
+    internal.nodeStates.set(mesh.uuid, state);
+    const producer = internal.sortProducers[0] as GpuSortProducer;
+    producer.ready();
+    await flush();
+    const budget = getGpuByteBudget();
+
+    scheduleSort(internal, mesh, mesh.uuid, 'motion');
+    expect(getGpuByteBudget()).toBeLessThan(budget);
+    expect(fake.allocations.some((allocation) => !allocation.destroyed)).toBe(true);
+
+    coord.releaseAllNodes();
+    expect(getGpuByteBudget()).toBe(budget);
+    expect(fake.allocations.every((allocation) => allocation.destroyed)).toBe(true);
+    expect(producer.ready()).toBe(true);
+    coord.dispose();
     gpu.dispose();
     geometry.dispose();
   });

@@ -93,7 +93,16 @@ export class GpuSortProducer implements SortProducer {
     if (!texture || !getElementTextureLayout(geometry) || !canComputeSortedIndex(geometry)) {
       return false;
     }
-    return !!this.getContext()?.texture(texture) && !!this.sorter?.accepts(job.state.count);
+    return this.textureReady(texture) && !!this.sorter?.accepts(job.state.count);
+  }
+
+  private textureReady(texture: THREE.DataTexture): boolean {
+    try {
+      return !!this.getContext()?.texture(texture);
+    } catch {
+      // Three may still be creating the resource, or the device may be lost.
+      return false;
+    }
   }
 
   /** A device ordering whose writer sorts the node into the inactive buffer. */
