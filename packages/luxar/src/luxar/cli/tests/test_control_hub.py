@@ -25,17 +25,17 @@ from luxar.cli.serving import _add_control_hub
 
 
 @pytest.mark.parametrize(
-    ("host", "network_bind", "opt_out"),
+    ("host", "opt_out", "want_token"),
     [
         ("127.0.0.1", False, False),
         ("[::1]", False, False),
+        ("0.0.0.0", False, True),
+        ("192.0.2.10", False, True),
         ("0.0.0.0", True, False),
-        ("192.0.2.10", True, False),
-        ("0.0.0.0", True, True),
     ],
 )
-def test_serve_token_default_follows_contract(
-    host: str, network_bind: bool, opt_out: bool
+def test_serve_token_default(
+    host: str, opt_out: bool, want_token: bool
 ) -> None:
     from luxar.cli.main import _serve_control_options
 
@@ -47,9 +47,7 @@ def test_serve_token_default_follows_contract(
         no_control_token=opt_out,
         advertise_host=None,
     )
-    assert (token is not None) == (
-        contract.TOKEN_REQUIRED_OFF_LOOPBACK and network_bind and not opt_out
-    )
+    assert (token is not None) is want_token
     if token is not None:
         padded = token + "=" * (-len(token) % 4)
         assert len(base64.urlsafe_b64decode(padded)) == contract.TOKEN_BYTES

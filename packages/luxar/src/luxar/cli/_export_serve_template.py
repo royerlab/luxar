@@ -147,7 +147,6 @@ PARAM_TOKEN = "token"
 #: Default policy for a relay exposed beyond loopback.
 TOKEN_REQUIRED_OFF_LOOPBACK = True
 TOKEN_BYTES = 24
-_TOKEN_BYTES = TOKEN_BYTES
 #: RFC 6455 "policy violation" -- an unknown role, a bad token, a foreign
 #: origin. Sent AFTER the handshake completes, so the client sees a code it can
 #: report rather than a bare HTTP error it cannot tell from "no relay here".
@@ -1718,11 +1717,7 @@ def resolve_control_token(args: argparse.Namespace, folder: Path) -> ControlToke
             "  Control token from --control-token: for this run only.",
             printable=False,
         )
-    if (
-        args.no_control_token
-        or not TOKEN_REQUIRED_OFF_LOOPBACK
-        or is_loopback_host(args.host)
-    ):
+    if args.no_control_token or is_loopback_host(args.host):
         return ControlToken(None)
     path = folder / CONTROL_TOKEN_FILE
     saved = read_saved_token(path)
@@ -1732,7 +1727,7 @@ def resolve_control_token(args: argparse.Namespace, folder: Path) -> ControlToke
             f"  Control token from {path.name}: the same every start, so a printed\n"
             "  QR keeps working. Delete the file to issue a new one (retires printed QRs).",
         )
-    token = create_token_file(path, secrets.token_urlsafe(_TOKEN_BYTES))
+    token = create_token_file(path, secrets.token_urlsafe(TOKEN_BYTES))
     if token is not None:
         return ControlToken(
             token,
@@ -1740,7 +1735,7 @@ def resolve_control_token(args: argparse.Namespace, folder: Path) -> ControlToke
             "  printed QR keeps working. Delete the file to issue a new one.",
         )
     return ControlToken(
-        secrets.token_urlsafe(_TOKEN_BYTES),
+        secrets.token_urlsafe(TOKEN_BYTES),
         f"  Note: could not save the control token in {path.name} (read-only folder?).\n"
         "  It is new on every start, so do not print this QR.",
         printable=False,

@@ -105,8 +105,8 @@ def _token_policy(contract: Dict[str, Any]) -> tuple[bool, int]:
     policy = _section(contract, "token_policy")
     required = policy.get("required_off_loopback")
     token_bytes = policy.get("bytes")
-    if not isinstance(required, bool):
-        raise TypeError("token_policy.required_off_loopback must be a bool")
+    if required is not True:
+        raise TypeError("token_policy.required_off_loopback must be true")
     if (
         isinstance(token_bytes, bool)
         or not isinstance(token_bytes, int)

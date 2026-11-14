@@ -340,7 +340,7 @@ func controlToken(root, host string) (string, error) {
 		}
 		return token, nil
 	}
-	if !TokenRequiredOffLoopback || isLoopbackHost(host) {
+	if isLoopbackHost(host) {
 		return "", nil
 	}
 	_, path := panelFiles(root)
