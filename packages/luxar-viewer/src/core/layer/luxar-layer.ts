@@ -153,6 +153,7 @@ import type { Renderer } from '../../rendering/renderer-capabilities';
 import { detachSceneGraphIndex } from '../../utils/scene-graph-index';
 import type { LoaderConfig } from '../../data/data-loader-types';
 import type { EmbedderDimensions } from '../app/embedder/events';
+import { gpuSortContextGetter } from '../../rendering/gpu-depth-sort/three-webgpu-bridge';
 
 /** Viewport size in CSS pixels. */
 export interface ViewportSize {
@@ -242,6 +243,11 @@ export interface LuxarLayerOptions {
    * coordinator's camera: the layer's nodes draw in plain three.js order.
    */
   depthSort?: boolean;
+  /**
+   * Depth-sort instanced nodes on the GPU when `renderer` runs on a native
+   * WebGPU device (#3162). Default: `config.depthSort.gpuSort`.
+   */
+  gpuSort?: boolean;
   /**
    * `renderOrder` stamped onto every Group in the layer subtree. Three.js uses
    * the nearest Group's value as the primary transparent-sort key, so nested
@@ -1203,6 +1209,10 @@ export class LuxarLayer {
       isLoadInProgress: () => this.sceneLoaders.getLoader(LOADER_ID)?.isUpdateInProgress() ?? false,
       getProfiler: () => this.sceneLoaders.getProfiler(),
       getDisplayDims: () => this.dims.getDims()?.displayed ?? null,
+      getGpuSortContext: gpuSortContextGetter(
+        this.options.gpuSort ?? config.depthSort.gpuSort,
+        () => this.options.renderer
+      ),
     });
     // Spawn the sort worker while the page is idle. Deferring it to the first
     // order-dependent commit puts its initialize() reply on a main thread that

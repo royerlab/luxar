@@ -120,6 +120,7 @@ import { isPhysicalMeshMaterial } from './materials/mesh-physical/config';
 import { setGlassPartition, type GlassPartition } from './materials/_shared/glass-partition';
 import {
   clearSortPose,
+  forgetSortPose,
   createCoordinatorState,
   invalidateSortedNodeCommitStamps,
   isLiveOrderDependent,
@@ -145,6 +146,9 @@ import {
   trySynchronousFirstSort,
 } from './depth-sort-coordinator/ordering-apply';
 import { evaluateDepthSortPerFrame, scheduleSort } from './depth-sort-coordinator/scheduler';
+import { workerSortProducer } from './depth-sort-coordinator/sort-producers';
+import { GpuSortProducer } from './depth-sort-coordinator/gpu-sort-producer';
+import type { GpuSortContext } from './gpu-depth-sort/three-webgpu-bridge';
 import { resortForCapture } from './depth-sort-coordinator/capture';
 
 export {
@@ -195,6 +199,16 @@ export interface DepthSortCoordinatorOptions {
    * the same inversion as `getCamera` above.
    */
   getDisplayDims?: () => readonly number[] | null;
+  /**
+   * The native WebGPU context to sort on, when the host renders through one and
+   * the GPU depth sort is enabled (`config.depthSort.gpuSort`, `?gpuSort`).
+   * Instanced nodes then sort on the GPU (`depth-sort-coordinator/
+   * gpu-sort-producer.ts`) and fall back to the SortWorker whenever it returns
+   * null, the sorter is still compiling, or the node does not fit. A GETTER,
+   * re-read on every sort, so a renderer recreated after a device loss is
+   * picked up.
+   */
+  getGpuSortContext?: () => GpuSortContext | null;
 }
 
 /**
@@ -252,7 +266,9 @@ function drawsAnyFace(mesh: THREE.Mesh): boolean {
  */
 export class DepthSortCoordinator {
   /** This instance's state; the submodules take it as their first argument. */
-  private readonly state: CoordinatorState = createCoordinatorState();
+  private readonly state: CoordinatorState = createCoordinatorState([workerSortProducer]);
+  /** The GPU producer, when the host supplied a WebGPU context. */
+  private gpuProducer: GpuSortProducer | null = null;
   /**
    * Set by {@link dispose}, cleared by {@link configure} / {@link warmUp}: a
    * torn-down host's late commit is ignored ({@link noteCommit}), so it can
@@ -278,6 +294,24 @@ export class DepthSortCoordinator {
     c.getProfiler = options.getProfiler ?? null;
     c.getDisplayDims = options.getDisplayDims ?? null;
     c.syncSortElementsRemaining = syncSortElementLimit();
+    this.gpuProducer?.dispose();
+    this.gpuProducer = options.getGpuSortContext
+      ? new GpuSortProducer(options.getGpuSortContext)
+      : null;
+    c.sortProducers = this.gpuProducer
+      ? [this.gpuProducer, workerSortProducer]
+      : [workerSortProducer];
+  }
+
+  /**
+   * Re-sort every node from its current pose at the next frame, as if it had
+   * never been sorted. The host calls this after a WebGPU device restore: the
+   * recreated buffers hold the host arrays, which a GPU-written order had left
+   * stale (still valid permutations, but older ones).
+   */
+  invalidateSortPoses(): void {
+    for (const state of this.state.nodeStates.values()) forgetSortPose(state);
+    this.state.requestRender?.();
   }
 
   /**
@@ -518,6 +552,8 @@ export class DepthSortCoordinator {
     // tears all of this host's content down anyway).
     cancelAllSortedIndexOrderingApplies(c);
     cancelAllTriangleOrderingApplies(c);
+    // The GPU sorter's scratch is sized for the scene that just left.
+    this.gpuProducer?.releaseScratch();
   }
 
   /**
@@ -621,6 +657,9 @@ export class DepthSortCoordinator {
    */
   dispose(): void {
     const c = this.state;
+    this.gpuProducer?.dispose();
+    this.gpuProducer = null;
+    c.sortProducers = [workerSortProducer];
     // The worker outlives this coordinator when another host still uses it,
     // so this host's registrations must leave it; when this is the last one
     // the terminate below drops them wholesale.

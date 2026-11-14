@@ -8,31 +8,6 @@
 
 import * as THREE from 'three';
 
-const byteChangeListeners = new WeakMap<THREE.BufferGeometry, Set<() => void>>();
-
-/** Notify resident-byte trackers when renderer-owned buffers change. */
-export function onGeometryByteChange(
-  geometry: THREE.BufferGeometry,
-  listener: () => void
-): () => void {
-  let listeners = byteChangeListeners.get(geometry);
-  if (!listeners) {
-    listeners = new Set();
-    byteChangeListeners.set(geometry, listeners);
-  }
-  listeners.add(listener);
-  return () => listeners?.delete(listener);
-}
-
-/** Charge WebGPU depth-order scratch for the geometry's lifetime. */
-export function setGpuOrderScratchBytes(geometry: THREE.BufferGeometry, bytes: number): void {
-  const data = geometry.userData as { gpuOrderScratchBytes?: number };
-  if ((data.gpuOrderScratchBytes ?? 0) === bytes) return;
-  data.gpuOrderScratchBytes = bytes;
-  invalidateCachedByteSize(geometry);
-  for (const listener of [...(byteChangeListeners.get(geometry) ?? [])]) listener();
-}
-
 /**
  * Estimate the GPU-resident byte footprint of a geometry by summing
  * the underlying typed-array byte lengths of every attribute (and
@@ -90,7 +65,6 @@ export function estimateGeometryBytes(geometry: THREE.BufferGeometry): number {
   // (a single quad), so they're a fixed overhead — small, but include
   // them for correctness.
   total += indexBytes;
-  total += (geometry.userData as { gpuOrderScratchBytes?: number }).gpuOrderScratchBytes ?? 0;
   // GSplat, Points and Lines geometries all carry their element data in an
   // RGBA32F texture (gsplats: 64 B/splat, 4 texels; points: 48 B/point, 3
   // texels; lines: 96 B/segment, 6 texels) riding `userData.elementTexture`

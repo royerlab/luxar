@@ -121,7 +121,7 @@ export class GpuDepthSorter {
     this.releaseScratch();
   }
 
-  /** Drop scratch when its accounted geometry leaves GPU residency. */
+  /** Free the scratch until the next sort, which allocates it again at its own size. */
   releaseScratch(): void {
     this.scratch?.destroy();
     this.scratch = null;

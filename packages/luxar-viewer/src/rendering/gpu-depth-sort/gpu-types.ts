@@ -83,6 +83,8 @@ export interface GpuLimits {
 /** A `GPUDevice`, reduced to what the sorter calls. */
 export interface GpuDevice {
   readonly limits: GpuLimits;
+  /** Resolves when the device is lost (absent on test fakes). */
+  readonly lost?: Promise<unknown>;
   readonly queue: GpuQueue;
   createBuffer(descriptor: { label?: string; size: number; usage: number }): GpuBuffer;
   createShaderModule(descriptor: { label?: string; code: string }): unknown;

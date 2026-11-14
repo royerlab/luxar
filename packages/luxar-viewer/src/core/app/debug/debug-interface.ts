@@ -22,6 +22,8 @@ import { getBlendModeProgramWarmupStats } from '../../../rendering/blend-warmup'
 import { materialManager, type BlendingMode } from '../../../rendering/material-manager';
 import { normalizeBlendingMode } from '../../../rendering/blending-state';
 import { getDepthSortWorkerStatus } from '../../../rendering/depth-sort-coordinator';
+import { getActiveSortedIndexAttribute } from '../../../rendering/element-storage';
+import { gpuSortContextFor } from '../../../rendering/gpu-depth-sort/three-webgpu-bridge';
 import { setCommittedData } from '../../../types/committed-data';
 import { resolveLinePrimitiveForNode } from '../../../types/line-primitive';
 import type { LoadedPointsData } from '../../../types/points';
@@ -219,6 +221,14 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     // the degrade used to be visible only as one console line, which is
     // impossible to check after the fact from an E2E run or a bug report.
     getDepthSortWorkerStatus: () => getDepthSortWorkerStatus(),
+
+    // The ordering a node is DRAWN with: its selected `aSortedIndex` buffer's
+    // first `count` entries. On native WebGPU it is read back from the GPU,
+    // because a GPU depth sort (#3162) writes the buffer without touching the
+    // host array; elsewhere the host array is the buffer's mirror. Null when
+    // the uuid names no instanced node.
+    readDrawnOrdering: (uuid: string, count: number) =>
+      readDrawnOrdering(ports.sceneManager.scene, ports.sceneManager.renderer, uuid, count),
 
     // Helper to get scene loader manager (for cache inspection)
     getSceneLoader: () => {
@@ -528,6 +538,10 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     Modules.LUXAR,
     '  __luxarDebug.getDepthSortWorkerStatus() - Why a scene may be drawn unsorted (idle/ready/starved/failed + deadline misses)'
   );
+  log.info(
+    Modules.LUXAR,
+    '  __luxarDebug.readDrawnOrdering(uuid, count) - The depth ordering a node is drawn with (read back on WebGPU)'
+  );
   log.info(Modules.LUXAR, '  __luxarDebug.scene - Access THREE.js scene');
   log.info(Modules.LUXAR, '  __luxarDebug.camera - Access camera');
   log.info(Modules.LUXAR, '  __luxarDebug.app - Access LuxarApp instance');
@@ -544,4 +558,21 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
   log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL1() - Clear L1 memory cache');
   log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL2() - Clear L2 OPFS cache');
   log.info(Modules.LUXAR, '  __luxarDebug.cache.clearAll() - Clear all caches (L0, L1, L2)');
+}
+
+/** See `readDrawnOrdering` on the debug interface. */
+async function readDrawnOrdering(
+  scene: THREE.Scene | null | undefined,
+  renderer: unknown,
+  uuid: string,
+  count: number
+): Promise<number[] | null> {
+  const mesh = scene?.getObjectByProperty('uuid', uuid) as THREE.Mesh | undefined;
+  const geometry = mesh?.geometry as THREE.InstancedBufferGeometry | undefined;
+  const attribute = geometry ? getActiveSortedIndexAttribute(geometry) : undefined;
+  if (!attribute) return null;
+  const context = gpuSortContextFor(renderer);
+  const buffer = context?.buffer(attribute);
+  if (context && buffer) return Array.from(await context.readUint32(buffer, count));
+  return Array.from((attribute.array as Uint32Array).subarray(0, count));
 }

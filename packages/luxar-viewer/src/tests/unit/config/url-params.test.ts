@@ -188,6 +188,7 @@ describe('readUrlParams', () => {
       lodEnergyComp: true, // streaming brightness compensation is ON (opt-out via ?noLodEnergy)
       blendWarmup: true, // WebGL blend-variant warm-up is ON by default (opt-out via ?noBlendWarmup)
       depthSort: true, // gsplat depth sorting is ON by default (opt-out via ?depthSort=0)
+      gpuSort: null, // config.depthSort.gpuSort unless ?gpuSort=0|1
       densityGuard: true, // projected-density guard is ON by default (opt-out via ?noDensityGuard)
       densityCap: null, // configured cap unless ?densityCap=N
       lodFinest: false, // capture-quality force-finest is OFF by default (opt-in via ?lodFinest)
@@ -281,6 +282,14 @@ describe('readUrlParams', () => {
     expect(readUrlParams('?depthSort=0').depthSort).toBe(false);
     expect(readUrlParams('?depthSort=false').depthSort).toBe(false);
     expect(readUrlParams('?depthSort=OFF').depthSort).toBe(false);
+  });
+
+  it('gpuSort is unset unless the URL says either way', () => {
+    expect(readUrlParams('').gpuSort).toBeNull();
+    expect(readUrlParams('?gpuSort').gpuSort).toBe(true);
+    expect(readUrlParams('?gpuSort=1').gpuSort).toBe(true);
+    expect(readUrlParams('?gpuSort=0').gpuSort).toBe(false);
+    expect(readUrlParams('?gpuSort=off').gpuSort).toBe(false);
   });
 
   it('lodFinest defaults OFF and is enabled only by ?lodFinest', () => {

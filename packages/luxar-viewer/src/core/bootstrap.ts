@@ -352,6 +352,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     kiosk: urlParams.kiosk,
     lodEnergyComp: urlParams.lodEnergyComp,
     depthSort: urlParams.depthSort,
+    gpuSort: urlParams.gpuSort ?? undefined,
     densityGuard: urlParams.densityGuard,
     // `?densityCap=<N>` sweeps the guard's threshold for one session.
     densityCap: urlParams.densityCap ?? undefined,

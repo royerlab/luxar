@@ -696,7 +696,7 @@
   },
   "src/rendering/depth-sort-coordinator/scheduler.ts": {
     "complexity": {
-      "count": 4
+      "count": 2
     }
   },
   "src/rendering/depth-sort-coordinator/triangle-ordering.ts": {

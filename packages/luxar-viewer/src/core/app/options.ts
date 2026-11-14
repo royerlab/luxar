@@ -239,6 +239,13 @@ export interface LuxarAppOptions {
   depthSort?: boolean;
 
   /**
+   * Depth-sort instanced nodes on the GPU when the renderer runs on a native
+   * WebGPU device (#3162). Default: `config.depthSort.gpuSort`. Mirrors
+   * `UrlParams.gpuSort` (`?gpuSort=1` / `?gpuSort=0`).
+   */
+  gpuSort?: boolean;
+
+  /**
    * Projected-density guard: per-node keep-fraction thinning (blendable
    * modes, brightness-compensated) and a refinement rung cap on nodes whose
    * elements-per-pixel exceed `config.densityGuard.capElementsPerPixel`.

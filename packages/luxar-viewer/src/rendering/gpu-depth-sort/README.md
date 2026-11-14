@@ -17,16 +17,29 @@ element's center from the element texture the geometry already uploaded, and
 writes the order into the ordering attribute's own GPU buffer, so a re-sort
 moves no data across the CPU.
 
-The sorter itself knows nothing about three.js. The coordinator's
-`gpu-order-producer.ts` resolves Three.js's texture and ordering buffers and
-uses it for native-WebGPU camera-motion refreshes. The SortWorker establishes
-the CPU repair seed on commits and handles unavailable GPU compute.
+The sorter itself knows nothing about three.js or the depth-sort coordinator.
+Two pieces connect it:
+
+- `three-webgpu-bridge.ts` is the only file that reaches into three's
+  WebGPURenderer for the sort: the device, the GPU texture behind an element
+  texture once three has uploaded its current version, and the GPU buffer
+  behind an ordering attribute.
+- `depth-sort-coordinator/gpu-sort-producer.ts` is the coordinator's GPU
+  producer of orderings, beside the SortWorker. It serves camera-motion and
+  capture re-sorts of instanced nodes; commits keep the SortWorker, whose
+  result also refreshes the host array the grow seed and repairs read.
+
+The GPU sort is on by default on a native WebGPU device
+(`config.depthSort.gpuSort`), and `?gpuSort=0` or `?gpuSort=1` overrides it.
+Mesh nodes, nodes the device cannot hold, other backends, and every node while
+the pipelines compile or after a device loss keep the SortWorker.
 
 ## File map
 
 ```
 gpu-depth-sort/
 ├── gpu-depth-sorter.ts — GpuDepthSorter: compile once per device, sort(request), scratch, dispose
+├── three-webgpu-bridge.ts — The device and up-to-date GPU resources of a three.js WebGPURenderer
 ├── pipelines.ts        — The compute pipelines and their explicit bind-group layouts
 ├── scratch.ts          — Scratch buffers, uniform slots and bind groups for one capacity
 ├── plan.ts             — Pure sizing: blocks, scan levels, device limits, uniform packing
@@ -60,8 +73,10 @@ All passes run in one compute pass and one submit per sort:
 Blocks hold 4,096 elements. Scratch for N elements is four 4N-byte buffers plus
 a small histogram: about 160 MB at 10M. One sorter's scratch is shared by every
 node it sorts. Each sort writes its uniforms and submits before the next sort,
-and the queue runs them in order. Scratch grows by doubling, is charged to a
-geometry's GPU residency budget, and is freed when that geometry is disposed.
+and the queue runs them in order. Scratch grows by doubling and is reserved from
+the GPU byte budget (`setGpuByteReservation`) while it exists. The coordinator's
+producer frees it when the host's scene is torn down (`releaseAllNodes`, a
+dataset switch), so the next sort allocates it again at the new scene's size.
 
 **Measured cost:** about 9 ms of GPU time for a 10M-element sort on an RTX 3070
 (`gpu-depth-sort.spec.ts`, back-to-back sorts), against 30–100 ms for the

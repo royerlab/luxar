@@ -264,9 +264,32 @@ export function initializeGpuByteBudget(overrideBytes?: number | null): void {
   );
 }
 
-/** Current GPU-geometry byte budget. Read dynamically so backoff applies live. */
+/**
+ * VRAM held outside pooled geometry, by owner (the GPU depth sort's scratch).
+ * It shares the GPU with the geometry, so the geometry budget shrinks by it.
+ */
+const reservations = new Map<object, number>();
+
+/**
+ * Record that `owner` holds `bytes` of GPU memory outside pooled geometry
+ * (replacing its previous figure; 0 releases it). The geometry budget
+ * ({@link getGpuByteBudget}) is reduced by the total, never below the
+ * context-loss backoff floor.
+ */
+export function setGpuByteReservation(owner: object, bytes: number): void {
+  if (bytes > 0) reservations.set(owner, bytes);
+  else reservations.delete(owner);
+}
+
+/**
+ * Current GPU-geometry byte budget, net of reservations. Read dynamically so
+ * backoff and reservations apply live. 0 (eviction disabled) stays 0.
+ */
 export function getGpuByteBudget(): number {
-  return budgetBytes;
+  if (budgetBytes === 0 || reservations.size === 0) return budgetBytes;
+  let reserved = 0;
+  for (const bytes of reservations.values()) reserved += bytes;
+  return Math.max(Math.min(budgetBytes, BACKOFF_FLOOR_BYTES), budgetBytes - reserved);
 }
 
 /**

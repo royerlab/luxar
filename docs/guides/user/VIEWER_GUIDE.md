@@ -224,6 +224,7 @@ Append parameters to the viewer URL to control startup behavior.
 | `lodFinest` | flag | Force the finest replacement LOD regardless of projected screen coverage (capture quality; the gallery harness appends it). |
 | `lodBias` | positive number | Session-wide replacement-LOD threshold bias in screen-area units: `2` advances an occupancy-halved ladder by one level, `4` by two. |
 | `depthSort` | `0` \| `false` \| `off` | Disable gsplat depth sorting (on by default); `normal`-mode splats then keep storage order, which pins deterministic output for visual runs. |
+| `gpuSort` | `1` \| `0` | Depth-sort points, lines and splats on the GPU when the viewer runs on native WebGPU (`1`), or on the CPU worker (`0`); absent keeps the default, which is the GPU on native WebGPU. Mesh nodes and other backends always use the worker. |
 | `noDensityGuard` | flag | Disable the projected-density guard (per-node thinning + refinement rung cap on over-drawn nodes; on by default). |
 | `densityCap` | positive number | Session-only override of the density guard's blendable cap, in elements per drawing-buffer pixel (configured default 4). |
 | `noBlendWarmup` | flag | Disable the blend-variant warm-up (on by default, WebGL programs and WebGPU pipelines): the first Layers-panel blend switch then pays the shader compile cost on the click. |

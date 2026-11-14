@@ -72,6 +72,7 @@ export const URL_PARAM_KEYS = {
   lodBias: 'lodBias',
   noBlendWarmup: 'noBlendWarmup',
   depthSort: 'depthSort',
+  gpuSort: 'gpuSort',
   noDensityGuard: 'noDensityGuard',
   densityCap: 'densityCap',
   noPrefetch: 'noPrefetch',
@@ -512,6 +513,13 @@ export interface UrlParams {
    * E2E/visual runs and reproduces pre-Phase-2 behavior for comparison.
    */
   depthSort: boolean;
+  /**
+   * Whether instanced nodes depth-sort on the GPU on a native WebGPU renderer
+   * (#3162): `?gpuSort=1` turns it on, `?gpuSort=0` (also `false`/`off`) off;
+   * absent (`null`) keeps `config.depthSort.gpuSort`. The A/B lever against the
+   * CPU SortWorker.
+   */
+  gpuSort: boolean | null;
 
   /**
    * Projected-density guard (per-node keep-fraction thinning + refinement
@@ -799,6 +807,7 @@ export function readUrlParams(
     lodBias: parsePositiveFloat(get(K.lodBias)),
     blendWarmup: !has(K.noBlendWarmup),
     depthSort: parseEnabledFlag(get(K.depthSort)),
+    gpuSort: parseOptionalFlag(get(K.gpuSort)),
     densityGuard: !has(K.noDensityGuard),
     densityCap: parsePositiveFloat(get(K.densityCap)),
     noPrefetch: has(K.noPrefetch),
@@ -853,6 +862,11 @@ function parseEnabledFlag(raw: string | null): boolean {
   if (raw === null) return true;
   const v = raw.trim().toLowerCase();
   return v !== '0' && v !== 'false' && v !== 'off';
+}
+
+/** An enable flag with no default: absent is `null`, otherwise as {@link parseEnabledFlag}. */
+function parseOptionalFlag(raw: string | null): boolean | null {
+  return raw === null ? null : parseEnabledFlag(raw);
 }
 
 /**
