@@ -27,6 +27,11 @@ it.each([
   { args: ['--help'], status: 0, output: /--stock/ },
   { args: ['--help'], status: 0, output: /--executable <value>/ },
   { args: ['--help'], status: 0, output: /--vsync/ },
+  {
+    args: ['--chrome-args', '--disable-domain-blocking-for-3d-apis', '--help'],
+    status: 0,
+    output: /--chrome-args <value>/,
+  },
   { args: ['--bogus'], status: 2, output: /unknown option --bogus/ },
   { args: ['--suites', 'exact'], status: 2, output: /unknown option --suites/ },
   { args: ['--suite'], status: 2, output: /--suite requires a value/ },
