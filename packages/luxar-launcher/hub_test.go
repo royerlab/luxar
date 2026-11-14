@@ -319,14 +319,15 @@ func TestDialHostResolvesAWildcardBind(t *testing.T) {
 func TestControlTokenDefaults(t *testing.T) {
 	for _, tc := range []struct {
 		name, host, explicit, optOut string
-		wantToken                    bool
+		networkBind                  bool
 	}{
 		{"loopback", "127.0.0.1", "", "", false},
+		{"IPv6 loopback", "[::1]", "", "", false},
 		{"wildcard", "0.0.0.0", "", "", true},
 		{"interface", "192.0.2.10", "", "", true},
 		{"explicit", "0.0.0.0", "chosen", "", true},
-		{"off", "0.0.0.0", "off", "", false},
-		{"opt out", "0.0.0.0", "", "1", false},
+		{"off", "0.0.0.0", "off", "", true},
+		{"opt out", "0.0.0.0", "", "1", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			setTestStateHome(t)
@@ -336,12 +337,10 @@ func TestControlTokenDefaults(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantToken := tc.wantToken
-			if tc.explicit == "" && tc.optOut == "" && !isLoopbackHost(tc.host) {
-				wantToken = TokenRequiredOffLoopback
-			}
+			wantToken := tc.explicit == "chosen" ||
+				(tc.explicit == "" && tc.optOut == "" && tc.networkBind && TokenRequiredOffLoopback)
 			if (token != "") != wantToken {
-				t.Fatalf("token = %q, wantToken %v", token, tc.wantToken)
+				t.Fatalf("token = %q, wantToken %v", token, wantToken)
 			}
 			if tc.explicit == "" && token != "" {
 				decoded, err := base64.RawURLEncoding.DecodeString(token)

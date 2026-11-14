@@ -73,20 +73,23 @@ def test_contract_values_match_the_contract() -> None:
 
 
 @pytest.mark.parametrize(
-    ("host", "opt_out"),
-    [("127.0.0.1", False), ("[::1]", False), ("0.0.0.0", False), ("0.0.0.0", True)],
+    ("host", "opt_out", "network_bind"),
+    [
+        ("127.0.0.1", False, False),
+        ("[::1]", False, False),
+        ("0.0.0.0", False, True),
+        ("0.0.0.0", True, True),
+    ],
 )
 def test_export_token_default_follows_contract(
-    tmp_path: Path, host: str, opt_out: bool
+    tmp_path: Path, host: str, opt_out: bool, network_bind: bool
 ) -> None:
     args = argparse.Namespace(
         control=True, control_token=None, no_control_token=opt_out, host=host
     )
     token = template.resolve_control_token(args, tmp_path).value
     assert (token is not None) == (
-        contract.TOKEN_REQUIRED_OFF_LOOPBACK
-        and not template.is_loopback_host(host)
-        and not opt_out
+        contract.TOKEN_REQUIRED_OFF_LOOPBACK and network_bind and not opt_out
     )
     if token is not None:
         assert template._TOKEN_PATTERN.fullmatch(token)
