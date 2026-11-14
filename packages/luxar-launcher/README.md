@@ -40,13 +40,17 @@ LUXAR_LAUNCHER_CONTROL=1 \
 ```
 
 The touch-panel URL is printed on stderr and written to a private
-`<app>.control-panel.txt` file **beside the `.app` or portable folder**, where it
-can be read after launching from Finder. The generated token is saved in a
-private `<app>.control-token.txt` beside it. Deleting the token file rotates the
-token on the next launch. Keep both files private: the panel URL grants control
-of the display. The launcher needs permission to write beside the app when
-control is enabled; otherwise it stops with an error. Neither file is inside
-the HTTP-served `viewer` or `data` directory.
+`<app>.control-panel.txt` file beside the `.app` or portable folder. The generated
+token is saved in `<app>.control-token.txt`. If that location is read-only (for
+example, a mounted DMG or a translocated macOS app), the launcher writes under
+`~/Library/Application Support/luxar/<app>/` on macOS or
+`$XDG_STATE_HOME/luxar/<app>/` on Linux (default `~/.local/state`). It prints the
+location actually used. If neither location is writable, the relay still starts
+with an ephemeral token and prints the panel URL; save that URL for this launch.
+Deleting the token file rotates the token on the next launch. Keep both files
+private: the panel URL grants control of the display. Neither file is inside
+the HTTP-served `viewer` or `data` directory. Programmatic clients such as
+`luxar.control.Viewer` must pass the saved token when connecting off loopback.
 
 `LUXAR_LAUNCHER_HOST` chooses the bind address; a wildcard bind resolves to a
 concrete address in the URLs. `LUXAR_LAUNCHER_ADVERTISE_HOST` instead puts a
