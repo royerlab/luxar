@@ -40,5 +40,5 @@ export function optionHelp(command, specs) {
     const flag = `--${name}${takesValue ? ' <value>' : ''}`;
     return `  ${flag}${defaultValue == null || defaultValue === false || defaultValue === '' ? '' : ` (default: ${defaultValue})`}`;
   });
-  return `Usage: node ${command} [options]\nValue options also accept --name=value.\nOptions:\n${lines.join('\n')}\n`;
+  return `Usage: node ${command} [options]\nValue options also accept --name=value (required for values starting with --, except options that take Chrome flags).\nOptions:\n${lines.join('\n')}\n`;
 }

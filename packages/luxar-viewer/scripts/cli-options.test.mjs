@@ -16,7 +16,9 @@ it('accepts equals-form values, including values that begin with dashes or conta
     suite: 'perf',
     headed: false,
   });
-  expect(optionHelp('gate.mjs', specs)).toContain('--name=value');
+  expect(optionHelp('gate.mjs', specs)).toContain(
+    '--name=value (required for values starting with --, except options that take Chrome flags)'
+  );
 });
 
 it('accepts Chrome flags as the following value without swallowing a known option', () => {
