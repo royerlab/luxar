@@ -48,22 +48,22 @@ never downloads the `three-webgpu` chunk.
 
 ## Platform policy
 
-A row of `WEBGPU_PLATFORM_RULES` admits one platform to WebGPU by default.
-**The table is empty for now:** WebGPU is not the default anywhere until its
-cold load is within 0.15 s of WebGL (#3172). Platforms that passed the GPU-speed
-measurement wait in `STAGED_WEBGPU_PLATFORM_RULES`:
+A row of `WEBGPU_PLATFORM_RULES` admits one platform to WebGPU by default:
 
-| OS    | Browser  | GPU vendor | Evidence                                                                                                                      |
-| ----- | -------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Linux | Chromium | NVIDIA     | #3146 go/no-go, RTX 3070 on Vulkan: WebGPU 2-9% faster GPU time on every heavy perf case; cold load about 0.5 s slower (held) |
+| OS    | Browser  | GPU vendor | Evidence                                                                                                                                                            |
+| ----- | -------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Linux | Chromium | NVIDIA     | #3146 go/no-go, RTX 3070 on Vulkan: WebGPU 2-9% faster GPU time on every heavy perf case; #3172 hosted `cold_zip_mixed`, 5 rounds: first frame 70.6 ms behind WebGL |
 
-A dev or test build can run the staged rows with
-`VITE_LUXAR_WEBGPU_STAGED_RULES=1`; the Playwright dev server sets it so the
-E2E suite exercises the policy path.
+A platform that passes the GPU-speed measurement but not the cold-load target
+(within 0.15 s of WebGL, #3172) waits in `STAGED_WEBGPU_PLATFORM_RULES`, which
+is empty today. A dev or test build can run staged rows with
+`VITE_LUXAR_WEBGPU_STAGED_RULES=1`; the Playwright dev server sets it.
 
 Platforms measured and left on WebGL2: macOS with an Apple GPU (Metal), where
-WebGPU is up to ~20% slower on 10M lines and additive splats (#3224) and cold
-load is ~0.4 s slower. Windows, Android, ChromeOS and Safari are unmeasured.
+WebGPU is up to ~20% slower in GPU time on 10M lines and additive splats
+(#3224). Its cold load now meets the target (57.7 ms behind WebGL on an M4 Max),
+so the GPU-time gap is what keeps it off. Windows, Android, ChromeOS and Safari
+are unmeasured.
 
 The match runs in two steps, so a session that cannot qualify pays nothing:
 
@@ -81,8 +81,9 @@ not on a measured WebGPU platform; using WebGLRenderer.`).
 Add a row only after running the render gate's `perf` and `hosted` suites with
 `--backends webgl,webgpu` on that platform, with cold load within 0.15 s of
 WebGL, and record the evidence in the row. Note that stock Chrome on Linux
-(146) exposes no WebGPU adapter without flags, so the Linux row, once active,
-takes effect where Chrome enables WebGPU on that hardware.
+(146) exposes no WebGPU adapter without flags, so the Linux row takes effect
+where Chrome enables WebGPU on that hardware; elsewhere those sessions stay on
+WebGL.
 
 Common invocations:
 
