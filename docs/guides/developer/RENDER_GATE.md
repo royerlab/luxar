@@ -32,6 +32,48 @@ buffers differ in size), element counts, camera matrices, and within-page
 stability in `report.json`; the report links the control heatmaps and summarizes
 those fields.
 
+## Measuring stock Chrome on Wayland
+
+Use `--stock --headed` to measure the browser path users run. `--stock` omits
+the gate's GPU blocklist, unsafe WebGPU, developer feature, ANGLE/Vulkan, and
+Linux `--no-sandbox` and `--disable-dev-shm-usage` launch-stability flags.
+On hosts that need those flags to launch Chrome, restore them with
+`--chrome-args --no-sandbox,--disable-dev-shm-usage`. Headed mode is needed
+for stock Linux Chrome:
+headless Chrome otherwise uses SwiftShader, which the gate refuses to measure.
+On Linux with NVIDIA, stock WebGPU requires Chrome 147 or newer, Wayland, and
+the proprietary driver; stock WebGL uses ANGLE on OpenGL. Chrome chooses the
+GPU driving the display, so check the GPU in the report header before comparing
+results from machines with multiple GPUs.
+
+From an SSH shell **as the user logged into the Wayland desktop**, point Chrome
+at that session's socket and bus. Set `WAYLAND_DISPLAY` to the actual socket name
+in `XDG_RUNTIME_DIR` (often `wayland-0`), and remove `DISPLAY` so Chrome does
+not select X11:
+
+```bash
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export WAYLAND_DISPLAY=wayland-0
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+unset DISPLAY
+cd packages/luxar-viewer
+node scripts/render-gate/run-gate.mjs --base HEAD --cand HEAD \
+  --suite perf --backends webgl,webgpu --stock --headed \
+  --executable /path/to/chrome --chrome-args --disable-domain-blocking-for-3d-apis
+```
+
+`--executable` selects a Chrome binary instead of the `--channel chrome`
+default; for example, use a Chrome for Testing binary installed with
+`npx @puppeteer/browsers install chrome@stable`. `--chrome-args` accepts a
+comma-separated list of Chrome flags either after a space or with `=`. The
+`--disable-domain-blocking-for-3d-apis` flag keeps a lost WebGL context from
+blocking 3D APIs for the origin and invalidating later rows. It does not
+prevent the context loss itself. Omit it when reproducing an entirely
+unmodified stock launch.
+
+Performance runs still disable GPU vsync and the frame-rate limit by default,
+including under `--stock`. Add `--vsync` to preserve Chrome's normal pacing.
+
 ## How a run works
 
 1. **Builds.** Each ref is extracted with `git archive` into
@@ -41,8 +83,8 @@ those fields.
    builds the working tree as it is.
 2. **Serving.** Each build's `dist/` is served by its own small static server
    with the checkout's `datasets/` mounted at `/datasets/`: same origin, no CORS.
-3. **Driving.** System Chrome (`--channel chrome`), headless. On Linux the
-   harness adds `--use-angle=vulkan --enable-features=Vulkan,WebGPU`, without
+3. **Driving.** System Chrome (`--channel chrome`), headless by default. On Linux the
+   harness adds `--use-angle=vulkan --enable-features=WebGPU`, without
    which headless Chrome renders on SwiftShader. A page reporting a software
    renderer is refused rather than measured. The page is driven only through
    debug surfaces present on main (`scripts/render-gate/page-ops.mjs`), so the

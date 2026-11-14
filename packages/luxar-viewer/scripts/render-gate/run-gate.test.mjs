@@ -8,7 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 
@@ -24,12 +24,33 @@ const cacheEntries = () => (existsSync(buildCache) ? readdirSync(buildCache).sor
 
 it.each([
   { args: ['--help'], status: 0, output: /--backends <value>/ },
+  { args: ['--help'], status: 0, output: /--stock/ },
+  { args: ['--help'], status: 0, output: /--executable <value>/ },
+  { args: ['--help'], status: 0, output: /--vsync/ },
+  {
+    args: ['--chrome-args', '--disable-domain-blocking-for-3d-apis', '--help'],
+    status: 0,
+    output: /--chrome-args <value>/,
+  },
   { args: ['--bogus'], status: 2, output: /unknown option --bogus/ },
   { args: ['--suites', 'exact'], status: 2, output: /unknown option --suites/ },
   { args: ['--suite'], status: 2, output: /--suite requires a value/ },
   { args: ['--suite', '--heavy'], status: 2, output: /--suite requires a value/ },
   { args: ['--headed=x'], status: 2, output: /--headed does not take a value/ },
   { args: ['--chrome-args='], status: 2, output: /--chrome-args requires a value/ },
+  {
+    args: ['--executable', '/tmp/chrome', '--channel', 'chrome-beta'],
+    status: 2,
+    output: /--executable.*--channel/,
+  },
+  {
+    args: ['--executable', '/tmp/chrome', '--channel=chrome'],
+    status: 2,
+    output: /--executable.*--channel/,
+  },
+  ...(platform() === 'linux'
+    ? [{ args: ['--stock'], status: 2, output: /--stock on Linux needs --headed/ }]
+    : []),
 ])('validates $args before any build', ({ args, status, output }) => {
   const cacheExisted = existsSync(buildCache);
   const before = cacheEntries();
@@ -99,6 +120,36 @@ it('reports the A/A buffers and scene state for an excluded view', () => {
   expect(markdown).toContain('within-page HDR/LDR stable true/false, true/true');
   expect(markdown).toContain('[A/A HDR heatmap](heatmaps/glass-control-hdr.png)');
   expect(markdown).toContain('[A/A LDR heatmap](heatmaps/glass-control-ldr.png)');
+});
+
+it('records the stock browser configuration in a saved report', () => {
+  const report = {
+    meta: {
+      label: 'stock',
+      base: { ref: 'HEAD', sha: '1234567890' },
+      cand: { ref: 'HEAD', sha: '1234567890' },
+      host: 'test',
+      gpu: 'test',
+      verdict: 'PASS',
+      browserRelaunches: 0,
+      options: {
+        executable: '/tmp/chrome',
+        headless: false,
+        stock: true,
+        vsync: true,
+        chromeArgs: ['--disable-domain-blocking-for-3d-apis'],
+      },
+    },
+    exact: null,
+    perf: null,
+    suites: {},
+  };
+  const jsonPath = join(dir, 'report.json');
+  writeFileSync(jsonPath, JSON.stringify(report));
+  execFileSync(process.execPath, [gateScript, '--from-json', jsonPath]);
+  const markdown = readFileSync(join(dir, 'report.md'), 'utf8');
+  expect(markdown).toContain('browser: executable `/tmp/chrome`; headed; stock; perf vsync on');
+  expect(markdown).toContain('Chrome args: --disable-domain-blocking-for-3d-apis');
 });
 
 it.each([

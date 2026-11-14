@@ -8,7 +8,8 @@
  *     [--suite exact|perf|counters|playback|scrub|hosted|trees|cache|all] \
  *     [--class IDENTICAL|ULP] [--intended id,id] [--only id,id] \
  *     [--backends webgl,webgpu,webgpu-gl] [--rounds 7] [--heavy] [--expect <file.json>] \
- *     [--server-profile local|hosted] [--chrome-args=--flag,...] [--out <dir>]
+ *     [--server-profile local|hosted] [--stock] [--executable <path>] [--headed]
+ *     [--vsync] [--chrome-args --flag,...] [--out <dir>]
  *   node scripts/render-gate/run-gate.mjs --from-json <dir>/report.json
  *     (rewrite <dir>/report.md from a saved report, measuring nothing)
  *
@@ -75,8 +76,11 @@ const cliOptions = [
   value('rounds', 0),
   value('base-port', 4801),
   value('channel', 'chrome'),
+  value('executable'),
   flag('headed'),
-  value('chrome-args', ''),
+  flag('stock'),
+  flag('vsync'),
+  { ...value('chrome-args', ''), allowLeadingDashes: true },
   value('label'),
   value('scenes', join(here, 'gate-scenes.json')),
   value('base-dist'),
@@ -112,7 +116,10 @@ const opts = {
   rounds: Number(cli.rounds) || null,
   basePort: Number(cli['base-port']),
   channel: cli.channel,
+  executable: cli.executable,
   headless: !cli.headed,
+  stock: cli.stock,
+  vsync: cli.vsync,
   chromeArgs: list(cli['chrome-args']) ?? [],
   label: cli.label,
   scenes: cli.scenes,
@@ -128,6 +135,17 @@ const opts = {
   serverProfile: cli['server-profile'],
 };
 if (!['IDENTICAL', 'ULP'].includes(opts.cls)) configError(`bad --class ${opts.cls}`);
+if (opts.stock && opts.headless && process.platform === 'linux') {
+  configError(
+    '--stock on Linux needs --headed: headless stock Chrome renders on SwiftShader, which the gate refuses'
+  );
+}
+if (
+  opts.executable &&
+  process.argv.slice(2).some((arg) => arg === '--channel' || arg.startsWith('--channel='))
+) {
+  configError('--executable and --channel cannot be used together');
+}
 
 const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
   cwd: viewerRoot,
@@ -169,7 +187,10 @@ if (opts.expect) {
 }
 const kit = browserKit({
   channel: opts.channel,
+  executable: opts.executable,
   headless: opts.headless,
+  stock: opts.stock,
+  vsync: opts.vsync,
   chromeArgs: opts.chromeArgs,
   log,
 });
@@ -529,6 +550,14 @@ function markdown(meta, exact, perf, suites) {
     `- class: ${opts.cls}; intended: ${opts.intended.join(', ') || '-'}`
   );
   lines.push(`- host: ${meta.host}; GPU: ${meta.gpu ?? '?'}`);
+  if (meta.options) {
+    const o = meta.options;
+    lines.push(
+      `- browser: ${o.executable ? `executable \`${o.executable}\`` : `channel \`${o.channel}\``}; ` +
+        `${o.headless ? 'headless' : 'headed'}; ${o.stock ? 'stock' : 'forced GPU flags'}; ` +
+        `perf ${o.vsync ? 'vsync on' : 'vsync off'}; Chrome args: ${o.chromeArgs?.join(', ') || '-'}`
+    );
+  }
   const load = meta.hostLoad;
   if (load) {
     const arms = Object.entries(load.arms)
