@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import socket
@@ -23,6 +24,7 @@ from .._zarr_compat import open_group as zarr_open_group
 from ..utils.deprecation import deprecation_message
 from ..utils.hosts import ALL_INTERFACES_HOSTS as _ALL_INTERFACES_HOSTS
 from ..utils.hosts import is_loopback_host as _is_loopback_host
+from ._export_serve_template import _advertise_host, _url_host
 
 # CORS configuration shared across the CLI. Lives here (not in main.py)
 # so subcommand modules like gsplat_commands.py can import it without
@@ -176,6 +178,19 @@ def advertised_host(bind_host: str) -> str:
     if host.lower() in ALL_INTERFACES_HOSTS:
         return primary_lan_address() or "127.0.0.1"
     return host
+
+
+def validate_advertise_host(value: str) -> str:
+    """Accept the same hostname and IP literals as exported ``serve.py``."""
+    try:
+        return _advertise_host(value)
+    except argparse.ArgumentTypeError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
+def url_host(host: str) -> str:
+    """Bracket IPv6 literals when inserting a host in an HTTP or WS URL."""
+    return _url_host(host)
 
 
 # An `Origin` is by specification exactly ``scheme "://" host [ ":" port ]`` —
