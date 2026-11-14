@@ -212,6 +212,7 @@ describe('createWebGPURenderer', () => {
     originalNavigator = globalThis.navigator;
     webgpuConstructorArgs.length = 0;
     vi.mocked(loadTslMaterials).mockClear();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as never);
   });
 
   afterEach(() => {
@@ -220,6 +221,7 @@ describe('createWebGPURenderer', () => {
       configurable: true,
       writable: true,
     });
+    vi.restoreAllMocks();
   });
 
   /** `undefined` stubs a browser without `navigator.gpu` at all. */
@@ -242,23 +244,32 @@ describe('createWebGPURenderer', () => {
 
   it('refuses the WebGL fallback when no GPU context is available', async () => {
     stubNavigatorGpu(undefined);
-    const canvas = makeCanvas();
-    canvas.getContext = vi.fn(() => null) as unknown as HTMLCanvasElement['getContext'];
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
 
-    await expect(createWebGPURenderer(canvas, { rendererOverride: 'webgpu' })).rejects.toThrow(
+    await expect(
+      createWebGPURenderer(makeCanvas(), { rendererOverride: 'webgpu' })
+    ).rejects.toThrow(/GPU access/i);
+    expect(webgpuConstructorArgs).toHaveLength(0);
+  });
+
+  it('refuses the forced WebGL backend when no GPU context is available', async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+
+    await expect(createWebGPURenderer(makeCanvas(), { webgpuForceWebGL: true })).rejects.toThrow(
       /GPU access/i
     );
     expect(webgpuConstructorArgs).toHaveLength(0);
   });
 
-  it('refuses the forced WebGL backend when no GPU context is available', async () => {
+  it('checks WebGL fallback without committing the display canvas to WebGL', async () => {
+    stubNavigatorGpu(undefined);
     const canvas = makeCanvas();
-    canvas.getContext = vi.fn(() => null) as unknown as HTMLCanvasElement['getContext'];
 
-    await expect(createWebGPURenderer(canvas, { webgpuForceWebGL: true })).rejects.toThrow(
-      /GPU access/i
-    );
-    expect(webgpuConstructorArgs).toHaveLength(0);
+    expect(await createWebGPURenderer(canvas, { rendererOverride: 'webgpu' })).toMatchObject({
+      fallback: false,
+    });
+    expect(HTMLCanvasElement.prototype.getContext).toHaveBeenCalledWith('webgl2');
+    expect(canvas.getContext).not.toHaveBeenCalled();
   });
 
   it('does not require WebGL2 when a native WebGPU device is available', async () => {

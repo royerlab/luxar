@@ -631,12 +631,13 @@ export async function createWebGPURenderer(
   const request = await resolveWebGPUDeviceRequest(options);
   if (request.fallback) return request;
   const { device, webgpuModule } = request;
-  // Three's WebGL2 backend assumes context creation succeeds. Check the
-  // fallback path before constructing its renderer, including forceWebGL.
+  // Three's WebGL2 backend assumes context creation succeeds. Probe a
+  // temporary canvas: touching the display canvas here would commit it to
+  // WebGL2 even if Three can still obtain a native WebGPU device on retry.
   if (device === undefined) {
     let gl: WebGL2RenderingContext | null = null;
     try {
-      gl = canvas.getContext('webgl2');
+      gl = document.createElement('canvas').getContext('webgl2');
     } catch (error) {
       log.warning(Modules.RENDERER, 'WebGL2 fallback context creation failed:', error);
     }
