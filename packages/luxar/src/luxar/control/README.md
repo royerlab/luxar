@@ -45,7 +45,7 @@ If nothing is listening yet, a call raises `ControlError` with
 import time
 from luxar.control import ControlError, Viewer
 
-with Viewer("ws://kiosk.local:5173/control") as viewer:
+with Viewer("ws://kiosk.local:5173/control", token="hunter2") as viewer:
     while True:
         try:
             viewer.get_dimensions()
