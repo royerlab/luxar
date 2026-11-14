@@ -429,7 +429,31 @@ class TestViewerAppWiring:
         serving._serve_viewer("0.0.0.0", 5173, control=True, open_browser_flag=False)
 
         output = capsys.readouterr().out
-        assert "reachable from the network without a token" in output
+        assert "--no-control-token" in output
+        assert "can drive the display" in output
+
+    def test_loopback_bind_with_advertised_host_warns(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from luxar.cli import serving
+
+        monkeypatch.setattr(serving, "get_viewer_dist_path", lambda: "viewer")
+        monkeypatch.setattr(
+            serving, "_build_viewer_app", lambda *args, **kwargs: object()
+        )
+        monkeypatch.setattr(serving.uvicorn, "run", lambda *args, **kwargs: None)
+
+        serving._serve_viewer(
+            "127.0.0.1",
+            5173,
+            control=True,
+            advertise_host="kiosk.local",
+            open_browser_flag=False,
+        )
+
+        output = capsys.readouterr().out
+        assert "--host 127.0.0.1 listens on this machine only" in output
+        assert "no other device can open the kiosk.local URLs" in output
 
     def test_advertised_address_changes_printed_urls_not_the_bind(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

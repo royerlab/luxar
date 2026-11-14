@@ -709,6 +709,11 @@ def _serve_viewer(
     )
     if local_url and local_url != viewer_url:
         aprint(f"💻 On this machine or through a port forward: {local_url}")
+    if advertise_host and is_loopback_host(host):
+        aprint(
+            f"⚠️  --host {host} listens on this machine only, so no other "
+            f"device can open the {advertise_host} URLs above."
+        )
     if control:
         # Same resolution as the viewer URL: a tablet cannot dial 0.0.0.0.
         reachable = advertise_host or advertised_host(host)
@@ -721,8 +726,8 @@ def _serve_viewer(
         aprint(f"📱 Control panel for a tablet: {panel_url}")
         if not is_loopback_host(host) and not control_token:
             aprint(
-                "⚠️  The control hub is reachable from the network without a token. "
-                "Pass --control-token if remote control should be restricted."
+                "⚠️  --no-control-token leaves the control hub open to anyone "
+                "who can reach this machine on the network and can drive the display."
             )
 
     if open_browser_flag:
