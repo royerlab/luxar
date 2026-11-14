@@ -293,7 +293,7 @@ back out of `getViewerState()` — on a loopback-only hub, with no LAN exposure 
 all. The hub therefore compares the handshake's `Origin` against the `Host` it
 arrived on (`ControlHub.origin_allowed`) and closes a mismatch with 1008. That
 blocks the direct cross-origin case; it is not a DNS-rebinding defence, so an
-untrusted network still requires `--control-token`.
+untrusted network still requires a control token.
 
 Two deliberate allowances, both stated rather than implied. A handshake with
 **no `Origin` at all is allowed**, because non-browser clients send none —
@@ -305,7 +305,8 @@ reverse proxy that rewrites `Host`; an embedding application may instead pass
 an explicit `allowed_origins` list to `ControlHub`.
 
 Same-host LAN kiosk by default: the hub binds the address `luxar serve` binds,
-which is loopback unless `--host 0.0.0.0` is given. `--control-token <t>`
+which is loopback unless `--host 0.0.0.0` is given. A non-loopback
+`luxar serve --control` generates a new token on each run; `--control-token <t>`
 requires `?token=` on the WebSocket URL, compared with `hmac.compare_digest`
 over UTF-8 **bytes** (that function raises `TypeError` on a non-ASCII `str`, so
 comparing strings would turn a wrong password into a crashed handler);
@@ -314,14 +315,14 @@ RFC 6455 code 1008 (as is an unrecognised `?role=`). No other auth is planned.
 
 Two things to say plainly rather than imply. **A token in a query string** lands
 in browser history and in the address bar of whatever tablet is on the plinth;
-it is a LAN convenience, not a secret. **The hub is open by default to
+it is a LAN convenience, not a secret. **A loopback hub is open by default to
 same-host browser pages and non-browser clients**, so an unauthenticated peer
 that can reach the socket can drive the display — including `switchDataset`,
 which is on the wire deliberately. The dispatcher runs its argument through
 the viewer's own `normalizeDataSourceUrl` (the app's method validates nothing),
 so a `file:` or `javascript:` URL is refused, but a reachable hub on an
 untrusted network is still a display someone else can repoint. Use
-`--control-token`, or do not bind past loopback.
+Keep the generated token, set `--control-token`, or do not bind past loopback.
 
 ## 4. Phase C — authored waypoints, the panel, and kiosk mode (implemented)
 
@@ -655,10 +656,13 @@ default, generated on the first start and saved in `control-token.txt`
 deleting the file rotates it and retires printed QRs). With the relay on, a
 busy port is an error rather than a move to the next port. And
 `--advertise-host` puts a fixed name or reserved address in the URLs while the
-server listens on every interface. `luxar serve --control` and the native
-launcher still default to no token, and print the address they bind (the
-launcher's port is random), which is fine for a URL read off a terminal but
-not for one printed on a poster.
+server listens on every interface. `luxar serve --control` also requires a
+token by default off loopback, but generates a new one for every run: its URL
+is read from the terminal and is not meant for printing. Its
+`--no-control-token` opt-out and `--advertise-host` use the exported server's
+validation rules, while a busy viewer port still shifts with a warning. The
+native launcher remains separate: a Finder-launched app needs a token delivery
+path without stdout (tracked in #3315).
 
 The exported script is also **threaded**, which is not a detail: a WebSocket
 occupies its thread for as long as the kiosk runs, so on the single-threaded

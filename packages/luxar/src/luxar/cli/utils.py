@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import socket
@@ -176,6 +177,42 @@ def advertised_host(bind_host: str) -> str:
     if host.lower() in ALL_INTERFACES_HOSTS:
         return primary_lan_address() or "127.0.0.1"
     return host
+
+
+_ADVERTISE_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
+
+
+def validate_advertise_host(value: str) -> str:
+    """Accept the same hostname and IP literals as exported ``serve.py``."""
+    text = value.strip()
+    bare = text[1:-1] if text.startswith("[") and text.endswith("]") else text
+    try:
+        address = ipaddress.ip_address(bare)
+    except ValueError:
+        address = None
+    if address is not None:
+        if address.is_unspecified or address.is_multicast or "%" in bare:
+            raise typer.BadParameter(
+                f"{value!r} is not an address another device can open"
+            )
+        return str(address)
+    name = text.rstrip(".")
+    labels = name.split(".")
+    if (
+        name
+        and len(name) <= 253
+        and all(_ADVERTISE_LABEL.fullmatch(label) for label in labels)
+        and not labels[-1].isdigit()
+    ):
+        return name
+    raise typer.BadParameter(
+        f"not a hostname or IP address: {value!r} (no scheme, port or path)"
+    )
+
+
+def url_host(host: str) -> str:
+    """Bracket IPv6 literals when inserting a host in an HTTP or WS URL."""
+    return f"[{host}]" if ":" in host and not host.startswith("[") else host
 
 
 # An `Origin` is by specification exactly ``scheme "://" host [ ":" port ]`` —

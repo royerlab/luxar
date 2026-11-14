@@ -10,6 +10,7 @@ IMPORTANT: URL Construction
 from __future__ import annotations
 
 import os
+import secrets
 import sys
 import threading
 from pathlib import Path
@@ -67,7 +68,10 @@ from .utils import (
     check_viewer_built,
     dataset_title,
     ensure_viewer_built,
+    is_loopback_host,
     pick_port,
+    url_host,
+    validate_advertise_host,
     wait_for_server,
 )
 from .utils import (
@@ -269,13 +273,53 @@ def _start_data_server_thread(
 
 
 def _warn_control_flag_misuse(
-    *, control: bool, control_token: Optional[str], viewer: bool, viewer_only: bool
+    *,
+    control: bool,
+    control_token: Optional[str],
+    no_control_token: bool,
+    viewer: bool,
+    viewer_only: bool,
 ) -> None:
     """Explain control options that cannot affect the selected serve mode."""
     if control and not (viewer or viewer_only):
         aprint("⚠️  --control requires --viewer or --viewer-only. Ignoring --control.")
     if control_token and not control:
         aprint("⚠️  --control-token requires --control. Ignoring --control-token.")
+    if no_control_token and not control:
+        aprint("⚠️  --no-control-token requires --control. Ignoring --no-control-token.")
+
+
+def _serve_control_options(
+    *,
+    host: str,
+    control: bool,
+    viewer_enabled: bool,
+    control_token: Optional[str],
+    no_control_token: bool,
+    advertise_host: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """Validate URL/auth flags and choose an ephemeral relay token if needed."""
+    if control_token is not None and no_control_token:
+        raise typer.BadParameter(
+            "--control-token and --no-control-token are mutually exclusive"
+        )
+    if control_token is not None and (
+        not control_token or control_token != control_token.strip()
+    ):
+        raise typer.BadParameter(
+            "--control-token must be non-empty without surrounding spaces"
+        )
+    if advertise_host is not None:
+        advertise_host = validate_advertise_host(advertise_host)
+    if (
+        control
+        and viewer_enabled
+        and not no_control_token
+        and control_token is None
+        and not is_loopback_host(host)
+    ):
+        control_token = secrets.token_urlsafe(12)
+    return control_token, advertise_host
 
 
 # ────────────────────────────── serve ────────────────────────────────────────
@@ -314,6 +358,16 @@ def serve(
         "--control-token",
         help="Require this shared secret as ?token= on every control socket",
     ),
+    no_control_token: bool = typer.Option(
+        False,
+        "--no-control-token",
+        help="Run the control relay without a token, including off loopback",
+    ),
+    advertise_host: Optional[str] = typer.Option(
+        None,
+        "--advertise-host",
+        help="Hostname or IP address to put in printed viewer and panel URLs",
+    ),
 ) -> None:
     """Serve a directory, Zarr dataset, or viewer via HTTP.
 
@@ -339,6 +393,15 @@ def serve(
         # Test packet loss
         luxar serve data.luxar.zarr --bandwidth 10mbps --packet-loss 5%
     """
+    control_token, advertise_host = _serve_control_options(
+        host=host,
+        control=control,
+        viewer_enabled=viewer or viewer_only,
+        control_token=control_token,
+        no_control_token=no_control_token,
+        advertise_host=advertise_host,
+    )
+
     # `--open` is an instruction and always opens; `--auto-open` (what demos
     # pass) opens only where the no-display heuristic finds a screen.
     explicit_open = open_browser
@@ -354,6 +417,7 @@ def serve(
         _warn_control_flag_misuse(
             control=control,
             control_token=control_token,
+            no_control_token=no_control_token,
             viewer=viewer,
             viewer_only=viewer_only,
         )
@@ -377,6 +441,7 @@ def serve(
                     cors_origin,
                     control=control,
                     control_token=control_token,
+                    advertise_host=advertise_host,
                     open_explicit=explicit_open,
                 )
             return
@@ -435,7 +500,7 @@ def serve(
         # `host` may be a wildcard bind, which is not a destination. Everything
         # that goes into a URL — printed, opened, or handed to the viewer as
         # ?src= — uses the resolved address instead.
-        reachable = advertised_host(host)
+        reachable = url_host(advertise_host or advertised_host(host))
 
         # Mount the static files handler with directory listing
         api.mount("/", DirectoryListingStaticFiles(directory=serve_path, html=True))
@@ -456,6 +521,7 @@ def serve(
                         "title": dataset_title(serve_path),
                         "control": control,
                         "control_token": control_token,
+                        "advertise_host": advertise_host,
                     },
                     daemon=True,
                 )
@@ -486,6 +552,7 @@ def serve(
                     title=dataset_title(serve_path),
                     control=control,
                     control_token=control_token,
+                    advertise_host=advertise_host,
                 )
                 open_browser_func(viewer_url, explicit=explicit_open)
 

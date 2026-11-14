@@ -431,6 +431,38 @@ class TestViewerAppWiring:
         output = capsys.readouterr().out
         assert "reachable from the network without a token" in output
 
+    def test_advertised_address_changes_printed_urls_not_the_bind(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from luxar.cli import serving
+
+        captured: dict[str, object] = {}
+        monkeypatch.setattr(serving, "get_viewer_dist_path", lambda: "viewer")
+        monkeypatch.setattr(
+            serving, "_build_viewer_app", lambda *args, **kwargs: object()
+        )
+        monkeypatch.setattr(
+            serving.uvicorn,
+            "run",
+            lambda *args, **kwargs: captured.update(kwargs),
+        )
+
+        serving._serve_viewer(
+            "0.0.0.0",
+            5173,
+            control=True,
+            control_token="secret",
+            advertise_host="kiosk.local",
+            open_browser_flag=False,
+        )
+
+        output = capsys.readouterr().out
+        assert "http://kiosk.local:5173/?control&controlToken=secret" in output
+        assert (
+            "http://kiosk.local:5173/control.html?control&controlToken=secret" in output
+        )
+        assert captured["host"] == "0.0.0.0"
+
     def test_control_panel_url_quotes_the_token(self) -> None:
         from luxar.cli.serving import _build_control_panel_url
 

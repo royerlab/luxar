@@ -112,11 +112,14 @@ camera pose anyway, not one from a thousand frames ago.
 the flight lands and `switchDataset` when the new scene has loaded, so the
 default is 30 s rather than something that looks snappy and then lies.
 
-**The hub is open unless `--control-token` is set.** Without one, browser
-sockets must be same-host while non-browser clients remain unauthenticated. A
-valid token permits split-origin or reverse-proxied setups. It travels as a
-query parameter, so it also lands in the viewer's address bar and history —
-fine for a kiosk, not a substitute for avoiding an untrusted network.
+`luxar serve --control` generates a fresh token for each run when the bind is
+not loopback. The printed panel and viewer URLs carry it; Python clients must
+pass that token to `Viewer(...)`. `--control-token WORD` sets one explicitly,
+and `--no-control-token` opts out. A loopback bind remains open by default:
+browser sockets must be same-host while non-browser clients need no token.
+`--advertise-host NAME` puts a fixed name or IP in the printed URLs while the
+listener keeps its bind address. A token in a URL also lands in browser history,
+so use this on a trusted network.
 
 ## See also
 
