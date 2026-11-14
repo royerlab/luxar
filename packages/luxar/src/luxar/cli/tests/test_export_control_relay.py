@@ -89,6 +89,7 @@ def test_export_token_default_follows_contract(
         and not opt_out
     )
     if token is not None:
+        assert template._TOKEN_PATTERN.fullmatch(token)
         padded = token + "=" * (-len(token) % 4)
         assert len(base64.urlsafe_b64decode(padded)) == contract.TOKEN_BYTES
 

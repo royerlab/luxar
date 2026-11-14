@@ -110,9 +110,11 @@ def _token_policy(contract: Dict[str, Any]) -> tuple[bool, int]:
     if (
         isinstance(token_bytes, bool)
         or not isinstance(token_bytes, int)
-        or token_bytes < 1
+        or not 6 <= token_bytes <= 96
     ):
-        raise TypeError("token_policy.bytes must be a positive int")
+        raise TypeError(
+            "token_policy.bytes must yield an 8–128 character token (6–96 bytes)"
+        )
     return required, token_bytes
 
 
