@@ -103,7 +103,7 @@ export interface TimingMetadata {
   info?: string;
   /**
    * Depth-sort split (set on 'Depth Sort' passes only): ms inside the
-   * backend `sort_splats_by_depth` call on the worker. LAST-WRITE on
+   * backend sort call on the worker (including keys when requested). LAST-WRITE on
    * merge (not in {@link SUMMED_METADATA_KEYS}) — these are per-sort
    * latencies of the most recent sort, not counters; summing across
    * merged sessions would be meaningless.
@@ -144,7 +144,7 @@ export interface DepthSortCompletion {
   seq: number;
   /** Dispatch→applied round-trip latency, ms. */
   lastMs: number;
-  /** ms inside the backend `sort_splats_by_depth` call, or null if unknown. */
+  /** ms inside the selected backend sort call, or null if unknown. */
   kernelMs: number | null;
   /** Worker-side overhead around the kernel (workerMs − kernelMs), or null. */
   boundaryMs: number | null;

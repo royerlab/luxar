@@ -9,8 +9,8 @@
  * A {@link SortProducer} owns only the computation. The SortWorker is one
  * producer ({@link workerSortProducer}): a CPU counting sort in a worker that
  * resolves later with a host array. A producer may also answer synchronously,
- * or with a GPU-side writer instead of an array (the WebGPU compute sort,
- * #3162); the scheduler settles every outcome through the same path.
+ * or with a GPU-side writer instead of an array (`gpuSortProducer`);
+ * the scheduler settles every outcome through the same path.
  *
  * @module rendering/depth-sort-coordinator/sort-producers
  */
@@ -36,12 +36,12 @@ export interface SortJob {
 /** Where a sort's time went, for the profiler's 'Depth Sort' pass. */
 export interface SortTiming {
   readonly route: SortRoute;
-  /** Inside the sort kernel (the worker), or encoding it (the GPU). */
-  readonly kernelMs: number;
-  /** Producer-side overhead around the kernel. */
-  readonly boundaryMs: number;
+  /** Inside the worker sort kernel; unavailable for a deferred GPU write. */
+  readonly kernelMs: number | null;
+  /** Producer-side overhead around the kernel, when measured. */
+  readonly boundaryMs: number | null;
   /** Transport and queueing between dispatch and result. */
-  readonly queueMs: number;
+  readonly queueMs: number | null;
 }
 
 /** Which producer computed an ordering. */
@@ -65,6 +65,8 @@ export type SortOutcome =
 /** Something that can compute orderings. */
 export interface SortProducer {
   readonly route: SortRoute;
+  /** Only capture and camera-motion sorts opt into this producer. */
+  readonly captureOnly?: boolean;
   /** Whether it can sort at all right now (initialized, device present). */
   ready(c: CoordinatorState): boolean;
   /** Whether it can sort this particular node (its type, its size). */
@@ -134,8 +136,15 @@ export const workerSortProducer: SortProducer = {
 };
 
 /** The first ready producer that accepts `job`, in the coordinator's preference order. */
-export function selectSortProducer(c: CoordinatorState, job: SortJob): SortProducer | null {
-  return c.sortProducers.find((p) => p.ready(c) && p.accepts(job)) ?? null;
+export function selectSortProducer(
+  c: CoordinatorState,
+  job: SortJob,
+  preferGpu = true
+): SortProducer | null {
+  return (
+    c.sortProducers.find((p) => (!p.captureOnly || preferGpu) && p.ready(c) && p.accepts(job)) ??
+    null
+  );
 }
 
 /** Whether any producer could sort right now. */

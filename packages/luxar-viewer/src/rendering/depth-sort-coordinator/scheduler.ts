@@ -47,6 +47,7 @@ import {
   syncSortedIndexSlot,
 } from './ordering-apply';
 import { maybeRetryStarvedWorkerInit } from './worker-lifecycle';
+import { disableGpuOrderProducer } from './gpu-order-producer';
 import {
   selectSortProducer,
   type SortJob,
@@ -72,7 +73,12 @@ const ORTHO_BSP_EYE_DISTANCE = 1e15;
  * (`sort-producers.ts`); its outcome, whenever it arrives, is settled by
  * `settleSort` below.
  */
-export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: string): void {
+export function scheduleSort(
+  c: CoordinatorState,
+  mesh: THREE.Mesh,
+  nodeId: string,
+  preferGpu = false
+): void {
   const state = c.nodeStates.get(nodeId);
   const camera = c.getCamera?.();
   if (!state || !camera) {
@@ -92,7 +98,7 @@ export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: stri
   // leaves a pose on record for a sort that never ran — which is exactly what
   // silences the per-frame `!lastSortAxis` recovery dispatch for a node whose
   // first real dispatch raced a null camera.
-  const producer = selectSortProducer(c, job);
+  const producer = selectSortProducer(c, job, preferGpu);
   if (!producer) {
     // Nothing will sort this population, so a held append draw must not wait.
     releaseHeldDraw(c, mesh);
@@ -118,12 +124,21 @@ export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: stri
   // one-in-flight-per-node.
   state.inFlight = true;
   recordSortPose(state, job.modelView);
-  const pass = beginSortPass(c, producer.route);
+  const pass = beginSortPass(c, producer);
   let outcome: ReturnType<SortProducer['run']>;
   try {
     outcome = producer.run(job);
   } catch (error) {
     failSort(c, job, pass, error);
+    return;
+  }
+  if (outcome === null && producer.captureOnly) {
+    // Resources can change between accepts() and run(). Use the worker for
+    // this dispatch without retiring a healthy GPU producer.
+    pass.session?.end();
+    state.inFlight = false;
+    state.lastSortAxis = null;
+    scheduleSort(c, mesh, nodeId);
     return;
   }
   if (outcome instanceof Promise) {
@@ -154,6 +169,7 @@ export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: stri
  */
 interface SortPass {
   readonly route: SortRoute;
+  readonly gpuFallback: boolean;
   readonly session: UpdateSession | null;
   readonly profiler: UpdateProfiler | null;
   readonly profilerGeneration: number;
@@ -168,10 +184,11 @@ interface SortPass {
   handedOff: boolean;
 }
 
-function beginSortPass(c: CoordinatorState, route: SortRoute): SortPass {
+function beginSortPass(c: CoordinatorState, producer: SortProducer): SortPass {
   const profiler = c.getProfiler?.() ?? null;
   return {
-    route,
+    route: producer.route,
+    gpuFallback: producer.captureOnly === true,
     session: profiler?.beginDepthSortPass() ?? null,
     profiler,
     profilerGeneration: profiler?._currentGeneration() ?? 0,
@@ -213,6 +230,14 @@ function settleSort(
     orderingCoversCommit(outcomeLength(outcome), current, job.nodeId)
   ) {
     stageOutcome(c, job, pass, current, outcome);
+    if (pass.gpuFallback && !pass.handedOff) {
+      // The device writer was rejected at staging; try the worker now, just
+      // as for a GPU resource that vanished before dispatch.
+      pass.session?.end();
+      current.lastSortAxis = null;
+      scheduleSort(c, job.mesh, job.nodeId);
+      return;
+    }
   }
   // No ordering staged (stale generation, demotion, rejected write, or missing
   // attribute): the pass is just the dispatch→result round trip (issue #713).
@@ -263,9 +288,9 @@ function stageOutcome(
   const { kernelMs, boundaryMs, queueMs } = outcome.timing;
   pass.session?.setMetadata({
     elements: outcomeLength(outcome),
-    kernelMs,
-    boundaryMs,
-    queueMs,
+    kernelMs: kernelMs ?? undefined,
+    boundaryMs: boundaryMs ?? undefined,
+    queueMs: queueMs ?? undefined,
     info: info(false),
   });
   const callbacks = sortApplyCallbacks(c, pass, outcome, info);
@@ -275,7 +300,18 @@ function stageOutcome(
   // and complete on return, because a half-permuted index buffer is not a
   // permutation (triangle-ordering.ts). Device: the pump has the producer
   // write the inactive buffer itself, then flips.
-  const staged = writeOutcome(geometry, triangleSource, outcome, callbacks);
+  const staged = writeOutcome(
+    geometry,
+    triangleSource,
+    outcome,
+    callbacks,
+    pass.gpuFallback
+      ? () => {
+          current.lastSortAxis = null;
+          scheduleSort(c, job.mesh, job.nodeId);
+        }
+      : undefined
+  );
   if (staged > 0) {
     // Handed off BEFORE the throwing `requestRender()` below, so a throw there
     // can't route into failSort and close the pass early.
@@ -293,11 +329,15 @@ function writeOutcome(
   geometry: THREE.InstancedBufferGeometry,
   triangleSource: NodeSortState['triangleSource'],
   outcome: SortOutcome,
-  callbacks: SortedIndexApplyCallbacks
+  callbacks: SortedIndexApplyCallbacks,
+  onDeviceWriteFailure?: () => void
 ): number {
   if (outcome.kind === 'device') {
     // A mesh orders its index buffer on the CPU; no device writer serves it.
-    return triangleSource ? 0 : writeDeviceSortedIndexOrdering(geometry, outcome.write, callbacks);
+    if (triangleSource) return 0;
+    return onDeviceWriteFailure
+      ? writeGpuOutcome(geometry, outcome.write, callbacks, onDeviceWriteFailure)
+      : writeDeviceSortedIndexOrdering(geometry, outcome.write, callbacks);
   }
   const { ordering } = outcome;
   return triangleSource
@@ -305,6 +345,45 @@ function writeOutcome(
     : writeSortedIndexOrdering(geometry, ordering, ordering.length, callbacks, {
         adoptOrdering: true,
       });
+}
+
+/** Keep a failed deferred GPU write on the worker fallback path. */
+function writeGpuOutcome(
+  geometry: THREE.InstancedBufferGeometry,
+  write: Extract<SortOutcome, { kind: 'device' }>['write'],
+  callbacks: SortedIndexApplyCallbacks,
+  onWriteFailure: () => void
+): number {
+  let failed = false;
+  return writeDeviceSortedIndexOrdering(
+    geometry,
+    {
+      count: write.count,
+      write(target) {
+        try {
+          const written = write.write(target);
+          failed = !written;
+          return written;
+        } catch (error) {
+          failed = true;
+          disableGpuOrderProducer();
+          log.warning(
+            Modules.WORKER_POOL,
+            'WebGPU depth ordering failed; using worker order',
+            error
+          );
+          return false;
+        }
+      },
+    },
+    {
+      ...callbacks,
+      onAbandoned: () => {
+        callbacks.onAbandoned?.();
+        if (failed) onWriteFailure();
+      },
+    }
+  );
 }
 
 /**
@@ -324,7 +403,7 @@ function orderingInfo(
   triangleSource: NodeSortState['triangleSource'],
   geometry: THREE.InstancedBufferGeometry
 ): (uploaded: boolean) => string {
-  if (outcome.kind === 'device') return (applied) => (applied ? 'GPU sort applied' : 'GPU sort');
+  if (outcome.kind === 'device') return () => 'GPU compute';
   const n = outcome.ordering.length;
   const bytes = triangleSource ? n * 3 * (geometry.index?.array.BYTES_PER_ELEMENT ?? 4) : n * 4;
   return (uploaded) => formatOrderingBytes(bytes, uploaded);
@@ -361,7 +440,9 @@ function sortApplyCallbacks(
       if (profiler && profiler._currentGeneration() === profilerGeneration) {
         profiler.recordDepthSortCompletion({
           lastMs: Math.max(0, appliedAt - pass.dispatchedAt),
-          ...outcome.timing,
+          kernelMs: outcome.timing.kernelMs,
+          boundaryMs: outcome.timing.boundaryMs,
+          queueMs: outcome.timing.queueMs,
           elements: outcomeLength(outcome),
         });
       }
@@ -385,6 +466,12 @@ function failSort(c: CoordinatorState, job: SortJob, pass: SortPass, error: unkn
   log.error(Modules.WORKER_POOL, `${who} sort failed for ${job.nodeId}`, error);
   if (!current) return;
   current.inFlight = false;
+  if (pass.gpuFallback && !pass.handedOff) {
+    disableGpuOrderProducer();
+    current.lastSortAxis = null;
+    if (hasCommittedData(job.mesh)) scheduleSort(c, job.mesh, job.nodeId);
+    return;
+  }
   if (current.generation === job.generation) releaseHeldDraw(c, job.mesh);
   // Drain a queued re-sort even on failure — a commit landed while this sort
   // was out, and dropping its request would leave the node stale until the NEXT
@@ -724,7 +811,7 @@ export function evaluateDepthSortPerFrame(c: CoordinatorState): boolean {
       }
     }
 
-    if (moved) scheduleSort(c, mesh, nodeId);
+    if (moved) scheduleSort(c, mesh, nodeId, true);
   }
 
   const ordered = assignGlobalRenderOrder();

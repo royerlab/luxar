@@ -136,12 +136,12 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 2. Lookup `node = ctx.nodes.get(nodeId)`
 3. **Stale-drop**: return `null` when `!node || node.generation !== params.generation`
 4. Allocate output to `orderingCapacity` when supplied, and sort into a `node.count`-length view of that buffer
-5. Time the backend call: `wasm.sort_splats_by_depth(node.centers3, params.modelView, ordering, node.count)`
-6. Return TRANSFERRED result: `transfer({ generation: node.generation, ordering, kernelMs, workerMs }, [ordering.buffer])`
+5. Time the backend call to `sort_splats_by_depth`. Native WebGPU camera refreshes use the texture-based `GpuDepthSorter` directly; the worker retains the CPU repair ordering for commits and fallback.
+6. Return the TRANSFERRED ordering.
 
 **Timing**:
 
-- `kernelMs` — time spent inside the backend `sort_splats_by_depth` call (includes wasm-bindgen boundary copies for compiled WASM; pure kernel for TS fallback)
+- `kernelMs` — time spent inside the chosen backend sort call (includes wasm-bindgen boundary copies for compiled WASM; pure kernel for TS fallback)
 - `workerMs` — whole `sortNode` body duration (registry lookup + output allocation + kernel)
 - `boundaryMs = workerMs - kernelMs` — worker-side overhead around the backend call (computed on the main thread, in `scheduleSort`'s resolve handler)
 - `queueMs = roundTripMs - workerMs` — Comlink RPC + structured clone + event-loop queueing (computed on the main thread, in the same handler)

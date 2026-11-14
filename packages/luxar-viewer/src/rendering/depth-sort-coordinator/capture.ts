@@ -1,7 +1,7 @@
 /**
  * The depth-sort coordinator's offline-capture drain: {@link resortForCapture}
  * forces a pose-fresh sort of every order-dependent node and drives the
- * scheduler, the worker round-trip and the chunked apply by hand until the
+ * scheduler, any producer round-trip and the chunked apply by hand until the
  * drawn ordering is the one for the current pose.
  *
  * @module rendering/depth-sort-coordinator/capture
@@ -114,7 +114,7 @@ export async function resortForCapture(c: CoordinatorState, maxWaitMs = 3000): P
         if (!isEffectivelyVisible(mesh)) continue;
         if (!hasCommittedData(mesh)) continue;
         if (!isLiveOrderDependent(liveBlendingMode(mesh))) continue;
-        scheduleSort(c, mesh, nodeId);
+        scheduleSort(c, mesh, nodeId, true);
       }
     }
 

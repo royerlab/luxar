@@ -26,6 +26,7 @@ export const SHADER_STAGE_COMPUTE = 0x4;
 /** A GPU buffer the sorter allocates, binds, or copies into. */
 export interface GpuBuffer {
   readonly size: number;
+  readonly usage: number;
   destroy(): void;
 }
 

@@ -38,10 +38,10 @@ export interface SortParams {
 export interface SortResult {
   /** Generation the ordering was computed for (re-checked on the main thread). */
   generation: number;
-  /** Back-to-front permutation [count] — TRANSFERRED to the main thread. */
+  /** Worker ordering uploaded when applied; also retained for commit repair. */
   ordering: Uint32Array;
   /**
-   * Time spent inside the backend `sort_splats_by_depth` call, in ms.
+   * Time spent inside the selected backend sort call, in ms.
    * For compiled WASM this INCLUDES the wasm-bindgen boundary copies
    * (centers copy-in, ordering copy-in/out, mallocs) — the shim performs
    * them inside the exported function; for the TS fallback it is the pure

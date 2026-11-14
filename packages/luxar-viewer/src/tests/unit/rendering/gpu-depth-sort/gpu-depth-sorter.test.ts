@@ -7,10 +7,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { GpuDepthSorter } from '../../../../rendering/gpu-depth-sort/gpu-depth-sorter';
-import type {
-  GpuBindGroupLayoutEntry,
-  GpuBuffer,
-  GpuDevice,
+import {
+  BufferUsage,
+  type GpuBindGroupLayoutEntry,
+  type GpuBuffer,
+  type GpuDevice,
 } from '../../../../rendering/gpu-depth-sort/gpu-types';
 import {
   BLOCK_ELEMENTS,
@@ -51,10 +52,11 @@ function fakeDevice(options: { failCompile?: boolean; maxBinding?: number } = {}
         }),
       submit: (cbs) => submits.push(...(cbs as (typeof submits)[number][])),
     },
-    createBuffer: ({ label = '', size }) => {
+    createBuffer: ({ label = '', size, usage }) => {
       const b: FakeBuffer = {
         label,
         size,
+        usage,
         destroyed: false,
         destroy: () => (b.destroyed = true),
       };
@@ -123,9 +125,21 @@ function request(count: number, target: GpuBuffer) {
   };
 }
 
-const target = (size = 64 * 1024 * 1024): GpuBuffer => ({ size, destroy: () => {} });
+const target = (size = 64 * 1024 * 1024, usage: number = BufferUsage.COPY_DST): GpuBuffer => ({
+  size,
+  usage,
+  destroy: () => {},
+});
 
 describe('GpuDepthSorter', () => {
+  it('rejects a target that cannot receive the complete copied ordering', async () => {
+    const fake = fakeDevice();
+    const sorter = await GpuDepthSorter.create(fake.device);
+    expect(() => sorter.sort(request(4, target(15)))).toThrow(/target.*size/i);
+    expect(() => sorter.sort(request(4, target(16, BufferUsage.VERTEX)))).toThrow(/COPY_DST/);
+    expect(fake.submits).toHaveLength(0);
+    sorter.dispose();
+  });
   it('binds exactly the bindings each shader declares', async () => {
     const fake = fakeDevice();
     await GpuDepthSorter.create(fake.device);

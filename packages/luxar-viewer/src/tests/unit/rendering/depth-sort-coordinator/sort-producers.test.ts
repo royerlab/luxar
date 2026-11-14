@@ -145,6 +145,19 @@ describe('producer selection', () => {
     resolves.forEach((resolve) => resolve(null));
     await Promise.resolve();
   });
+
+  it('uses the worker when GPU resources disappear before dispatch', () => {
+    const gpu = { ...producer('gpu', () => null), captureOnly: true };
+    const worker = producer('worker', () => null);
+    const { c, mesh, state } = setup([gpu, worker]);
+
+    scheduleSort(c, mesh, mesh.uuid, true);
+
+    expect(gpu.run).toHaveBeenCalledOnce();
+    expect(worker.run).toHaveBeenCalledOnce();
+    expect(state.inFlight).toBe(false);
+    expect(state.lastSortAxis).not.toBeNull();
+  });
 });
 
 describe('settling an outcome', () => {
@@ -177,6 +190,33 @@ describe('settling an outcome', () => {
     expect(pumpSortedIndexOrderingApply(geometry).flipped).toBe(true);
     expect(write).toHaveBeenCalledWith(inactive);
     expect(activeSortedIndexSlot(geometry)).toBe(1);
+  });
+
+  it('falls back to the worker when a GPU device writer cannot be staged', () => {
+    let oversizedCount = 0;
+    const gpu = {
+      ...producer('gpu', (job) => ({
+        kind: 'device' as const,
+        generation: job.generation,
+        write: { count: oversizedCount, write: () => true },
+        timing: TIMING,
+      })),
+      captureOnly: true,
+    };
+    const worker = producer('worker', () => null);
+    const { c, mesh, state } = setup([gpu, worker]);
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    oversizedCount = geometry.getAttribute('aSortedIndex').array.length + 1;
+    state.count = oversizedCount;
+
+    scheduleSort(c, mesh, mesh.uuid, true);
+
+    expect(gpu.run).toHaveBeenCalledOnce();
+    expect(worker.run).toHaveBeenCalledOnce();
+    expect(state.inFlight).toBe(false);
+    expect(
+      pumpSortedIndexOrderingApply(mesh.geometry as THREE.InstancedBufferGeometry).flipped
+    ).toBe(false);
   });
 
   it('drops an outcome for another generation, or for a population it does not cover', () => {

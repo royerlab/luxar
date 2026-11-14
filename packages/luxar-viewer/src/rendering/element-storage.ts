@@ -36,6 +36,12 @@ import {
 import { rendererBackendPolicy } from './renderer-backend-policy';
 import { log, Modules } from '../utils/log';
 
+// Three's WebGPU backend recognizes this flag; inherit from the public
+// instance so the eager WebGL bundle keeps one BufferAttribute class graph.
+class StorageInstancedBufferAttribute extends THREE.InstancedBufferAttribute {
+  readonly isStorageInstancedBufferAttribute = true;
+}
+
 /**
  * Above this fraction of a texture's rows being dirty, the per-row
  * `texSubImage2D` call overhead outweighs the bytes a ranged upload
@@ -116,6 +122,7 @@ export function hasPendingElementTextureFullUpload(texture: THREE.DataTexture): 
  * storage equals a full one — what the classic renderer already does.
  */
 const uploadedOnce = new WeakSet<THREE.DataTexture>();
+const uploadedVersions = new WeakMap<THREE.DataTexture, number>();
 
 /** True once any renderer has consumed an upload of this element texture. */
 export function hasElementTextureBeenUploaded(texture: THREE.DataTexture): boolean {
@@ -211,6 +218,7 @@ export function registerElementTexelDirtyRange(
 /** `geometry.userData` slot carrying the element texture. */
 interface ElementStorageUserData {
   elementTexture?: THREE.DataTexture;
+  elementTextureLayout?: ElementTextureLayout;
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -303,6 +311,19 @@ let sortedIndexChunkElements = SORTED_INDEX_CHUNK_ELEMENTS;
 /** Override the slice size (tests only). `null` restores the default. */
 export function setSortedIndexChunkElementsForTests(elements: number | null): void {
   sortedIndexChunkElements = elements ?? SORTED_INDEX_CHUNK_ELEMENTS;
+}
+
+/** True only for geometries built with storage-capable ordering buffers. */
+export function canComputeSortedIndex(geometry: THREE.InstancedBufferGeometry): boolean {
+  const a = geometry.getAttribute('aSortedIndex');
+  const b = geometry.getAttribute('aSortedIndexB');
+  return (
+    !!a &&
+    !!b &&
+    a !== b &&
+    'isStorageInstancedBufferAttribute' in a &&
+    'isStorageInstancedBufferAttribute' in b
+  );
 }
 
 /**
@@ -892,7 +913,7 @@ export function pumpSortedIndexOrderingApply(
  * the callback so re-entrant disposal/cancellation cannot double-close it.
  */
 export function acknowledgeSortedIndexOrderingDraw(geometry: THREE.InstancedBufferGeometry): void {
-  const state = acknowledgeDeviceHostUpload(geometry);
+  const state = acknowledgeHostUploadsAfterDraw(geometry);
   const callbacks = awaitingDrawAcknowledgement.get(geometry);
   if (callbacks) {
     awaitingDrawAcknowledgement.delete(geometry);
@@ -903,17 +924,24 @@ export function acknowledgeSortedIndexOrderingDraw(geometry: THREE.InstancedBuff
   }
 }
 
-/** Clear a device writer's old host ranges only when this draw consumed them. */
-function acknowledgeDeviceHostUpload(
+/** Clear host ranges after WebGPU has drawn both ordering attributes. */
+function acknowledgeHostUploadsAfterDraw(
   geometry: THREE.InstancedBufferGeometry
 ): OrderingApply | undefined {
   // WebGPU has no attribute upload callback. An update clears ranges, but
   // first buffer creation uploads the full array and leaves them set. Both
-  // ordering attributes are bound by the draw, so either path has consumed
-  // the old host data here. Inspect before callbacks can stage a new upload.
+  // ordering attributes are bound by every draw, so both have consumed any
+  // old host data here. Clear even without a pending device writer: capture
+  // drains without drawing, and an old range would otherwise stall it.
+  // Inspect before callbacks can stage a new upload.
   const state = orderingApplies.get(geometry);
-  if (state?.staged.kind === 'device') {
-    getInactiveSortedIndexAttribute(geometry)?.clearUpdateRanges();
+  if (!rendererBackendPolicy().ordering.chunked) {
+    (
+      geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute | undefined
+    )?.clearUpdateRanges();
+    (
+      geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute | undefined
+    )?.clearUpdateRanges();
   }
   return state;
 }
@@ -1041,7 +1069,9 @@ export function attachElementStorage(
   // (and caps aSortedIndex to match). Idempotent for the pool path, which
   // already clamps at acquire time.
   capacity = clampElementCapacity(capacity, layout);
-  const sortedIndex = new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
+  const sortedIndex = rendererBackendPolicy().gpuCompute
+    ? new StorageInstancedBufferAttribute(new Uint32Array(capacity), 1)
+    : new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
   sortedIndex.setUsage(rendererBackendPolicy().ordering.usage);
   geometry.setAttribute('aSortedIndex', sortedIndex);
   // Slot B is a DISTINCT buffer from the very first frame — never an
@@ -1083,7 +1113,9 @@ export function attachElementStorage(
   // costs a flat +4 B/element on nodes that never sort (≈6% of a
   // gsplat's 68 B/element), which is the honest price of not depending
   // on a cache-invalidation path that does not exist.
-  const sortedIndexB = new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
+  const sortedIndexB = rendererBackendPolicy().gpuCompute
+    ? new StorageInstancedBufferAttribute(new Uint32Array(capacity), 1)
+    : new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
   sortedIndexB.setUsage(rendererBackendPolicy().ordering.usage);
   geometry.setAttribute('aSortedIndexB', sortedIndexB);
 
@@ -1111,11 +1143,13 @@ export function attachElementStorage(
   texture.onUpdate = () => {
     pendingFullUpload.delete(texture);
     uploadedOnce.add(texture);
+    uploadedVersions.set(texture, texture.version);
   };
   texture.needsUpdate = true;
   elementTextures.add(texture);
 
   (geometry.userData as ElementStorageUserData).elementTexture = texture;
+  (geometry.userData as ElementStorageUserData).elementTextureLayout = layout;
   geometry.addEventListener('dispose', () => texture.dispose());
   return texture;
 }
@@ -1123,6 +1157,18 @@ export function attachElementStorage(
 /** The element texture attached by `attachElementStorage`, if any. */
 export function getElementTexture(geometry: THREE.BufferGeometry): THREE.DataTexture | null {
   return (geometry.userData as ElementStorageUserData).elementTexture ?? null;
+}
+
+/** True after three has uploaded the current texture version. */
+export function isElementTextureCurrent(texture: THREE.DataTexture): boolean {
+  return uploadedVersions.get(texture) === texture.version;
+}
+
+/** The layout used to allocate a geometry's element texture. */
+export function getElementTextureLayout(
+  geometry: THREE.BufferGeometry
+): ElementTextureLayout | null {
+  return (geometry.userData as ElementStorageUserData).elementTextureLayout ?? null;
 }
 
 /**
