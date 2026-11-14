@@ -41,17 +41,37 @@ vi.mock('../../../../../utils/hdr/hdr-detection', () => ({
 
 import { createWebGLRenderer } from '../../../../../scene/scene-manager/render-pipeline/renderer-setup';
 import { rendererBackendPolicy } from '../../../../../rendering/renderer-backend-policy';
+import { config } from '../../../../../config';
 
 function canvas(): HTMLCanvasElement {
   const el = document.createElement('canvas');
-  // jsdom has no WebGL; the helper tolerates a null context.
-  el.getContext = vi.fn(() => null) as unknown as HTMLCanvasElement['getContext'];
+  el.getContext = vi.fn(() => ({})) as unknown as HTMLCanvasElement['getContext'];
   return el;
 }
 
 type WithDebug = { debug: { checkShaderErrors: boolean } };
 
 describe('createWebGLRenderer shader-error checking', () => {
+  it('refuses to construct a renderer when WebGL2 is unavailable', async () => {
+    const el = canvas();
+    el.getContext = vi.fn(() => null) as unknown as HTMLCanvasElement['getContext'];
+    await expect(createWebGLRenderer(el)).rejects.toThrow(/GPU access/i);
+    expect(el.getContext).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries without desynchronized while preserving other context options', async () => {
+    const el = canvas();
+    const context = {};
+    el.getContext = vi.fn().mockReturnValueOnce(null).mockReturnValueOnce(context);
+    const { renderer } = await createWebGLRenderer(el);
+    expect(renderer).toBeDefined();
+    expect(el.getContext).toHaveBeenCalledTimes(2);
+    expect(el.getContext).toHaveBeenNthCalledWith(2, 'webgl2', {
+      ...config.webgl.context,
+      desynchronized: false,
+    });
+  });
+
   it('is off without debug', async () => {
     const { renderer } = await createWebGLRenderer(canvas());
     expect((renderer as unknown as WithDebug).debug.checkShaderErrors).toBe(false);

@@ -1692,11 +1692,11 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // Dispose post-processing resources first
     // This includes HDR render targets, effect composer, and all passes
-    this.postProcessing.dispose();
+    this.postProcessing?.dispose();
 
     // Dispose controls - removes all event listeners and internal references
     // This prevents memory leaks from mouse/touch event handlers
-    this.controls.dispose();
+    this.controls?.dispose();
 
     // Dispose material manager - cleans up all cached materials
     materialManager.dispose();
@@ -1718,13 +1718,13 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // Dispose renderer - cleans up WebGL context and associated GPU resources
     // This frees vertex buffers, textures, and shader programs
-    this.renderer.dispose();
+    this.renderer?.dispose();
 
     // Traverse scene graph and dispose all geometry and material resources
     // (WebGL resources are not garbage collected). Delegated to
     // scene-manager/render-pipeline/scene-disposal so the same one-shot
     // final-dispose pass is unit-testable in isolation.
-    disposeSceneGraphResources(this.scene, this.depthSort);
+    if (this.scene) disposeSceneGraphResources(this.scene, this.depthSort);
   }
 
   /**

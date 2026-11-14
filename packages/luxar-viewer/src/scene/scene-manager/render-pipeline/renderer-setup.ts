@@ -55,7 +55,6 @@ import {
   DEFAULT_HDR_HEADROOM,
   type HdrOutputState,
 } from '../../../types/hdr-output';
-import { notifier } from '../../../utils/cross-layer/notifier';
 import { formatErrorForDisplay, getErrorMessage } from '../../../utils/format-error';
 export { selectBackend } from './backend-selection';
 import { shouldPrefetchTsl } from './backend-selection';
@@ -122,6 +121,28 @@ export interface CreatedRenderer {
   capabilities: RendererCapabilities;
 }
 
+/** A renderer cannot start because this canvas has neither usable GPU API. */
+export class GpuContextUnavailableError extends Error {
+  constructor() {
+    super(
+      'The browser is not providing GPU access. It may have blocked this page after a GPU reset, ' +
+        "or hardware acceleration may be off. Reload the page or restart the browser, and check your browser's GPU status page (chrome://gpu in Chrome)."
+    );
+    this.name = 'GpuContextUnavailableError';
+  }
+}
+
+/** Find the actionable GPU failure through startup wrappers. */
+export function gpuContextUnavailableFrom(error: unknown): GpuContextUnavailableError | undefined {
+  let current = error;
+  for (let depth = 0; depth < 8; depth++) {
+    if (current instanceof GpuContextUnavailableError) return current;
+    if (!(current instanceof Error)) return undefined;
+    current = current.cause;
+  }
+  return undefined;
+}
+
 /** Options that `createWebGLRenderer` honours. */
 export interface CreateWebGLOptions {
   /**
@@ -157,14 +178,24 @@ export async function createWebGLRenderer(
   let gl: WebGLRenderingContext | null = null;
   try {
     gl = canvas.getContext('webgl2', config.webgl.context) as WebGLRenderingContext | null;
-
-    if (!gl) {
-      log.warning(Modules.SCENE_MANAGER, 'WebGL2 context creation failed, falling back to default');
-    }
   } catch (error) {
-    log.error(Modules.SCENE_MANAGER, 'Error creating WebGL2 context:', error);
-    notifier.error('Failed to create WebGL2 context. Your browser may not support WebGL2.');
+    log.warning(Modules.SCENE_MANAGER, 'Configured WebGL2 context creation failed:', error);
   }
+  if (!gl) {
+    log.warning(
+      Modules.SCENE_MANAGER,
+      'WebGL2 context creation failed, retrying without desynchronized'
+    );
+    try {
+      gl = canvas.getContext('webgl2', {
+        ...config.webgl.context,
+        desynchronized: false,
+      }) as WebGLRenderingContext | null;
+    } catch (error) {
+      log.warning(Modules.SCENE_MANAGER, 'WebGL2 context retry failed:', error);
+    }
+  }
+  if (!gl) throw new GpuContextUnavailableError();
 
   const renderer = new THREE.WebGLRenderer({
     canvas,
@@ -606,6 +637,20 @@ export async function createWebGPURenderer(
   const request = await resolveWebGPUDeviceRequest(options);
   if (request.fallback) return request;
   const { device, webgpuModule } = request;
+  // Three's WebGL2 backend assumes context creation succeeds. Probe a
+  // temporary canvas: touching the display canvas here would commit it to
+  // WebGL2 even if Three can still obtain a native WebGPU device on retry.
+  // This is a best-effort check; Three creates the actual context during init().
+  if (device === undefined) {
+    let gl: WebGL2RenderingContext | null = null;
+    try {
+      gl = document.createElement('canvas').getContext('webgl2');
+    } catch (error) {
+      log.warning(Modules.RENDERER, 'WebGL2 fallback context creation failed:', error);
+    }
+    if (!gl) throw new GpuContextUnavailableError();
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+  }
 
   // Loaded lazily, not at module scope: a static `import { WebGPURenderer }`
   // makes the ~182 kB gzipped `three-webgpu` chunk a dependency of the entry

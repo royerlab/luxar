@@ -2,9 +2,8 @@
 /**
  * Unit tests for the renderer-setup helpers used by SceneManager.
  *
- * `createWebGLRenderer` is intentionally NOT unit-tested: mocking the
- * WebGL2 context surface (getContext / getExtension / getParameter /
- * getShaderPrecisionFormat) would test the mock, not the GL contract.
+ * `createWebGLRenderer` is only unit-tested for the context acquisition
+ * boundary and debug flag. Its full WebGL contract needs a real browser;
  * E2E coverage via `basic-rendering.spec.ts` is the safety net there.
  *
  * `selectBackend` is the pure-fn precedence ladder.
@@ -27,6 +26,7 @@ const fakeBackend = vi.hoisted(() => ({ isWebGPUBackend: true, device: {} }));
 // What `(dynamic-range: high)` answers for the HDR-output gate.
 const displayHdr = vi.hoisted(() => ({ hdr: false }));
 const webgpuImport = vi.hoisted(() => ({ failures: 0, calls: 0 }));
+const loseProbeContext = vi.hoisted(() => vi.fn());
 vi.mock('three/webgpu', () => {
   webgpuImport.calls++;
   if (webgpuImport.failures-- > 0) throw new Error('chunk unavailable');
@@ -213,6 +213,10 @@ describe('createWebGPURenderer', () => {
     originalNavigator = globalThis.navigator;
     webgpuConstructorArgs.length = 0;
     vi.mocked(loadTslMaterials).mockClear();
+    loseProbeContext.mockClear();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      getExtension: vi.fn(() => ({ loseContext: loseProbeContext })),
+    } as never);
   });
 
   afterEach(() => {
@@ -221,6 +225,7 @@ describe('createWebGPURenderer', () => {
       configurable: true,
       writable: true,
     });
+    vi.restoreAllMocks();
   });
 
   /** `undefined` stubs a browser without `navigator.gpu` at all. */
@@ -236,8 +241,29 @@ describe('createWebGPURenderer', () => {
   }
 
   function makeCanvas(): HTMLCanvasElement {
-    return document.createElement('canvas');
+    const canvas = document.createElement('canvas');
+    canvas.getContext = vi.fn(() => ({})) as unknown as HTMLCanvasElement['getContext'];
+    return canvas;
   }
+
+  it('refuses the WebGL fallback when no GPU context is available', async () => {
+    stubNavigatorGpu(undefined);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+
+    await expect(
+      createWebGPURenderer(makeCanvas(), { rendererOverride: 'webgpu' })
+    ).rejects.toThrow(/GPU access/i);
+    expect(webgpuConstructorArgs).toHaveLength(0);
+  });
+
+  it('refuses the forced WebGL backend when no GPU context is available', async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+
+    await expect(createWebGPURenderer(makeCanvas(), { webgpuForceWebGL: true })).rejects.toThrow(
+      /GPU access/i
+    );
+    expect(webgpuConstructorArgs).toHaveLength(0);
+  });
 
   function makeAdapter(opts: {
     maxVertexBuffers?: number;
@@ -256,6 +282,7 @@ describe('createWebGPURenderer', () => {
     };
   }
 
+  // Must be the first successful three/webgpu import: Vitest caches the mocked module.
   it('starts both imports while requestDevice is pending and retries a failed renderer prefetch', async () => {
     let releaseDevice!: (device: object) => void;
     const requestDevice = vi.fn(
@@ -276,6 +303,28 @@ describe('createWebGPURenderer', () => {
     releaseDevice({});
     expect(await creating).toMatchObject({ fallback: false });
     expect(webgpuImport.calls).toBe(2);
+  });
+
+  it('checks WebGL fallback without committing the display canvas to WebGL', async () => {
+    stubNavigatorGpu(undefined);
+    const canvas = makeCanvas();
+
+    expect(await createWebGPURenderer(canvas, { rendererOverride: 'webgpu' })).toMatchObject({
+      fallback: false,
+    });
+    expect(HTMLCanvasElement.prototype.getContext).toHaveBeenCalledWith('webgl2');
+    expect(canvas.getContext).not.toHaveBeenCalled();
+    expect(loseProbeContext).toHaveBeenCalledOnce();
+  });
+
+  it('does not require WebGL2 when a native WebGPU device is available', async () => {
+    stubNavigatorGpu(vi.fn().mockResolvedValue(makeAdapter({ maxVertexBuffers: 16 })));
+    const canvas = makeCanvas();
+    canvas.getContext = vi.fn(() => null) as unknown as HTMLCanvasElement['getContext'];
+
+    expect(await createWebGPURenderer(canvas)).toMatchObject({ fallback: false });
+    expect(canvas.getContext).not.toHaveBeenCalled();
+    expect(loseProbeContext).not.toHaveBeenCalled();
   });
 
   it('consumes an early device request once without renegotiating', async () => {
@@ -632,6 +681,7 @@ describe('createWebGPURenderer', () => {
         configure: vi.fn(),
         unconfigure: vi.fn(),
         getConfiguration: () => (mode === null ? null : { toneMapping: { mode } }),
+        getExtension: vi.fn(() => ({ loseContext: loseProbeContext })),
       } as never);
       return makeCanvas();
     }

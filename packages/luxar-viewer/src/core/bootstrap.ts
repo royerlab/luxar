@@ -47,6 +47,7 @@ import { prefetchRootDocument } from '../cache/root-document-prefetch';
 import { normalizeURL } from '../data/scene-loader/lifecycle/url-normalization';
 import { loadsDirectlyWithoutProbe } from './app/dataset/should-show-browser';
 import {
+  gpuContextUnavailableFrom,
   requestWebGPUDevice,
   selectBackend,
 } from '../scene/scene-manager/render-pipeline/renderer-setup';
@@ -484,11 +485,11 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     app.onDispose(() => window.removeEventListener('hashchange', onHashChange));
   } catch (error) {
     log.error(Modules.LUXAR, `Failed to start Luxar application: ${getErrorMessage(error)}`, error);
-    // Two failures carry a user-actionable message of their own: an archive
-    // fault (wrong `?src=` path) and a refused format version (the message
-    // names the version, the supported set and the remedy). Everything else
-    // is a programming/environment error and keeps the generic text.
-    const surfaced = archiveFaultFrom(error) ?? unsupportedFormatVersionFrom(error);
+    // Surface actionable failures; other startup faults keep the generic text.
+    const surfaced =
+      archiveFaultFrom(error) ??
+      unsupportedFormatVersionFrom(error) ??
+      gpuContextUnavailableFrom(error);
     showViewerError(
       surfaced
         ? surfaced.message

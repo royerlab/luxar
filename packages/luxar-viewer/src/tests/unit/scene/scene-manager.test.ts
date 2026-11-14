@@ -1915,6 +1915,12 @@ describe('SceneManager', () => {
     });
   });
 
+  it('disposes cleanly after GPU context acquisition stops initialization', async () => {
+    mockCanvas.getContext.mockReturnValueOnce(null).mockReturnValueOnce(null);
+    await expect(sceneManager.init({ canvas: mockCanvas as any })).rejects.toThrow(/GPU access/i);
+    expect(() => sceneManager.dispose()).not.toThrow();
+  });
+
   describe('resource management', () => {
     beforeEach(async () => {
       await sceneManager.init({ canvas: mockCanvas as any });
