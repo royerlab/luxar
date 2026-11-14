@@ -1,10 +1,10 @@
 # rendering/depth-sort-coordinator
 
-> Main-thread side of the persistent depth-sort worker — camera-driven re-sorts (Phase 3) and cross-node back-to-front ordering
+> Main-thread depth-sort coordination — camera-driven re-sorts (Phase 3) and cross-node back-to-front ordering
 
 ## Purpose
 
-Depth sorting orders transparent elements back-to-front for correct order-dependent blending (normal and volumetric modes). **Within-node sorting** is driven by the `SortWorker` (Phase 2); **cross-node ordering** (THREE.js `renderOrder`) is driven here in Phase 3.
+Depth sorting orders transparent elements back-to-front for correct order-dependent blending (normal and volumetric modes). **Within-node sorting** uses the `SortWorker` on commits, for mesh, and as fallback; native WebGPU camera refreshes use `GpuDepthSorter` when the uploaded element texture and a storage-capable order buffer are ready. **Cross-node ordering** (THREE.js `renderOrder`) is driven here in Phase 3.
 
 This module is the **main-thread authority** for the depth-sort subsystem. It serves **all four geometry types** via a geometry-agnostic mechanism: projected 3D centers in, back-to-front permutation out.
 
@@ -14,13 +14,13 @@ What the coordinators SHARE is the one **SortWorker** (`workerHost` in `state.ts
 
 **There are two APPLY paths, and only the apply differs.** A "center" is a splat/point center, a line segment midpoint, or a triangle centroid — 3 floats either way, so registration, worker and kernel are shared:
 
-|                  | Instanced (gsplats, points, lines)                             | Indexed (mesh)                                                                                              |
-| ---------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| What is permuted | `aSortedIndex`, a per-instance draw-slot indirection           | `geometry.index` itself                                                                                     |
-| Buffering        | Double-buffered pair + `uSortedIndexSlot` uniform              | Single buffer                                                                                               |
-| Cadence          | Chunked: one 4 MB slice per rendered frame, flip on completion | Atomic: the whole visible prefix in one write                                                               |
-| Why              | A half-written INACTIVE buffer is never drawn                  | A half-written index buffer is not a permutation — it would draw some triangles twice and others not at all |
-| Owner            | `rendering/element-storage.ts`                                 | `triangle-ordering.ts`                                                                                      |
+|                  | Instanced (gsplats, points, lines)                                                                                     | Indexed (mesh)                                                                                              |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| What is permuted | `aSortedIndex`, a per-instance draw-slot indirection                                                                   | `geometry.index` itself                                                                                     |
+| Buffering        | Double-buffered pair + `uSortedIndexSlot` uniform                                                                      | Single buffer                                                                                               |
+| Cadence          | WebGL host order: one 4 MB slice per frame; WebGPU device order: one write after pending host uploads flush, then flip | Atomic: the whole visible prefix in one write                                                               |
+| Why              | A half-written INACTIVE buffer is never drawn                                                                          | A half-written index buffer is not a permutation — it would draw some triangles twice and others not at all |
+| Owner            | `rendering/element-storage.ts`                                                                                         | `triangle-ordering.ts`                                                                                      |
 
 Mesh cannot double-buffer because `geometry.index` is _bound_ state: no uniform can select between two index buffers, and reassigning `geometry.index` is the drawn-geometry rebind `applyMeshIndices` exists to avoid. The atomic write costs one upload of a prefix the mesh path already re-uploads on every slice move. Its permutation is applied to the commit's CANONICAL triples (retained on `NodeSortState.triangleSource` only while the node is sorting), never to the live buffer, which would compose successive permutations.
 
@@ -44,8 +44,9 @@ depth-sort-coordinator/
 │                          attach/detach (the last detach terminates the worker)
 ├── ordering-apply.ts    — Slot → material sync, draw-acknowledgement hook, the
 │                          commit-time synchronous first sort, resolve helpers
-├── scheduler.ts         — scheduleSort (single in flight, resolve + apply), the
+├── scheduler.ts         — scheduleSort (GPU/worker dispatch, resolve + apply), the
 │                          chunked apply pump, the per-frame camera-motion pass
+├── gpu-order-producer.ts — Native WebGPU texture sort and ordering-buffer handoff
 ├── capture.ts           — resortForCapture / isCaptureQuiescent (offline drain)
 ├── render-order.ts      — Cross-node renderOrder assignment: BSP partition traversal +
 │                          centroid fallback, ONE global scale
@@ -209,28 +210,30 @@ Enforces **at most one in-flight sort per node**; a commit landing mid-sort queu
 
 **Flow**:
 
-1. Get `state` (from THIS coordinator's node map), `camera` (from its `getCamera()`) — and return unless the worker is actually usable: `api` is wrapped BEFORE `initializeWithGuard` is awaited, so a live handle is not a ready worker, and `sort` is the one RPC that `requireWasm`s worker-side. `workerInitState === 'ready'` is therefore part of the gate, here rather than at each caller (the offline-capture force loop dispatches without consulting `registered`). Skipping also keeps `recordSortPose` below from stamping a pose for a sort that never ran, which would silence the per-frame `!lastSortAxis` recovery dispatch
+1. Get `state` (from THIS coordinator's node map) and `camera` (from its `getCamera()`); return if either is missing
 2. Return if already `inFlight` — set `resortQueued = true` and return
-3. Set `inFlight = true`
-4. Refresh `mesh.matrixWorld` and `camera.matrixWorld` (can be stale when a commit fires before the next frame)
-5. Derive `viewMatrix = inverse(camera.matrixWorld)`, `modelView = viewMatrix × mesh.matrixWorld`
-6. Record the pose (`recordSortPose(state, modelView)`) — stores the model-view z-row (axis direction + normalized offset)
-7. Begin a detached profiler pass (`getProfiler()?.beginDepthSortPass()`) — its duration is the dispatch→applied round-trip
-8. `withTimeout('depth-sort', api.sort({ nodeId, generation, modelView }), 30s)`:
-   - **Timeout**: a worker that CRASHES mid-session leaves the Comlink RPC pending forever, and a stuck `inFlight` is unrecoverable — the per-frame scheduler skips in-flight nodes and later commits only set `resortQueued`, which never drains. Routing the timeout through the existing .catch clears `inFlight` and drains the queue (bounded staleness degrade instead of a permanently unsorted node).
-9. On **resolve**:
-   - Clear `inFlight`
-   - **Stale-drop**: stage only when `result.generation === current.generation` AND `hasCommittedData(mesh)` (LOD demotion signal)
-   - Set profiler metadata: `splats`, `kernelMs`, `boundaryMs` (worker overhead), `queueMs` (round-trip minus worker time), and `info` with ordering bytes labeled `sched`
-   - Stage the ordering with lifecycle callbacks: `writeSortedIndexOrdering(geometry, result.ordering, count, callbacks, { adoptOrdering: true })` — `callbacks` always carries the owner hooks (`orderingApplyHooks(c)`) and, with a profiler session, `onApplied` / `onAbandoned`; the per-frame pump streams slices into the inactive buffer. On WebGPU, a result backed by the full attribute capacity becomes the inactive attribute array without a second CPU copy; orderings without that backing and WebGL still copy.
-   - Transfer profiler-session ownership to those callbacks and request the bootstrap frame
-   - Drain `resortQueued` if set: `scheduleSort(c, mesh, nodeId)`
-10. On **rendered application**:
+3. When requested, stage a texture-based GPU write through `writeDeviceSortedIndexOrdering` and record the pose without waiting for worker initialization. The per-frame pump submits it to the inactive buffer and flips only after any earlier host upload on that slot has drawn; a failed write falls back to the worker
+4. Otherwise return unless the worker is usable: `api` is wrapped BEFORE `initializeWithGuard` is awaited, so a live handle is not a ready worker. `workerInitState === 'ready'` gates the worker RPC here rather than at each caller (the offline-capture force loop dispatches without consulting `registered`). Skipping keeps `recordSortPose` below from stamping a pose for a sort that never ran, which would silence the per-frame `!lastSortAxis` recovery dispatch
+5. Set `inFlight = true`
+6. Refresh `mesh.matrixWorld` and `camera.matrixWorld` (can be stale when a commit fires before the next frame)
+7. Derive `viewMatrix = inverse(camera.matrixWorld)`, `modelView = viewMatrix × mesh.matrixWorld`
+8. Record the pose (`recordSortPose(state, modelView)`) — stores the model-view z-row (axis direction + normalized offset)
+9. Begin a detached profiler pass (`getProfiler()?.beginDepthSortPass()`) — its duration is the dispatch→applied round-trip
+10. `withTimeout('depth-sort', api.sort({ nodeId, generation, modelView }), 30s)`:
+    - **Timeout**: a worker that CRASHES mid-session leaves the Comlink RPC pending forever, and a stuck `inFlight` is unrecoverable — the per-frame scheduler skips in-flight nodes and later commits only set `resortQueued`, which never drains. Routing the timeout through the existing .catch clears `inFlight` and drains the queue (bounded staleness degrade instead of a permanently unsorted node).
+11. On **resolve**:
+    - Clear `inFlight`
+    - **Stale-drop**: stage only when `result.generation === current.generation` AND `hasCommittedData(mesh)` (LOD demotion signal)
+    - Set profiler metadata: `splats`, `kernelMs`, `boundaryMs` (worker overhead), `queueMs` (round-trip minus worker time), and `info` with ordering bytes labeled `sched`
+    - Stage the ordering with lifecycle callbacks: `writeSortedIndexOrdering(geometry, result.ordering, count, callbacks, { adoptOrdering: true })` — `callbacks` always carries the owner hooks (`orderingApplyHooks(c)`) and, with a profiler session, `onApplied` / `onAbandoned`; the per-frame pump streams slices into the inactive buffer. On WebGPU, a result backed by the full attribute capacity becomes the inactive attribute array without a second CPU copy; orderings without that backing and WebGL still copy.
+    - Transfer profiler-session ownership to those callbacks and request the bootstrap frame
+    - Drain `resortQueued` if set: `scheduleSort(c, mesh, nodeId)`
+12. On **rendered application**:
     - The final pump selects the complete buffer but does not yet report it applied
     - The mesh's chained `onAfterRender` hook acknowledges that THREE consumed the pending attribute ranges and completed a draw with the selected buffer
     - Upgrade `info` from `sched` to `up`, record `applyMs` (resolve→draw) and the monotonic completion event, then end the profiler pass
     - If the ordering is superseded, cancelled, demoted, released, or disposed before that draw, end the pass still labeled `sched` and do not record a completion
-11. On **reject** (timeout or worker error):
+13. On **reject** (timeout or worker error):
     - End the profiler pass (unless ownership was already transferred to an accepted ordering)
     - Log error
     - Clear `inFlight`
@@ -238,7 +241,7 @@ Enforces **at most one in-flight sort per node**; a commit landing mid-sort queu
 
 ### Chunked Ordering Apply (Perf Lever L8)
 
-Every ordering uses the same staged-apply path; orderings larger than one 1M-index (4 MB) slice span multiple frames on the classic WebGL backend:
+Host and device orderings use the same staged-apply path. Host orderings larger than one 1M-index (4 MB) slice span multiple frames on the classic WebGL backend:
 
 - The resolve path only records the pending state (`writeSortedIndexOrdering`)
 - The per-frame pump (`pumpChunkedOrderingApplies`, called from `evaluateDepthSortPerFrame`) writes at most one slice per rendered frame
@@ -250,6 +253,7 @@ Every ordering uses the same staged-apply path; orderings larger than one 1M-ind
 - On **completion**, drain a queued re-sort (a commit that landed mid-sort parked it)
 - **Abort** when `committedData` is cleared, the node/scene is released, or the geometry is disposed; accepted-but-unrendered profiler sessions close as abandoned rather than uploaded
 - Chunk slicing/back-pressure is gated to the classic WebGL backend (the backend policy's `ordering.chunked`, `rendering/renderer-backend-policy.ts`): the back-pressure waits on the attribute's `onUploadCallback`, which neither WebGPU backend fires, so there an ordering is written in one slice and flips on the next pump. The WebGPU backends do honour attribute update ranges, but three re-uploads a `DynamicDrawUsage` attribute on every render, so the pair is `StaticDrawUsage` there (the policy's `ordering.usage`). Double buffering and post-render acknowledgement remain unconditional
+- A device write waits if the inactive attribute still has host `updateRanges`: three would otherwise upload that stale range over the GPU result. Every WebGPU draw acknowledges host ranges on both bound ordering attributes, including a first upload that three leaves marked; this also keeps offline capture from stalling on a range that was already drawn. A draw with a pending device writer wakes the pump. After a device write the host array is behind; append/grow seeds check `isSortedIndexHostArrayCurrent`, and context restore calls `repairSortedIndexHostArray` before re-uploading
 
 **Bounded per node, not globally**: several large nodes resolving simultaneously each add one slice's cost to a frame (simultaneous 10M-scale resolves are already serialized by the per-node single-in-flight sort rule).
 

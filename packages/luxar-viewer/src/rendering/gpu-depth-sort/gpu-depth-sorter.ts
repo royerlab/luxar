@@ -18,7 +18,7 @@
  * @module rendering/gpu-depth-sort/gpu-depth-sorter
  */
 
-import type { GpuBuffer, GpuDevice, GpuTexture } from './gpu-types';
+import { BufferUsage, type GpuBuffer, type GpuDevice, type GpuTexture } from './gpu-types';
 import {
   SCAN_BLOCK_ELEMENTS,
   packParams,
@@ -83,6 +83,12 @@ export class GpuDepthSorter {
    */
   sort(request: DepthSortRequest): { encodeMs: number } | null {
     const started = performance.now();
+    if (request.target.size < request.count * 4) {
+      throw new RangeError('depth sort target size is smaller than the ordering');
+    }
+    if ((request.target.usage & BufferUsage.COPY_DST) === 0) {
+      throw new Error('depth sort target needs COPY_DST usage');
+    }
     const scratch = this.scratchFor(request.count);
     if (!scratch) return null;
     const plan = planDispatch(request.count);
@@ -112,6 +118,11 @@ export class GpuDepthSorter {
   /** Free the scratch. The sorter refuses every later request. */
   dispose(): void {
     this.disposed = true;
+    this.releaseScratch();
+  }
+
+  /** Drop scratch when its accounted geometry leaves GPU residency. */
+  releaseScratch(): void {
     this.scratch?.destroy();
     this.scratch = null;
   }
