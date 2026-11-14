@@ -2,6 +2,7 @@
 Tests for the enhanced luxar CLI commands.
 """
 
+import argparse
 import json
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
@@ -173,6 +174,8 @@ class TestViewerCommand:
             assert seen[0][0:2] == ("0.0.0.0", 5174)
             assert seen[0][2]["advertise_host"] == exported._advertise_host(name)
         else:
+            with pytest.raises(argparse.ArgumentTypeError):
+                exported._advertise_host(name)
             assert result.exit_code != 0
             assert not seen
 

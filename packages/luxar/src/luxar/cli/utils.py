@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import ipaddress
+import argparse
 import os
 import re
 import socket
@@ -24,6 +24,7 @@ from .._zarr_compat import open_group as zarr_open_group
 from ..utils.deprecation import deprecation_message
 from ..utils.hosts import ALL_INTERFACES_HOSTS as _ALL_INTERFACES_HOSTS
 from ..utils.hosts import is_loopback_host as _is_loopback_host
+from ._export_serve_template import _advertise_host, _url_host
 
 # CORS configuration shared across the CLI. Lives here (not in main.py)
 # so subcommand modules like gsplat_commands.py can import it without
@@ -179,40 +180,17 @@ def advertised_host(bind_host: str) -> str:
     return host
 
 
-_ADVERTISE_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
-
-
 def validate_advertise_host(value: str) -> str:
     """Accept the same hostname and IP literals as exported ``serve.py``."""
-    text = value.strip()
-    bare = text[1:-1] if text.startswith("[") and text.endswith("]") else text
     try:
-        address = ipaddress.ip_address(bare)
-    except ValueError:
-        address = None
-    if address is not None:
-        if address.is_unspecified or address.is_multicast or "%" in bare:
-            raise typer.BadParameter(
-                f"{value!r} is not an address another device can open"
-            )
-        return str(address)
-    name = text.rstrip(".")
-    labels = name.split(".")
-    if (
-        name
-        and len(name) <= 253
-        and all(_ADVERTISE_LABEL.fullmatch(label) for label in labels)
-        and not labels[-1].isdigit()
-    ):
-        return name
-    raise typer.BadParameter(
-        f"not a hostname or IP address: {value!r} (no scheme, port or path)"
-    )
+        return _advertise_host(value)
+    except argparse.ArgumentTypeError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 def url_host(host: str) -> str:
     """Bracket IPv6 literals when inserting a host in an HTTP or WS URL."""
-    return f"[{host}]" if ":" in host and not host.startswith("[") else host
+    return _url_host(host)
 
 
 # An `Origin` is by specification exactly ``scheme "://" host [ ":" port ]`` —
