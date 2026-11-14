@@ -126,7 +126,7 @@ export class GpuContextUnavailableError extends Error {
   constructor() {
     super(
       'The browser is not providing GPU access. It may have blocked this page after a GPU reset, ' +
-        'or hardware acceleration may be off. Reload the page or restart the browser, and check chrome://gpu.'
+        "or hardware acceleration may be off. Reload the page or restart the browser, and check your browser's GPU status page (chrome://gpu in Chrome)."
     );
     this.name = 'GpuContextUnavailableError';
   }
@@ -182,11 +182,17 @@ export async function createWebGLRenderer(
     log.warning(Modules.SCENE_MANAGER, 'Configured WebGL2 context creation failed:', error);
   }
   if (!gl) {
-    log.warning(Modules.SCENE_MANAGER, 'WebGL2 context creation failed, falling back to default');
+    log.warning(
+      Modules.SCENE_MANAGER,
+      'WebGL2 context creation failed, retrying without desynchronized'
+    );
     try {
-      gl = canvas.getContext('webgl2') as WebGLRenderingContext | null;
+      gl = canvas.getContext('webgl2', {
+        ...config.webgl.context,
+        desynchronized: false,
+      }) as WebGLRenderingContext | null;
     } catch (error) {
-      log.warning(Modules.SCENE_MANAGER, 'Default WebGL2 context creation failed:', error);
+      log.warning(Modules.SCENE_MANAGER, 'WebGL2 context retry failed:', error);
     }
   }
   if (!gl) throw new GpuContextUnavailableError();
@@ -634,6 +640,7 @@ export async function createWebGPURenderer(
   // Three's WebGL2 backend assumes context creation succeeds. Probe a
   // temporary canvas: touching the display canvas here would commit it to
   // WebGL2 even if Three can still obtain a native WebGPU device on retry.
+  // This is a best-effort check; Three creates the actual context during init().
   if (device === undefined) {
     let gl: WebGL2RenderingContext | null = null;
     try {
@@ -642,6 +649,7 @@ export async function createWebGPURenderer(
       log.warning(Modules.RENDERER, 'WebGL2 fallback context creation failed:', error);
     }
     if (!gl) throw new GpuContextUnavailableError();
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
   }
 
   // Loaded lazily, not at module scope: a static `import { WebGPURenderer }`

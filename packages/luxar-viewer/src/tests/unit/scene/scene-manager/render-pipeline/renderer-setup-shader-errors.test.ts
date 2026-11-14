@@ -41,6 +41,7 @@ vi.mock('../../../../../utils/hdr/hdr-detection', () => ({
 
 import { createWebGLRenderer } from '../../../../../scene/scene-manager/render-pipeline/renderer-setup';
 import { rendererBackendPolicy } from '../../../../../rendering/renderer-backend-policy';
+import { config } from '../../../../../config';
 
 function canvas(): HTMLCanvasElement {
   const el = document.createElement('canvas');
@@ -58,13 +59,17 @@ describe('createWebGLRenderer shader-error checking', () => {
     expect(el.getContext).toHaveBeenCalledTimes(2);
   });
 
-  it('uses default context options when the configured options fail', async () => {
+  it('retries without desynchronized while preserving other context options', async () => {
     const el = canvas();
     const context = {};
     el.getContext = vi.fn().mockReturnValueOnce(null).mockReturnValueOnce(context);
     const { renderer } = await createWebGLRenderer(el);
     expect(renderer).toBeDefined();
     expect(el.getContext).toHaveBeenCalledTimes(2);
+    expect(el.getContext).toHaveBeenNthCalledWith(2, 'webgl2', {
+      ...config.webgl.context,
+      desynchronized: false,
+    });
   });
 
   it('is off without debug', async () => {
