@@ -27,6 +27,8 @@ DATA SOURCE & CITATIONS:
     Research Campus. CC BY 4.0.
     figshare DOI 10.25378/janelia.13622819 (file ``LHA3_R3_medium.czi``,
     34.9 GB, two tiles x 4 channels x 591 x 1920 x 1920, uint16).
+    We thank Janelia Scientific Computing and Konrad Rokicki for permission
+    to bundle this sample.
 
     Please cite:
 
@@ -1209,7 +1211,9 @@ def create_luxar_scene(
                 "(https://creativecommons.org/licenses/by/4.0/); changed by "
                 "stitching the two tiles, block-mean downsampling (mRNA xy/2; "
                 "DAPI z/2, xy/4), background subtraction, Gaussian-splat fitting "
-                "and rescaling to pre-expansion micrometres. Scene size: "
+                "and rescaling to pre-expansion micrometres. Used with "
+                "permission of Janelia Scientific Computing (Konrad Rokicki). "
+                "Scene size: "
                 f"{compression_note(CZI_BYTES, scene_bytes, RAW_LABEL)}."
             )
             for ch in CHANNELS:

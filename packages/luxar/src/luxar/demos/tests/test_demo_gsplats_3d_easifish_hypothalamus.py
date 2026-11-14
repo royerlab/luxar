@@ -40,6 +40,20 @@ def _load_demo_module():
 _demo = _load_demo_module()
 
 
+def test_permission_acknowledgment_accompanies_demo_source() -> None:
+    acknowledgments = (
+        Path(__file__).resolve().parents[6] / "ACKNOWLEDGMENTS.md"
+    ).read_text(encoding="utf-8")
+    credit = acknowledgments.split("- **EASI-FISH Mouse Lateral Hypothalamus**", 1)[
+        1
+    ].split("\n", 1)[0]
+    for text in (credit, _demo.__doc__ or ""):
+        text = " ".join(text.split())
+        assert "Janelia Scientific Computing" in text
+        assert "Konrad Rokicki" in text
+        assert "permission to bundle" in text
+
+
 # =============================================================================
 # A synthetic two-view acquisition
 # =============================================================================
@@ -759,7 +773,8 @@ def test_scene_text_states_its_size_against_the_raw_czi(tmp_path: Path) -> None:
         "(https://creativecommons.org/licenses/by/4.0/); changed by stitching the "
         "two tiles, block-mean downsampling (mRNA xy/2; DAPI z/2, xy/4), "
         "background subtraction, Gaussian-splat fitting and rescaling to "
-        "pre-expansion micrometres. Scene size: "
+        "pre-expansion micrometres. Used with permission of Janelia "
+        "Scientific Computing (Konrad Rokicki). Scene size: "
     ) in description
     assert any(
         "splats • 111 MB, ≈315x smaller than the raw CZI • Wang et al. 2021" in t
@@ -800,7 +815,7 @@ def test_build_scene_restates_the_measured_packed_size(
     measured = _demo.build_scene(paths, out)
 
     assert measured == _demo.dir_size_bytes(out)
-    assert len(packs) == 2  # the estimate was off; one restatement converged
+    assert len(packs) in (2, 3)  # text size can need a second restatement
     description, texts = _scene_texts(out)
     note, caption = _demo._size_texts(measured)
     assert note in description
