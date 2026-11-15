@@ -18,6 +18,13 @@ convention, not a CI gate. Before closing a duplicate PR, use the script's
 transfer every duplicate-only change, and carry any materially different review
 conclusion onto the surviving PR.
 
+Before a routine merge pass calls `gh pr merge`, run
+`hatch run python scripts/check_pr_merge_policy.py <pr-number>` against the
+PR's current GitHub file list. Exit status 1 means a workflow file changed and
+the PR requires a manual maintainer merge, regardless of its ledger entry.
+Exit status 3 means the file query failed; stop that merge attempt. This check
+must run for every PR, immediately before the merge command.
+
 ## Quick Reference
 
 ### Python (use Hatch)
