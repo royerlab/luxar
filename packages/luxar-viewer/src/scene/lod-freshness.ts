@@ -137,9 +137,10 @@ export interface SweepNode {
 
 /**
  * Whether EVERY freshness-tracked leaf under `root` (root included, hidden
- * descendants included) holds a commit for view `version` with a complete
- * ladder — i.e. whether a re-sweep of the subtree at `version` would find
- * nothing to do. `false` when the subtree has no tracked leaf at all, or any
+ * descendants included) holds a commit for view `version` with no further
+ * work in this pass — i.e. whether a re-sweep of the subtree at `version`
+ * would find nothing to do. A budgeted pass may stop at a partial ladder.
+ * `false` when the subtree has no tracked leaf at all, or any
  * tracked leaf carries no stamp (never committed): "unknown" never counts as
  * settled.
  *

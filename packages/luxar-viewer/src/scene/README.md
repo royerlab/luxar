@@ -588,7 +588,7 @@ either one alone leaves a hole. A lazy child's live `hasMoreLODs()` thunk
 answers first. Then the commit-time `committedLadderComplete` stamp,
 which reports whether this pass has stopped, even when its budget leaves a
 partial ladder. Whole-ladder coverage is reported separately by
-`committedLadderFull` / `getPerf().ladderFull`. It is
+`committedLadderFull` / `getPerf().ladderFull`. The pass-stop stamp is
 surfaced as `subtreeLadderComplete` through the registry's
 `childFreshAndCount` — read off the child itself for a tracked **leaf**,
 and folded over the visible stamped leaves

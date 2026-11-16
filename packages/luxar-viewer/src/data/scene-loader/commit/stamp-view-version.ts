@@ -2,7 +2,7 @@
  * Shared helpers for the per-geometry commit concerns: stamp commit-time
  * facts about a mesh's committed geometry onto its `userData`.
  *
- * Consumers read three stamps:
+ * Consumers read four stamps:
  *
  *   - `loadedViewVersion` — whether a level's committed geometry is *fresh
  *     for the current view (slice / displayDims) version*; distinct from
@@ -21,8 +21,7 @@
  *     Scene-Graph tab reports what is on screen rather than the loader cursor.
  *   - `committedLadderFull` — whether every rung is committed for this view.
  *
- * Centralised here so GSplats, Points, and Lines stamp identically
- * (three-geometry symmetry).
+ * Centralised here so GSplats, Points, Lines, and Mesh stamp identically.
  *
  * @module data/scene-loader/commit/stamp-view-version
  */
@@ -98,24 +97,29 @@ export function stampLoadedViewVersion(
  * stamp-only no-op branches, so the stamps are exactly as current as the
  * freshness stamp beside them.
  */
+interface LadderLoader {
+  hasMoreLODs?: boolean;
+  committedEnergyFraction?: number | null;
+  loadedLODCount?: number;
+  totalLODCount?: number;
+}
+
+function isCommittedLadderFull(loader: LadderLoader | undefined): boolean {
+  if (!loader || !('hasMoreLODs' in loader || 'totalLODCount' in loader)) return true;
+  return (
+    typeof loader.loadedLODCount === 'number' &&
+    typeof loader.totalLODCount === 'number' &&
+    Number.isSafeInteger(loader.totalLODCount) &&
+    loader.totalLODCount > 0 &&
+    loader.loadedLODCount === loader.totalLODCount
+  );
+}
+
 export function stampLadderComplete(userData: LadderStampable | undefined | null): void {
   if (!userData) return;
-  const loader = userData.loader as
-    | {
-        hasMoreLODs?: boolean;
-        committedEnergyFraction?: number | null;
-        loadedLODCount?: number;
-        totalLODCount?: number;
-      }
-    | undefined;
+  const loader = userData.loader as LadderLoader | undefined;
   userData.committedLadderComplete = loader?.hasMoreLODs !== true;
-  const progressive = loader && ('hasMoreLODs' in loader || 'totalLODCount' in loader);
-  userData.committedLadderFull = progressive
-    ? typeof loader.loadedLODCount === 'number' &&
-      typeof loader.totalLODCount === 'number' &&
-      loader.totalLODCount > 0 &&
-      loader.loadedLODCount === loader.totalLODCount
-    : true;
+  userData.committedLadderFull = isCommittedLadderFull(loader);
   // Snapshot the cursor AT COMMIT. Reading it later reports rungs that were
   // fetched but never drawn — see `committedLODCount`.
   if (typeof loader?.loadedLODCount === 'number') {

@@ -10,6 +10,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { GSplatsProgressiveLoader } from '../../../data/gsplats/gsplats-progressive-loader';
+import { stampLadderComplete } from '../../../data/scene-loader/commit/stamp-view-version';
 import type { GSplatsSpatialIndexLoader } from '../../../data/gsplats/gsplats-spatial-index-loader';
 import type { GSplatsViewState, LoadedGSplatsData } from '../../../types/gsplats';
 import { signalPriority } from '../../../utils/fetch-concurrency';
@@ -82,6 +83,21 @@ function makeLoader(rungs: ReturnType<typeof subLoader>[]): GSplatsProgressiveLo
 }
 
 describe('GSplatsProgressiveLoader — scrubbing (B5)', () => {
+  it('a pinned partial pass is done without committing the full ladder', async () => {
+    const loader = makeLoader([1, 2, 3, 4].map((count) => subLoader(count, false)));
+    await loader.updateView(viewAt(0, { ladderDepth: 1 }));
+    expect(loader.loadedLODCount).toBe(1);
+    expect(loader.hasMoreLODs).toBe(false);
+
+    const userData = { loader };
+    stampLadderComplete(userData);
+    expect(userData).toMatchObject({
+      committedLadderComplete: true,
+      committedLadderFull: false,
+      committedLODCount: 1,
+    });
+  });
+
   it('pinned rungs are fetched concurrently, coarsest first', async () => {
     const rungs = [subLoader(1, true), subLoader(2, true), subLoader(4, true)];
     const loader = makeLoader(rungs);

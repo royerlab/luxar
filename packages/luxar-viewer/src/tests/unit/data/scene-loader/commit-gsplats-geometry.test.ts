@@ -499,6 +499,11 @@ describe('commitGSplatsGeometry — committedLadderComplete stamp', () => {
     loader.loadedLODCount = 5;
     commitGSplatsGeometry(makeStaged(3), testHost(root, null), undefined, V);
     expect(mesh.userData.committedLadderFull).toBe(false);
+
+    loader.totalLODCount = Infinity;
+    loader.loadedLODCount = Infinity;
+    commitGSplatsGeometry(makeStaged(3), testHost(root, null), undefined, V);
+    expect(mesh.userData.committedLadderFull).toBe(false);
   });
 
   it('stamps true for a non-progressive loader (no hasMoreLODs getter) and for no loader at all', () => {
@@ -523,6 +528,7 @@ describe('commitGSplatsGeometry — committedLadderComplete stamp', () => {
     const mesh = makeMesh('/g');
     mesh.userData.loader = { hasMoreLODs: true };
     mesh.userData.committedLadderComplete = true; // stale value from a previous view
+    mesh.userData.committedLadderFull = true;
     root.add(mesh);
     const staged = makeStaged(5);
     const noop: StagedGSplatsCommit = {
@@ -532,6 +538,7 @@ describe('commitGSplatsGeometry — committedLadderComplete stamp', () => {
     };
     commitGSplatsGeometry(noop, testHost(root, null), undefined, V);
     expect(ladderComplete(mesh)).toBe(false); // refreshed from the live loader
+    expect(mesh.userData.committedLadderFull).toBe(false);
   });
 });
 

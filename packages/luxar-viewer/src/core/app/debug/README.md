@@ -112,8 +112,8 @@ means the current pass has stopped; `committedLadderFull` means all rungs are
 actually on screen. `getPerf().ladderFull` summarizes visible progressive
 leaves; combine it with `isSettled` when waiting for a full settled view.
 Element counts must also be checked when a node can be capacity-clamped.
-This is how an additive-only leaf advertises
-that it is laddered; `lodGroups[]` remains reserved for substitutive
+These fields let an additive-only leaf advertise that it is laddered;
+`lodGroups[]` remains reserved for substitutive
 `kind=lod` containers.
 
 Mesh reveal ladders do not use `SliceCache`, so they contribute additive timing

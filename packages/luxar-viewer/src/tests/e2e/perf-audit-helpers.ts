@@ -348,14 +348,15 @@ export async function dollyCamera(page: Page, factor: number): Promise<void> {
 export interface DimensionStep {
   /** Time to the first commit (`awaitDimensionUpdate` resolving). */
   firstMs: number;
-  /** Time until `getPerf().isSettled` (full ladder), or null on timeout. */
+  /** Time until a settled, fully committed visible ladder, or null if capped or timed out. */
   fullMs: number | null;
   elements: number;
 }
 
 /**
  * Step a non-displayed dimension to `value` and time the first commit and the
- * settled state. `settleTimeoutMs` bounds the second wait.
+ * settled full-ladder state. `settleTimeoutMs` bounds the second wait;
+ * a settled partial ladder returns `fullMs: null` immediately.
  */
 export async function stepDimension(
   page: Page,
@@ -372,7 +373,7 @@ export async function stepDimension(
               setDimensionValue: (i: number, v: number) => void;
               awaitDimensionUpdate: () => Promise<void>;
             };
-            getPerf: () => { isSettled: boolean | null };
+            getPerf: () => { isSettled: boolean | null; ladderFull: boolean | null };
             getState: () => { totalElements: number };
           };
         }
@@ -384,8 +385,9 @@ export async function stepDimension(
       let fullMs: number | null = null;
       const deadline = t0 + settleTimeoutMs;
       while (performance.now() < deadline) {
-        if (d.getPerf().isSettled === true) {
-          fullMs = performance.now() - t0;
+        const perf = d.getPerf();
+        if (perf.isSettled === true) {
+          if (perf.ladderFull === true) fullMs = performance.now() - t0;
           break;
         }
         await new Promise((r) => setTimeout(r, 10));
