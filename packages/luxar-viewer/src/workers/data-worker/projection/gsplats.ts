@@ -154,9 +154,10 @@ export async function projectGSplatsTo3D(
     truncate?: number;
     /**
      * Visibility gate on the STORED attenuated amplitude when a continuous
-     * hidden dimension is sliced (defaults to `MIN_AMPLITUDE`). A node with a `display_gain` passes
-     * `MIN_AMPLITUDE / gain`, so the gate stays a threshold on what the shader
-     * emits (`data-processor-gsplats.ts::readMinAmplitude`).
+     * hidden dimension is sliced (defaults to `MIN_AMPLITUDE`). A node with a
+     * `display_gain` passes `MIN_AMPLITUDE / gain`, so the gate stays a
+     * threshold on what the shader emits
+     * (`data-processor-gsplats.ts::readMinAmplitude`).
      */
     minAmplitude?: number;
     /** Components per color item: 3 (RGB, default) or 4 (RGBA — alpha = per-splat opacity) */

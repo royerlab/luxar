@@ -239,11 +239,12 @@ export interface GSplatsProjectionGate {
 /**
  * The visibility gate for a node drawn with a `display_gain` other than 1.
  *
- * The kernel compacts out splats whose ATTENUATED amplitude falls below
- * `MIN_AMPLITUDE`, a threshold on what the shader emits. With a display gain
- * the shader emits `amplitude × gain`, and the stored amplitude is in data
- * units — 1e-6 of a float volume in [0, 1e-5] is a visible fraction of it — so
- * the gate is re-stated on the stored values: `MIN_AMPLITUDE / gain`. That keeps
+ * On continuous hidden-dimension slices, the kernel compacts out splats whose
+ * ATTENUATED amplitude falls below `MIN_AMPLITUDE`, a threshold on what the
+ * shader emits. With a display gain the shader emits `amplitude × gain`, and
+ * the stored amplitude is in data units — 1e-6 of a float volume in [0, 1e-5]
+ * is a visible fraction of it. The gate is re-stated on the stored values:
+ * `MIN_AMPLITUDE / gain`. That keeps
  * exactly the splats the pre-scaled (normalised) scene kept. Reads the node's
  * LIVE gain; `undefined` at the identity (and for a non-gsplat material).
  */
