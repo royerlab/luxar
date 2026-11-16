@@ -77,6 +77,24 @@ export function stampLoadedViewVersion(
   if (userData) userData.loadedViewVersion = version;
 }
 
+interface LadderLoader {
+  hasMoreLODs?: boolean;
+  committedEnergyFraction?: number | null;
+  loadedLODCount?: number;
+  totalLODCount?: number;
+}
+
+function isCommittedLadderFull(loader: LadderLoader | undefined): boolean {
+  if (!loader || !('hasMoreLODs' in loader || 'totalLODCount' in loader)) return true;
+  return (
+    typeof loader.loadedLODCount === 'number' &&
+    typeof loader.totalLODCount === 'number' &&
+    Number.isSafeInteger(loader.totalLODCount) &&
+    loader.totalLODCount > 0 &&
+    loader.loadedLODCount === loader.totalLODCount
+  );
+}
+
 /**
  * Stamp the committing loader's ladder state for the current view: whether
  * this pass is done (`committedLadderComplete`), whether all rungs are on
@@ -97,24 +115,6 @@ export function stampLoadedViewVersion(
  * stamp-only no-op branches, so the stamps are exactly as current as the
  * freshness stamp beside them.
  */
-interface LadderLoader {
-  hasMoreLODs?: boolean;
-  committedEnergyFraction?: number | null;
-  loadedLODCount?: number;
-  totalLODCount?: number;
-}
-
-function isCommittedLadderFull(loader: LadderLoader | undefined): boolean {
-  if (!loader || !('hasMoreLODs' in loader || 'totalLODCount' in loader)) return true;
-  return (
-    typeof loader.loadedLODCount === 'number' &&
-    typeof loader.totalLODCount === 'number' &&
-    Number.isSafeInteger(loader.totalLODCount) &&
-    loader.totalLODCount > 0 &&
-    loader.loadedLODCount === loader.totalLODCount
-  );
-}
-
 export function stampLadderComplete(userData: LadderStampable | undefined | null): void {
   if (!userData) return;
   const loader = userData.loader as LadderLoader | undefined;
