@@ -46,7 +46,10 @@ import { getWorkerPool } from '../../../workers/worker-pool';
 // `./data-worker?worker`, and this predicate must stay free of that dependency.
 import { isWorkerInfrastructureError } from '../../../workers/worker-pool/errors';
 import { projectGSplatsInProcess } from '../../../workers/data-worker/projection/in-process';
-import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-dims';
+import {
+  classifyHiddenDims,
+  isExtendToAll,
+} from '../../../workers/data-worker/projection/hidden-dims';
 import { isStandardGSplats3D } from '../../../workers/data-worker/projection/gsplats';
 import { MIN_AMPLITUDE } from '../../../workers/data-worker/projection/constants';
 import { projectGSplatLabelIndices } from '../../gsplats/label-channel';
@@ -131,6 +134,13 @@ function buildGSplatsParams(
       }
     }
   }
+  const hasContinuousHiddenDim =
+    classifyHiddenDims(
+      data.ndim,
+      viewState.displayDims,
+      new Set(discreteDims),
+      new Set(extendToAllDims)
+    ).continuousHiddenDims.length > 0;
   // Strict layout check at the chokepoint where the exact splat count
   // is known: catches an RGBA array whose producer forgot to declare
   // colorComponents (see assertColorLayout).
@@ -162,9 +172,9 @@ function buildGSplatsParams(
     discreteSteps,
     extendToAllDims,
     truncate,
-    // Only present for a gained node (see `readMinAmplitude`): an absent key
-    // keeps the stage-cache signature of every other scene unchanged.
-    ...(minAmplitude !== undefined ? { minAmplitude } : {}),
+    // Only continuous slices use the gain-dependent gate. Omitting it on
+    // discrete-only slices also keeps their stage-cache signature gain-independent.
+    ...(minAmplitude !== undefined && hasContinuousHiddenDim ? { minAmplitude } : {}),
     // Ask the kernel to record which source splat each emitted slot came from
     // (issue #1423) only when there is a map to build AND the projection will
     // actually compact. The standard-3D fast path emits every splat in order,

@@ -247,6 +247,46 @@ describe('gsplats projection stage cache — exactness', () => {
     expect(calls.gsplats).toBe(4);
   });
 
+  it('reuses a discrete slice across Brightness changes but reprojects a continuous slice', async () => {
+    const root = new THREE.Group();
+    const mesh = gsplatsMesh(3.0);
+    root.add(mesh);
+    const uniforms = (mesh.material as unknown as { uniforms: Record<string, { value: number }> })
+      .uniforms;
+    uniforms.uDisplayGain = { value: 1 };
+    const source = makeGSplats(4000);
+
+    const discreteView: GSplatsViewState = {
+      ...GS_VIEW,
+      dimensions: [
+        ...GS_VIEW.dimensions!.slice(0, 3),
+        { name: 'w', unit: 's', scale: 1, step: 1, discrete: true },
+      ],
+    };
+    const discreteCache = new SliceCache({ maxSize: 256 * 1024 * 1024 });
+    storeLadder(discreteCache, '/g', discreteView, [source]);
+    const discreteRestore = () =>
+      restoreLadder<LoadedGSplatsData>(discreteCache, '/g', discreteView, 1)![0];
+    const discreteAt1 = await projectGS(discreteRestore(), root, discreteView);
+    expect(discreteAt1.splatCount).toBeGreaterThan(0);
+    uniforms.uDisplayGain.value = 1e-7;
+    const discreteAtLowGain = await projectGS(discreteRestore(), root, discreteView);
+    expect(discreteAtLowGain).toBe(discreteAt1);
+    expect(calls.gsplats).toBe(1);
+
+    uniforms.uDisplayGain.value = 1;
+    const continuousCache = new SliceCache({ maxSize: 256 * 1024 * 1024 });
+    storeLadder(continuousCache, '/g', GS_VIEW, [source]);
+    const continuousRestore = () =>
+      restoreLadder<LoadedGSplatsData>(continuousCache, '/g', GS_VIEW, 1)![0];
+    const continuousAt1 = await projectGS(continuousRestore(), root);
+    expect(continuousAt1.splatCount).toBeGreaterThan(0);
+    uniforms.uDisplayGain.value = 1e-7;
+    const continuousAtLowGain = await projectGS(continuousRestore(), root);
+    expect(continuousAtLowGain.splatCount).toBe(0);
+    expect(calls.gsplats).toBe(3);
+  });
+
   it('drops the stage output with its slice (eviction and upgrade)', async () => {
     const root = new THREE.Group();
     root.add(gsplatsMesh(3.0));
