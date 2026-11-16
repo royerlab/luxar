@@ -350,6 +350,7 @@ export interface DimensionStep {
   firstMs: number;
   /** Time until a settled, fully committed visible ladder, or null if capped or timed out. */
   fullMs: number | null;
+  fullStop: 'full' | 'capped' | 'timeout';
   elements: number;
 }
 
@@ -383,19 +384,40 @@ export async function stepDimension(
       await d.app.awaitDimensionUpdate();
       const firstMs = performance.now() - t0;
       let fullMs: number | null = null;
+      let fullStop: DimensionStep['fullStop'] = 'timeout';
       const deadline = t0 + settleTimeoutMs;
       while (performance.now() < deadline) {
         const perf = d.getPerf();
         if (perf.isSettled === true) {
-          if (perf.ladderFull === true) fullMs = performance.now() - t0;
+          if (perf.ladderFull === true) {
+            fullMs = performance.now() - t0;
+            fullStop = 'full';
+          } else {
+            fullStop = 'capped';
+          }
           break;
         }
         await new Promise((r) => setTimeout(r, 10));
       }
-      return { firstMs, fullMs, elements: d.getState().totalElements };
+      return { firstMs, fullMs, fullStop, elements: d.getState().totalElements };
     },
     { dim, value, settleTimeoutMs }
   );
+}
+
+/** Summarize a playback arm while retaining why full-ladder timing is absent. */
+export function summarizePlaybackSteps(steps: DimensionStep[]): {
+  firstMs: number | null;
+  fullMs: number | null;
+  cappedSteps: number;
+  timedOutSteps: number;
+} {
+  return {
+    firstMs: r1(median(steps.map((step) => step.firstMs))),
+    fullMs: r1(median(steps.flatMap((step) => (step.fullMs === null ? [] : [step.fullMs])))),
+    cappedSteps: steps.filter((step) => step.fullStop === 'capped').length,
+    timedOutSteps: steps.filter((step) => step.fullStop === 'timeout').length,
+  };
 }
 
 /** First non-displayed dimension index and its integer range, or null for a 3-D scene. */
