@@ -826,8 +826,9 @@ export class LayerApplyEngine {
 
   applyBrightness(layer: LayerInfo): void {
     this.applyComposed(layer);
-    // Projected gsplats use a visibility gate of MIN_AMPLITUDE / gain;
-    // only standard 3D leaves take the unfiltered fast path.
+    // Continuous hidden-dimension slices use a visibility gate of
+    // MIN_AMPLITUDE / gain. Reprocess nD leaves; a cached discrete-only
+    // projection can be reused because its params omit that gate.
     const displayDims = this.deps.getDisplayDims?.() ?? [];
     const nd = this.getAffectedDataLeaves(layer.path)
       .filter(
