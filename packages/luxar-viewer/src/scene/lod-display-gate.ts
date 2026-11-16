@@ -10,7 +10,7 @@
  * settles) and climbs back over the following passes.
  * {@link shouldHoldPreviousDisplay} holds the previously-displayed level
  * while the streaming aspiration is strictly worse than what is shown, and
- * releases on ladder completion, the committed-energy threshold (stamped
+ * releases when this ladder pass stops, the committed-energy threshold (stamped
  * datasets, UPGRADE direction only: committed e(k) ≥
  * {@link ENERGY_RELEASE_THRESHOLD} — the primary, much earlier release on
  * zoom-in), committed-count crossover (the unstamped fallback, and the sole
@@ -24,7 +24,7 @@
  * never the loaders' live `hasMoreLODs` getters. Live getters flip the moment
  * the final LOD's fetch resolves, frames before its processing + commit land;
  * the stamps flip in the same synchronous call that writes the final count,
- * so the gate can never see "complete" paired with a stale partial count.
+ * so the gate can never see "pass done" paired with a stale partial count.
  * (The registry's refinement-kick logic deliberately keeps using the live
  * getter — kicking MORE loading wants live loader state; displaying wants
  * committed state.)
@@ -71,7 +71,7 @@ export interface ProgressNode {
 export interface SubtreeDisplayProgress {
   /** Sum of the visible stamped leaves' committed element counts. */
   count: number;
-  /** True iff NO visible leaf carries `committedLadderComplete: false`. */
+  /** True iff no visible leaf still has work in this pass. */
   complete: boolean;
   /**
    * True iff every visible stamped leaf is stamped for `version` (vacuously
@@ -433,7 +433,7 @@ export function shouldHoldPreviousDisplay(
  *
  * ``subtreeLadderComplete`` is the third answer, folded from the same walk
  * (``SubtreeDisplayProgress.complete``): false when any visible stamped leaf
- * under the subtree has committed only a prefix of its additive ladder. A
+ * under the subtree is still advancing its additive ladder this pass. A
  * tracked LEAF has no subtree to fold, so it answers with its OWN
  * ``committedLadderComplete`` stamp.
  *

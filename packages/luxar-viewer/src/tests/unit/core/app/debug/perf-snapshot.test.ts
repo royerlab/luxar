@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 
 import { computePerfSnapshot } from '../../../../../core/app/debug/perf-snapshot';
 import {
@@ -18,6 +19,7 @@ describe('computePerfSnapshot', () => {
     expect(snap.perfReady).toBe(true);
     expect(snap.runtimeReady).toBe(false);
     expect(snap.isSettled).toBeNull();
+    expect(snap.ladderFull).toBeNull();
     expect(snap.rendererInfo).toBeNull();
     expect(snap.adaptiveDpr).toBeNull();
     expect(snap.workers).toBeNull();
@@ -37,6 +39,30 @@ describe('computePerfSnapshot', () => {
     const stats = { l2WriteQueue: { pending: 0, inFlight: 0, dropped: 3 } };
     const snap = computePerfSnapshot({ isUpdateInProgress: () => false, cache: () => stats });
     expect(snap.cache).toBe(stats);
+  });
+
+  it('reports visible committed ladders separately from pass settlement', () => {
+    const scene = new THREE.Scene();
+    const visible = new THREE.Points();
+    visible.userData.loader = { totalLODCount: 4 };
+    visible.userData.committedLadderFull = false;
+    scene.add(visible);
+    const hidden = new THREE.Group();
+    hidden.visible = false;
+    const hiddenLeaf = new THREE.Points();
+    hiddenLeaf.userData.loader = { totalLODCount: 4 };
+    hiddenLeaf.userData.committedLadderFull = false;
+    hidden.add(hiddenLeaf);
+    scene.add(hidden);
+    noteRefinementComplete();
+
+    const hooks = { scene: () => scene, isUpdateInProgress: () => false };
+    expect(computePerfSnapshot(hooks).isSettled).toBe(true);
+    expect(computePerfSnapshot(hooks).ladderFull).toBe(false);
+    visible.userData.committedLadderFull = true;
+    expect(computePerfSnapshot(hooks).ladderFull).toBe(true);
+    delete visible.userData.committedLadderFull;
+    expect(computePerfSnapshot(hooks).ladderFull).toBe(false);
   });
 
   it('isSettled requires no update, no load pass, no lazy level, no LOD dissolve, and refinement complete', () => {

@@ -272,7 +272,7 @@ interface DepthSortStats {
 interface LadderStats {
   /** ms from navigation start to ladder completion. Exact
    *  stamp-confirmed completion time (the first tick of the last
-   *  continuous committedLadderComplete window) UNLESS {@link
+   *  continuous committedLadderFull window) UNLESS {@link
    *  usedFallback} (a count-plateau estimate) or {@link timedOut} (the
    *  ladder never completed within the cap, so this is a last-commit
    *  lower bound). */
@@ -996,7 +996,7 @@ async function measureZarrOrbitScenario(
 
 /**
  * Progressive-ladder load scenario: poll each visible gsplat leaf's
- * `userData.committedLadderComplete` stamp every driven frame; the
+ * `userData.committedLadderFull` stamp every driven frame; the
  * ladder is complete once every visible leaf reports a committed FULL
  * ladder (no leaf still stamped `false`). The viewer writes that stamp
  * whenever a gsplat leaf commits, so the stamped path is the normal
@@ -1032,7 +1032,7 @@ async function measureZarrLadderScenario(
       observedGrowth: false,
       initialCount: 0,
       // Stamp-based completion (the authoritative signal): sticky flag
-      // that any leaf ever carried a committedLadderComplete stamp, plus
+      // that any leaf ever carried a committedLadderFull stamp, plus
       // the start timestamp of the current continuous "all stamped
       // complete" window (0 while any visible leaf is still incomplete).
       sawStamps: false,
@@ -1044,7 +1044,7 @@ async function measureZarrLadderScenario(
     };
     (window as unknown as { __ladderRec: typeof rec }).__ladderRec = rec;
     // Per-tick scan: sum visible splats (drives the count-plateau
-    // fallback) AND fold each visible leaf's committedLadderComplete
+    // fallback) AND fold each visible leaf's committedLadderFull
     // stamp into the completion signal.
     const scanScene = (): {
       sum: number;
@@ -1069,7 +1069,7 @@ async function measureZarrLadderScenario(
         ) {
           sum += obj.userData.visibleSplatCount;
           nodeCount += 1;
-          const stamp = obj.userData.committedLadderComplete;
+          const stamp = obj.userData.committedLadderFull;
           if (typeof stamp === 'boolean') {
             anyStamped = true;
             stampedCount += 1;

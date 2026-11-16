@@ -2,15 +2,15 @@
  * Shared helpers for the per-geometry commit concerns: stamp commit-time
  * facts about a mesh's committed geometry onto its `userData`.
  *
- * Consumers read three stamps:
+ * Consumers read four stamps:
  *
  *   - `loadedViewVersion` — whether a level's committed geometry is *fresh
  *     for the current view (slice / displayDims) version*; distinct from
  *     "ready" (geometry committed), since a re-slice overwrites the geometry
  *     buffers in place without changing readiness.
- *   - `committedLadderComplete` — whether the committed geometry is the FULL
- *     additive ladder for the current view, or a partial prefix that is
- *     still streaming. Read by the never-downgrade display gate
+ *   - `committedLadderComplete` — whether this pass has no more rungs to load,
+ *     including when a budget or pinned depth stops at a partial prefix.
+ *     Read by the never-downgrade display gate
  *     (`shouldHoldPreviousDisplay` / `subtreeDisplayProgress`). Stamped at
  *     commit time — unlike the loaders' live `hasMoreLODs` getters, which
  *     flip the moment the final LOD's *fetch* resolves, frames before its
@@ -19,9 +19,9 @@
  *   - `committedLODCount` — how many additive ladder rungs the committed
  *     geometry contains. Read by the monitor's `committed-lod-reader` so the
  *     Scene-Graph tab reports what is on screen rather than the loader cursor.
+ *   - `committedLadderFull` — whether every rung is committed for this view.
  *
- * Centralised here so GSplats, Points, and Lines stamp identically
- * (three-geometry symmetry).
+ * Centralised here so GSplats, Points, Lines, and Mesh stamp identically.
  *
  * @module data/scene-loader/commit/stamp-view-version
  */
@@ -40,6 +40,7 @@ export interface ViewVersionStampable {
 export interface LadderStampable {
   loader?: unknown;
   committedLadderComplete?: boolean;
+  committedLadderFull?: boolean;
   /**
    * Cumulative energy fraction e(k) of the COMMITTED ladder prefix — how much
    * of the ladder's total self-energy is on screen (from the progressive
@@ -76,9 +77,28 @@ export function stampLoadedViewVersion(
   if (userData) userData.loadedViewVersion = version;
 }
 
+interface LadderLoader {
+  hasMoreLODs?: boolean;
+  committedEnergyFraction?: number | null;
+  loadedLODCount?: number;
+  totalLODCount?: number;
+}
+
+function isCommittedLadderFull(loader: LadderLoader | undefined): boolean {
+  if (!loader || !('hasMoreLODs' in loader || 'totalLODCount' in loader)) return true;
+  return (
+    typeof loader.loadedLODCount === 'number' &&
+    typeof loader.totalLODCount === 'number' &&
+    Number.isSafeInteger(loader.totalLODCount) &&
+    loader.totalLODCount > 0 &&
+    loader.loadedLODCount === loader.totalLODCount
+  );
+}
+
 /**
  * Stamp the committing loader's ladder state for the current view: whether
- * the committed ladder is complete (`committedLadderComplete`) and how much
+ * this pass is done (`committedLadderComplete`), whether all rungs are on
+ * screen (`committedLadderFull`), and how much
  * of its total self-energy the committed prefix carries
  * (`committedEnergyFraction`). Reads both off `userData.loader` (the same
  * loader whose just-returned data is being committed — one source of truth).
@@ -97,14 +117,9 @@ export function stampLoadedViewVersion(
  */
 export function stampLadderComplete(userData: LadderStampable | undefined | null): void {
   if (!userData) return;
-  const loader = userData.loader as
-    | {
-        hasMoreLODs?: boolean;
-        committedEnergyFraction?: number | null;
-        loadedLODCount?: number;
-      }
-    | undefined;
+  const loader = userData.loader as LadderLoader | undefined;
   userData.committedLadderComplete = loader?.hasMoreLODs !== true;
+  userData.committedLadderFull = isCommittedLadderFull(loader);
   // Snapshot the cursor AT COMMIT. Reading it later reports rungs that were
   // fetched but never drawn — see `committedLODCount`.
   if (typeof loader?.loadedLODCount === 'number') {

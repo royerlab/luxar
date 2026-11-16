@@ -54,10 +54,12 @@ import {
   setManualDpr,
   spread,
   stepDimension,
+  summarizePlaybackSteps,
   waitForPerfReady,
   waitForPerfSettled,
   waitForStateReady,
   type NetworkProfile,
+  type DimensionStep,
 } from './perf-audit-helpers';
 import {
   biasArmsForScene,
@@ -216,8 +218,12 @@ interface RunMetrics extends LoadMetrics {
   drawCalls: number | null;
   playbackFirstMs_cold: number | null;
   playbackFullMs_cold: number | null;
+  playbackCappedSteps_cold: number | null;
+  playbackTimedOutSteps_cold: number | null;
   playbackFirstMs_warm: number | null;
   playbackFullMs_warm: number | null;
+  playbackCappedSteps_warm: number | null;
+  playbackTimedOutSteps_warm: number | null;
   visibleElements_default: number | null;
   visibleElements_zoom4x: number | null;
   zoomSettled: boolean;
@@ -349,24 +355,26 @@ async function measurePlayback(page: Page): Promise<Partial<RunMetrics>> {
   const values: number[] = [];
   for (let i = 1; i <= PLAYBACK_STEPS && slice.lo + i <= slice.hi; i++) values.push(slice.lo + i);
   if (values.length === 0) return {};
-  const cold = { first: [] as number[], full: [] as number[] };
-  const warm = { first: [] as number[], full: [] as number[] };
+  const cold: DimensionStep[] = [];
+  const warm: DimensionStep[] = [];
   for (const v of values) {
-    const s = await stepDimension(page, slice.dim, v);
-    cold.first.push(s.firstMs);
-    if (s.fullMs !== null) cold.full.push(s.fullMs);
+    cold.push(await stepDimension(page, slice.dim, v));
   }
   await stepDimension(page, slice.dim, slice.lo);
   for (const v of values) {
-    const s = await stepDimension(page, slice.dim, v);
-    warm.first.push(s.firstMs);
-    if (s.fullMs !== null) warm.full.push(s.fullMs);
+    warm.push(await stepDimension(page, slice.dim, v));
   }
+  const coldSummary = summarizePlaybackSteps(cold);
+  const warmSummary = summarizePlaybackSteps(warm);
   return {
-    playbackFirstMs_cold: r1(median(cold.first)),
-    playbackFullMs_cold: r1(median(cold.full)),
-    playbackFirstMs_warm: r1(median(warm.first)),
-    playbackFullMs_warm: r1(median(warm.full)),
+    playbackFirstMs_cold: coldSummary.firstMs,
+    playbackFullMs_cold: coldSummary.fullMs,
+    playbackCappedSteps_cold: coldSummary.cappedSteps,
+    playbackTimedOutSteps_cold: coldSummary.timedOutSteps,
+    playbackFirstMs_warm: warmSummary.firstMs,
+    playbackFullMs_warm: warmSummary.fullMs,
+    playbackCappedSteps_warm: warmSummary.cappedSteps,
+    playbackTimedOutSteps_warm: warmSummary.timedOutSteps,
   };
 }
 
@@ -389,8 +397,12 @@ async function runOnce(
         opfsDroppedFinal,
         playbackFirstMs_cold: null,
         playbackFullMs_cold: null,
+        playbackCappedSteps_cold: null,
+        playbackTimedOutSteps_cold: null,
         playbackFirstMs_warm: null,
         playbackFullMs_warm: null,
+        playbackCappedSteps_warm: null,
+        playbackTimedOutSteps_warm: null,
         ...frames.metrics,
         ...playback,
       },

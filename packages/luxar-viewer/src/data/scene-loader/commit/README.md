@@ -88,7 +88,7 @@ are allowed inside commit — by contract.
   `syncPointMaterialWithGeometry`. (Sharpness carries no scale on any
   geometry — it is authored natively in `[0, 1]`.)
 - **Commit-time stamps are the display-side truth.** The count,
-  `loadedViewVersion`, `committedLadderComplete`, and
+  `loadedViewVersion`, `committedLadderComplete`, `committedLadderFull`, and
   `committedEnergyFraction` stamps are written
   in the same synchronous call as the buffer write (and refreshed in
   the stamp-only no-op branches), so readers — the LOD registry's
