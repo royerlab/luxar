@@ -10,18 +10,22 @@
  * widened. `isSettled` here is the wide predicate — no update pass, no
  * refinement drain, no lazy LOD promotion in flight, no LOD level dissolve
  * still drawing two levels, no visible partition resync waiting for the loader,
- * and the post-load refinement ran to completion.
+ * and the post-load refinement pass stopped. A budgeted pass can settle with
+ * only a partial ladder; `ladderFull` reports committed rung coverage separately.
  *
  * @module core/app/debug/perf-snapshot
  */
 
 import { getLoadTimeline, type LoadTimelineSnapshot } from '../../../profiling/load-timeline';
 import { perfCounters } from '../../../profiling/perf-counters';
+import type { Object3D } from 'three';
 import type { AdaptiveDPRDiagnostics } from '../../../rendering/adaptive-dpr-manager';
 import type { RendererInfoSnapshot } from './renderer-info-sampler';
 
 /** Optional runtime hooks; every field is absent before `init()` finishes. */
 export interface PerfSnapshotContext {
+  /** Live scene for the visible committed-ladder summary. */
+  scene?: () => Object3D | null;
   rendererInfo?: () => RendererInfoSnapshot | null;
   adaptiveDpr?: () => AdaptiveDPRDiagnostics;
   workers?: () => unknown;
@@ -68,6 +72,8 @@ export interface PerfSnapshot {
    * hooks exist. See the module doc for what it covers.
    */
   isSettled: boolean | null;
+  /** All visible progressive leaves have committed every rung; null before scene wiring. */
+  ladderFull: boolean | null;
   /** Component predicates behind `isSettled`, for diagnosing what is still busy. */
   settle: {
     updateInProgress: boolean | null;
@@ -97,6 +103,18 @@ function readOrNull<T>(fn: (() => T) | undefined): T | null {
   }
 }
 
+function visibleLaddersFull(scene: Object3D | null): boolean | null {
+  if (!scene) return null;
+  let full = true;
+  scene.traverseVisible((object) => {
+    const loader = object.userData.loader as { totalLODCount?: unknown } | undefined;
+    if (typeof loader?.totalLODCount === 'number' && loader.totalLODCount > 1) {
+      if (object.userData.committedLadderFull !== true) full = false;
+    }
+  });
+  return full;
+}
+
 /** Build the snapshot. Never throws: a failing hook reads as `null`. */
 export function computePerfSnapshot(ctx: PerfSnapshotContext = {}): PerfSnapshot {
   const timeline = getLoadTimeline();
@@ -107,6 +125,7 @@ export function computePerfSnapshot(ctx: PerfSnapshotContext = {}): PerfSnapshot
   const visiblePartitionResyncPending = read(ctx.hasVisiblePendingPartitionResync);
   const runtimeReady = ctx.isUpdateInProgress !== undefined;
   const refinementComplete = timeline.refinement.complete;
+  const scene = ctx.scene;
   const isSettled = runtimeReady
     ? updateInProgress === false &&
       loadPassInProgress !== true &&
@@ -127,6 +146,7 @@ export function computePerfSnapshot(ctx: PerfSnapshotContext = {}): PerfSnapshot
     cache: readOrNull(ctx.cache),
     blendWarmup: readOrNull(ctx.blendWarmup),
     isSettled,
+    ladderFull: readOrNull(scene ? () => visibleLaddersFull(scene()) : undefined),
     settle: {
       updateInProgress,
       loadPassInProgress,

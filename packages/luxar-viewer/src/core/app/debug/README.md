@@ -107,8 +107,13 @@ material's `defines`.
 Every per-node geometry entry also exposes additive-ladder state when its live
 loader has more than one level: `loadedLODCount`, `totalLODCount`,
 `lastAllResident`, and the commit-time `committedLadderComplete` /
-`committedEnergyFraction` stamps. This is how an additive-only leaf advertises
-that it is laddered; `lodGroups[]` remains reserved for substitutive
+`committedLadderFull` / `committedEnergyFraction` stamps. `committedLadderComplete`
+means the current pass has stopped; `committedLadderFull` means all rungs are
+actually on screen. `getPerf().ladderFull` summarizes visible progressive
+leaves; combine it with `isSettled` when waiting for a full settled view.
+Element counts must also be checked when a node can be capacity-clamped.
+These fields let an additive-only leaf advertise that it is laddered;
+`lodGroups[]` remains reserved for substitutive
 `kind=lod` containers.
 
 Mesh reveal ladders do not use `SliceCache`, so they contribute additive timing

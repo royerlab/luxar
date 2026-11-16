@@ -479,6 +479,7 @@ describe('computeDebugState', () => {
     for (const node of nodes) {
       Object.assign(node.userData, {
         committedLadderComplete: false,
+        committedLadderFull: false,
         committedEnergyFraction: 0.625,
         loader: {
           loadedLODCount: 3,
@@ -498,6 +499,7 @@ describe('computeDebugState', () => {
     ]) {
       expect(info).toMatchObject({
         committedLadderComplete: false,
+        committedLadderFull: false,
         committedEnergyFraction: 0.625,
         loadedLODCount: 3,
         totalLODCount: 8,
@@ -512,6 +514,7 @@ describe('computeDebugState', () => {
     const node = makePointCloud(10);
     Object.assign(node.userData, {
       committedLadderComplete: true,
+      committedLadderFull: true,
       committedEnergyFraction: 1,
       loader: {
         loadedLODCount: 1,
@@ -524,6 +527,7 @@ describe('computeDebugState', () => {
     const info = computeDebugState(makeContext(scene)).pointClouds[0];
     for (const field of [
       'committedLadderComplete',
+      'committedLadderFull',
       'committedEnergyFraction',
       'loadedLODCount',
       'totalLODCount',

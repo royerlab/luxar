@@ -11,8 +11,8 @@
  */
 
 /**
- * Minimum attenuated amplitude for a GSplat to count as visible. Splats
- * whose `amplitude × attenuation` falls below this are compacted out.
+ * Minimum attenuated amplitude for continuous hidden-dimension slicing.
+ * Discrete-only slices preserve the stored amplitudes instead.
  */
 export const MIN_AMPLITUDE = 1e-6;
 

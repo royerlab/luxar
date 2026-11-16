@@ -502,9 +502,9 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    and climb back. The registry holds the previously-displayed level
    while the streaming aspiration's committed geometry is strictly
    worse than what is shown (`shouldHoldPreviousDisplay` in
-   `lod-display-gate.ts`), releasing on ladder completion (the
+   `lod-display-gate.ts`), releasing when the current ladder pass stops (the
    commit-time `committedLadderComplete` stamp — committed, not just
-   fetched), the **committed-energy threshold** (quality-stamped
+   fetched; a budgeted pass may stop before the full ladder), the **committed-energy threshold** (quality-stamped
    datasets: the aspiration's committed prefix carries ≥ 60% of its
    total self-energy — `committedEnergyFraction` ≥
    `ENERGY_RELEASE_THRESHOLD`, the primary and much earlier release;
@@ -586,6 +586,9 @@ quiescent.
 "Still streaming additive LODs" takes **both** available signals, and
 either one alone leaves a hole. A lazy child's live `hasMoreLODs()` thunk
 answers first. Then the commit-time `committedLadderComplete` stamp,
+which reports whether this pass has stopped, even when its budget leaves a
+partial ladder. Whole-ladder coverage is reported separately by
+`committedLadderFull` / `getPerf().ladderFull`. The pass-stop stamp is
 surfaced as `subtreeLadderComplete` through the registry's
 `childFreshAndCount` — read off the child itself for a tracked **leaf**,
 and folded over the visible stamped leaves
