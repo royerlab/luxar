@@ -43,14 +43,19 @@ function makeLoaderWithScene(): {
   loader: SceneLoader;
   spy: ReturnType<typeof vi.fn>;
   invalidatePartitionFootprint: ReturnType<typeof vi.fn>;
+  settleReleasedPartitionLeaf: ReturnType<typeof vi.fn>;
 } {
   const loader = new SceneLoader({ enableMonitor: false });
   const spy = vi.fn();
   const invalidatePartitionFootprint = vi.fn();
+  const settleReleasedPartitionLeaf = vi.fn();
   loader.setRequestRender(spy);
-  internals(loader).lodGroupRegistry = { invalidatePartitionFootprint };
+  internals(loader).lodGroupRegistry = {
+    invalidatePartitionFootprint,
+    settleReleasedPartitionLeaf,
+  };
   makeCommitScene(loader);
-  return { loader, spy, invalidatePartitionFootprint };
+  return { loader, spy, invalidatePartitionFootprint, settleReleasedPartitionLeaf };
 }
 
 describe('SceneLoader commit → requestRender funnel', () => {
@@ -62,7 +67,8 @@ describe('SceneLoader commit → requestRender funnel', () => {
   });
 
   it('invalidates the partition footprint when a pooled points commit throws', () => {
-    const { loader, invalidatePartitionFootprint } = makeLoaderWithScene();
+    const { loader, invalidatePartitionFootprint, settleReleasedPartitionLeaf } =
+      makeLoaderWithScene();
     const geometry = new THREE.BufferGeometry();
     internals(loader)._gpuBufferPool = {
       acquirePointsGeometry: vi.fn(() => geometry),
@@ -76,10 +82,13 @@ describe('SceneLoader commit → requestRender funnel', () => {
       'upload failed'
     );
     expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/p');
+    // Nothing was written, so a released leaf stays pending (#3332).
+    expect(settleReleasedPartitionLeaf).not.toHaveBeenCalled();
   });
 
   it('invalidates the partition footprint when a pooled lines commit throws', () => {
-    const { loader, invalidatePartitionFootprint } = makeLoaderWithScene();
+    const { loader, invalidatePartitionFootprint, settleReleasedPartitionLeaf } =
+      makeLoaderWithScene();
     const geometry = new THREE.BufferGeometry();
     internals(loader)._gpuBufferPool = {
       acquireLinesGeometry: vi.fn(() => geometry),
@@ -93,10 +102,13 @@ describe('SceneLoader commit → requestRender funnel', () => {
       'upload failed'
     );
     expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/lines');
+    // Nothing was written, so a released leaf stays pending (#3332).
+    expect(settleReleasedPartitionLeaf).not.toHaveBeenCalled();
   });
 
   it('invalidates the partition footprint when a pooled gsplats commit throws', () => {
-    const { loader, invalidatePartitionFootprint } = makeLoaderWithScene();
+    const { loader, invalidatePartitionFootprint, settleReleasedPartitionLeaf } =
+      makeLoaderWithScene();
     const geometry = new THREE.BufferGeometry();
     internals(loader)._gpuBufferPool = {
       acquireGSplatsGeometry: vi.fn(() => geometry),
@@ -110,6 +122,8 @@ describe('SceneLoader commit → requestRender funnel', () => {
       'upload failed'
     );
     expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/g');
+    // Nothing was written, so a released leaf stays pending (#3332).
+    expect(settleReleasedPartitionLeaf).not.toHaveBeenCalled();
   });
 
   it('bare loaders without a callback do not throw', () => {
@@ -140,6 +154,8 @@ describe('SceneLoader commit → requestRender says whether the frame changed', 
       expect(drawn.spy).toHaveBeenCalledWith(true);
       expect(drawn.spy).not.toHaveBeenCalledWith(false);
       expect(drawn.invalidatePartitionFootprint).toHaveBeenCalledWith(adapter.path);
+      // A successful write re-acquires a released partition leaf (#3332).
+      expect(drawn.settleReleasedPartitionLeaf).toHaveBeenCalledWith(adapter.path);
 
       const hidden = makeLoaderWithScene();
       internals(hidden.loader).rootGroup!.getObjectByName(adapter.path)!.visible = false;
