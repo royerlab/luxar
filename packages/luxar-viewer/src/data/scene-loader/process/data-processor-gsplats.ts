@@ -242,7 +242,7 @@ function readTruncate(mesh: THREE.Mesh): number {
 export interface GSplatsProjectionGate {
   /** Truncation radius in sigmas (`uTruncate`). */
   truncate: number;
-  /** Visibility threshold on the stored amplitude (see `readMinAmplitude`). */
+  /** Visibility threshold on continuous hidden-dimension slices (see `readMinAmplitude`). */
   minAmplitude?: number;
 }
 
