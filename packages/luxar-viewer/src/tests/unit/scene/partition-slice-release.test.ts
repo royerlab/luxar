@@ -85,9 +85,11 @@ function makeHarness(options: { wireRelease: boolean; budgetBytes?: number }): H
       positionBounds: { min: [-0.5, -0.5, -0.5, t], max: [0.5, 0.5, 0.5, t] },
     })),
   });
+  // As `SceneLoader`: dirty the footprint, write, then settle on success.
   const commitPart = (t: number) => {
     reg.invalidatePartitionFootprint(partPath(t));
     meshes[t].geometry = pool.acquireGSplatsGeometry(partPath(t), SPLATS_PER_PART);
+    reg.settleReleasedPartitionLeaf(partPath(t));
   };
   const stepTo = (t: number, opts: { commit?: boolean } = {}) => {
     if (opts.commit !== false) commitPart(t);
@@ -275,13 +277,38 @@ describe('partition slice exit releases the part (#3332)', () => {
     expect(part.visible).toBe(true);
   });
   describe('a part with several leaves', () => {
-    function multiLeafHarness() {
+    /**
+     * Part 0 at t=0 with pooled leaves `pts` / `lines` (and optionally a mesh
+     * `surface`), against a real pool. The release dep mirrors
+     * `SceneLoader.releasePartitionPart`: release EVERY leaf (idempotently),
+     * report only those whose object draws a pooled geometry.
+     */
+    function multiLeafHarness(options: { withMesh?: boolean } = {}) {
       let committed = 0;
       const camera = new THREE.Camera();
       camera.matrixWorldInverse.identity();
       camera.projectionMatrix.identity();
-      const leaves = ['/partition/part_0/pts', '/partition/part_0/lines'];
-      const release = vi.fn((): readonly string[] => leaves);
+      const pool = new GPUBufferPool(64, 300, 5, () => 0);
+      const leafPaths = ['/partition/part_0/pts', '/partition/part_0/lines'];
+      if (options.withMesh) leafPaths.push('/partition/part_0/surface');
+      const part = new THREE.Group();
+      part.name = '/partition/part_0';
+      const leaves = new Map(
+        leafPaths.map((name) => {
+          const leaf = new THREE.Mesh(new THREE.BufferGeometry());
+          leaf.name = name;
+          part.add(leaf);
+          return [name, leaf] as const;
+        })
+      );
+      const release = vi.fn((): readonly string[] => {
+        const pooled: string[] = [];
+        for (const [path, leaf] of leaves) {
+          if (leaf.geometry.userData.luxarPooled === true) pooled.push(path);
+          pool.releaseGSplatsGeometry(path);
+        }
+        return pooled;
+      });
       const reg = new LODGroupRegistry({
         getCamera: () => camera,
         getViewportSize: () => ({ width: 800, height: 600 }),
@@ -290,14 +317,6 @@ describe('partition slice exit releases the part (#3332)', () => {
         releasePartitionPart: release,
       });
       const groupObject = new THREE.Group();
-      const part = new THREE.Group();
-      part.name = '/partition/part_0';
-      const [pts, lines] = leaves.map((name) => {
-        const leaf = new THREE.Mesh(new THREE.BufferGeometry());
-        leaf.name = name;
-        part.add(leaf);
-        return leaf;
-      });
       groupObject.add(part);
       reg.registerPartition({
         path: '/partition',
@@ -310,46 +329,118 @@ describe('partition slice exit releases the part (#3332)', () => {
           },
         ],
       });
+      const leaf = (name: string) => leaves.get(`/partition/part_0/${name}`)!;
+      /** A successful commit of a pooled leaf, as the scene loader funnels it. */
+      const commit = (name: string) => {
+        const path = `/partition/part_0/${name}`;
+        reg.invalidatePartitionFootprint(path);
+        leaves.get(path)!.geometry = pool.acquireGSplatsGeometry(path, SPLATS_PER_PART);
+        reg.settleReleasedPartitionLeaf(path);
+      };
       const setView = (t: number) => {
         committed = t;
         reg.applyCommittedSlice();
         reg.evaluatePerFrame();
       };
+      commit('pts');
+      commit('lines');
       setView(0);
       setView(1);
       expect(release).toHaveBeenCalledTimes(1);
-      return { reg, part, pts, lines, leaves, setView };
+      expect(pool.getStats().activeBuffers).toBe(0);
+      return { reg, pool, part, leaf, commit, release, setView };
     }
 
     it('stays hidden until EVERY released leaf has recommitted', () => {
       const h = multiLeafHarness();
       // Back in slice; only `pts` commits (the `lines` load failed): `lines`
       // may still point at a pool buffer another node adopted.
-      h.reg.invalidatePartitionFootprint(h.leaves[0]);
+      h.commit('pts');
       h.setView(0);
       expect(h.part.visible).toBe(false);
-      h.reg.invalidatePartitionFootprint(h.leaves[1]);
+      h.commit('lines');
       h.reg.applyCommittedSlice();
       expect(h.part.visible).toBe(true);
+    });
+
+    it('a commit that is only invalidated (it threw before writing) settles nothing', () => {
+      const h = multiLeafHarness();
+      h.commit('pts');
+      // The footprint is dirtied BEFORE the write; the write then throws.
+      h.reg.invalidatePartitionFootprint('/partition/part_0/lines');
+      h.setView(0);
+      expect(h.part.visible).toBe(false);
     });
 
     it('a layer-hidden released leaf does not blank its siblings, until re-shown', () => {
       const h = multiLeafHarness();
       // The sweep skips a layer-hidden leaf, so only `pts` recommits.
-      h.lines.userData.layerVisible = false;
-      h.lines.visible = false;
-      h.reg.invalidatePartitionFootprint(h.leaves[0]);
+      h.leaf('lines').userData.layerVisible = false;
+      h.leaf('lines').visible = false;
+      h.commit('pts');
       h.setView(0);
       expect(h.part.visible).toBe(true);
       // Re-showing the layer: its stale geometry must not draw before its resync commits.
-      h.lines.userData.layerVisible = true;
-      h.lines.visible = true;
+      h.leaf('lines').userData.layerVisible = true;
+      h.leaf('lines').visible = true;
       h.reg.evaluatePerFrame();
       expect(h.part.visible).toBe(false);
-      h.reg.invalidatePartitionFootprint(h.leaves[1]);
+      h.commit('lines');
       h.reg.evaluatePerFrame();
       expect(h.part.visible).toBe(true);
     });
+
+    it('keeps releasing on EVERY exit while a sibling stays pending (looped playback)', () => {
+      const h = multiLeafHarness();
+      // `lines` sits in a hidden layer for the whole loop: it never recommits,
+      // so the part always has a pending leaf when it exits again.
+      h.leaf('lines').userData.layerVisible = false;
+      h.leaf('lines').visible = false;
+      for (let loop = 0; loop < 3; loop++) {
+        h.commit('pts');
+        h.setView(0);
+        expect(h.part.visible).toBe(true);
+        expect(h.pool.getStats().activeBuffers).toBe(1);
+        h.setView(1);
+        // `pts`'s fresh buffer is given back on THIS exit too: no leak. (Each
+        // loop exits twice: here, and after the uncommitted revisit below.)
+        expect(h.release).toHaveBeenCalledTimes(2 + 2 * loop);
+        expect(h.pool.getStats().activeBuffers).toBe(0);
+        // ...and it is pending again: back in slice without its commit, the
+        // part must not draw the buffer it just released.
+        h.setView(0);
+        expect(h.part.visible).toBe(false);
+        h.setView(1);
+      }
+    });
+
+    it('a leaf holding no pool buffer that never recommits does not blank its siblings', () => {
+      // A mesh's release swaps in an empty placeholder (never pooled); one
+      // whose budget refusal is latched never recommits again.
+      const h = multiLeafHarness({ withMesh: true });
+      h.commit('pts');
+      h.commit('lines');
+      h.setView(0);
+      expect(h.part.visible).toBe(true);
+      // Repeated cycles keep it that way.
+      h.setView(1);
+      h.commit('pts');
+      h.commit('lines');
+      h.setView(0);
+      expect(h.part.visible).toBe(true);
+    });
+  });
+
+  it('a layer-hidden released leaf that IS the part object still blocks it', () => {
+    // The stamp writes a part object's `visible` regardless of its layer, so a
+    // released single-object leaf would draw its released buffer.
+    const h = makeHarness({ wireRelease: true });
+    h.stepTo(1);
+    h.meshes[0].userData.layerVisible = false;
+    h.stepTo(0, { commit: false });
+    expect(h.meshes[0].visible).toBe(false);
+    h.stepTo(0);
+    expect(h.meshes[0].visible).toBe(true);
   });
 
   it('the per-frame frustum gate never releases, even on a slice exit it sees first', () => {

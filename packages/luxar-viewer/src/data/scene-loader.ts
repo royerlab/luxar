@@ -181,7 +181,7 @@ import type {
   MeshMetadata,
   MeshViewState,
 } from '../types/mesh';
-import { clearCommittedData } from '../types/committed-data';
+import { clearCommittedData, hasCommittedData } from '../types/committed-data';
 import {
   releaseDepthSortNode,
   type DepthSortCoordinator,
@@ -297,6 +297,12 @@ export interface RefinementPhaseShared {
 
 /** Every sweep-registered loader kind a released partition part may hold (#3332). */
 const PARTITION_RELEASE_KINDS: readonly GeometryKind[] = ['points', 'lines', 'gsplats', 'mesh'];
+
+/** Whether `object` draws a pooled geometry (see `texture-backed-adapter`'s `luxarPooled`). */
+function holdsPoolBuffer(object: THREE.Object3D | undefined): boolean {
+  const geometry = (object as THREE.Mesh | undefined)?.geometry as THREE.BufferGeometry | undefined;
+  return geometry?.userData.luxarPooled === true;
+}
 
 /** Join two stage-1 sweeps of one pass, type by type (points, lines, gsplats, mesh). */
 function concatSweeps<A, B, C, D>(
@@ -914,6 +920,10 @@ export class SceneLoader {
     const drawnBefore = isEffectivelyVisible(node);
     if (this._materials) runWithMaterialManager(this._materials, commit);
     else commit();
+    // Only a write that reached the GPU re-stamps the node (every decline
+    // returns before it, a throw never gets here): that is what re-acquires a
+    // released partition leaf (#3332).
+    if (node && hasCommittedData(node)) this.lodGroupRegistry?.settleReleasedPartitionLeaf(path);
     const drawn = node === undefined || drawnBefore || isEffectivelyVisible(node);
     this._requestRender?.(drawn);
     return drawn;
@@ -2045,23 +2055,28 @@ export class SceneLoader {
    * SliceCache or re-streams, and the cleared stamp forces a full recommit.
    * Called synchronously from `applyCommittedSlice` only (never from the
    * per-frame frustum gate), inside the pass that committed — under the pass
-   * lock, so no update of these loaders is in flight. Returns the paths of the
-   * released loaders, so the gate can keep the part hidden until each of them
-   * has recommitted.
+   * lock, so no update of these loaders is in flight. Idempotent per leaf: the
+   * gate calls it again on every later exit, while leaves of an earlier one may
+   * still be pending. Returns the paths of the released loaders whose object
+   * references a POOL buffer, so the gate can keep the part hidden until each
+   * of them has recommitted — only those can draw a buffer another node has
+   * adopted. A mesh (placeholder swap) or a never-committed leaf cannot, and a
+   * leaf that never recommits (a latched mesh budget refusal) must not blank
+   * its siblings forever.
    */
   releasePartitionPart(partPath: string): readonly string[] {
     if (partPath === '') return [];
     const under = new Set([partPath]);
-    const released: string[] = [];
+    const pooled: string[] = [];
     for (const kind of PARTITION_RELEASE_KINDS) {
       for (const [path, loader] of this.registry.loadersOf(kind)) {
         if (!isUnderAny(path, under)) continue;
+        if (holdsPoolBuffer(findObjectByName(this.rootGroup, path))) pooled.push(path);
         this.releaseNodeGeometry(kind, path);
         (loader as { releaseResidentLadder?: () => void }).releaseResidentLadder?.();
-        released.push(path);
       }
     }
-    return released;
+    return pooled;
   }
 
   /**

@@ -90,13 +90,20 @@ function fakeLoader() {
   };
 }
 
-/** Attach a placeholder and a sweep loader for `path`, stamped as committed. */
-function attach(sceneLoader: SceneLoader, kind: string, path: string) {
+/**
+ * Attach a placeholder and a sweep loader for `path`, stamped as committed —
+ * drawing a POOLED geometry for the pooled kinds, as a real commit leaves it
+ * (`committed: false`: the never-committed placeholder).
+ */
+function attach(sceneLoader: SceneLoader, kind: string, path: string, committed = true) {
   const internals = sceneLoader as unknown as Internals;
   const object = new THREE.Mesh(new THREE.BufferGeometry());
   object.name = path;
   internals.rootGroup.add(object);
-  setCommittedData(object, {});
+  if (committed) {
+    setCommittedData(object, {});
+    if (kind !== 'mesh') object.geometry.userData.luxarPooled = true;
+  }
   const loader = fakeLoader();
   internals.registry.register(kind, path, loader);
   return { object, loader };
@@ -176,13 +183,38 @@ describe('SceneLoader.releasePartitionPart (#3332)', () => {
     const committedGeometry = mesh.object.geometry;
     const dispose = vi.spyOn(committedGeometry, 'dispose');
 
-    expect(sceneLoader.releasePartitionPart('/p/part_3')).toEqual(['/p/part_3/surface']);
+    // Released, but NOT reported: an empty placeholder cannot draw stale data,
+    // so a mesh that never recommits (a latched budget refusal) must not hold
+    // its part hidden.
+    expect(sceneLoader.releasePartitionPart('/p/part_3')).toEqual([]);
 
     expect(mesh.loader.releaseResidentLadder).toHaveBeenCalledTimes(1);
     expect(dispose).toHaveBeenCalledTimes(1);
     expect(mesh.object.geometry).not.toBe(committedGeometry);
     expect(mesh.object.geometry.index?.count ?? 0).toBe(0);
     expect(hasCommittedData(mesh.object)).toBe(false);
+  });
+
+  it('a never-committed pooled-kind leaf is released but not reported', async () => {
+    await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+    const fresh = attach(sceneLoader, 'points', '/p/part_3/never', false);
+    expect(sceneLoader.releasePartitionPart('/p/part_3')).toEqual([]);
+    expect(fresh.loader.releaseResidentLadder).toHaveBeenCalledTimes(1);
+  });
+
+  it('is idempotent: a second release of a still-released leaf frees nothing twice', async () => {
+    await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+    const pool = sceneLoader.gpuBufferPool!;
+    const splats = attach(sceneLoader, 'gsplats', '/p/part_3');
+    splats.object.geometry = pool.acquireGSplatsGeometry('/p/part_3', 100);
+    expect(pool.getStats().activeBuffers).toBe(1);
+    expect(sceneLoader.releasePartitionPart('/p/part_3')).toEqual(['/p/part_3']);
+    const after = pool.getStats();
+    expect(after.activeBuffers).toBe(0);
+    // Its object still references the released buffer, so it is still
+    // reported (the gate dedups); the pool is untouched.
+    expect(sceneLoader.releasePartitionPart('/p/part_3')).toEqual(['/p/part_3']);
+    expect(pool.getStats()).toEqual(after);
   });
 
   it('reports nothing when nothing is under the part, and never matches a pathless part', async () => {
