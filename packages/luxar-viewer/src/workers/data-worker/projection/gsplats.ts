@@ -153,10 +153,11 @@ export async function projectGSplatsTo3D(
      *  `GSPLAT_DEFAULT_TRUNCATION_RADIUS`) */
     truncate?: number;
     /**
-     * Visibility gate on the STORED attenuated amplitude (defaults to
-     * `MIN_AMPLITUDE`). A node with a `display_gain` passes
-     * `MIN_AMPLITUDE / gain`, so the gate stays a threshold on what the shader
-     * emits (`data-processor-gsplats.ts::readMinAmplitude`).
+     * Visibility gate on the STORED attenuated amplitude when a continuous
+     * hidden dimension is sliced (defaults to `MIN_AMPLITUDE`). A node with a
+     * `display_gain` passes `MIN_AMPLITUDE / gain`, so the gate stays a
+     * threshold on what the shader emits
+     * (`data-processor-gsplats.ts::readMinAmplitude`).
      */
     minAmplitude?: number;
     /** Components per color item: 3 (RGB, default) or 4 (RGBA — alpha = per-splat opacity) */
@@ -242,8 +243,8 @@ export async function projectGSplatsTo3D(
   // has no hidden dimensions, so there is nothing to attenuate or
   // compact — every splat is visible. Preserves the semantics of the
   // former main-thread `projectGSplats3DOnly`: a straight copy with NO
-  // amplitude filtering (the general fused path below culls amplitude <
-  // MIN_AMPLITUDE; the standard-3D copy intentionally does not). centers
+  // amplitude filtering (the fused path below applies MIN_AMPLITUDE only
+  // when a continuous hidden dimension can attenuate splats). centers
   // and Cholesky are already in 3D layout (3 and 6 elements per splat).
   //
   // No `sourceIndices` here even when `emitSourceIndices` is set: every splat
@@ -304,8 +305,11 @@ export async function projectGSplatsTo3D(
   const continuousHiddenDimsU32 = new Uint32Array(continuousHiddenDims);
   const displayDimsU32 = new Uint32Array(orderedDisplayDims);
 
-  // Minimum attenuated-amplitude threshold for visibility.
-  const minAmplitude = params.minAmplitude ?? MIN_AMPLITUDE;
+  // A discrete-only slice removes other categories but does not attenuate
+  // the retained splats. Preserve their stored amplitudes, as the 3D fast
+  // path does; the absolute visibility floor is only for continuous slicing.
+  const minAmplitude =
+    continuousHiddenDims.length === 0 ? 0 : (params.minAmplitude ?? MIN_AMPLITUDE);
 
   // Step 0: Pre-filter discrete dimensions (TypeScript, before WASM).
   // Splats whose center is more than half a step away in any discrete dim are invisible.
