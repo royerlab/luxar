@@ -127,6 +127,7 @@ interface Ladder {
     signal?: AbortSignal
   ): Promise<void>;
   ladderResidency(): { loadedRungs: number; elementCount: number; residentBytes: number };
+  releaseResidentLadder(): void;
   dispose(): void;
 }
 
@@ -291,6 +292,43 @@ describe.each(GEOMETRIES)('$name progressive loader — shared ladder engine', (
     expect(residency.loadedRungs).toBe(0);
     expect(residency.elementCount).toBe(0);
     expect(residency.residentBytes).toBe(0);
+  });
+
+  it('#3332: releaseResidentLadder drops the ladder, and a return to its view reloads it', async () => {
+    const rungs = Array.from({ length: 3 }, (_, i) => rung(make, i + 1));
+    const loader = build(rungs);
+    const first = await loader.updateView(viewAt(2));
+    const full = loader.ladderResidency();
+    expect(full.loadedRungs).toBe(3);
+    expect(full.residentBytes).toBeGreaterThan(0);
+
+    // The part left the committed slice: nothing it decoded stays charged.
+    loader.releaseResidentLadder();
+    const released = loader.ladderResidency();
+    expect(released.loadedRungs).toBe(0);
+    expect(released.elementCount).toBe(0);
+    expect(released.residentBytes).toBe(0);
+
+    // Stepping BACK to the same view is a view entry, not the unchanged-view
+    // no-op: every rung re-streams, the ladder is whole again, and the result
+    // is a NEW reference — so the commit's identity no-op cannot skip it.
+    const calls = rungs.map((r) => r.updateViewWithResidency.mock.calls.length);
+    const again = await loader.updateView(viewAt(2));
+    expect(again).not.toBe(first);
+    expect(loader.ladderResidency()).toEqual(full);
+    rungs.forEach((r, i) => {
+      expect(r.updateViewWithResidency.mock.calls.length).toBe(calls[i] + 1);
+      expect((r.updateViewWithResidency.mock.calls.at(-1)?.[0] as ViewState).slicePosition[3]).toBe(
+        2
+      );
+    });
+  });
+
+  it('#3332: releaseResidentLadder on a disposed loader is a no-op', async () => {
+    const loader = build(Array.from({ length: 2 }, (_, i) => rung(make, i + 1)));
+    loader.dispose();
+    expect(() => loader.releaseResidentLadder()).not.toThrow();
+    expect(loader.ladderResidency().loadedRungs).toBe(0);
   });
 
   it('answers the predicted-view prefetch by warming its coarse rung', async () => {

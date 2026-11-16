@@ -903,6 +903,17 @@ export interface LODGroupRegistryDeps {
    */
   getCommittedViewState?: () => PartitionSliceView | undefined;
   /**
+   * Release what a partition part holds once it LEFT the committed slice
+   * (#3332): its leaves' GPU geometry and decoded ladders, so a per-timepoint
+   * partition stepped through does not keep every visited part resident. Fired
+   * once per slice exit from ``PartitionGate`` (never on a frustum cull — a
+   * camera pan must not thrash reloads), for loaded parts only. Returns whether
+   * anything was released; a released part stays hidden until a commit lands
+   * under it, so it can never draw a pool buffer another node has adopted.
+   * Omitted ⇒ hidden parts stay resident (the pre-#3332 behaviour).
+   */
+  releasePartitionPart?: (path: string) => boolean;
+  /**
    * Whether the owning loader has a view PASS in flight or queued. Rising edges
    * are held (and coalesced) while this is true so a resync never lands on top
    * of a pass. A refinement hold deliberately does NOT count: the loader parks

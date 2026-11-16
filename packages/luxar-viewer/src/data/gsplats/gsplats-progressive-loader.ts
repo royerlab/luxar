@@ -404,6 +404,11 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   }
 
   /** Clean up all LOD loaders. */
+  /** Drop the decoded ladder of a hidden node (see `AdditiveLadderCore`). */
+  releaseResidentLadder(): void {
+    this.core.releaseResidentLadder();
+  }
+
   dispose(): void {
     this.core.dispose();
   }

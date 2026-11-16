@@ -278,6 +278,23 @@ export interface PartitionChildCache {
   footprintDirty: boolean;
   /** Last frustum test (`true` until the first evaluation). */
   inFrustum: boolean;
+  /**
+   * Last committed-slice test (`true` until the first stamp). A `true` →
+   * `false` transition is the SLICE EXIT that releases the part (#3332). The
+   * `true` start means a LOADED part outside the first committed slice is
+   * released at once: the loader defers such parts, so one loaded anyway (no
+   * usable view at load ⇒ nothing deferred) holds data that cannot draw.
+   */
+  inSlice: boolean;
+  /**
+   * The part's leaves gave back their GPU geometry on a slice exit
+   * (``LODGroupRegistryDeps.releasePartitionPart``) and no commit has landed
+   * under it since: it stays hidden even in slice and frustum, because its
+   * objects may still reference a pool buffer another node has adopted.
+   * Cleared by the next geometry commit under it ({@link
+   * PartitionGate.invalidatePartitionFootprint}).
+   */
+  released: boolean;
   /** Deferred part state (B4): see {@link PartitionGroupChild.activate}. */
   lazy: LazyPartState | null;
 }
@@ -486,6 +503,8 @@ export class PartitionGate implements TickDemand {
         // outside the padded frustum (or the slice), so a pass reaching
         // `activatePartitionParts` first must not activate it on a guess.
         inFrustum: !child.activate,
+        inSlice: true,
+        released: false,
         lazy: child.activate
           ? { requested: false, requestedAtMs: 0, running: null, claims: [], failed: false }
           : null,
@@ -540,7 +559,10 @@ export class PartitionGate implements TickDemand {
     let matched = false;
     for (const hit of hits) {
       if (hit.entryPath !== entryPath) continue;
-      cache.children[hit.index].footprintDirty = true;
+      const childCache = cache.children[hit.index];
+      childCache.footprintDirty = true;
+      // A commit under a released part re-acquired its geometry (#3332).
+      childCache.released = false;
       matched = true;
     }
     if (matched) return;
@@ -582,6 +604,7 @@ export class PartitionGate implements TickDemand {
    * the same frame as the commit — not one evaluation later (refinement,
    * scheduled at the pass tail, reads these stamps before the next frame).
    * The frustum half is the last evaluation's; nothing here is a rising edge.
+   * A part that LEFT the slice is released here ({@link stampPart}).
    */
   applyCommittedSlice(): void {
     const committed = this.deps.getCommittedViewState?.();
@@ -591,11 +614,7 @@ export class PartitionGate implements TickDemand {
       for (let index = 0; index < entry.children.length; index++) {
         const child = entry.children[index];
         const inSlice = partitionChildInSlice(child, committed);
-        const flags = updatePartitionObjectVisibility(
-          child.objects,
-          cache.children[index].inFrustum,
-          inSlice
-        );
+        const flags = this.stampPart(child, cache.children[index], inSlice);
         if ((flags & PARTITION_VISIBILITY_CHANGED) !== 0) this.host.markDrawn();
       }
     }
@@ -864,16 +883,54 @@ export class PartitionGate implements TickDemand {
       const childCache = cache.children[index];
       childCache.inFrustum = this.partitionPartInFrustum(child, childCache, displayDims, frustum);
       const inSlice = partitionChildInSlice(child, committed);
-      const flags = updatePartitionObjectVisibility(child.objects, childCache.inFrustum, inSlice);
+      const flags = this.stampPart(child, childCache, inSlice);
       result |= flags;
       if (childCache.lazy) {
         const wanted = childCache.inFrustum && inSlice;
         this.requestLazyActivation(risingParts, entry.path, child, childCache.lazy, wanted);
-      } else if ((flags & PARTITION_BECAME_VISIBLE) !== 0 && !this.partitionPartSettled(child)) {
+      } else if (
+        (flags & PARTITION_BECAME_VISIBLE) !== 0 &&
+        (childCache.released || !this.partitionPartSettled(child))
+      ) {
         noteRisingPart(risingParts, child.path, entry.path);
       }
     }
     return result;
+  }
+
+  /**
+   * Stamp one part's visibility for the committed-slice test `inSlice` (the
+   * frustum half is ``childCache.inFrustum``), releasing it on a slice EXIT.
+   * A released part draws nothing until a commit re-acquires its geometry.
+   * Returns the ``PARTITION_*`` flags.
+   */
+  private stampPart(
+    child: PartitionGroupChild,
+    childCache: PartitionChildCache,
+    inSlice: boolean
+  ): number {
+    if (childCache.inSlice && !inSlice) this.releaseSliceExitedPart(child, childCache);
+    childCache.inSlice = inSlice;
+    return updatePartitionObjectVisibility(
+      child.objects,
+      childCache.inFrustum,
+      inSlice && !childCache.released
+    );
+  }
+
+  /**
+   * A loaded part left the committed slice (#3332): hand its leaves' GPU
+   * geometry and decoded ladders back (``deps.releasePartitionPart``). Only a
+   * SLICE exit releases — a frustum cull is a camera pan, and releasing then
+   * would reload on every pan back. A deferred part holds nothing yet, and a
+   * pathless part cannot be targeted without releasing the whole scene.
+   */
+  private releaseSliceExitedPart(
+    child: PartitionGroupChild,
+    childCache: PartitionChildCache
+  ): void {
+    if (childCache.lazy || childCache.released || !child.path) return;
+    if (this.deps.releasePartitionPart?.(child.path) === true) childCache.released = true;
   }
 
   /** Frustum test of one part: its stored bounds united with its rendered footprint. */

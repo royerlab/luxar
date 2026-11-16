@@ -541,6 +541,26 @@ describe('MeshProgressiveLoader', () => {
     for (const sub of subs) expect(sub.calls).toBe(1);
   });
 
+  it('#3332: releaseResidentLadder drops the ladder, and the next pass re-streams it whole', async () => {
+    const { loader, subs } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2])]);
+    const first = await loader.updateView(VIEW);
+    expect(loader.ladderResidency().residentBytes).toBeGreaterThan(0);
+
+    loader.releaseResidentLadder();
+    expect(loader.loadedLODCount).toBe(0);
+    expect(loader.ladderResidency().residentBytes).toBe(0);
+    expect(loader.hasMoreLODs).toBe(true);
+
+    // Re-entry: every level is asked again, the surface is whole, and the
+    // result is a NEW reference so the commit cannot identity-skip it.
+    const again = await loader.updateView(VIEW);
+    for (const sub of subs) expect(sub.calls).toBe(2);
+    expect(again).not.toBe(first);
+    expect(again.faceCount).toBe(first.faceCount);
+    expect(Array.from(again.faces)).toEqual(Array.from(first.faces));
+    expect(loader.loadedLODCount).toBe(2);
+  });
+
   it('disposes every sub-loader and reports no further work', async () => {
     const { loader, subs } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2])]);
     await loader.updateView(VIEW);

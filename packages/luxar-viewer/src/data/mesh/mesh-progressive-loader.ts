@@ -863,6 +863,23 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     this._visibleTriangles = triangles;
   }
 
+  /**
+   * Drop the decoded ladder of a node that can no longer draw (a partition
+   * part that left the committed slice, #3332), keeping the loader usable: the
+   * next `updateView` re-streams from level 0 (the levels' handles stay warm)
+   * and its concat is a new reference, so the commit full-writes.
+   */
+  releaseResidentLadder(): void {
+    if (this._disposed) return;
+    this.loadedLODs = [];
+    this._loadedLODCount = 0;
+    this._levelsAtPassStart = 0;
+    this._payloadsAtPassStart = 0;
+    this._retryFoldedPass = false;
+    this._concatCache = null;
+    this._visibleTriangles = 0;
+  }
+
   dispose(): void {
     this._disposed = true;
     for (const loader of this.lodLoaders) loader.dispose();

@@ -471,6 +471,34 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
     return this.rungs[0].prefetchChunkBoundary(current, predicted, signal);
   }
 
+  /**
+   * Drop the decoded ladder of a node that can no longer draw (a partition
+   * part that left the committed slice, #3332), keeping the loader usable.
+   * The ladder is first stored under its view — the departure store
+   * `enterView` would have made, which a skipped hidden loader never reaches —
+   * so a return to that view restores it from the SliceCache. Forgetting
+   * `lastViewState` makes that return a view ENTRY (restore or re-stream), and
+   * dropping the memo makes its result a new reference, so the commit
+   * full-writes instead of taking the no-op or append fast path. Only call it
+   * between passes on this loader (the owner's pass lock guarantees that).
+   */
+  releaseResidentLadder(): void {
+    if (this.disposed) return;
+    if (this.lastViewState && this.loadedCount > 0) this.store(this.lastViewState, false);
+    this.cancelSpeculation();
+    this.loadedLODs = [];
+    this.payloadLevelStarts = [];
+    this.restoredOrigin = null;
+    this.loadedCount = 0;
+    this.levelsAtPassStart = 0;
+    this.payloadsAtPassStart = 0;
+    this.restoredFullLadderAtPassStart = false;
+    this.retryFoldedPass = false;
+    this.lastViewState = null;
+    this.concatCache = null;
+    this.resetGeneration++;
+  }
+
   dispose(): void {
     this.disposed = true;
     this.cancelSpeculation();
