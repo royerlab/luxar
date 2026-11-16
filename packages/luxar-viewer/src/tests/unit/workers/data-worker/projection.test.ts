@@ -722,6 +722,41 @@ describe('projectGSplatsTo3D — happy paths', () => {
     expect(Array.from(result.amplitudes)).toEqual([1, 1]);
   });
 
+  it('keeps the amplitude gate when a discrete slice also has a continuous hidden dimension', async () => {
+    const { mod } = await loadWorker();
+    const ndim = 5;
+    const splatCount = 3;
+    const stride = (ndim * (ndim + 1)) / 2;
+    const choleskyFactors = new Float32Array(splatCount * stride);
+    for (let s = 0; s < splatCount; s++) {
+      for (let d = 0; d < ndim; d++) {
+        choleskyFactors[s * stride + (d * (d + 1)) / 2 + d] = 1;
+      }
+    }
+    const result = (await mod.workerAPI.projectGSplatsTo3D({
+      positions: new Float32Array([0, 0, 0, 1, 0, 1, 1, 1, 1, 0, 2, 2, 2, 0, 0]),
+      choleskyFactors,
+      amplitudes: new Float32Array([1, 9.642800478104618e-7, 1]),
+      colors: null,
+      sharpness: null,
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 1, 0],
+        tolerance: [0, 0, 0, 0.25, 0],
+      },
+      ndim,
+      splatCount,
+      discreteDims: [3],
+      discreteSteps: { 3: 1 },
+      extendToAllDims: [],
+      emitSourceIndices: true,
+    })) as { visibleCount: number; amplitudes: Float32Array; sourceIndices?: Uint32Array };
+
+    expect(result.visibleCount).toBe(1);
+    expect(Array.from(result.amplitudes)).toEqual([1]);
+    expect(Array.from(result.sourceIndices ?? [])).toEqual([0]);
+  });
+
   it('emitSourceIndices returns the surviving SOURCE indices on the general nD path', async () => {
     const { mod } = await loadWorker();
 
