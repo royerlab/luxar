@@ -684,6 +684,44 @@ describe('projectGSplatsTo3D — happy paths', () => {
     };
   }
 
+  it('keeps faint stored splats on a discrete time slice without admitting adjacent frames', async () => {
+    const { mod } = await loadWorker();
+    const params = cullingNdParams({
+      positions: new Float32Array([0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 1]),
+      amplitudes: new Float32Array([1, 1, 9.642800478104618e-7]),
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 1],
+        tolerance: [0, 0, 0, 0.25],
+      },
+      discreteDims: [3],
+      discreteSteps: { 3: 1 },
+      emitSourceIndices: true,
+    });
+
+    const result = (await mod.workerAPI.projectGSplatsTo3D(params)) as {
+      visibleCount: number;
+      amplitudes: Float32Array;
+      sourceIndices?: Uint32Array;
+    };
+    expect(result.visibleCount).toBe(2);
+    expect(Array.from(result.amplitudes)).toEqual([1, Math.fround(9.642800478104618e-7)]);
+    expect(Array.from(result.sourceIndices ?? [])).toEqual([0, 2]);
+  });
+
+  it('still culls sub-threshold amplitudes on a continuous slice', async () => {
+    const { mod } = await loadWorker();
+    const result = (await mod.workerAPI.projectGSplatsTo3D(
+      cullingNdParams({
+        positions: new Float32Array([0, 0, 0, 0, 1, 1, 1, 0, 2, 2, 2, 0]),
+        amplitudes: new Float32Array([1, 9.642800478104618e-7, 1]),
+      })
+    )) as { visibleCount: number; amplitudes: Float32Array };
+
+    expect(result.visibleCount).toBe(2);
+    expect(Array.from(result.amplitudes)).toEqual([1, 1]);
+  });
+
   it('emitSourceIndices returns the surviving SOURCE indices on the general nD path', async () => {
     const { mod } = await loadWorker();
 
