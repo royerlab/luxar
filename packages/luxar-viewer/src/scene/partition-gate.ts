@@ -278,6 +278,26 @@ export interface PartitionChildCache {
   footprintDirty: boolean;
   /** Last frustum test (`true` until the first evaluation). */
   inFrustum: boolean;
+  /**
+   * Last committed-slice test as {@link PartitionGate.applyCommittedSlice} saw
+   * it (`true` until then) — only that pass-locked path updates it. A `true` →
+   * `false` transition is the SLICE EXIT that releases the part (#3332). The
+   * `true` start means a LOADED part outside the first committed slice is
+   * released at once: the loader defers such parts, so one loaded anyway (no
+   * usable view at load ⇒ nothing deferred) holds data that cannot draw.
+   */
+  inSlice: boolean;
+  /**
+   * The leaves that gave a POOL buffer back on a slice exit
+   * (``LODGroupRegistryDeps.releasePartitionPart``) and have not landed a
+   * commit since, by loader path → its scene object (`null`: not found under
+   * the part). While any of them could draw, the part stays hidden even in
+   * slice and frustum: that leaf may still reference a pool buffer another
+   * node has adopted. Each leaf's own successful commit removes it ({@link
+   * PartitionGate.settleReleasedPartitionLeaf}); a later exit merges newly
+   * released leaves in; `null` once none is left.
+   */
+  released: Map<string, THREE.Object3D | null> | null;
   /** Deferred part state (B4): see {@link PartitionGroupChild.activate}. */
   lazy: LazyPartState | null;
 }
@@ -320,6 +340,54 @@ function updatePartitionObjectVisibility(
     (changed ? PARTITION_VISIBILITY_CHANGED : 0) |
     (inFrustum && !wasInFrustum ? PARTITION_BECAME_VISIBLE : 0)
   );
+}
+
+/** A released leaf's scene object, searched under the part's own objects. */
+function findPartLeaf(child: PartitionGroupChild, path: string): THREE.Object3D | null {
+  for (const object of child.objects) {
+    const leaf = object.name === path ? object : object.getObjectByName(path);
+    if (leaf) return leaf;
+  }
+  return null;
+}
+
+/** Whether a layer toggle hides `object` (on it or any ancestor). */
+function isLayerHidden(object: THREE.Object3D): boolean {
+  for (let node: THREE.Object3D | null = object; node; node = node.parent) {
+    if (node.userData.layerVisible === false) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a released, not-yet-recommitted leaf of the part could draw: one
+ * hidden by its layer cannot, so it does not blank its siblings — re-showing
+ * the layer makes it count again at the next per-frame gate (which runs
+ * before that frame draws), until its own resync commits. The exception is a
+ * leaf that IS one of the part's own objects: the stamp writes its `visible`
+ * regardless of its layer, so it can draw and must block. An unresolved leaf
+ * is not under the part's objects at all.
+ */
+function releasedLeafDrawable(
+  child: PartitionGroupChild,
+  childCache: PartitionChildCache
+): boolean {
+  for (const leaf of (childCache.released as Map<string, THREE.Object3D | null>).values()) {
+    if (leaf && (!isLayerHidden(leaf) || child.objects.includes(leaf))) return true;
+  }
+  return false;
+}
+
+/**
+ * A commit at `nodePath` re-acquired the released leaf AT that path. Exact
+ * match only: the keys are loader paths and the commit names the loader it
+ * wrote, so a prefix match would let a nested loader's commit settle a still
+ * pending ancestor loader whose own buffer was never rewritten.
+ */
+function settleReleasedLeaf(childCache: PartitionChildCache, nodePath: string): void {
+  const released = childCache.released as Map<string, THREE.Object3D | null>;
+  released.delete(nodePath);
+  if (released.size === 0) childCache.released = null;
 }
 
 /**
@@ -486,6 +554,8 @@ export class PartitionGate implements TickDemand {
         // outside the padded frustum (or the slice), so a pass reaching
         // `activatePartitionParts` first must not activate it on a guess.
         inFrustum: !child.activate,
+        inSlice: true,
+        released: null,
         lazy: child.activate
           ? { requested: false, requestedAtMs: 0, running: null, claims: [], failed: false }
           : null,
@@ -513,10 +583,36 @@ export class PartitionGate implements TickDemand {
    */
   invalidatePartitionFootprint(nodePath: string): void {
     if (this.partitionCaches.size === 0) return;
-    // A partition or part is affected exactly when its path is ``nodePath`` or a
-    // segment prefix of it, so enumerate those prefixes (O(depth)) and look them
-    // up, instead of scanning every registered part — a commit per part on a
-    // 2000-part partition made the scan O(parts²) per pass (B9c).
+    const { touched, hits } = this.partitionPartsAlong(nodePath);
+    for (const entryPath of touched) this.dirtyPartitionParts(entryPath, hits);
+  }
+
+  /**
+   * A commit at `nodePath` SUCCEEDED in writing geometry (#3332): the released
+   * leaf it belongs to holds its own buffer again, so it no longer blocks its
+   * part; its siblings stay pending until their own commits land. Called after
+   * the write (``SceneLoader.commitAndRequestRender``), unlike
+   * {@link invalidatePartitionFootprint}, so a commit that throws or declines
+   * leaves the leaf pending.
+   */
+  settleReleasedPartitionLeaf(nodePath: string): void {
+    if (this.partitionCaches.size === 0) return;
+    for (const hit of this.partitionPartsAlong(nodePath).hits) {
+      const childCache = this.partitionCaches.get(hit.entryPath)?.children[hit.index];
+      if (childCache?.released) settleReleasedLeaf(childCache, nodePath);
+    }
+  }
+
+  /**
+   * The partitions (`touched`) and parts (`hits`) whose path is ``nodePath`` or
+   * a segment prefix of it — enumerated O(depth) and looked up, instead of
+   * scanning every registered part: a commit per part on a 2000-part partition
+   * made the scan O(parts²) per pass (B9c).
+   */
+  private partitionPartsAlong(nodePath: string): {
+    touched: string[];
+    hits: PartitionPartRef[];
+  } {
     const touched: string[] = [];
     const hits: PartitionPartRef[] = [];
     for (let end = nodePath.length; end >= 0; end--) {
@@ -526,7 +622,7 @@ export class PartitionGate implements TickDemand {
       const parts = this.partitionPartsByPath.get(prefix);
       if (parts) hits.push(...parts);
     }
-    for (const entryPath of touched) this.dirtyPartitionParts(entryPath, hits);
+    return { touched, hits };
   }
 
   /**
@@ -582,6 +678,7 @@ export class PartitionGate implements TickDemand {
    * the same frame as the commit — not one evaluation later (refinement,
    * scheduled at the pass tail, reads these stamps before the next frame).
    * The frustum half is the last evaluation's; nothing here is a rising edge.
+   * A part that LEFT the slice is released here ({@link stampPart}).
    */
   applyCommittedSlice(): void {
     const committed = this.deps.getCommittedViewState?.();
@@ -591,11 +688,7 @@ export class PartitionGate implements TickDemand {
       for (let index = 0; index < entry.children.length; index++) {
         const child = entry.children[index];
         const inSlice = partitionChildInSlice(child, committed);
-        const flags = updatePartitionObjectVisibility(
-          child.objects,
-          cache.children[index].inFrustum,
-          inSlice
-        );
+        const flags = this.stampPart(child, cache.children[index], inSlice, true);
         if ((flags & PARTITION_VISIBILITY_CHANGED) !== 0) this.host.markDrawn();
       }
     }
@@ -864,16 +957,76 @@ export class PartitionGate implements TickDemand {
       const childCache = cache.children[index];
       childCache.inFrustum = this.partitionPartInFrustum(child, childCache, displayDims, frustum);
       const inSlice = partitionChildInSlice(child, committed);
-      const flags = updatePartitionObjectVisibility(child.objects, childCache.inFrustum, inSlice);
+      // Frustum path: never releases (it can run mid-pass, e.g. for a part
+      // registered while the pass is still sweeping its loaders).
+      const flags = this.stampPart(child, childCache, inSlice, false);
       result |= flags;
       if (childCache.lazy) {
         const wanted = childCache.inFrustum && inSlice;
         this.requestLazyActivation(risingParts, entry.path, child, childCache.lazy, wanted);
-      } else if ((flags & PARTITION_BECAME_VISIBLE) !== 0 && !this.partitionPartSettled(child)) {
+      } else if (
+        (flags & PARTITION_BECAME_VISIBLE) !== 0 &&
+        (childCache.released !== null || !this.partitionPartSettled(child))
+      ) {
         noteRisingPart(risingParts, child.path, entry.path);
       }
     }
     return result;
+  }
+
+  /**
+   * Stamp one part's visibility for the committed-slice test `inSlice` (the
+   * frustum half is ``childCache.inFrustum``). Only `mayRelease` callers —
+   * {@link applyCommittedSlice}, under the owner's pass lock — track the slice
+   * state and release the part on a slice EXIT; the per-frame frustum path
+   * never does. A part with a released leaf that could draw stays hidden until
+   * that leaf's commit re-acquires its geometry. Returns the ``PARTITION_*``
+   * flags.
+   */
+  private stampPart(
+    child: PartitionGroupChild,
+    childCache: PartitionChildCache,
+    inSlice: boolean,
+    mayRelease: boolean
+  ): number {
+    if (mayRelease) {
+      if (childCache.inSlice && !inSlice) this.releaseSliceExitedPart(child, childCache);
+      childCache.inSlice = inSlice;
+    }
+    const blocked =
+      inSlice && childCache.released !== null && releasedLeafDrawable(child, childCache);
+    return updatePartitionObjectVisibility(
+      child.objects,
+      childCache.inFrustum,
+      inSlice && !blocked
+    );
+  }
+
+  /**
+   * A loaded part left the committed slice (#3332): hand its leaves' GPU
+   * geometry and decoded ladders back (``deps.releasePartitionPart``). Only a
+   * SLICE exit releases — a frustum cull is a camera pan, and releasing then
+   * would reload on every pan back. A deferred part holds nothing yet, and a
+   * pathless part cannot be targeted without releasing the whole scene.
+   *
+   * A part still holding leaves pending from an earlier exit (a layer-hidden
+   * one is never swept, so never recommits) is released again all the same:
+   * the leaves that DID recommit since hold fresh buffers again. Releasing is
+   * idempotent per leaf, and the newly reported paths are merged into the
+   * pending set.
+   */
+  private releaseSliceExitedPart(
+    child: PartitionGroupChild,
+    childCache: PartitionChildCache
+  ): void {
+    if (childCache.lazy || !child.path) return;
+    const paths = this.deps.releasePartitionPart?.(child.path) ?? [];
+    if (paths.length === 0) return;
+    const released = childCache.released ?? new Map<string, THREE.Object3D | null>();
+    for (const path of paths) {
+      if (!released.has(path)) released.set(path, findPartLeaf(child, path));
+    }
+    childCache.released = released;
   }
 
   /** Frustum test of one part: its stored bounds united with its rendered footprint. */

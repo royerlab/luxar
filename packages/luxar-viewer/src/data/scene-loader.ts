@@ -76,6 +76,7 @@ export {
 } from './scene-loader/update-view/pass-scheduler';
 import {
   DataLoader,
+  type GeometryKind,
   ViewState,
   SceneNode,
   LoaderConfig,
@@ -128,6 +129,13 @@ export interface LODGroupRegistryOwner {
    * Optional so a narrow owner (a test double) may omit it ⇒ no slice gating.
    */
   readonly committedViewState?: ViewState;
+  /**
+   * Release the GPU geometry and decoded ladder of every sweep-registered
+   * loader under a partition part that just left the committed slice (#3332).
+   * Returns the released loader paths (empty ⇒ nothing). Optional so a narrow
+   * owner may omit it ⇒ hidden parts stay resident (the pre-#3332 behaviour).
+   */
+  releasePartitionPart?(partPath: string): readonly string[];
 }
 
 /** Per-call directives for {@link SceneLoader.updateView}. */
@@ -173,7 +181,7 @@ import type {
   MeshMetadata,
   MeshViewState,
 } from '../types/mesh';
-import { clearCommittedData } from '../types/committed-data';
+import { clearCommittedData, hasCommittedData } from '../types/committed-data';
 import {
   releaseDepthSortNode,
   type DepthSortCoordinator,
@@ -285,6 +293,15 @@ export interface RefinementPhaseShared {
   profiler: UpdateProfiler | null;
   residencyBudget: RefinementResidencyBudget;
   releaseLock(): void;
+}
+
+/** Every sweep-registered loader kind a released partition part may hold (#3332). */
+const PARTITION_RELEASE_KINDS: readonly GeometryKind[] = ['points', 'lines', 'gsplats', 'mesh'];
+
+/** Whether `object` draws a pooled geometry (see `texture-backed-adapter`'s `luxarPooled`). */
+function holdsPoolBuffer(object: THREE.Object3D | undefined): boolean {
+  const geometry = (object as THREE.Mesh | undefined)?.geometry as THREE.BufferGeometry | undefined;
+  return geometry?.userData.luxarPooled === true;
 }
 
 /** Join two stage-1 sweeps of one pass, type by type (points, lines, gsplats, mesh). */
@@ -903,6 +920,10 @@ export class SceneLoader {
     const drawnBefore = isEffectivelyVisible(node);
     if (this._materials) runWithMaterialManager(this._materials, commit);
     else commit();
+    // Only a write that reached the GPU re-stamps the node (every decline
+    // returns before it, a throw never gets here): that is what re-acquires a
+    // released partition leaf (#3332).
+    if (node && hasCommittedData(node)) this.lodGroupRegistry?.settleReleasedPartitionLeaf(path);
     const drawn = node === undefined || drawnBefore || isEffectivelyVisible(node);
     this._requestRender?.(drawn);
     return drawn;
@@ -1668,11 +1689,22 @@ export class SceneLoader {
     });
   }
 
-  /** Snapshot every sweep-registered progressive ladder, including completed ones. */
+  /**
+   * Snapshot every sweep-registered progressive ladder that can draw for the
+   * committed view, including completed ones.
+   */
   private progressiveLadderResidencies(): Map<string, LadderResidency> {
     const residencies = new Map<string, LadderResidency>();
+    const committed = this._committedViewState;
     const collect = (loaders: ReadonlyMap<string, unknown>) => {
       for (const [path, loader] of loaders) {
+        // A partition part outside the committed slice draws nothing and has
+        // released its ladder (`releasePartitionPart`, #3332): it is not part
+        // of the working set, and counting it would also dilute every visible
+        // node's fair share of the headroom.
+        if (committed && this.lodGroupRegistry?.isPathInPartitionSlice(path, committed) === false) {
+          continue;
+        }
         const ladderResidency = (loader as { ladderResidency?: () => LadderResidency })
           .ladderResidency;
         if (ladderResidency) residencies.set(path, ladderResidency.call(loader));
@@ -1974,6 +2006,80 @@ export class SceneLoader {
   }
 
   /**
+   * Release one geometry node's GPU-resident data: a lazy LOD level on
+   * demotion, or a sweep-registered leaf of a partition part that left the
+   * committed slice ({@link releasePartitionPart}). Points / lines / gsplats
+   * return their buffer to the pool's evictable free list; a mesh (never
+   * pooled) disposes its indexed geometry for an empty placeholder. Clearing
+   * the `committedData` stamp makes the next commit a full write.
+   */
+  private releaseNodeGeometry(kind: GeometryKind, path: string): void {
+    if (kind === 'gsplats') this._gpuBufferPool?.releaseGSplatsGeometry(path);
+    else if (kind === 'points') this._gpuBufferPool?.releasePointsGeometry(path);
+    else if (kind === 'lines') this._gpuBufferPool?.releaseLinesGeometry(path);
+    this.clearCommittedDataStamp(path);
+    const mesh = findObjectByName(this.rootGroup, path);
+    if (!mesh) return;
+    // Also drop the node's depth-sort state + worker-side centers/midpoints/
+    // centroids: it won't sort again until a fresh commit re-registers it
+    // (`depthSort.noteCommit`). Mirrors the coordinator's empty-commit release
+    // hygiene; mesh is depthSortable too (#1347).
+    releaseDepthSortNode(mesh as THREE.Mesh);
+    if (kind === 'mesh') this.releaseMeshGeometry(mesh as THREE.Mesh);
+  }
+
+  /** The mesh half of {@link releaseNodeGeometry}: swap in an empty placeholder. */
+  private releaseMeshGeometry(level: THREE.Mesh): void {
+    const rotatePickIndices = level.geometry.userData.meshPickRotateIndices === true;
+    level.geometry.dispose();
+    // The geometry owns the uploaded texture's disposal hook. Forget its
+    // cached identity so the next commit creates a live texture again.
+    // Materials retain the disposed texture while this level is hidden;
+    // recommit replaces it before the level can be shown again.
+    delete level.userData.meshTexture;
+    delete level.userData.meshTextureSource;
+    level.geometry = createEmptyMeshGeometry(level.userData.attrs as MeshMetadata);
+    if (rotatePickIndices) enableFirstVertexMeshPickFallback(level.geometry);
+    invalidateRenderObjectFor(level);
+  }
+
+  /**
+   * Release what a partition part holds once it left the committed slice
+   * (#3332; wired as `LODGroupRegistryDeps.releasePartitionPart`): every
+   * sweep-registered loader at or under `partPath` gives back its GPU geometry
+   * ({@link releaseNodeGeometry}) and its decoded ladder
+   * (`releaseResidentLadder`), so neither the buffer pool's byte budget nor the
+   * refinement working-set cap keeps charging a per-timepoint part the user
+   * stepped away from. Returning to the part's slice re-sweeps it (the view
+   * pass skips only out-of-slice loaders): the ladder restores from the
+   * SliceCache or re-streams, and the cleared stamp forces a full recommit.
+   * Called synchronously from `applyCommittedSlice` only (never from the
+   * per-frame frustum gate), inside the pass that committed — under the pass
+   * lock, so no update of these loaders is in flight. Idempotent per leaf: the
+   * gate calls it again on every later exit, while leaves of an earlier one may
+   * still be pending. Returns the paths of the released loaders whose object
+   * references a POOL buffer, so the gate can keep the part hidden until each
+   * of them has recommitted — only those can draw a buffer another node has
+   * adopted. A mesh (placeholder swap) or a never-committed leaf cannot, and a
+   * leaf that never recommits (a latched mesh budget refusal) must not blank
+   * its siblings forever.
+   */
+  releasePartitionPart(partPath: string): readonly string[] {
+    if (partPath === '') return [];
+    const under = new Set([partPath]);
+    const pooled: string[] = [];
+    for (const kind of PARTITION_RELEASE_KINDS) {
+      for (const [path, loader] of this.registry.loadersOf(kind)) {
+        if (!isUnderAny(path, under)) continue;
+        if (holdsPoolBuffer(findObjectByName(this.rootGroup, path))) pooled.push(path);
+        this.releaseNodeGeometry(kind, path);
+        (loader as { releaseResidentLadder?: () => void }).releaseResidentLadder?.();
+      }
+    }
+    return pooled;
+  }
+
+  /**
    * Aggregate visible counts from all lines and gsplats meshes and update monitor.
    * This should be called after view updates to report accurate visible counts.
    */
@@ -2184,60 +2290,12 @@ export class SceneLoader {
         if (this._sceneGraph) this._leafMaterializedListener?.(this._sceneGraph, path, object);
       },
       isDatasetLive: () => this._datasetAbortController === ctrl && ctrl?.signal.aborted !== true,
-      releaseLazyGSplats: (path) => {
-        // Return the level's GPU buffer to the evictable pool. Its loader was
-        // never registered (lazy levels stay out of the sweep), so there is
-        // nothing to unregister.
-        this._gpuBufferPool?.releaseGSplatsGeometry(path);
-        this.clearCommittedDataStamp(path);
-        // Also drop the level's depth-sort state + worker-side centers: a
-        // demoted level won't sort again until re-promotion re-registers it
-        // (fresh commit → `depthSort.noteCommit`). Mirrors the coordinator's
-        // empty-commit release hygiene.
-        const mesh = findObjectByName(this.rootGroup, path);
-        if (mesh) releaseDepthSortNode(mesh as THREE.Mesh);
-      },
-      releaseLazyPoints: (path) => {
-        // Points peer of releaseLazyGSplats: return the level's GPU buffer to
-        // the evictable pool. Re-selection reloads via the lod_group's
-        // ensureLoaded thunk (cheap re-projection from cached chunks).
-        this._gpuBufferPool?.releasePointsGeometry(path);
-        this.clearCommittedDataStamp(path);
-        // Drop the level's depth-sort state + worker-side centers — the
-        // same demotion hygiene as the gsplats branch above.
-        const mesh = findObjectByName(this.rootGroup, path);
-        if (mesh) releaseDepthSortNode(mesh as THREE.Mesh);
-      },
-      releaseLazyLines: (path) => {
-        // Lines peer of releaseLazyGSplats/releaseLazyPoints.
-        this._gpuBufferPool?.releaseLinesGeometry(path);
-        this.clearCommittedDataStamp(path);
-        // Drop the level's depth-sort state + worker-side midpoints —
-        // the same demotion hygiene as the gsplats/points branches above.
-        const mesh = findObjectByName(this.rootGroup, path);
-        if (mesh) releaseDepthSortNode(mesh as THREE.Mesh);
-      },
-      releaseLazyMesh: (path) => {
-        this.clearCommittedDataStamp(path);
-        const mesh = findObjectByName(this.rootGroup, path);
-        if (mesh) {
-          const level = mesh as THREE.Mesh;
-          // Mesh is depthSortable (#1347); demotion must drop coordinator
-          // state and worker-side centroids along with its geometry.
-          releaseDepthSortNode(level);
-          const rotatePickIndices = level.geometry.userData.meshPickRotateIndices === true;
-          level.geometry.dispose();
-          // The geometry owns the uploaded texture's disposal hook. Forget its
-          // cached identity so the next commit creates a live texture again.
-          // Materials retain the disposed texture while this level is hidden;
-          // recommit replaces it before the level can be shown again.
-          delete level.userData.meshTexture;
-          delete level.userData.meshTextureSource;
-          level.geometry = createEmptyMeshGeometry(level.userData.attrs as MeshMetadata);
-          if (rotatePickIndices) enableFirstVertexMeshPickFallback(level.geometry);
-          invalidateRenderObjectFor(level);
-        }
-      },
+      // Lazy levels were never registered (they stay out of the sweep), so
+      // there is nothing to unregister: only the geometry goes.
+      releaseLazyGSplats: (path) => this.releaseNodeGeometry('gsplats', path),
+      releaseLazyPoints: (path) => this.releaseNodeGeometry('points', path),
+      releaseLazyLines: (path) => this.releaseNodeGeometry('lines', path),
+      releaseLazyMesh: (path) => this.releaseNodeGeometry('mesh', path),
       applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       connectLoaderToMonitor: (path, loader) => this.connectLoaderToMonitor(path, loader),

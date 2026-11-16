@@ -903,6 +903,22 @@ export interface LODGroupRegistryDeps {
    */
   getCommittedViewState?: () => PartitionSliceView | undefined;
   /**
+   * Release what a partition part holds once it LEFT the committed slice
+   * (#3332): its leaves' GPU geometry and decoded ladders, so a per-timepoint
+   * partition stepped through does not keep every visited part resident. Fired
+   * once per slice exit from ``PartitionGate`` (never on a frustum cull — a
+   * camera pan must not thrash reloads), for loaded parts only — again on
+   * every later exit, so it must be idempotent per leaf. Returns the paths of
+   * the released loaders whose object still references a POOL buffer (empty ⇒
+   * none); the part stays hidden until EACH of them has landed a fresh commit,
+   * so it can never draw a buffer another node has adopted. A leaf holding no
+   * pool buffer (a mesh, whose release swaps in an empty placeholder, or one
+   * that never committed) is released but not reported: it cannot draw stale
+   * data, so a leaf that never recommits does not blank its siblings. Omitted ⇒
+   * hidden parts stay resident (the pre-#3332 behaviour).
+   */
+  releasePartitionPart?: (path: string) => readonly string[];
+  /**
    * Whether the owning loader has a view PASS in flight or queued. Rising edges
    * are held (and coalesced) while this is true so a resync never lands on top
    * of a pass. A refinement hold deliberately does NOT count: the loader parks
@@ -1232,6 +1248,11 @@ export class LODGroupRegistry {
   /** See {@link PartitionGate.invalidatePartitionFootprint}. */
   invalidatePartitionFootprint(nodePath: string): void {
     this.partitions.invalidatePartitionFootprint(nodePath);
+  }
+
+  /** See {@link PartitionGate.settleReleasedPartitionLeaf}. */
+  settleReleasedPartitionLeaf(nodePath: string): void {
+    this.partitions.settleReleasedPartitionLeaf(nodePath);
   }
 
   /** See {@link PartitionGate.applyCommittedSlice}. */

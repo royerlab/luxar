@@ -35,7 +35,10 @@ import type { LoadedMeshData, MeshDataLoader, MeshMetadata, MeshViewState } from
 /** Reach-in surface for `SceneLoader`'s private commit methods. */
 export interface SceneLoaderCommitInternals {
   rootGroup: THREE.Group | null;
-  lodGroupRegistry: { invalidatePartitionFootprint(path: string): void } | null;
+  lodGroupRegistry: {
+    invalidatePartitionFootprint(path: string): void;
+    settleReleasedPartitionLeaf?(path: string): void;
+  } | null;
   _gpuBufferPool: unknown;
   updatePointsGeometry(path: string, data: LoadedPointsData): void;
   commitLinesGeometry(staged: StagedLinesCommit): void;

@@ -278,6 +278,8 @@ export class MeshProgressiveLoader implements MeshDataLoader {
   private readonly path: string;
   private _initialLoadDone = false;
   private _disposed = false;
+  /** Set by {@link releaseResidentLadder}: idle until the next `updateView`. */
+  private _released = false;
   /**
    * Latched once {@link assertWithinByteBudget} has fully accounted the ladder
    * and admitted it. Set ONLY on that success path — never on a rejection — so
@@ -395,6 +397,8 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     // refinement loop holding a stale reference stops instead of indexing into
     // the now-empty `lodLoaders`. Mirrors the sibling loaders.
     if (this._disposed) return false;
+    // A released ladder is idle until its next view entry: nothing is pending.
+    if (this._released) return false;
     // A latched aggregate-over-budget refusal means this ladder will never load
     // another level (see `_budgetRefusal`'s docstring) — report no further work
     // so the refinement loop leaves the node instead of re-failing it forever.
@@ -680,6 +684,8 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     // time-budgeted streaming (null); a numeric pin is honoured.
     this._ladderDepth = resolveLadderDepth(viewState.ladderDepth, this.nLods, null, 1);
     this._retryFoldedPass = false;
+    // Any pass is the released ladder's view re-entry: its work is pending again.
+    this._released = false;
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
 
@@ -861,6 +867,30 @@ export class MeshProgressiveLoader implements MeshDataLoader {
   /** See `MeshWholeNodeLoader.recordVisibleElements`. */
   recordVisibleElements(triangles: number): void {
     this._visibleTriangles = triangles;
+  }
+
+  /**
+   * Drop the decoded ladder of a node that can no longer draw (a partition
+   * part that left the committed slice, #3332), keeping the loader usable: the
+   * next `updateView` re-fetches every level from level 0 — only the levels'
+   * opened array handles stay warm; their decoded payloads were already
+   * released at concat — and its concat is a new reference, so the commit
+   * full-writes. Call it after the node's geometry (and its uploaded texture)
+   * is released: a single-level ladder's cumulative payload IS level 0's, whose
+   * `ImageBitmap` the concat kept open for that texture, so it is closed here.
+   */
+  releaseResidentLadder(): void {
+    if (this._disposed) return;
+    const single = this._loadedLODCount === 1 ? this._concatCache?.result : undefined;
+    if (single?.texture?.kind === 'bitmap') single.texture.bitmap.close();
+    this.loadedLODs = [];
+    this._loadedLODCount = 0;
+    this._levelsAtPassStart = 0;
+    this._payloadsAtPassStart = 0;
+    this._retryFoldedPass = false;
+    this._concatCache = null;
+    this._visibleTriangles = 0;
+    this._released = true;
   }
 
   dispose(): void {

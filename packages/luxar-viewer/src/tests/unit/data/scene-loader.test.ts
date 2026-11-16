@@ -591,6 +591,7 @@ describe('SceneLoader', () => {
         isPathInPartitionSlice: () => true,
         activatePartitionParts: vi.fn().mockResolvedValue([]),
         invalidatePartitionFootprint: vi.fn(),
+        settleReleasedPartitionLeaf: vi.fn(),
         applyCommittedSlice,
         clear: vi.fn(),
       };
@@ -4484,6 +4485,7 @@ describe('SceneLoader', () => {
       const invalidatePartitionFootprint = vi.fn();
       (sceneLoader as any).lodGroupRegistry = {
         invalidatePartitionFootprint,
+        settleReleasedPartitionLeaf: vi.fn(),
         clear: vi.fn(),
       };
       const newData = {
