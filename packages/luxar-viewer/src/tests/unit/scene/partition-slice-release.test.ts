@@ -46,7 +46,7 @@ interface Harness {
   pool: GPUBufferPool;
   camera: THREE.Camera;
   meshes: THREE.Mesh[];
-  release: ReturnType<typeof vi.fn<(path: string) => boolean>>;
+  release: ReturnType<typeof vi.fn<(path: string) => readonly string[]>>;
   /** One view pass for `t`: commit the part at `t`, then commit the view. */
   stepTo(t: number, opts?: { commit?: boolean }): void;
 }
@@ -57,9 +57,9 @@ function makeHarness(options: { wireRelease: boolean; budgetBytes?: number }): H
   camera.matrixWorldInverse.identity();
   camera.projectionMatrix.identity();
   const pool = new GPUBufferPool(64, 300, 5, () => options.budgetBytes ?? 0);
-  const release = vi.fn((path: string) => {
+  const release = vi.fn((path: string): readonly string[] => {
     pool.releaseGSplatsGeometry(path);
-    return true;
+    return [path];
   });
   const deps: LODGroupRegistryDeps = {
     getCamera: () => camera,
@@ -192,6 +192,9 @@ describe('partition slice exit releases the part (#3332)', () => {
     h.camera.position.set(100, 0, 0);
     h.camera.updateMatrixWorld();
     h.reg.evaluatePerFrame();
+    // Precondition: part 0 really is off-screen (frustum-culled) before the step.
+    expect(h.meshes[0].visible).toBe(false);
+    expect(h.meshes[0].userData.partitionInFrustum).toBe(false);
     h.stepTo(1, { commit: false });
     expect(h.release).toHaveBeenCalledWith(partPath(0));
   });
@@ -201,7 +204,7 @@ describe('partition slice exit releases the part (#3332)', () => {
     const camera = new THREE.Camera();
     camera.matrixWorldInverse.identity();
     camera.projectionMatrix.identity();
-    const release = vi.fn(() => true);
+    const release = vi.fn((path: string): readonly string[] => [path]);
     const reg = new LODGroupRegistry({
       getCamera: () => camera,
       getViewportSize: () => ({ width: 800, height: 600 }),
@@ -247,7 +250,7 @@ describe('partition slice exit releases the part (#3332)', () => {
       getViewportSize: () => ({ width: 800, height: 600 }),
       getDisplayDims: () => [0, 1, 2],
       getCommittedViewState: () => viewAt(committed),
-      releasePartitionPart: () => false,
+      releasePartitionPart: () => [],
     });
     const groupObject = new THREE.Group();
     const part = new THREE.Group();
@@ -270,5 +273,120 @@ describe('partition slice exit releases the part (#3332)', () => {
     committed = 0;
     reg.applyCommittedSlice();
     expect(part.visible).toBe(true);
+  });
+  describe('a part with several leaves', () => {
+    function multiLeafHarness() {
+      let committed = 0;
+      const camera = new THREE.Camera();
+      camera.matrixWorldInverse.identity();
+      camera.projectionMatrix.identity();
+      const leaves = ['/partition/part_0/pts', '/partition/part_0/lines'];
+      const release = vi.fn((): readonly string[] => leaves);
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        getCommittedViewState: () => viewAt(committed),
+        releasePartitionPart: release,
+      });
+      const groupObject = new THREE.Group();
+      const part = new THREE.Group();
+      part.name = '/partition/part_0';
+      const [pts, lines] = leaves.map((name) => {
+        const leaf = new THREE.Mesh(new THREE.BufferGeometry());
+        leaf.name = name;
+        part.add(leaf);
+        return leaf;
+      });
+      groupObject.add(part);
+      reg.registerPartition({
+        path: '/partition',
+        groupObject,
+        children: [
+          {
+            path: '/partition/part_0',
+            objects: [part],
+            positionBounds: { min: [-0.5, -0.5, -0.5, 0], max: [0.5, 0.5, 0.5, 0] },
+          },
+        ],
+      });
+      const setView = (t: number) => {
+        committed = t;
+        reg.applyCommittedSlice();
+        reg.evaluatePerFrame();
+      };
+      setView(0);
+      setView(1);
+      expect(release).toHaveBeenCalledTimes(1);
+      return { reg, part, pts, lines, leaves, setView };
+    }
+
+    it('stays hidden until EVERY released leaf has recommitted', () => {
+      const h = multiLeafHarness();
+      // Back in slice; only `pts` commits (the `lines` load failed): `lines`
+      // may still point at a pool buffer another node adopted.
+      h.reg.invalidatePartitionFootprint(h.leaves[0]);
+      h.setView(0);
+      expect(h.part.visible).toBe(false);
+      h.reg.invalidatePartitionFootprint(h.leaves[1]);
+      h.reg.applyCommittedSlice();
+      expect(h.part.visible).toBe(true);
+    });
+
+    it('a layer-hidden released leaf does not blank its siblings, until re-shown', () => {
+      const h = multiLeafHarness();
+      // The sweep skips a layer-hidden leaf, so only `pts` recommits.
+      h.lines.userData.layerVisible = false;
+      h.lines.visible = false;
+      h.reg.invalidatePartitionFootprint(h.leaves[0]);
+      h.setView(0);
+      expect(h.part.visible).toBe(true);
+      // Re-showing the layer: its stale geometry must not draw before its resync commits.
+      h.lines.userData.layerVisible = true;
+      h.lines.visible = true;
+      h.reg.evaluatePerFrame();
+      expect(h.part.visible).toBe(false);
+      h.reg.invalidatePartitionFootprint(h.leaves[1]);
+      h.reg.evaluatePerFrame();
+      expect(h.part.visible).toBe(true);
+    });
+  });
+
+  it('the per-frame frustum gate never releases, even on a slice exit it sees first', () => {
+    let committed = 0;
+    const camera = new THREE.Camera();
+    camera.matrixWorldInverse.identity();
+    camera.projectionMatrix.identity();
+    const release = vi.fn((path: string): readonly string[] => [path]);
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getCommittedViewState: () => viewAt(committed),
+      releasePartitionPart: release,
+    });
+    const groupObject = new THREE.Group();
+    const part = new THREE.Group();
+    groupObject.add(part);
+    // Registered mid-pass, outside the committed slice: the frame gate hides
+    // it, but a rung load for its loader may be in flight — no release here.
+    committed = 1;
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [-0.5, -0.5, -0.5, 0], max: [0.5, 0.5, 0.5, 0] },
+        },
+      ],
+    });
+    reg.evaluatePerFrame();
+    expect(part.visible).toBe(false);
+    expect(release).not.toHaveBeenCalled();
+    // The pass's own committed-slice stamp, under its lock, releases it.
+    reg.applyCommittedSlice();
+    expect(release).toHaveBeenCalledWith('/partition/part_0');
   });
 });

@@ -907,12 +907,13 @@ export interface LODGroupRegistryDeps {
    * (#3332): its leaves' GPU geometry and decoded ladders, so a per-timepoint
    * partition stepped through does not keep every visited part resident. Fired
    * once per slice exit from ``PartitionGate`` (never on a frustum cull — a
-   * camera pan must not thrash reloads), for loaded parts only. Returns whether
-   * anything was released; a released part stays hidden until a commit lands
-   * under it, so it can never draw a pool buffer another node has adopted.
-   * Omitted ⇒ hidden parts stay resident (the pre-#3332 behaviour).
+   * camera pan must not thrash reloads), for loaded parts only. Returns the
+   * paths of the loaders it released (empty ⇒ nothing); the part stays hidden
+   * until EACH of them has landed a fresh commit, so it can never draw a pool
+   * buffer another node has adopted. Omitted ⇒ hidden parts stay resident
+   * (the pre-#3332 behaviour).
    */
-  releasePartitionPart?: (path: string) => boolean;
+  releasePartitionPart?: (path: string) => readonly string[];
   /**
    * Whether the owning loader has a view PASS in flight or queued. Rising edges
    * are held (and coalesced) while this is true so a resync never lands on top

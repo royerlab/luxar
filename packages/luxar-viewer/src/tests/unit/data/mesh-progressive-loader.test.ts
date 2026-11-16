@@ -549,7 +549,8 @@ describe('MeshProgressiveLoader', () => {
     loader.releaseResidentLadder();
     expect(loader.loadedLODCount).toBe(0);
     expect(loader.ladderResidency().residentBytes).toBe(0);
-    expect(loader.hasMoreLODs).toBe(true);
+    // Idle until its next pass: a released ladder reports no pending levels.
+    expect(loader.hasMoreLODs).toBe(false);
 
     // Re-entry: every level is asked again, the surface is whole, and the
     // result is a NEW reference so the commit cannot identity-skip it.
@@ -559,6 +560,19 @@ describe('MeshProgressiveLoader', () => {
     expect(again.faceCount).toBe(first.faceCount);
     expect(Array.from(again.faces)).toEqual(Array.from(first.faces));
     expect(loader.loadedLODCount).toBe(2);
+    expect(loader.hasMoreLODs).toBe(false);
+  });
+
+  it('#3332: a pass after release clears the released state (its levels are pending again)', async () => {
+    const { loader } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2])]);
+    await loader.updateView(VIEW);
+    loader.releaseResidentLadder();
+    expect(loader.hasMoreLODs).toBe(false);
+    // A 1-byte residency allowance stops the re-entry pass after level 0:
+    // the remaining level must be pending again for refinement to finish it.
+    await loader.updateView(VIEW, undefined, undefined, 1);
+    expect(loader.loadedLODCount).toBe(1);
+    expect(loader.hasMoreLODs).toBe(true);
   });
 
   it('disposes every sub-loader and reports no further work', async () => {

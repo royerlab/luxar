@@ -150,7 +150,11 @@ describe('SceneLoader.releasePartitionPart (#3332)', () => {
     const lines = attach(sceneLoader, 'lines', '/p/part_3/lines');
     const sibling = attach(sceneLoader, 'gsplats', '/p/part_30');
 
-    expect(sceneLoader.releasePartitionPart('/p/part_3')).toBe(true);
+    expect(sceneLoader.releasePartitionPart('/p/part_3')).toEqual([
+      '/p/part_3/nested/leaf',
+      '/p/part_3/lines',
+      '/p/part_3',
+    ]);
 
     expect(releaseGSplats).toHaveBeenCalledWith('/p/part_3');
     expect(releaseGSplats).not.toHaveBeenCalledWith('/p/part_30');
@@ -165,11 +169,27 @@ describe('SceneLoader.releasePartitionPart (#3332)', () => {
     expect(hasCommittedData(sibling.object)).toBe(true);
   });
 
-  it('reports false when nothing is under the part, and never matches a pathless part', async () => {
+  it('releases a mesh leaf: its indexed geometry is swapped for an empty placeholder', async () => {
+    await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+    const mesh = attach(sceneLoader, 'mesh', '/p/part_3/surface');
+    mesh.object.userData.attrs = { has_normals: false, has_scalars: false, has_uvs: false };
+    const committedGeometry = mesh.object.geometry;
+    const dispose = vi.spyOn(committedGeometry, 'dispose');
+
+    expect(sceneLoader.releasePartitionPart('/p/part_3')).toEqual(['/p/part_3/surface']);
+
+    expect(mesh.loader.releaseResidentLadder).toHaveBeenCalledTimes(1);
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(mesh.object.geometry).not.toBe(committedGeometry);
+    expect(mesh.object.geometry.index?.count ?? 0).toBe(0);
+    expect(hasCommittedData(mesh.object)).toBe(false);
+  });
+
+  it('reports nothing when nothing is under the part, and never matches a pathless part', async () => {
     await sceneLoader.loadScene('http://localhost:8000/test.zarr');
     const leaf = attach(sceneLoader, 'gsplats', '/p/part_0');
-    expect(sceneLoader.releasePartitionPart('/p/part_9')).toBe(false);
-    expect(sceneLoader.releasePartitionPart('')).toBe(false);
+    expect(sceneLoader.releasePartitionPart('/p/part_9')).toEqual([]);
+    expect(sceneLoader.releasePartitionPart('')).toEqual([]);
     expect(leaf.loader.releaseResidentLadder).not.toHaveBeenCalled();
   });
 

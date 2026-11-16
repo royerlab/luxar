@@ -81,6 +81,29 @@ describe('buildLodRegistryDeps', () => {
     expect(deps.getLodBias?.()).toBeUndefined();
   });
 
+  it('wires releasePartitionPart iff the owner has one, forwarding path and result (#3332)', () => {
+    const wiring = {
+      getCamera: () => new THREE.PerspectiveCamera(),
+      getViewportSize: () => ({ width: 1, height: 1 }),
+      getDisplayDims: () => [0, 1, 2],
+      registerMaterial: vi.fn(),
+      requestRender: vi.fn(),
+    };
+    // Without it the registry must see the dep ABSENT (hidden parts stay resident).
+    expect('releasePartitionPart' in buildLodRegistryDeps(makeOwner(), wiring)).toBe(false);
+
+    const owner = makeOwner();
+    const release = vi.fn((path: string): readonly string[] =>
+      path === '/p/part_3' ? ['/p/part_3/pts', '/p/part_3/lines'] : []
+    );
+    (owner as { releasePartitionPart?: typeof release }).releasePartitionPart = release;
+    const deps = buildLodRegistryDeps(owner, wiring);
+    expect(deps.releasePartitionPart?.('/p/part_3')).toEqual(['/p/part_3/pts', '/p/part_3/lines']);
+    expect(release).toHaveBeenLastCalledWith('/p/part_3');
+    expect(deps.releasePartitionPart?.('/p/part_9')).toEqual([]);
+    expect(release).toHaveBeenLastCalledWith('/p/part_9');
+  });
+
   it('omits the optional deps an owner does not supply, and forwards the ones it does', () => {
     const bare = buildLodRegistryDeps(makeOwner(), {
       getCamera: () => new THREE.PerspectiveCamera(),

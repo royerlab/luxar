@@ -245,6 +245,9 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
   private initialLoadDone = false;
   private lastResident = true;
   private disposed = false;
+  // Set by releaseResidentLadder(): the loader is idle until its next view
+  // entry, so no rung is pending however few are loaded.
+  private released = false;
   // Memoized concatenation, keyed on (resetGeneration, logical rung count).
   private resetGeneration = 0;
   private concatCache: { generation: number; lodCount: number; result: TData } | null = null;
@@ -302,6 +305,8 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
     // A disposed loader reports no further work, so a refinement loop holding
     // a stale reference stops instead of indexing the now-empty rungs.
     if (this.disposed) return false;
+    // A released loader is idle until its next view entry: nothing is pending.
+    if (this.released) return false;
     if (this.retryFoldedPass) return true;
     // A playback budget or pinned depth makes the prefix the target: no
     // background refinement between ticks; the commit stamps it complete.
@@ -497,6 +502,7 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
     this.lastViewState = null;
     this.concatCache = null;
     this.resetGeneration++;
+    this.released = true;
   }
 
   dispose(): void {
@@ -595,6 +601,7 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
     this.payloadsAtPassStart = 0;
     this.restoredFullLadderAtPassStart = false;
     this.resetGeneration++;
+    this.released = false;
     this.lastViewState = {
       displayDims: [...viewState.displayDims],
       slicePosition: [...viewState.slicePosition],

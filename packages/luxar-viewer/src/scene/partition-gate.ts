@@ -279,7 +279,8 @@ export interface PartitionChildCache {
   /** Last frustum test (`true` until the first evaluation). */
   inFrustum: boolean;
   /**
-   * Last committed-slice test (`true` until the first stamp). A `true` →
+   * Last committed-slice test as {@link PartitionGate.applyCommittedSlice} saw
+   * it (`true` until then) — only that pass-locked path updates it. A `true` →
    * `false` transition is the SLICE EXIT that releases the part (#3332). The
    * `true` start means a LOADED part outside the first committed slice is
    * released at once: the loader defers such parts, so one loaded anyway (no
@@ -287,14 +288,15 @@ export interface PartitionChildCache {
    */
   inSlice: boolean;
   /**
-   * The part's leaves gave back their GPU geometry on a slice exit
-   * (``LODGroupRegistryDeps.releasePartitionPart``) and no commit has landed
-   * under it since: it stays hidden even in slice and frustum, because its
-   * objects may still reference a pool buffer another node has adopted.
-   * Cleared by the next geometry commit under it ({@link
-   * PartitionGate.invalidatePartitionFootprint}).
+   * The leaves that gave back their GPU geometry on a slice exit
+   * (``LODGroupRegistryDeps.releasePartitionPart``) and have not landed a
+   * commit since, by loader path → its scene object (`null`: not found under
+   * the part). While any of them could draw, the part stays hidden even in
+   * slice and frustum: that leaf may still reference a pool buffer another
+   * node has adopted. Each leaf's own commit removes it ({@link
+   * PartitionGate.invalidatePartitionFootprint}); `null` once none is left.
    */
-  released: boolean;
+  released: Map<string, THREE.Object3D | null> | null;
   /** Deferred part state (B4): see {@link PartitionGroupChild.activate}. */
   lazy: LazyPartState | null;
 }
@@ -337,6 +339,45 @@ function updatePartitionObjectVisibility(
     (changed ? PARTITION_VISIBILITY_CHANGED : 0) |
     (inFrustum && !wasInFrustum ? PARTITION_BECAME_VISIBLE : 0)
   );
+}
+
+/** A released leaf's scene object, searched under the part's own objects. */
+function findPartLeaf(child: PartitionGroupChild, path: string): THREE.Object3D | null {
+  for (const object of child.objects) {
+    const leaf = object.name === path ? object : object.getObjectByName(path);
+    if (leaf) return leaf;
+  }
+  return null;
+}
+
+/** Whether a layer toggle hides `object` (on it or any ancestor). */
+function isLayerHidden(object: THREE.Object3D): boolean {
+  for (let node: THREE.Object3D | null = object; node; node = node.parent) {
+    if (node.userData.layerVisible === false) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a released, not-yet-recommitted leaf of the part could draw: one
+ * hidden by its layer cannot, so it does not blank its siblings — re-showing
+ * the layer makes it count again at the next per-frame gate (which runs
+ * before that frame draws), until its own resync commits. An unresolved leaf is not under the part's objects at all.
+ */
+function releasedLeafDrawable(childCache: PartitionChildCache): boolean {
+  for (const leaf of (childCache.released as Map<string, THREE.Object3D | null>).values()) {
+    if (leaf && !isLayerHidden(leaf)) return true;
+  }
+  return false;
+}
+
+/** A commit at `nodePath` re-acquired the released leaf it belongs to. */
+function settleReleasedLeaf(childCache: PartitionChildCache, nodePath: string): void {
+  const released = childCache.released as Map<string, THREE.Object3D | null>;
+  for (const path of released.keys()) {
+    if (nodePath === path || nodePath.startsWith(`${path}/`)) released.delete(path);
+  }
+  if (released.size === 0) childCache.released = null;
 }
 
 /**
@@ -504,7 +545,7 @@ export class PartitionGate implements TickDemand {
         // `activatePartitionParts` first must not activate it on a guess.
         inFrustum: !child.activate,
         inSlice: true,
-        released: false,
+        released: null,
         lazy: child.activate
           ? { requested: false, requestedAtMs: 0, running: null, claims: [], failed: false }
           : null,
@@ -545,7 +586,7 @@ export class PartitionGate implements TickDemand {
       const parts = this.partitionPartsByPath.get(prefix);
       if (parts) hits.push(...parts);
     }
-    for (const entryPath of touched) this.dirtyPartitionParts(entryPath, hits);
+    for (const entryPath of touched) this.dirtyPartitionParts(entryPath, hits, nodePath);
   }
 
   /**
@@ -553,7 +594,11 @@ export class PartitionGate implements TickDemand {
    * does (a commit under the partition matching no registered part), every part
    * of it, conservatively, rather than keep an under-covering stale box.
    */
-  private dirtyPartitionParts(entryPath: string, hits: readonly PartitionPartRef[]): void {
+  private dirtyPartitionParts(
+    entryPath: string,
+    hits: readonly PartitionPartRef[],
+    nodePath: string
+  ): void {
     const cache = this.partitionCaches.get(entryPath);
     if (!cache) return;
     let matched = false;
@@ -561,8 +606,9 @@ export class PartitionGate implements TickDemand {
       if (hit.entryPath !== entryPath) continue;
       const childCache = cache.children[hit.index];
       childCache.footprintDirty = true;
-      // A commit under a released part re-acquired its geometry (#3332).
-      childCache.released = false;
+      // A commit re-acquired THIS leaf's geometry (#3332); its siblings stay
+      // pending until their own commits land.
+      if (childCache.released) settleReleasedLeaf(childCache, nodePath);
       matched = true;
     }
     if (matched) return;
@@ -614,7 +660,7 @@ export class PartitionGate implements TickDemand {
       for (let index = 0; index < entry.children.length; index++) {
         const child = entry.children[index];
         const inSlice = partitionChildInSlice(child, committed);
-        const flags = this.stampPart(child, cache.children[index], inSlice);
+        const flags = this.stampPart(child, cache.children[index], inSlice, true);
         if ((flags & PARTITION_VISIBILITY_CHANGED) !== 0) this.host.markDrawn();
       }
     }
@@ -883,14 +929,16 @@ export class PartitionGate implements TickDemand {
       const childCache = cache.children[index];
       childCache.inFrustum = this.partitionPartInFrustum(child, childCache, displayDims, frustum);
       const inSlice = partitionChildInSlice(child, committed);
-      const flags = this.stampPart(child, childCache, inSlice);
+      // Frustum path: never releases (it can run mid-pass, e.g. for a part
+      // registered while the pass is still sweeping its loaders).
+      const flags = this.stampPart(child, childCache, inSlice, false);
       result |= flags;
       if (childCache.lazy) {
         const wanted = childCache.inFrustum && inSlice;
         this.requestLazyActivation(risingParts, entry.path, child, childCache.lazy, wanted);
       } else if (
         (flags & PARTITION_BECAME_VISIBLE) !== 0 &&
-        (childCache.released || !this.partitionPartSettled(child))
+        (childCache.released !== null || !this.partitionPartSettled(child))
       ) {
         noteRisingPart(risingParts, child.path, entry.path);
       }
@@ -900,21 +948,28 @@ export class PartitionGate implements TickDemand {
 
   /**
    * Stamp one part's visibility for the committed-slice test `inSlice` (the
-   * frustum half is ``childCache.inFrustum``), releasing it on a slice EXIT.
-   * A released part draws nothing until a commit re-acquires its geometry.
-   * Returns the ``PARTITION_*`` flags.
+   * frustum half is ``childCache.inFrustum``). Only `mayRelease` callers —
+   * {@link applyCommittedSlice}, under the owner's pass lock — track the slice
+   * state and release the part on a slice EXIT; the per-frame frustum path
+   * never does. A part with a released leaf that could draw stays hidden until
+   * that leaf's commit re-acquires its geometry. Returns the ``PARTITION_*``
+   * flags.
    */
   private stampPart(
     child: PartitionGroupChild,
     childCache: PartitionChildCache,
-    inSlice: boolean
+    inSlice: boolean,
+    mayRelease: boolean
   ): number {
-    if (childCache.inSlice && !inSlice) this.releaseSliceExitedPart(child, childCache);
-    childCache.inSlice = inSlice;
+    if (mayRelease) {
+      if (childCache.inSlice && !inSlice) this.releaseSliceExitedPart(child, childCache);
+      childCache.inSlice = inSlice;
+    }
+    const blocked = inSlice && childCache.released !== null && releasedLeafDrawable(childCache);
     return updatePartitionObjectVisibility(
       child.objects,
       childCache.inFrustum,
-      inSlice && !childCache.released
+      inSlice && !blocked
     );
   }
 
@@ -930,7 +985,9 @@ export class PartitionGate implements TickDemand {
     childCache: PartitionChildCache
   ): void {
     if (childCache.lazy || childCache.released || !child.path) return;
-    if (this.deps.releasePartitionPart?.(child.path) === true) childCache.released = true;
+    const paths = this.deps.releasePartitionPart?.(child.path) ?? [];
+    if (paths.length === 0) return;
+    childCache.released = new Map(paths.map((path) => [path, findPartLeaf(child, path)]));
   }
 
   /** Frustum test of one part: its stored bounds united with its rendered footprint. */

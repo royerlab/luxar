@@ -86,7 +86,7 @@ export function buildLodRegistryDeps(
     // A partition part that left that slice gives back its GPU geometry and
     // decoded ladder (#3332).
     ...(owner.releasePartitionPart
-      ? { releasePartitionPart: (path: string) => owner.releasePartitionPart?.(path) === true }
+      ? { releasePartitionPart: (path: string) => owner.releasePartitionPart?.(path) ?? [] }
       : {}),
     // The single adaptive GPU-geometry budget shared with the buffer pool (one
     // VRAM authority), read live so context-loss backoff applies.

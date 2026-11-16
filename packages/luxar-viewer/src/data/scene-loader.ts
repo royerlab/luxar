@@ -132,10 +132,10 @@ export interface LODGroupRegistryOwner {
   /**
    * Release the GPU geometry and decoded ladder of every sweep-registered
    * loader under a partition part that just left the committed slice (#3332).
-   * Returns whether anything was released. Optional so a narrow owner may omit
-   * it ⇒ hidden parts stay resident (the pre-#3332 behaviour).
+   * Returns the released loader paths (empty ⇒ nothing). Optional so a narrow
+   * owner may omit it ⇒ hidden parts stay resident (the pre-#3332 behaviour).
    */
-  releasePartitionPart?(partPath: string): boolean;
+  releasePartitionPart?(partPath: string): readonly string[];
 }
 
 /** Per-call directives for {@link SceneLoader.updateView}. */
@@ -2043,20 +2043,22 @@ export class SceneLoader {
    * stepped away from. Returning to the part's slice re-sweeps it (the view
    * pass skips only out-of-slice loaders): the ladder restores from the
    * SliceCache or re-streams, and the cleared stamp forces a full recommit.
-   * Called synchronously from `applyCommittedSlice`, inside the pass that
-   * committed — under the pass lock, so no update of these loaders is in
-   * flight. Returns whether any loader was released.
+   * Called synchronously from `applyCommittedSlice` only (never from the
+   * per-frame frustum gate), inside the pass that committed — under the pass
+   * lock, so no update of these loaders is in flight. Returns the paths of the
+   * released loaders, so the gate can keep the part hidden until each of them
+   * has recommitted.
    */
-  releasePartitionPart(partPath: string): boolean {
-    if (partPath === '') return false;
+  releasePartitionPart(partPath: string): readonly string[] {
+    if (partPath === '') return [];
     const under = new Set([partPath]);
-    let released = false;
+    const released: string[] = [];
     for (const kind of PARTITION_RELEASE_KINDS) {
       for (const [path, loader] of this.registry.loadersOf(kind)) {
         if (!isUnderAny(path, under)) continue;
         this.releaseNodeGeometry(kind, path);
         (loader as { releaseResidentLadder?: () => void }).releaseResidentLadder?.();
-        released = true;
+        released.push(path);
       }
     }
     return released;
