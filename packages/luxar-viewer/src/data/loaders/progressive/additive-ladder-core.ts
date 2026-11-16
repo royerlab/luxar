@@ -245,6 +245,9 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
   private initialLoadDone = false;
   private lastResident = true;
   private disposed = false;
+  // Set by releaseResidentLadder(): the loader is idle until its next view
+  // entry, so no rung is pending however few are loaded.
+  private released = false;
   // Memoized concatenation, keyed on (resetGeneration, logical rung count).
   private resetGeneration = 0;
   private concatCache: { generation: number; lodCount: number; result: TData } | null = null;
@@ -302,6 +305,8 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
     // A disposed loader reports no further work, so a refinement loop holding
     // a stale reference stops instead of indexing the now-empty rungs.
     if (this.disposed) return false;
+    // A released loader is idle until its next view entry: nothing is pending.
+    if (this.released) return false;
     if (this.retryFoldedPass) return true;
     // A playback budget or pinned depth makes the prefix the target: no
     // background refinement between ticks; the commit stamps it complete.
@@ -471,6 +476,35 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
     return this.rungs[0].prefetchChunkBoundary(current, predicted, signal);
   }
 
+  /**
+   * Drop the decoded ladder of a node that can no longer draw (a partition
+   * part that left the committed slice, #3332), keeping the loader usable.
+   * The ladder is first stored under its view — the departure store
+   * `enterView` would have made, which a skipped hidden loader never reaches —
+   * so a return to that view restores it from the SliceCache. Forgetting
+   * `lastViewState` makes that return a view ENTRY (restore or re-stream), and
+   * dropping the memo makes its result a new reference, so the commit
+   * full-writes instead of taking the no-op or append fast path. Only call it
+   * between passes on this loader (the owner's pass lock guarantees that).
+   */
+  releaseResidentLadder(): void {
+    if (this.disposed) return;
+    if (this.lastViewState && this.loadedCount > 0) this.store(this.lastViewState, false);
+    this.cancelSpeculation();
+    this.loadedLODs = [];
+    this.payloadLevelStarts = [];
+    this.restoredOrigin = null;
+    this.loadedCount = 0;
+    this.levelsAtPassStart = 0;
+    this.payloadsAtPassStart = 0;
+    this.restoredFullLadderAtPassStart = false;
+    this.retryFoldedPass = false;
+    this.lastViewState = null;
+    this.concatCache = null;
+    this.resetGeneration++;
+    this.released = true;
+  }
+
   dispose(): void {
     this.disposed = true;
     this.cancelSpeculation();
@@ -567,6 +601,7 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
     this.payloadsAtPassStart = 0;
     this.restoredFullLadderAtPassStart = false;
     this.resetGeneration++;
+    this.released = false;
     this.lastViewState = {
       displayDims: [...viewState.displayDims],
       slicePosition: [...viewState.slicePosition],

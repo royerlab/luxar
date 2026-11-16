@@ -1375,7 +1375,19 @@ _For implementation details, see the source files in this directory._
   - `partition-gate.ts` — `PartitionGate`: per-part frustum/slice culling,
     the coalesced re-entry resync, deferred-part (B4) activation and its
     request timeout; ticks while a visible resync is outstanding (only when
-    `requestReprocess` is wired).
+    `requestReprocess` is wired). A loaded part's committed-SLICE exit, seen by
+    `applyCommittedSlice` under the pass lock (never a frustum cull, nor the
+    per-frame gate), calls `deps.releasePartitionPart`, which returns its
+    leaves' GPU buffers to the evictable pool and drops their decoded ladders
+    (#3332 — a stepped-through per-timepoint partition otherwise kept every
+    visited part resident) — on EVERY exit, merging into any leaves still
+    pending from an earlier one. A released part stays hidden until EACH
+    reported leaf that could draw (a layer-hidden one cannot, unless it is a
+    part object itself) has landed a successful commit
+    (`settleReleasedPartitionLeaf`, after the write). Only leaves that drew a
+    POOL buffer are reported: a mesh (empty placeholder) or a never-committed
+    leaf cannot draw stale data, so one that never recommits cannot blank its
+    siblings.
   - `retry-wakes.ts` — `RetryWakes`: waits that only have to END (a failed
     level's retry cooldown, an unanswered part activation request) tick
     nothing; each schedules one wake at its expiry, and each consecutive

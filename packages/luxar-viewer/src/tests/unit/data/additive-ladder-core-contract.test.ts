@@ -30,6 +30,8 @@ import type { LoadedGSplatsData } from '../../../types/gsplats';
 import type { LoadedLinesData } from '../../../types/lines';
 import type { LoadedPointsData } from '../../../types/points';
 import { signalPriority } from '../../../utils/fetch-concurrency';
+import { SliceCache } from '../../../cache/slice-cache';
+import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
 
 const DIMENSIONS = [
   { name: 'X', unit: 'um', scale: 1 },
@@ -127,6 +129,8 @@ interface Ladder {
     signal?: AbortSignal
   ): Promise<void>;
   ladderResidency(): { loadedRungs: number; elementCount: number; residentBytes: number };
+  releaseResidentLadder(): void;
+  readonly hasMoreLODs: boolean;
   dispose(): void;
 }
 
@@ -293,6 +297,46 @@ describe.each(GEOMETRIES)('$name progressive loader — shared ladder engine', (
     expect(residency.residentBytes).toBe(0);
   });
 
+  it('#3332: releaseResidentLadder drops the ladder, and a return to its view reloads it', async () => {
+    const rungs = Array.from({ length: 3 }, (_, i) => rung(make, i + 1));
+    const loader = build(rungs);
+    const first = await loader.updateView(viewAt(2));
+    const full = loader.ladderResidency();
+    expect(full.loadedRungs).toBe(3);
+    expect(full.residentBytes).toBeGreaterThan(0);
+
+    // The part left the committed slice: nothing it decoded stays charged.
+    loader.releaseResidentLadder();
+    const released = loader.ladderResidency();
+    expect(released.loadedRungs).toBe(0);
+    expect(released.elementCount).toBe(0);
+    expect(released.residentBytes).toBe(0);
+    // Idle until its next view entry: no pending rungs, so neither the monitor
+    // (`refining`) nor the pass scheduler's refinement loop picks it up.
+    expect(loader.hasMoreLODs).toBe(false);
+
+    // Stepping BACK to the same view is a view entry, not the unchanged-view
+    // no-op: every rung re-streams, the ladder is whole again, and the result
+    // is a NEW reference — so the commit's identity no-op cannot skip it.
+    const calls = rungs.map((r) => r.updateViewWithResidency.mock.calls.length);
+    const again = await loader.updateView(viewAt(2));
+    expect(again).not.toBe(first);
+    expect(loader.ladderResidency()).toEqual(full);
+    rungs.forEach((r, i) => {
+      expect(r.updateViewWithResidency.mock.calls.length).toBe(calls[i] + 1);
+      expect((r.updateViewWithResidency.mock.calls.at(-1)?.[0] as ViewState).slicePosition[3]).toBe(
+        2
+      );
+    });
+  });
+
+  it('#3332: releaseResidentLadder on a disposed loader is a no-op', async () => {
+    const loader = build(Array.from({ length: 2 }, (_, i) => rung(make, i + 1)));
+    loader.dispose();
+    expect(() => loader.releaseResidentLadder()).not.toThrow();
+    expect(loader.ladderResidency().loadedRungs).toBe(0);
+  });
+
   it('answers the predicted-view prefetch by warming its coarse rung', async () => {
     const rungs = Array.from({ length: 2 }, (_, i) => rung(make, i + 1));
     const loader = build(rungs);
@@ -305,5 +349,40 @@ describe.each(GEOMETRIES)('$name progressive loader — shared ladder engine', (
     loader.dispose();
     await loader.prefetchChunks(viewAt(4), signal);
     expect(rungs[0].prefetchChunks).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('#3332: releaseResidentLadder and the SliceCache', () => {
+  it('stores a PARTIAL ladder on release, and a step back restores it then resumes', async () => {
+    const cache = new SliceCache({ maxSize: 64 * 1024 * 1024 });
+    const rungs = Array.from({ length: 3 }, (_, i) => rung(pointsData, i + 1));
+    const loader = new PointsProgressiveLoader(
+      rungs as unknown as PointsSpatialIndexLoader[],
+      3,
+      '/p',
+      undefined,
+      cache
+    );
+    const key = SliceCache.makeKey('/p', buildSliceViewSig(viewAt(2)));
+    // A 1-byte residency allowance stops the pass after rung 0: a partial
+    // ladder, which the after-pass store deliberately does not cache.
+    await loader.updateView(viewAt(2), undefined, undefined, 1);
+    expect(loader.loadedLODCount).toBe(1);
+    expect(loader.hasMoreLODs).toBe(true);
+    expect(cache.peek(key)).toBeUndefined();
+
+    loader.releaseResidentLadder();
+    // The release's departure store is the only thing that caches it.
+    expect(cache.peek(key)?.ladderDepth).toBe(1);
+    expect(loader.hasMoreLODs).toBe(false);
+
+    // Step back: rung 0 is restored (not re-fetched), and the view entry
+    // clears the released state, so the remaining rungs are pending again.
+    const rung0Calls = rungs[0].updateViewWithResidency.mock.calls.length;
+    await loader.updateView(viewAt(2), undefined, undefined, 1);
+    expect(rungs[0].updateViewWithResidency.mock.calls.length).toBe(rung0Calls);
+    expect(loader.loadedLODCount).toBe(2);
+    expect(loader.hasMoreLODs).toBe(true);
+    loader.dispose();
   });
 });
