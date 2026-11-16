@@ -490,6 +490,7 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     resetPerfCounters: () => perfCounters.reset(),
     getPerf: () =>
       computePerfSnapshot({
+        scene: () => ports.sceneManager.scene,
         rendererInfo: getRendererInfoSnapshot,
         adaptiveDpr: () => ports.adaptiveDPRManager.getDiagnostics(),
         workers: () => getWorkerPool().getStats(),

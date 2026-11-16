@@ -481,6 +481,26 @@ describe('commitGSplatsGeometry — committedLadderComplete stamp', () => {
     expect(ladderComplete(mesh)).toBe(true);
   });
 
+  it('distinguishes a stopped partial ladder from all rungs committed', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    const loader = { hasMoreLODs: false, loadedLODCount: 1, totalLODCount: 4 };
+    mesh.userData.loader = loader;
+    root.add(mesh);
+
+    commitGSplatsGeometry(makeStaged(3), testHost(root, null), undefined, V);
+    expect(mesh.userData.committedLadderComplete).toBe(true);
+    expect(mesh.userData.committedLadderFull).toBe(false);
+
+    loader.loadedLODCount = 4;
+    commitGSplatsGeometry(makeStaged(3), testHost(root, null), undefined, V);
+    expect(mesh.userData.committedLadderFull).toBe(true);
+
+    loader.loadedLODCount = 5;
+    commitGSplatsGeometry(makeStaged(3), testHost(root, null), undefined, V);
+    expect(mesh.userData.committedLadderFull).toBe(false);
+  });
+
   it('stamps true for a non-progressive loader (no hasMoreLODs getter) and for no loader at all', () => {
     const root = new THREE.Group();
     const plain = makeMesh('/g');
@@ -488,12 +508,14 @@ describe('commitGSplatsGeometry — committedLadderComplete stamp', () => {
     root.add(plain);
     commitGSplatsGeometry(makeStaged(3), testHost(root, null), undefined, V);
     expect(ladderComplete(plain)).toBe(true);
+    expect(plain.userData.committedLadderFull).toBe(true);
 
     const root2 = new THREE.Group();
     const loaderless = makeMesh('/g');
     root2.add(loaderless);
     commitGSplatsGeometry(makeStaged(3), testHost(root2, null), undefined, V);
     expect(ladderComplete(loaderless)).toBe(true);
+    expect(loaderless.userData.committedLadderFull).toBe(true);
   });
 
   it('noop (stamp-only) commit refreshes the ladder stamp too', () => {

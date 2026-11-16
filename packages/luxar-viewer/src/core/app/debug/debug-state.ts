@@ -27,7 +27,10 @@ import type { RefinementResidencyStop } from '../../../data/scene-loader/progres
 
 /** Additive reveal-ladder state shared by every drawable leaf type. */
 export interface AdditiveLadderDebugInfo {
+  /** This pass has no more work; it may have stopped at a budgeted prefix. */
   committedLadderComplete?: boolean;
+  /** All rungs are committed for the current view. */
+  committedLadderFull?: boolean;
   committedEnergyFraction?: number;
   loadedLODCount?: number;
   totalLODCount?: number;
@@ -352,6 +355,9 @@ function readAdditiveLadderDebugInfo(userData: Record<string, unknown>): Additiv
   return {
     ...(typeof userData.committedLadderComplete === 'boolean'
       ? { committedLadderComplete: userData.committedLadderComplete }
+      : {}),
+    ...(typeof userData.committedLadderFull === 'boolean'
+      ? { committedLadderFull: userData.committedLadderFull }
       : {}),
     ...(typeof userData.committedEnergyFraction === 'number'
       ? { committedEnergyFraction: userData.committedEnergyFraction }
