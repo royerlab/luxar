@@ -28,6 +28,7 @@ scripts/
 | `check_demo_links.py` | Report whether canonical demo click-through destinations still discriminate known-good and known-bad identifiers without gating on third-party availability |
 | `check_scene_credits.py` | Verify built demo stores carry the `short`, `doi`, and `license` their registry citation declares |
 | `check_open_issue_pr.py` | Report whether an open PR already claims an issue (advisory, run by hand); inventory unique/shared paths before closing a duplicate |
+| `check_pr_merge_policy.py` | Refuse an automated merge for workflow-file changes (including renames) or fork PRs; fail closed on GitHub errors, truncated file lists, or a moving head; print the checked commit for `gh pr merge --match-head-commit` |
 | `ci_queue_scan.py` | Classify obsidian-labelled Actions jobs and perform bounded repository run scans for the CI watchdog |
 | `check_fixture_env.py` | Assert the viewer-fixture Hatch environment is CPU-only and free of default-env tooling |
 | `check_version_consistency.py` | Verify the Python, viewer, and citation metadata describe the same release |
