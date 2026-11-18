@@ -18,6 +18,21 @@ convention, not a CI gate. Before closing a duplicate PR, use the script's
 transfer every duplicate-only change, and carry any materially different review
 conclusion onto the surviving PR.
 
+Anyone merging a pull request on the maintainer's behalf — the routine merge
+pass or any other automated path — must run
+`hatch run python scripts/check_pr_merge_policy.py <pr-number>` immediately
+before `gh pr merge`, against the PR's current GitHub file list and fork
+status. Exit status 1 means the PR requires a manual maintainer merge — a
+workflow file changed, or the PR is a fork (`isCrossRepository`) — regardless
+of its ledger entry. Exit status 3 means a GitHub query failed or the PR's
+head moved while checking; stop that merge attempt. On exit 0 the script
+prints the head commit it checked; pass that SHA to
+`gh pr merge <pr-number> --match-head-commit <sha> ...` so a push landing
+after this check ran cannot slip past it. This is the single source of truth
+for the workflow-file and fork-PR rules — any other automated merge path
+(such as the merge daemon) should call this script rather than keep its own
+copy of the same check.
+
 ## Quick Reference
 
 ### Python (use Hatch)
