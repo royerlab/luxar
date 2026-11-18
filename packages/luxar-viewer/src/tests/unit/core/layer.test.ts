@@ -27,6 +27,7 @@ import { PointMaterial } from '../../../rendering/materials/point/material-glsl'
 import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 import { GSplatMaterial } from '../../../rendering/materials/gsplat/material-glsl';
 import { MeshMaterial } from '../../../rendering/materials/mesh/material-glsl';
+import { stampLadderComplete } from '../../../data/scene-loader/commit/stamp-view-version';
 
 // The layer's only browser requirement: these must exist.
 vi.stubGlobal('window', globalThis.window ?? {});
@@ -1162,6 +1163,40 @@ describe('LuxarLayer', () => {
 
       expect(layer.update()).toBe(false);
       expect(requestRender).not.toHaveBeenCalled();
+    });
+
+    it('applies standalone prefix energy after a commit and requests the changed frame', async () => {
+      let opacity = 1;
+      const material = Object.assign(new THREE.MeshBasicMaterial(), {
+        getOpacity(): number {
+          return opacity;
+        },
+        updateOpacity(value: number) {
+          opacity = value;
+        },
+      });
+      material.userData.blendingMode = 'additive';
+      const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+      const loader = { committedEnergyFraction: 0.5 };
+      mesh.userData.loader = loader;
+      stampLadderComplete(mesh.userData);
+      mesh.userData._layerMaterialCloned = true;
+      const root = new THREE.Group();
+      root.add(mesh);
+      loadSceneMock.mockResolvedValueOnce(root);
+      const requestRender = vi.fn();
+      const layer = new LuxarLayer(makeOptions({ densityGuard: false, requestRender }));
+      await layer.load('http://example.test/scene.zarr');
+      requestRender.mockClear();
+
+      expect(layer.update()).toBe(true);
+      expect(opacity).toBe(2);
+      expect(requestRender).toHaveBeenCalledTimes(1);
+      expect(layer.update()).toBe(false);
+      loader.committedEnergyFraction = 1;
+      stampLadderComplete(mesh.userData);
+      expect(layer.update()).toBe(true);
+      expect(opacity).toBe(1);
     });
   });
 

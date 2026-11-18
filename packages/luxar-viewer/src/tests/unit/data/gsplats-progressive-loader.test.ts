@@ -30,6 +30,7 @@ import {
   snapshotLodLoadStats,
 } from '../../../data/scene-loader/lod-load-stats';
 import { log, LogEmoji, Modules } from '../../../utils/log';
+import { stampLadderComplete } from '../../../data/scene-loader/commit/stamp-view-version';
 
 interface SubLoaderStub {
   ensureInitialized: ReturnType<typeof vi.fn>;
@@ -813,7 +814,7 @@ describe('GSplatsProgressiveLoader', () => {
       nowSpy.mockRestore();
     });
 
-    it('pins the first rung whose cumulative energy reaches the configured threshold', async () => {
+    it('guarantees the first rung whose cumulative energy reaches the configured threshold', async () => {
       // e(1) = 0.5, e(2) = 0.95, e(3) = 1.0 with the default threshold 0.9 -> depth 2.
       const l = new GSplatsProgressiveLoader(
         [lodA, lodB, lodC] as never,
@@ -825,6 +826,143 @@ describe('GSplatsProgressiveLoader', () => {
       expect(l.loadedLODCount).toBe(2);
       expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
       expect(l.hasMoreLODs).toBe(false);
+    });
+
+    it('uses spare playback budget beyond the auto energy floor and reports a full ladder', async () => {
+      for (const lod of [lodA, lodB, lodC]) {
+        lod.updateViewWithResidency.mockReturnValue(
+          Promise.resolve({ data: makeLodData(10, 3, { color: 'uint8' }), allResident: true })
+        );
+      }
+      const l = new GSplatsProgressiveLoader(
+        [lodA, lodB, lodC] as never,
+        3,
+        '/auto_gsplats',
+        [0.5, 0.95, 1.0]
+      );
+      await l.updateView({ ...baseViewState, frameBudgetMs: 40, ladderDepth: 'auto' });
+      const committed = { loader: l, committedLadderFull: false };
+      stampLadderComplete(committed);
+      expect(l.loadedLODCount).toBe(3);
+      expect(committed.committedLadderFull).toBe(true);
+      expect(l.committedEnergyFraction).toBe(1);
+    });
+
+    it('warms beyond the auto floor in a shadow pass for the next frame', async () => {
+      const cache = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const shadow = new GSplatsProgressiveLoader(
+        [lodA, lodB, lodC] as never,
+        3,
+        '/auto_gsplats',
+        [0.5, 0.95, 1.0],
+        cache
+      );
+      const foreground = new GSplatsProgressiveLoader(
+        [lodA, lodB, lodC] as never,
+        3,
+        '/auto_gsplats',
+        [0.5, 0.95, 1.0],
+        cache
+      );
+      await shadow.updateView({
+        ...baseViewState,
+        frameBudgetMs: 100,
+        ladderDepth: 'auto',
+        prefetch: true,
+      });
+      expect(shadow.loadedLODCount).toBe(3);
+      expect(lodC.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      for (const lod of [lodA, lodB, lodC]) lod.updateViewWithResidency.mockClear();
+      await foreground.updateView({ ...baseViewState, frameBudgetMs: 10, ladderDepth: 'auto' });
+      expect(foreground.loadedLODCount).toBe(3);
+      for (const lod of [lodA, lodB, lodC]) {
+        expect(lod.updateViewWithResidency).not.toHaveBeenCalled();
+      }
+      // A cheap commit of an already-prefetched full ladder must not convince
+      // the next cold frame to wait for all three rungs.
+      stampLadderComplete({ loader: foreground });
+      await foreground.updateView({
+        ...baseViewState,
+        slicePosition: [0, 0, 1],
+        frameBudgetMs: 10,
+        ladderDepth: 'auto',
+      });
+      expect(foreground.loadedLODCount).toBe(2);
+    });
+
+    it('bounds a carried depth when the next tick slows down', async () => {
+      for (const lod of [lodA, lodB, lodC]) {
+        lod.updateViewWithResidency.mockImplementation(() => {
+          now += 8;
+          return { data: makeLodData(10, 3, { color: 'uint8' }), allResident: false };
+        });
+      }
+      const l = new GSplatsProgressiveLoader(
+        [lodA, lodB, lodC] as never,
+        3,
+        '/auto_gsplats',
+        [0.5, 0.95, 1.0]
+      );
+      const view = (t: number) => ({
+        ...baseViewState,
+        slicePosition: [0, 0, t],
+        frameBudgetMs: 45,
+        ladderDepth: 'auto' as const,
+      });
+      await l.updateView(view(0));
+      now += 2;
+      stampLadderComplete({ loader: l });
+      expect(l.loadedLODCount).toBe(3);
+
+      for (const lod of [lodA, lodB, lodC]) {
+        lod.updateViewWithResidency.mockImplementation(() => {
+          now += 30;
+          return { data: makeLodData(10, 3, { color: 'uint8' }), allResident: false };
+        });
+      }
+      const start = now;
+      await l.updateView(view(1));
+      expect(l.loadedLODCount).toBe(2);
+      now += 2;
+      stampLadderComplete({ loader: l });
+      expect(now - start).toBe(62);
+      await l.updateView(view(2));
+      expect(l.loadedLODCount).toBe(2);
+    });
+
+    it('settles at a stable cold depth on successive frames', async () => {
+      const rungs = Array.from({ length: 5 }, () =>
+        makeSubLoader(makeLodData(10, 3, { color: 'uint8' }))
+      );
+      for (const rung of rungs) {
+        rung.updateViewWithResidency.mockImplementation(() => {
+          now += 8;
+          return { data: makeLodData(10, 3, { color: 'uint8' }), allResident: false };
+        });
+      }
+      const l = new GSplatsProgressiveLoader(
+        rungs as never,
+        5,
+        '/auto_gsplats',
+        [0.5, 0.92, 0.97, 0.99, 1.0]
+      );
+      const depths: number[] = [];
+      const costs: number[] = [];
+      for (let t = 0; t < 7; t++) {
+        const start = now;
+        await l.updateView({
+          ...baseViewState,
+          slicePosition: [0, 0, t],
+          frameBudgetMs: 35,
+          ladderDepth: 'auto',
+        });
+        now += 2; // geometry commit cost
+        stampLadderComplete({ loader: l });
+        depths.push(l.loadedLODCount);
+        costs.push(now - start);
+      }
+      expect(depths).toEqual([3, 4, 4, 4, 4, 4, 4]);
+      expect(costs).toEqual([26, 34, 34, 34, 34, 34, 34]);
     });
 
     it('an unstamped ladder stays time-budgeted under auto (first cold level stops the pass)', async () => {

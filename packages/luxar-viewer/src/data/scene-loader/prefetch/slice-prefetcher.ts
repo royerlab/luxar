@@ -368,7 +368,7 @@ export class SlicePrefetcher {
     request: {
       viewState: ViewState;
       budgetMs: number;
-      /** Pinned playback ladder depth, forwarded so the t+1 entry carries the pinned prefix. */
+      /** Playback detail: numeric pin or auto energy floor, carried into the t+1 shadow pass. */
       ladderDepth?: number | 'auto';
       signal: AbortSignal;
       object: THREE.Object3D | null | undefined;

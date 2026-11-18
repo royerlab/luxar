@@ -108,12 +108,17 @@ import {
 } from '../../data/zarr-loader';
 import type { SceneLoader } from '../../data/scene-loader';
 import { SceneLoaderManager } from '../../data/scene-loader-manager';
+import { getLadderEnergyStampVersion } from '../../data/scene-loader/commit/stamp-view-version';
 import { LODGroupRegistry } from '../../scene/lod-group-registry';
 import { ViewContextProvider } from '../../scene/view-context';
 import { ProjectedDensityTracker } from '../../scene/projected-density';
 import { DensityGuard } from '../../scene/density-guard';
 import { SceneDimsManager, snapDiscreteValue } from '../../scene/scene-dims-manager';
-import { rebaseLodFade, type FadeableMaterial } from '../../scene/lod-fade';
+import {
+  applyStandaloneLadderFade,
+  rebaseLodFade,
+  type FadeableMaterial,
+} from '../../scene/lod-fade';
 import { MaterialManager } from '../../rendering/material-manager';
 import { resolveMaterialBackend } from '../../rendering/material-manager/factories';
 import {
@@ -566,7 +571,7 @@ export class LuxarLayer {
     // LOD swaps may invalidate sorting; density measures the levels now shown.
     const sortChanged = this.depthSort.evaluatePerFrame();
     const lodChanged = this.evaluateLodFrame();
-    const densityChanged = this.densityGuard.perFrame();
+    const densityChanged = this.evaluateDensityFrame();
     // Scene / LOD / partition groups may attach lazily after load(). Three.js
     // replaces the transparent group-order key at every Group boundary, so a
     // newly attached default-zero group would otherwise nullify the option.
@@ -578,6 +583,18 @@ export class LuxarLayer {
     const changed = sortChanged || lodChanged || densityChanged;
     if (changed) this.options.requestRender?.();
     return changed;
+  }
+
+  private evaluateDensityFrame(): boolean {
+    const densityChanged = this.densityGuard.perFrame();
+    if (!this.rootGroup) return densityChanged;
+    const energyChanged = applyStandaloneLadderFade(
+      this.rootGroup,
+      this.options.lodEnergyComp ?? true,
+      (material) => this.materials.register(material),
+      getLadderEnergyStampVersion()
+    );
+    return densityChanged || energyChanged;
   }
 
   /**

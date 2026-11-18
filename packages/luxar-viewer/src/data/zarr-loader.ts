@@ -123,7 +123,7 @@ export async function updateSceneForDimensions(
      */
     frameBudgetMs?: number;
     /**
-     * Pinned playback ladder depth (see `ViewState.ladderDepth`). Per-pass,
+     * Playback ladder detail (see `ViewState.ladderDepth`). Per-pass,
      * like `frameBudgetMs`.
      */
     ladderDepth?: number | 'auto';

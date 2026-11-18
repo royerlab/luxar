@@ -331,6 +331,11 @@ export const MODULE_FAMILY_ASYMMETRIES: Readonly<
     },
   },
   '<t>-progressive-loader.ts': {
+    '<T>ProgressiveLoader.noteCommitted': {
+      presentIn: ['points', 'lines', 'gsplats'],
+      reason:
+        'Only the instanced ladders carry energy stamps and adapt auto playback depth from committed cost; mesh reveal has no energy stamps.',
+    },
     '<T>ProgressiveLoader.prefetchChunks': {
       presentIn: ['points', 'lines', 'gsplats'],
       reason: 'A mesh level loads whole; there are no spatial-index chunks to prefetch.',

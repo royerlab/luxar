@@ -42,9 +42,10 @@ export interface DimensionAnimationState {
   /**
    * Playback "detail": how deep every frame's additive ladder is loaded while
    * this dimension plays (and scrubs). A number pins that many rungs
-   * (`Infinity` = the whole ladder); `'auto'` pins each ladder at the first rung
-   * whose cumulative energy reaches `config.dimensionAnimation.playback.autoEnergyThreshold`
-   * (an unstamped ladder stays time-budgeted); `null` streams whatever is
+   * (`Infinity` = the whole ladder); `'auto'` guarantees each ladder the first
+   * rung whose cumulative energy reaches `config.dimensionAnimation.playback.autoEnergyThreshold`
+   * and uses spare playback time for more (an unstamped ladder stays time-budgeted);
+   * `null` streams whatever is
    * resident within the tick ("Fast"). Threaded to the progressive loaders as
    * `ViewState.ladderDepth`.
    */

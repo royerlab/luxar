@@ -156,26 +156,47 @@ the two loops (`AdditiveLadderCore` and Mesh's reveal ladder) stay identical by 
 three facts (is a per-frame budget active? is this a background prefetch? is a
 ladder depth pinned?):
 
-| Pass       | When                            | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| ---------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `playback` | foreground, budgeted (playing)  | Stream cache-resident levels within budget and stop at the first cold/slow one. Only an empty ladder gets an unconditional first level.                                                                                                                                                                                                                                                                                         |
-| `prefetch` | background shadow pass          | **Deepen toward the full ladder** — keep one new level after a restore, never stop on a cache miss, then obey the pass budget + abort.                                                                                                                                                                                                                                                                                          |
-| `refine`   | foreground, unbudgeted (paused) | Stream cache-resident levels; stop at the first cold/slow one (the `CACHE_HIT_THRESHOLD_MS` rule).                                                                                                                                                                                                                                                                                                                              |
-| `pinned`   | `ViewState.ladderDepth` set     | **Load exactly the pinned rung count**, cold or not — the loader bounds its loop at `resolveLadderDepth(depth, nLods, energyTable, threshold)` and neither the deadline nor a cache miss stops it. Foreground or shadow; takes precedence over the other three. `'auto'` resolves to the first rung whose energy stamp reaches `config.dimensionAnimation.playback.autoEnergyThreshold` (an unstamped ladder is left unpinned). |
+| Pass       | When                                                    | Behavior                                                                                                                                |
+| ---------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `playback` | foreground, budgeted (playing)                          | Stream cache-resident levels within budget and stop at the first cold/slow one. Only an empty ladder gets an unconditional first level. |
+| `prefetch` | background shadow pass                                  | **Deepen toward the full ladder** — keep one new level after a restore, never stop on a cache miss, then obey the pass budget + abort.  |
+| `refine`   | foreground, unbudgeted (paused)                         | Stream cache-resident levels; stop at the first cold/slow one (the `CACHE_HIT_THRESHOLD_MS` rule).                                      |
+| `pinned`   | Numeric `ViewState.ladderDepth`, or unbudgeted `'auto'` | **Load exactly the pinned rung count**, cold or not. Foreground or shadow; takes precedence over the other three.                       |
+
+During budgeted playback, `'auto'` uses the first rung reaching
+`autoEnergyThreshold` as a guaranteed floor, then follows `playback` or
+`prefetch` rules toward the full ladder. The energy rung alone ignores the
+deadline. The last foreground frame's depth can carry as a preferred cold
+prefix, but it still obeys the deadline. A new cold rung is probed only when
+the previous frame had enough time left for its average rung cost, preventing
+steady playback from alternating between deep overruns and shallow frames.
+Unstamped ladders remain time-budgeted.
 
 When the refinement sweep supplies a residency allowance, it overrides all
 four disciplines: the level that spends the allowance is kept, then the pass
 stops before appending another cached level.
 
 ```typescript
-const pinnedDepth = resolveLadderDepth(viewState.ladderDepth, nLods, energyTable, threshold); // null unless pinned
+const pinnedDepth = resolveLadderDepth(viewState.ladderDepth, nLods, energyTable, threshold);
+const autoFloor =
+  viewState.ladderDepth === 'auto' && budgetDeadline !== null ? (pinnedDepth ?? 0) : 0;
+const preferredDepth = autoFloor; // A measured foreground carry may raise this.
 const pass = classifyStreamingPass(
   budgetDeadline !== null,
   viewState.prefetch === true,
-  pinnedDepth !== null
+  pinnedDepth !== null && autoFloor === 0
 );
-for (let level = startLevel; level < (pinnedDepth ?? nLods); level++) {
-  if (shouldStopBeforeLevel(pass, level, startLevel, now(), budgetDeadline)) break;
+for (let level = startLevel; level < (autoFloor > 0 ? nLods : (pinnedDepth ?? nLods)); level++) {
+  if (
+    shouldStopBeforeLevel(
+      pass,
+      level,
+      startLevel,
+      { nowMs: now(), deadlineMs: budgetDeadline },
+      autoFloor
+    )
+  )
+    break;
   // ... load level ...
   const additionalResidentBytes = Math.max(
     0,
@@ -189,7 +210,8 @@ for (let level = startLevel; level < (pinnedDepth ?? nLods); level++) {
       allResident,
       elapsed,
       additionalResidentBytes,
-      residencyAllowanceBytes
+      residencyAllowanceBytes,
+      preferredDepth
     )
   )
     break;
@@ -207,10 +229,12 @@ frames. Pinning a ladder depth (`DimensionAnimationManager.setLadderDepth`, the
 **Detail** section of the dimension context menu, `play(dim, { ladderDepth })`, or
 the scene's authored `viewer_config.playback_lod_depth`) flips the trade: every
 frame is drawn at exactly that many rungs and the tick waits for the data, so
-quality is constant and the frame rate adapts. The default, `'auto'`, lets each
-ladder pick its own depth from its `energy_fraction_cum` stamps (the first rung at
-or above the configured threshold, 0.9), so the same scene adapts to how its
-ladder was built; ladders without stamps keep the time-budgeted behaviour.
+quality is constant and the frame rate adapts. The default, `'auto'`, guarantees
+each ladder the first rung at or above the configured energy threshold (0.9),
+then spends spare time on deeper rungs. A fast committed depth carries to the
+next tick; slow commits fall back to the energy floor. The shadow pass warms
+deeper rungs in the t+1 SliceCache entry. Ladders without stamps keep the
+time-budgeted behaviour.
 Scrubbing (a slider drag, a keyboard step) is pinned the same way, and an
 unpinned settle pass follows once the scrub is quiet so a paused view still
 refines to its full ladder. The pinned

@@ -26,10 +26,9 @@ export interface DimensionLoadingContext {
 
 /**
  * The per-pass playback directives the loaders receive: the per-tick LOD time
- * budget, and the playback "detail" — a pinned rung count that makes the
- * loaders load exactly that many rungs per frame (cold or not) instead of
- * whatever fits the budget, the tick waiting for it (consistent frames at an
- * adaptive rate). Both undefined outside FRAME-PACED playback: a slideshow tick
+ * budget, and playback detail. A numeric detail pins an exact rung count;
+ * `'auto'` guarantees the energy rung and spends spare budget on deeper rungs.
+ * Both are undefined outside FRAME-PACED playback: a slideshow tick
  * (`timing.slideshowPeriodMs`) takes the scrub path below, like a manual step.
  */
 function playbackDirectives(anim: DimensionAnimationManager | undefined): {
