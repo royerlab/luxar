@@ -26,6 +26,14 @@ describe('element texture loads in generated WGSL', () => {
     expect(loads).toHaveLength(9);
   });
 
+  it('guards the second perspective line color/sharpness fetch behind clipping', () => {
+    const material = new LineTSLMaterial({ primitive: 'screen-space' });
+    const vertex = wgslVertexFor(material, new THREE.PerspectiveCamera(50, 1, 0.1, 100), geometry);
+    const loads = vertex.split('\n').filter((line) => line.includes('textureLoad('));
+    expect(loads).toHaveLength(10);
+    expect(vertex).toMatch(/if \([^\n]* != [^\n]*\) \{\s*\w+ = textureLoad\(/);
+  });
+
   // geometry-subset: Mesh reads vertex buffers rather than element data textures.
   it.each([
     ['gsplat', () => new GSplatTSLMaterial(), 4], // splatT0..T3
