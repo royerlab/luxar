@@ -108,6 +108,7 @@ import {
 } from '../../data/zarr-loader';
 import type { SceneLoader } from '../../data/scene-loader';
 import { SceneLoaderManager } from '../../data/scene-loader-manager';
+import { getLadderEnergyStampVersion } from '../../data/scene-loader/commit/stamp-view-version';
 import { LODGroupRegistry } from '../../scene/lod-group-registry';
 import { ViewContextProvider } from '../../scene/view-context';
 import { ProjectedDensityTracker } from '../../scene/projected-density';
@@ -590,7 +591,8 @@ export class LuxarLayer {
     const energyChanged = applyStandaloneLadderFade(
       this.rootGroup,
       this.options.lodEnergyComp ?? true,
-      (material) => this.materials.register(material)
+      (material) => this.materials.register(material),
+      getLadderEnergyStampVersion()
     );
     return densityChanged || energyChanged;
   }

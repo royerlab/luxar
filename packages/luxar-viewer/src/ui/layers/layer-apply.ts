@@ -55,7 +55,7 @@ import {
   type LayerStateManager,
 } from './layer-state';
 import { remapWindowToLeafRange } from '../../rendering/display-range';
-import { rebaseLodFade } from '../../scene/lod-fade';
+import { invalidateStandaloneLadderFade, rebaseLodFade } from '../../scene/lod-fade';
 import { isStandardGSplats3D } from '../../workers/data-worker/projection/gsplats';
 import {
   applyColorAdjustments,
@@ -1002,6 +1002,7 @@ export class LayerApplyEngine {
 
   applyBlendingMode(layer: LayerInfo): void {
     this.applyComposed(layer);
+    invalidateStandaloneLadderFade();
   }
 
   /**

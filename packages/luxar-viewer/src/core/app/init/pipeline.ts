@@ -24,6 +24,7 @@ import { DataMonitorManager } from '../../../ui/data-monitor-manager';
 import { SceneLoaderManager, getSceneLoader } from '../../../data/scene-loader-manager';
 import { LODGroupRegistry } from '../../../scene/lod-group-registry';
 import { applyStandaloneLadderFade } from '../../../scene/lod-fade';
+import { getLadderEnergyStampVersion } from '../../../data/scene-loader/commit/stamp-view-version';
 import { buildLodRegistryDeps } from './lod-registry-deps';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { notifier } from '../../../utils/cross-layer/notifier';
@@ -437,8 +438,11 @@ export async function runInitPipeline(
   // frame rather than draw it once on a stale keep (#2944 review B).
   animationController.addPerFrameCallback('projected-density', densityWiring.perFrame);
   animationController.addPerFrameCallback('standalone-ladder-energy', () =>
-    applyStandaloneLadderFade(sceneManager.scene, lodEnergyCompEnabled, (material) =>
-      materialManager.register(material)
+    applyStandaloneLadderFade(
+      sceneManager.scene,
+      lodEnergyCompEnabled,
+      (material) => materialManager.register(material),
+      getLadderEnergyStampVersion()
     )
   );
 

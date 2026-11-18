@@ -268,15 +268,36 @@ export function applyLodFade(
   return changed;
 }
 
+let standaloneFadeRevision = 0;
+const standaloneFadeVersions = new WeakMap<
+  THREE.Object3D,
+  { stamp: number; revision: number; enabled: boolean }
+>();
+
+/** Recompose standalone fades after an appearance edit changes blending. */
+export function invalidateStandaloneLadderFade(): void {
+  standaloneFadeRevision++;
+}
+
 /** Apply streaming energy compensation to leaves outside registry-owned LOD groups. */
 export function applyStandaloneLadderFade(
   root: THREE.Object3D,
   energyComp: boolean,
-  registerMaterial?: (material: THREE.Material) => void
+  registerMaterial?: (material: THREE.Material) => void,
+  stampVersion?: number
 ): boolean {
+  const applied = standaloneFadeVersions.get(root);
+  if (
+    stampVersion !== undefined &&
+    applied?.stamp === stampVersion &&
+    applied.revision === standaloneFadeRevision &&
+    applied.enabled === energyComp
+  ) {
+    return false;
+  }
   let changed = false;
   const visit = (object: THREE.Object3D): void => {
-    if (!object.visible || object.userData.kind === 'lod') return;
+    if (object.userData.kind === 'lod') return;
     const mesh = object as THREE.Mesh;
     const energy = object.userData.committedEnergyFraction as number | undefined;
     if (
@@ -288,6 +309,13 @@ export function applyStandaloneLadderFade(
     for (const child of object.children) visit(child);
   };
   visit(root);
+  if (stampVersion !== undefined) {
+    standaloneFadeVersions.set(root, {
+      stamp: stampVersion,
+      revision: standaloneFadeRevision,
+      enabled: energyComp,
+    });
+  }
   return changed;
 }
 

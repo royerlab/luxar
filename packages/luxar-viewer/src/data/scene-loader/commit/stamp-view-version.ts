@@ -85,6 +85,20 @@ interface LadderLoader {
   noteCommitted?(): void;
 }
 
+let ladderEnergyStampVersion = 0;
+
+/** Changes only when a commit changes a leaf's energy stamp. */
+export function getLadderEnergyStampVersion(): number {
+  return ladderEnergyStampVersion;
+}
+
+function stampEnergy(userData: LadderStampable, energy: number | null): void {
+  const previousEnergy = userData.committedEnergyFraction;
+  if (energy === null) delete userData.committedEnergyFraction;
+  else userData.committedEnergyFraction = energy;
+  if (previousEnergy !== userData.committedEnergyFraction) ladderEnergyStampVersion++;
+}
+
 function isCommittedLadderFull(loader: LadderLoader | undefined): boolean {
   if (!loader || !('hasMoreLODs' in loader || 'totalLODCount' in loader)) return true;
   return (
@@ -129,11 +143,9 @@ export function stampLadderComplete(userData: LadderStampable | undefined | null
   if (!loader || !('committedEnergyFraction' in loader)) {
     // Non-progressive loader: the committed geometry is the leaf's complete
     // content — all of its energy is on screen.
-    userData.committedEnergyFraction = 1;
+    stampEnergy(userData, 1);
     return;
   }
-  const e = loader.committedEnergyFraction;
-  if (e == null) delete userData.committedEnergyFraction;
-  else userData.committedEnergyFraction = e;
+  stampEnergy(userData, loader.committedEnergyFraction ?? null);
   loader.noteCommitted?.();
 }

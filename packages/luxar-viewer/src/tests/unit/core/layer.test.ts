@@ -27,6 +27,7 @@ import { PointMaterial } from '../../../rendering/materials/point/material-glsl'
 import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 import { GSplatMaterial } from '../../../rendering/materials/gsplat/material-glsl';
 import { MeshMaterial } from '../../../rendering/materials/mesh/material-glsl';
+import { stampLadderComplete } from '../../../data/scene-loader/commit/stamp-view-version';
 
 // The layer's only browser requirement: these must exist.
 vi.stubGlobal('window', globalThis.window ?? {});
@@ -1176,7 +1177,9 @@ describe('LuxarLayer', () => {
       });
       material.userData.blendingMode = 'additive';
       const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
-      mesh.userData.committedEnergyFraction = 0.5;
+      const loader = { committedEnergyFraction: 0.5 };
+      mesh.userData.loader = loader;
+      stampLadderComplete(mesh.userData);
       mesh.userData._layerMaterialCloned = true;
       const root = new THREE.Group();
       root.add(mesh);
@@ -1189,7 +1192,9 @@ describe('LuxarLayer', () => {
       expect(layer.update()).toBe(true);
       expect(opacity).toBe(2);
       expect(requestRender).toHaveBeenCalledTimes(1);
-      mesh.userData.committedEnergyFraction = 1;
+      expect(layer.update()).toBe(false);
+      loader.committedEnergyFraction = 1;
+      stampLadderComplete(mesh.userData);
       expect(layer.update()).toBe(true);
       expect(opacity).toBe(1);
     });
