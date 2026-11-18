@@ -1163,6 +1163,36 @@ describe('LuxarLayer', () => {
       expect(layer.update()).toBe(false);
       expect(requestRender).not.toHaveBeenCalled();
     });
+
+    it('applies standalone prefix energy after a commit and requests the changed frame', async () => {
+      let opacity = 1;
+      const material = Object.assign(new THREE.MeshBasicMaterial(), {
+        getOpacity(): number {
+          return opacity;
+        },
+        updateOpacity(value: number) {
+          opacity = value;
+        },
+      });
+      material.userData.blendingMode = 'additive';
+      const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+      mesh.userData.committedEnergyFraction = 0.5;
+      mesh.userData._layerMaterialCloned = true;
+      const root = new THREE.Group();
+      root.add(mesh);
+      loadSceneMock.mockResolvedValueOnce(root);
+      const requestRender = vi.fn();
+      const layer = new LuxarLayer(makeOptions({ densityGuard: false, requestRender }));
+      await layer.load('http://example.test/scene.zarr');
+      requestRender.mockClear();
+
+      expect(layer.update()).toBe(true);
+      expect(opacity).toBe(2);
+      expect(requestRender).toHaveBeenCalledTimes(1);
+      mesh.userData.committedEnergyFraction = 1;
+      expect(layer.update()).toBe(true);
+      expect(opacity).toBe(1);
+    });
   });
 
   describe('nD navigation', () => {

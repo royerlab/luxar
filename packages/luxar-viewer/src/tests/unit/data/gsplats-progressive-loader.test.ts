@@ -814,7 +814,7 @@ describe('GSplatsProgressiveLoader', () => {
       nowSpy.mockRestore();
     });
 
-    it('pins the first rung whose cumulative energy reaches the configured threshold', async () => {
+    it('guarantees the first rung whose cumulative energy reaches the configured threshold', async () => {
       // e(1) = 0.5, e(2) = 0.95, e(3) = 1.0 with the default threshold 0.9 -> depth 2.
       const l = new GSplatsProgressiveLoader(
         [lodA, lodB, lodC] as never,

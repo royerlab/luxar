@@ -15,7 +15,7 @@ export interface PassDirectives {
    */
   frameBudgetMs?: number;
   /**
-   * Pinned playback ladder depth (see `ViewState.ladderDepth`). Same per-pass
+   * Playback ladder detail (see `ViewState.ladderDepth`). Same per-pass
    * contract as `frameBudgetMs`: injected into the DERIVED view state only.
    */
   ladderDepth?: number | 'auto';

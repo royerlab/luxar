@@ -586,6 +586,7 @@ export class LuxarLayer {
 
   private evaluateDensityFrame(): boolean {
     const densityChanged = this.densityGuard.perFrame();
+    if (!this.rootGroup) return densityChanged;
     const energyChanged = applyStandaloneLadderFade(
       this.rootGroup,
       this.options.lodEnergyComp ?? true,

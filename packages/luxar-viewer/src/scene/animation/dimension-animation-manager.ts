@@ -846,9 +846,8 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   }
 
   /**
-   * Playback "detail" for the current tick: the pinned additive-ladder depth
-   * (rungs) the progressive loaders must load for every frame, or null when no
-   * frame-paced dimension pins one (time-budgeted streaming). With several playing
+   * Playback "detail" for the current tick: a numeric additive-ladder pin,
+   * the `'auto'` energy floor, or null for time-budgeted streaming. With several playing
    * dimensions the DEEPEST pin wins — a pinned dim must never be drawn below
    * its setting because another dim plays on Auto. Threaded to the loaders as
    * `ViewState.ladderDepth` by `updateAllNDNodes`, and to the t+1 shadow

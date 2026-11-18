@@ -188,13 +188,13 @@ describe("resolveLadderDepth ('auto' = the energy rule)", () => {
     expect(resolveLadderDepth(null, 5, energies, 0.9)).toBeNull();
   });
 
-  it("'auto' pins the FIRST rung whose cumulative energy reaches the threshold", () => {
+  it("'auto' selects the FIRST rung whose cumulative energy reaches the threshold", () => {
     expect(resolveLadderDepth('auto', 5, energies, 0.9)).toBe(3);
     expect(resolveLadderDepth('auto', 5, energies, 0.6)).toBe(2);
     expect(resolveLadderDepth('auto', 5, energies, 0.5)).toBe(1);
   });
 
-  it("'auto' pins the whole ladder when no rung reaches the threshold", () => {
+  it("'auto' selects the whole ladder when no rung reaches the threshold", () => {
     expect(resolveLadderDepth('auto', 5, [0.1, 0.2, 0.3, 0.4, 0.5], 0.9)).toBe(5);
   });
 

@@ -47,6 +47,8 @@
  *    stops it before that bound — a frame is drawn at the pinned depth or the
  *    tick waits. Takes precedence over the other three. Only the refinement
  *    residency allowance still applies.
+ *  - budgeted `'auto'` — guarantee the energy-threshold rung, then follow
+ *    `playback` or `prefetch` rules for deeper rungs.
  *
  * @module data/loaders/progressive/streaming-policy
  */
@@ -85,6 +87,8 @@ function isPastGuaranteedProgressFloor(
 
 /**
  * Whether to stop BEFORE loading `level` because the pass budget is spent.
+ * An object deadline also carries the guaranteed auto depth; levels below it
+ * ignore the deadline.
  *
  * Playback only guarantees a level when the ladder starts empty; a restored
  * prefix is already showable. Prefetch and refine retain one guaranteed new
@@ -177,8 +181,9 @@ export function normalizeLadderDepth(
 
 /**
  * Resolve a pass's requested playback detail (`ViewState.ladderDepth`) to a
- * loop bound for THIS ladder. A number goes through {@link normalizeLadderDepth};
- * `'auto'` pins the first rung whose cumulative energy fraction e(k) reaches
+ * loop bound or guaranteed floor for THIS ladder. A number goes through
+ * {@link normalizeLadderDepth}; `'auto'` selects the first rung whose
+ * cumulative energy fraction e(k) reaches
  * `energyThreshold` (the `energy_fraction_cum` build stamps, one per rung, in
  * `[0, 1]`, non-decreasing), or the whole ladder if none does; a ladder without
  * stamps cannot be judged and returns `null` (time-budgeted streaming). Shared

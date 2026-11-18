@@ -11,7 +11,7 @@
  *
  * One `updateView` pass:
  *
- * 1. **Directives.** Record the pass's playback budget and pinned ladder depth
+ * 1. **Directives.** Record the pass's playback budget and ladder detail
  *    first — a pause re-trigger arrives with the SAME view and must still clear
  *    them.
  * 2. **View change.** Abort the old view's speculative reads (keeping a
@@ -25,7 +25,8 @@
  *    the full ladder, `refine` until the first cold/slow rung, `pinned` exactly
  *    the pinned depth — whose rungs are all started up front under per-rung
  *    child signals so a brake cancels the remainder and releases what it
- *    decoded. While a rung loads, the next rung's spatial index is warmed at
+ *    decoded. Budgeted `auto` guarantees the energy rung, then follows the
+ *    playback/prefetch rules. While a rung loads, the next rung's index is warmed at
  *    refinement priority (B6). A rung coming back empty never stops the loop
  *    (#1456): additive rungs are disjoint subsets, not coarse resamplings.
  * 4. **Close.** Log the summary at verbose, schedule the signal-linked
@@ -672,8 +673,8 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
 
   /** The streaming loop (see the module notes, step 3). */
   private async streamRungs(pass: StreamPass): Promise<void> {
-    // A pinned pass takes every rung up to its depth whatever they cost, so
-    // their fetches need not wait on one another: start them all now.
+    // A pinned pass, or the guaranteed portion of auto, takes those rungs
+    // whatever they cost: start them together to overlap their fetches.
     const pinned =
       pass.kind === 'pinned' || pass.guaranteedDepth > pass.startLevel
         ? this.startRungLoads(
