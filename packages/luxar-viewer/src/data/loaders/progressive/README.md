@@ -165,9 +165,12 @@ ladder depth pinned?):
 
 During budgeted playback, `'auto'` uses the first rung reaching
 `autoEnergyThreshold` as a guaranteed floor, then follows `playback` or
-`prefetch` rules toward the full ladder. The last foreground frame's committed
-depth remains a floor while its measured load-through-commit time fits the
-current budget. Unstamped ladders remain time-budgeted.
+`prefetch` rules toward the full ladder. The energy rung alone ignores the
+deadline. The last foreground frame's depth can carry as a preferred cold
+prefix, but it still obeys the deadline. A new cold rung is probed only when
+the previous frame had enough time left for its average rung cost, preventing
+steady playback from alternating between deep overruns and shallow frames.
+Unstamped ladders remain time-budgeted.
 
 When the refinement sweep supplies a residency allowance, it overrides all
 four disciplines: the level that spends the allowance is kept, then the pass
@@ -177,6 +180,7 @@ stops before appending another cached level.
 const pinnedDepth = resolveLadderDepth(viewState.ladderDepth, nLods, energyTable, threshold);
 const autoFloor =
   viewState.ladderDepth === 'auto' && budgetDeadline !== null ? (pinnedDepth ?? 0) : 0;
+const preferredDepth = autoFloor; // A measured foreground carry may raise this.
 const pass = classifyStreamingPass(
   budgetDeadline !== null,
   viewState.prefetch === true,
@@ -184,10 +188,13 @@ const pass = classifyStreamingPass(
 );
 for (let level = startLevel; level < (autoFloor > 0 ? nLods : (pinnedDepth ?? nLods)); level++) {
   if (
-    shouldStopBeforeLevel(pass, level, startLevel, now(), {
-      at: budgetDeadline,
-      guaranteedDepth: autoFloor,
-    })
+    shouldStopBeforeLevel(
+      pass,
+      level,
+      startLevel,
+      { nowMs: now(), deadlineMs: budgetDeadline },
+      autoFloor
+    )
   )
     break;
   // ... load level ...
@@ -204,7 +211,7 @@ for (let level = startLevel; level < (autoFloor > 0 ? nLods : (pinnedDepth ?? nL
       elapsed,
       additionalResidentBytes,
       residencyAllowanceBytes,
-      autoFloor
+      preferredDepth
     )
   )
     break;

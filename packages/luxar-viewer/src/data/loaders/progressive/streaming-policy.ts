@@ -87,8 +87,7 @@ function isPastGuaranteedProgressFloor(
 
 /**
  * Whether to stop BEFORE loading `level` because the pass budget is spent.
- * An object deadline also carries the guaranteed auto depth; levels below it
- * ignore the deadline.
+ * Levels below the guaranteed auto energy depth ignore the deadline.
  *
  * Playback only guarantees a level when the ladder starts empty; a restored
  * prefix is already showable. Prefetch and refine retain one guaranteed new
@@ -99,17 +98,14 @@ export function shouldStopBeforeLevel(
   kind: StreamingPassKind,
   level: number,
   startLevel: number,
-  nowMs: number,
-  deadline: number | null | { at: number | null; guaranteedDepth: number }
+  timing: { nowMs: number; deadlineMs: number | null },
+  guaranteedDepth = 0
 ): boolean {
-  const deadlineMs = typeof deadline === 'object' && deadline !== null ? deadline.at : deadline;
-  const guaranteedDepth =
-    typeof deadline === 'object' && deadline !== null ? deadline.guaranteedDepth : 0;
   if (kind === 'pinned' || level < guaranteedDepth) return false;
   return (
-    deadlineMs !== null &&
+    timing.deadlineMs !== null &&
     isPastGuaranteedProgressFloor(kind, level, startLevel) &&
-    nowMs > deadlineMs
+    timing.nowMs > timing.deadlineMs
   );
 }
 

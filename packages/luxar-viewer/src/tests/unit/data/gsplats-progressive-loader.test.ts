@@ -890,16 +890,12 @@ describe('GSplatsProgressiveLoader', () => {
       expect(foreground.loadedLODCount).toBe(2);
     });
 
-    it('carries a fast committed depth to the next tick, then drops it after a slow commit', async () => {
-      let clockStep = 1;
-      nowSpy.mockImplementation(() => {
-        now += clockStep;
-        return now;
-      });
+    it('bounds a carried depth when the next tick slows down', async () => {
       for (const lod of [lodA, lodB, lodC]) {
-        lod.updateViewWithResidency.mockReturnValue(
-          Promise.resolve({ data: makeLodData(10, 3, { color: 'uint8' }), allResident: true })
-        );
+        lod.updateViewWithResidency.mockImplementation(() => {
+          now += 8;
+          return { data: makeLodData(10, 3, { color: 'uint8' }), allResident: false };
+        });
       }
       const l = new GSplatsProgressiveLoader(
         [lodA, lodB, lodC] as never,
@@ -910,24 +906,63 @@ describe('GSplatsProgressiveLoader', () => {
       const view = (t: number) => ({
         ...baseViewState,
         slicePosition: [0, 0, t],
-        frameBudgetMs: 40,
+        frameBudgetMs: 45,
         ladderDepth: 'auto' as const,
       });
       await l.updateView(view(0));
+      now += 2;
       stampLadderComplete({ loader: l });
       expect(l.loadedLODCount).toBe(3);
 
-      clockStep = 20;
       for (const lod of [lodA, lodB, lodC]) {
-        lod.updateViewWithResidency.mockReturnValue(
-          Promise.resolve({ data: makeLodData(10, 3, { color: 'uint8' }), allResident: false })
-        );
+        lod.updateViewWithResidency.mockImplementation(() => {
+          now += 30;
+          return { data: makeLodData(10, 3, { color: 'uint8' }), allResident: false };
+        });
       }
+      const start = now;
       await l.updateView(view(1));
-      expect(l.loadedLODCount).toBe(3);
+      expect(l.loadedLODCount).toBe(2);
+      now += 2;
       stampLadderComplete({ loader: l });
+      expect(now - start).toBe(62);
       await l.updateView(view(2));
       expect(l.loadedLODCount).toBe(2);
+    });
+
+    it('settles at a stable cold depth on successive frames', async () => {
+      const rungs = Array.from({ length: 5 }, () =>
+        makeSubLoader(makeLodData(10, 3, { color: 'uint8' }))
+      );
+      for (const rung of rungs) {
+        rung.updateViewWithResidency.mockImplementation(() => {
+          now += 8;
+          return { data: makeLodData(10, 3, { color: 'uint8' }), allResident: false };
+        });
+      }
+      const l = new GSplatsProgressiveLoader(
+        rungs as never,
+        5,
+        '/auto_gsplats',
+        [0.5, 0.92, 0.97, 0.99, 1.0]
+      );
+      const depths: number[] = [];
+      const costs: number[] = [];
+      for (let t = 0; t < 7; t++) {
+        const start = now;
+        await l.updateView({
+          ...baseViewState,
+          slicePosition: [0, 0, t],
+          frameBudgetMs: 35,
+          ladderDepth: 'auto',
+        });
+        now += 2; // geometry commit cost
+        stampLadderComplete({ loader: l });
+        depths.push(l.loadedLODCount);
+        costs.push(now - start);
+      }
+      expect(depths).toEqual([3, 4, 4, 4, 4, 4, 4]);
+      expect(costs).toEqual([26, 34, 34, 34, 34, 34, 34]);
     });
 
     it('an unstamped ladder stays time-budgeted under auto (first cold level stops the pass)', async () => {

@@ -225,6 +225,7 @@ export interface StreamPass {
   readonly startLevel: number;
   readonly targetLevels: number;
   readonly guaranteedDepth: number;
+  readonly preferredDepth: number;
   readonly residentBytesAtPassStart: number;
   readonly residencyAllowanceBytes: number | undefined;
 }
@@ -277,6 +278,8 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
   private frameBudgetMs: number | null = null;
   private ladderDepth: number | null = null;
   private autoFloor = 0;
+  private autoPreferredDepth = 0;
+  private autoTargetLevels = 0;
   private lastAutoDepth = 0;
   private lastAutoCommitMs = Number.POSITIVE_INFINITY;
   private pendingAutoStartMs: number | null = null;
@@ -455,8 +458,9 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
       isPrefetch,
       budgetDeadline,
       startLevel,
-      targetLevels: this.streamingTargetLevels(),
+      targetLevels: this.streamingTargetLevels(startLevel, isPrefetch),
       guaranteedDepth: this.autoFloor,
+      preferredDepth: this.autoPreferredDepth,
       residentBytesAtPassStart: ladderResidentBytes(this.ladderResidency()),
       residencyAllowanceBytes,
     });
@@ -544,13 +548,26 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
       config.dimensionAnimation.playback.autoEnergyThreshold
     );
     this.autoFloor =
-      viewState.ladderDepth === 'auto' && this.frameBudgetMs !== null
-        ? Math.max(
-            this.ladderDepth ?? 0,
-            this.lastAutoCommitMs <= this.frameBudgetMs ? this.lastAutoDepth : 0
-          )
-        : 0;
+      viewState.ladderDepth === 'auto' && this.frameBudgetMs !== null ? (this.ladderDepth ?? 0) : 0;
+    this.recordAutoCarry();
     this.retryFoldedPass = false;
+  }
+
+  private recordAutoCarry(): void {
+    const previousOverran = this.lastAutoCommitMs > (this.frameBudgetMs ?? 0);
+    this.autoPreferredDepth = Math.max(
+      this.autoFloor,
+      previousOverran ? this.lastAutoDepth - 1 : this.lastAutoDepth
+    );
+    // Probe one more cold rung only when the previous frame had room for its
+    // average rung cost. This prevents a steady stream from probing, overrunning,
+    // and dropping back on every few frames.
+    const remaining = (this.frameBudgetMs ?? 0) - this.lastAutoCommitMs;
+    this.autoTargetLevels =
+      this.lastAutoDepth > 0 &&
+      (previousOverran || remaining < this.lastAutoCommitMs / this.lastAutoDepth)
+        ? this.autoPreferredDepth
+        : this.nLods;
   }
 
   private streamingKind(deadline: number | null, isPrefetch: boolean): StreamingPassKind {
@@ -561,8 +578,11 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
     );
   }
 
-  private streamingTargetLevels(): number {
-    return this.autoFloor > 0 ? this.nLods : (this.ladderDepth ?? this.nLods);
+  private streamingTargetLevels(startLevel: number, isPrefetch: boolean): number {
+    if (this.autoFloor > 0) {
+      return startLevel > 0 || isPrefetch ? this.nLods : this.autoTargetLevels;
+    }
+    return this.ladderDepth ?? this.nLods;
   }
 
   private prepareAutoMeasurement(
@@ -576,6 +596,7 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
       this.pendingAutoStartMs = passStartMs;
     } else {
       this.lastAutoDepth = 0;
+      this.autoPreferredDepth = this.autoFloor;
     }
   }
 
@@ -688,10 +709,13 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
         // rather than mis-count a teardown as a refinement failure.
         if (this.disposed) break;
         if (
-          shouldStopBeforeLevel(pass.kind, level, pass.startLevel, performance.now(), {
-            at: pass.budgetDeadline,
-            guaranteedDepth: pass.guaranteedDepth,
-          })
+          shouldStopBeforeLevel(
+            pass.kind,
+            level,
+            pass.startLevel,
+            { nowMs: performance.now(), deadlineMs: pass.budgetDeadline },
+            pass.guaranteedDepth
+          )
         ) {
           break;
         }
@@ -737,7 +761,7 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
       elapsed,
       additional,
       pass.residencyAllowanceBytes,
-      pass.guaranteedDepth
+      pass.preferredDepth
     );
   }
 

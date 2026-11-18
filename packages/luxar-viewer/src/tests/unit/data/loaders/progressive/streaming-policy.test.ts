@@ -41,28 +41,28 @@ describe('classifyStreamingPass', () => {
 
 describe('shouldStopBeforeLevel', () => {
   it('guarantees auto energy rungs even past the deadline, then stops before the next rung', () => {
-    expect(shouldStopBeforeLevel('playback', 1, 0, 20, { at: 10, guaranteedDepth: 2 })).toBe(false);
-    expect(shouldStopBeforeLevel('playback', 2, 0, 20, { at: 10, guaranteedDepth: 2 })).toBe(true);
+    expect(shouldStopBeforeLevel('playback', 1, 0, { nowMs: 20, deadlineMs: 10 }, 2)).toBe(false);
+    expect(shouldStopBeforeLevel('playback', 2, 0, { nowMs: 20, deadlineMs: 10 }, 2)).toBe(true);
   });
   it('never stops before a level when the pass has no deadline', () => {
-    expect(shouldStopBeforeLevel('refine', 4, 3, 100, null)).toBe(false);
+    expect(shouldStopBeforeLevel('refine', 4, 3, { nowMs: 100, deadlineMs: null })).toBe(false);
   });
 
   it('keeps the first level of an empty playback ladder despite an expired budget', () => {
-    expect(shouldStopBeforeLevel('playback', 0, 0, 11, 10)).toBe(false);
-    expect(shouldStopBeforeLevel('playback', 1, 0, 11, 10)).toBe(true);
+    expect(shouldStopBeforeLevel('playback', 0, 0, { nowMs: 11, deadlineMs: 10 })).toBe(false);
+    expect(shouldStopBeforeLevel('playback', 1, 0, { nowMs: 11, deadlineMs: 10 })).toBe(true);
   });
 
   it('stops before extending a restored playback prefix after its budget expires', () => {
-    expect(shouldStopBeforeLevel('playback', 3, 3, 11, 10)).toBe(true);
-    expect(shouldStopBeforeLevel('playback', 3, 3, 10, 10)).toBe(false);
+    expect(shouldStopBeforeLevel('playback', 3, 3, { nowMs: 11, deadlineMs: 10 })).toBe(true);
+    expect(shouldStopBeforeLevel('playback', 3, 3, { nowMs: 10, deadlineMs: 10 })).toBe(false);
   });
 
   it('keeps one-level progress for prefetch and refine after restoring a prefix', () => {
-    expect(shouldStopBeforeLevel('prefetch', 3, 3, 11, 10)).toBe(false);
-    expect(shouldStopBeforeLevel('prefetch', 4, 3, 11, 10)).toBe(true);
-    expect(shouldStopBeforeLevel('refine', 3, 3, 11, 10)).toBe(false);
-    expect(shouldStopBeforeLevel('refine', 4, 3, 11, 10)).toBe(true);
+    expect(shouldStopBeforeLevel('prefetch', 3, 3, { nowMs: 11, deadlineMs: 10 })).toBe(false);
+    expect(shouldStopBeforeLevel('prefetch', 4, 3, { nowMs: 11, deadlineMs: 10 })).toBe(true);
+    expect(shouldStopBeforeLevel('refine', 3, 3, { nowMs: 11, deadlineMs: 10 })).toBe(false);
+    expect(shouldStopBeforeLevel('refine', 4, 3, { nowMs: 11, deadlineMs: 10 })).toBe(true);
   });
 });
 
@@ -142,8 +142,8 @@ describe('pinned pass (ViewState.ladderDepth — the playback "detail" setting)'
   });
 
   it('never stops before a level on an expired deadline (the loop bound is the pinned depth)', () => {
-    expect(shouldStopBeforeLevel('pinned', 3, 3, 11, 10)).toBe(false);
-    expect(shouldStopBeforeLevel('pinned', 4, 0, 11, 10)).toBe(false);
+    expect(shouldStopBeforeLevel('pinned', 3, 3, { nowMs: 11, deadlineMs: 10 })).toBe(false);
+    expect(shouldStopBeforeLevel('pinned', 4, 0, { nowMs: 11, deadlineMs: 10 })).toBe(false);
   });
 
   it('never stops after a cold or slow level — a pinned frame waits for its rungs', () => {
