@@ -96,14 +96,25 @@ export function shouldStopBeforeLevel(
   level: number,
   startLevel: number,
   nowMs: number,
-  deadlineMs: number | null
+  deadline: number | null | { at: number | null; guaranteedDepth: number }
 ): boolean {
-  if (kind === 'pinned') return false;
+  const deadlineMs = typeof deadline === 'object' && deadline !== null ? deadline.at : deadline;
+  const guaranteedDepth =
+    typeof deadline === 'object' && deadline !== null ? deadline.guaranteedDepth : 0;
+  if (kind === 'pinned' || level < guaranteedDepth) return false;
   return (
     deadlineMs !== null &&
     isPastGuaranteedProgressFloor(kind, level, startLevel) &&
     nowMs > deadlineMs
   );
+}
+
+function continuesPastCold(
+  kind: StreamingPassKind,
+  level: number,
+  guaranteedDepth: number
+): boolean {
+  return kind === 'pinned' || kind === 'prefetch' || level < guaranteedDepth;
 }
 
 /**
@@ -130,7 +141,8 @@ export function shouldStopAfterLevel(
   allResident: boolean,
   elapsedMs: number,
   additionalResidentBytes = 0,
-  residencyAllowanceBytes?: number
+  residencyAllowanceBytes?: number,
+  guaranteedDepth = 0
 ): boolean {
   if (
     residencyAllowanceBytes !== undefined &&
@@ -139,7 +151,7 @@ export function shouldStopAfterLevel(
   ) {
     return true;
   }
-  if (kind === 'pinned' || kind === 'prefetch') return false;
+  if (continuesPastCold(kind, level, guaranteedDepth)) return false;
   return (
     isPastGuaranteedProgressFloor(kind, level, startLevel) &&
     (!allResident || elapsedMs > CACHE_HIT_THRESHOLD_MS)

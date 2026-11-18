@@ -322,6 +322,10 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     return this.core.committedEnergyFraction;
   }
 
+  noteCommitted(): void {
+    this.core.noteCommitted();
+  }
+
   /** Total number of LOD levels. */
   get totalLODCount(): number {
     return this.core.totalLODCount;

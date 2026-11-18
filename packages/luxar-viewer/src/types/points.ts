@@ -394,8 +394,9 @@ export interface ViewState {
    * pass load EXACTLY `min(ladderDepth, nLods)` rungs, cold or not, ignoring the
    * time budget, so every frame of a time-lapse is drawn at the same rung and
    * the tick waits for the data instead of showing whatever happened to be
-   * resident. `'auto'` lets each loader resolve its own depth from its energy
-   * stamps (`resolveLadderDepth`); a ladder without stamps stays time-budgeted.
+   * resident. During budgeted playback, `'auto'` guarantees the energy depth
+   * (`resolveLadderDepth`) and uses spare time for deeper rungs; during a
+   * scrub it pins that depth. A ladder without stamps stays time-budgeted.
    * Absent = the time-budgeted behaviour.
    *
    * Like `frameBudgetMs` this is a **PER-PASS DIRECTIVE, not state**: the scene

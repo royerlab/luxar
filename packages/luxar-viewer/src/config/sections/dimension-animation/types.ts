@@ -10,7 +10,7 @@ export interface DimensionAnimationConfig {
     /** Per-tick step override; null = Auto (fps-derived / authored step). */
     stepSize: number | null;
     /**
-     * Playback detail: `'auto'` pins each ladder at the first rung whose
+     * Playback detail: `'auto'` guarantees each ladder the first rung whose
      * cumulative energy e(k) reaches `playback.autoEnergyThreshold` (stamped
      * ladders; unstamped ones fall back to time-budgeted streaming), a number
      * pins that many rungs, `null` streams whatever fits the tick ("Fast").
@@ -76,7 +76,7 @@ export interface DimensionAnimationConfig {
      */
     overheadReserveMs: number;
     /**
-     * The `'auto'` playback detail pins a ladder at the FIRST rung whose
+     * The `'auto'` playback detail guarantees the FIRST rung whose
      * cumulative energy fraction e(k) (the `energy_fraction_cum` build stamps)
      * reaches this value; a ladder without stamps is left time-budgeted.
      */

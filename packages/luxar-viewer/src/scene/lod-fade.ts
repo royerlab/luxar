@@ -268,6 +268,29 @@ export function applyLodFade(
   return changed;
 }
 
+/** Apply streaming energy compensation to leaves outside registry-owned LOD groups. */
+export function applyStandaloneLadderFade(
+  root: THREE.Object3D,
+  energyComp: boolean,
+  registerMaterial?: (material: THREE.Material) => void
+): boolean {
+  let changed = false;
+  const visit = (object: THREE.Object3D): void => {
+    if (!object.visible || object.userData.kind === 'lod') return;
+    const mesh = object as THREE.Mesh;
+    const energy = object.userData.committedEnergyFraction as number | undefined;
+    if (
+      mesh.material &&
+      ((typeof energy === 'number' && energy < 1) || object.userData._lodFadeBase != null)
+    ) {
+      changed = applyLodFade(object, null, energyComp, registerMaterial) || changed;
+    }
+    for (const child of object.children) visit(child);
+  };
+  visit(root);
+  return changed;
+}
+
 /**
  * Route an authored-opacity edit (Layers panel, layer exposure) through a live
  * LOD fade: when `obj` carries a fade snapshot (`_lodFadeBase`), rebase it to

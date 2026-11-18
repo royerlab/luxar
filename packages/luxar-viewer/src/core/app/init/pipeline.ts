@@ -23,6 +23,7 @@ import { getViewerContainer } from '../../../utils/viewer-container';
 import { DataMonitorManager } from '../../../ui/data-monitor-manager';
 import { SceneLoaderManager, getSceneLoader } from '../../../data/scene-loader-manager';
 import { LODGroupRegistry } from '../../../scene/lod-group-registry';
+import { applyStandaloneLadderFade } from '../../../scene/lod-fade';
 import { buildLodRegistryDeps } from './lod-registry-deps';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { notifier } from '../../../utils/cross-layer/notifier';
@@ -435,6 +436,11 @@ export async function runInitPipeline(
   // keep fraction of what is drawn, so it must see the level revealed this
   // frame rather than draw it once on a stale keep (#2944 review B).
   animationController.addPerFrameCallback('projected-density', densityWiring.perFrame);
+  animationController.addPerFrameCallback('standalone-ladder-energy', () =>
+    applyStandaloneLadderFade(sceneManager.scene, lodEnergyCompEnabled, (material) =>
+      materialManager.register(material)
+    )
+  );
 
   // Seed the pixel-ratio cap from config BEFORE anything sizes a frame.
   // The renderer boundary (dpr-policy.getActivePixelRatio) reads the cap

@@ -40,6 +40,10 @@ describe('classifyStreamingPass', () => {
 });
 
 describe('shouldStopBeforeLevel', () => {
+  it('guarantees auto energy rungs even past the deadline, then stops before the next rung', () => {
+    expect(shouldStopBeforeLevel('playback', 1, 0, 20, { at: 10, guaranteedDepth: 2 })).toBe(false);
+    expect(shouldStopBeforeLevel('playback', 2, 0, 20, { at: 10, guaranteedDepth: 2 })).toBe(true);
+  });
   it('never stops before a level when the pass has no deadline', () => {
     expect(shouldStopBeforeLevel('refine', 4, 3, 100, null)).toBe(false);
   });
@@ -65,6 +69,11 @@ describe('shouldStopBeforeLevel', () => {
 describe('shouldStopAfterLevel', () => {
   const fast = CACHE_HIT_THRESHOLD_MS - 1;
   const slow = CACHE_HIT_THRESHOLD_MS + 1;
+
+  it('ignores a cold/slow rung inside the auto floor, then stops at the first cold extra rung', () => {
+    expect(shouldStopAfterLevel('playback', 1, 0, false, slow, 0, undefined, 2)).toBe(false);
+    expect(shouldStopAfterLevel('playback', 2, 0, false, fast, 0, undefined, 2)).toBe(true);
+  });
 
   it('refine stops at the first cold (cache-miss) level past the floor', () => {
     // allResident=false ⇒ this level required a fresh fetch.

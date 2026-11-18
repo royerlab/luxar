@@ -82,6 +82,7 @@ interface LadderLoader {
   committedEnergyFraction?: number | null;
   loadedLODCount?: number;
   totalLODCount?: number;
+  noteCommitted?(): void;
 }
 
 function isCommittedLadderFull(loader: LadderLoader | undefined): boolean {
@@ -134,4 +135,5 @@ export function stampLadderComplete(userData: LadderStampable | undefined | null
   const e = loader.committedEnergyFraction;
   if (e == null) delete userData.committedEnergyFraction;
   else userData.committedEnergyFraction = e;
+  loader.noteCommitted?.();
 }

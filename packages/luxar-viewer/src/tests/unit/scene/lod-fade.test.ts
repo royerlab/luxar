@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   applyLodFade,
+  applyStandaloneLadderFade,
   densityCompensation,
   isBlendableMode,
   isBlendableSubtree,
@@ -48,6 +49,44 @@ function leafMesh(mode?: string): THREE.Mesh {
 }
 const liveOpacity = (mesh: THREE.Mesh): number =>
   (mesh.material as unknown as FadeMatStub).getOpacity();
+
+describe('standalone additive ladder compensation', () => {
+  it('brightens a committed prefix, follows deeper commits, and restores full brightness', () => {
+    const scene = new THREE.Group();
+    const leaf = leafMesh('additive');
+    leaf.userData.committedEnergyFraction = 0.5;
+    scene.add(leaf);
+    expect(applyStandaloneLadderFade(scene, true)).toBe(true);
+    expect(liveOpacity(leaf)).toBeCloseTo(2);
+    leaf.userData.committedEnergyFraction = 0.8;
+    expect(applyStandaloneLadderFade(scene, true)).toBe(true);
+    expect(liveOpacity(leaf)).toBeCloseTo(1.25);
+    leaf.userData.committedEnergyFraction = 1;
+    expect(applyStandaloneLadderFade(scene, true)).toBe(true);
+    expect(liveOpacity(leaf)).toBe(1);
+    expect(applyStandaloneLadderFade(scene, true)).toBe(false);
+  });
+
+  it('leaves registry-owned LOD children to their dissolve, and honors the opt-out', () => {
+    const scene = new THREE.Group();
+    const lod = new THREE.Group();
+    lod.userData.kind = 'lod';
+    const owned = leafMesh('additive');
+    owned.userData.committedEnergyFraction = 0.5;
+    lod.add(owned);
+    const standalone = leafMesh('additive');
+    standalone.userData.committedEnergyFraction = 0.5;
+    scene.add(lod, standalone);
+    applyStandaloneLadderFade(scene, false);
+    expect(liveOpacity(owned)).toBe(1);
+    expect(liveOpacity(standalone)).toBe(1);
+    applyStandaloneLadderFade(scene, true);
+    expect(liveOpacity(owned)).toBe(1);
+    expect(liveOpacity(standalone)).toBe(2);
+    applyStandaloneLadderFade(scene, false);
+    expect(liveOpacity(standalone)).toBe(1);
+  });
+});
 
 describe('isBlendableSubtree — BLENDABLE_MODES matrix', () => {
   it.each(['additive', 'luminous', 'volumetric'])('%s ⇒ blendable', (mode) => {

@@ -223,6 +223,7 @@ export interface StreamPass {
   readonly budgetDeadline: number | null;
   readonly startLevel: number;
   readonly targetLevels: number;
+  readonly guaranteedDepth: number;
   readonly residentBytesAtPassStart: number;
   readonly residencyAllowanceBytes: number | undefined;
 }
@@ -274,6 +275,10 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
   // Per-pass directives (never part of lastViewState / cache keys).
   private frameBudgetMs: number | null = null;
   private ladderDepth: number | null = null;
+  private autoFloor = 0;
+  private lastAutoDepth = 0;
+  private lastAutoCommitMs = Number.POSITIVE_INFINITY;
+  private pendingAutoStartMs: number | null = null;
 
   constructor(
     rungs: TRung[],
@@ -418,7 +423,9 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
     signal?: AbortSignal,
     residencyAllowanceBytes?: number
   ): Promise<TData> {
+    const passStartMs = performance.now();
     this.recordDirectives(viewState);
+    this.pendingAutoStartMs = null;
     const budgetDeadline =
       this.frameBudgetMs !== null ? performance.now() + this.frameBudgetMs : null;
     // A shadow (prefetch) pass only warms the SliceCache, and its caller drops
@@ -428,22 +435,27 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
     const finish = (): TData =>
       isPrefetch || this.disposed ? this.geometry.empty() : this.concatenateMemoized(session);
 
-    if (await this.syncView(viewState, signal, isPrefetch)) return finish();
+    if (await this.syncView(viewState, signal, isPrefetch)) {
+      this.lastAutoDepth = 0;
+      return finish();
+    }
     if (this.initialLoadDone && this.frameBudgetMs === null) this.warmRemainingMetadata();
 
     const startLevel = this.loadedCount;
+    this.prepareAutoMeasurement(startLevel, isPrefetch, passStartMs);
     this.levelsAtPassStart = startLevel;
     this.payloadsAtPassStart = this.loadedLODs.length;
     this.restoredFullLadderAtPassStart = false;
     await this.streamRungs({
-      kind: classifyStreamingPass(budgetDeadline !== null, isPrefetch, this.ladderDepth !== null),
+      kind: this.streamingKind(budgetDeadline, isPrefetch),
       viewState,
       session,
       signal,
       isPrefetch,
       budgetDeadline,
       startLevel,
-      targetLevels: this.ladderDepth ?? this.nLods,
+      targetLevels: this.streamingTargetLevels(),
+      guaranteedDepth: this.autoFloor,
       residentBytesAtPassStart: ladderResidentBytes(this.ladderResidency()),
       residencyAllowanceBytes,
     });
@@ -530,7 +542,48 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
       this.energyTable,
       config.dimensionAnimation.playback.autoEnergyThreshold
     );
+    this.autoFloor =
+      viewState.ladderDepth === 'auto' && this.frameBudgetMs !== null
+        ? Math.max(
+            this.ladderDepth ?? 0,
+            this.lastAutoCommitMs <= this.frameBudgetMs ? this.lastAutoDepth : 0
+          )
+        : 0;
     this.retryFoldedPass = false;
+  }
+
+  private streamingKind(deadline: number | null, isPrefetch: boolean): StreamingPassKind {
+    return classifyStreamingPass(
+      deadline !== null,
+      isPrefetch,
+      this.ladderDepth !== null && this.autoFloor === 0
+    );
+  }
+
+  private streamingTargetLevels(): number {
+    return this.autoFloor > 0 ? this.nLods : (this.ladderDepth ?? this.nLods);
+  }
+
+  private prepareAutoMeasurement(
+    startLevel: number,
+    isPrefetch: boolean,
+    passStartMs: number
+  ): void {
+    // A restored prefix was assembled by a shadow pass. Its cheap foreground
+    // commit cannot predict the cost of loading that depth on the next frame.
+    if (startLevel === 0 && this.autoFloor > 0 && !isPrefetch) {
+      this.pendingAutoStartMs = passStartMs;
+    } else {
+      this.lastAutoDepth = 0;
+    }
+  }
+
+  /** Record the actual load-through-geometry-commit cost of a displayed auto frame. */
+  noteCommitted(): void {
+    if (this.pendingAutoStartMs === null) return;
+    this.lastAutoCommitMs = performance.now() - this.pendingAutoStartMs;
+    this.lastAutoDepth = this.loadedCount;
+    this.pendingAutoStartMs = null;
   }
 
   /**
@@ -621,20 +674,23 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
   private async streamRungs(pass: StreamPass): Promise<void> {
     // A pinned pass takes every rung up to its depth whatever they cost, so
     // their fetches need not wait on one another: start them all now.
-    const pinned = pass.kind === 'pinned' ? this.startRungLoads(pass) : null;
+    const pinned =
+      pass.kind === 'pinned' || pass.guaranteedDepth > pass.startLevel
+        ? this.startRungLoads(
+            pass,
+            pass.kind === 'pinned' ? pass.targetLevels : pass.guaranteedDepth
+          )
+        : null;
     try {
       for (let level = pass.startLevel; level < pass.targetLevels; level++) {
         // A dispose() racing the awaited rung clears `rungs`: stop streaming
         // rather than mis-count a teardown as a refinement failure.
         if (this.disposed) break;
         if (
-          shouldStopBeforeLevel(
-            pass.kind,
-            level,
-            pass.startLevel,
-            performance.now(),
-            pass.budgetDeadline
-          )
+          shouldStopBeforeLevel(pass.kind, level, pass.startLevel, performance.now(), {
+            at: pass.budgetDeadline,
+            guaranteedDepth: pass.guaranteedDepth,
+          })
         ) {
           break;
         }
@@ -679,7 +735,8 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
       allResident,
       elapsed,
       additional,
-      pass.residencyAllowanceBytes
+      pass.residencyAllowanceBytes,
+      pass.guaranteedDepth
     );
   }
 
@@ -705,9 +762,9 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
    * unhandled rejection, so each gets a no-op handler; the loop still awaits —
    * and rethrows — the original.
    */
-  private startRungLoads(pass: StreamPass): PinnedRungLoad<TData>[] {
+  private startRungLoads(pass: StreamPass, targetLevels: number): PinnedRungLoad<TData>[] {
     const loads: PinnedRungLoad<TData>[] = [];
-    for (let level = pass.startLevel; level < pass.targetLevels; level++) {
+    for (let level = pass.startLevel; level < targetLevels; level++) {
       const child = createChildController(pass.signal);
       const load = this.loadRung(level, pass.viewState, pass.session, child.controller.signal);
       void load.catch(() => {});
