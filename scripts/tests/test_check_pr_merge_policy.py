@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -70,7 +71,7 @@ def _run(
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(SCRIPT), *(args if args is not None else ["3268"])],
-        env={"PATH": str(tmp_path)},
+        env={**os.environ, "PATH": str(tmp_path)},
         capture_output=True,
         text=True,
         check=False,
