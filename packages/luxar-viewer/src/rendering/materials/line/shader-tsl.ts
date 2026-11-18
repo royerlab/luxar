@@ -375,20 +375,13 @@ export function lineWebGPUFactory(
 
   const vertexBody = Fn(() => {
     // === Line-texture fetch prologue ===
-    // textureLoad reads reconstruct the per-segment values into the
-    // exact local names the math below has always used — zero changes
-    // downstream of this block. Every value is a `.toVar()` STATEMENT
-    // (the Fn house rule; see the block comment above). The texture
-    // width is a multiple of 6 (element-texture-layout.ts), so a
-    // segment's 6 texels share one row and only x advances. texel5
-    // carries the colormap scalars (.xy, read under useColormap) and
-    // the per-endpoint alphas (.zw, written unconditionally by the
-    // texel writer — 1.0 for RGB data), so it is fetched in every
-    // mode. Unlike the GLSL twin, texels 2/3/5 are NOT deferred past
-    // the bothBehind cull — the Fn trace-order house rule emits
-    // statements unconditionally, so the TSL backend pays the extra
-    // loads per culled vertex (accepted asymmetry, output-identical;
-    // same trade as the point factory).
+    // The texture width is a multiple of 6 (element-texture-layout.ts),
+    // so a segment's texels share one row and only x advances. Texel 5
+    // carries colormap scalars (.xy) and endpoint alphas (.zw); it is
+    // fetched in every mode. Color/sharpness texels 2/3 are handled
+    // after near clipping. Unlike the GLSL twin, these reads are not
+    // deferred past the bothBehind cull: the Fn trace-order house rule
+    // emits statements unconditionally outside explicit If blocks.
     const lineBase: TSLNode = int(aSortedIndex).mul(int(6)).toVar();
     // The width is baked as a LITERAL, not read via textureSize(): a
     // compile-time constant lets the shader compiler strength-reduce
@@ -405,8 +398,8 @@ export function lineWebGPUFactory(
     ).toVar();
     const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
     const texelY: TSLNode = lineBase.div(lineTexW).toVar();
-    // Quad corners are exactly -1/+1 along the segment. Their color and
-    // sharpness are fetched after near clipping establishes tEff below.
+    // Quad corners are exactly -1/+1 along the segment, giving t=0/1.
+    // Color and sharpness are fetched after near clipping establishes tEff.
     const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5).toVar();
     const lineT0: TSLNode = loadTexel(uLineTex, ivec2(texelX, texelY)).toVar();
     const lineT1: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(1)), texelY)).toVar();
@@ -420,8 +413,6 @@ export function lineWebGPUFactory(
     const aStartJointCode: TSLNode = lineT4.y.toVar();
     const aEndJointCode: TSLNode = lineT4.z.toVar();
 
-    // t ∈ {0, 1} — position along the segment. Branchless because
-    // aQuadCorner.x ∈ {-1, +1} by construction.
     // The ortho branch of the projection THIS draw uses (GLSL twin:
     // `luxarLineIsOrtho = luxarIsOrthoProjection()`), so a draw through a
     // different camera (the environment capture's cube faces) needs no
