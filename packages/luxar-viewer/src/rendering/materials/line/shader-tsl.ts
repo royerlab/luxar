@@ -229,6 +229,23 @@ export interface LineTSLNodes {
   readonly uScalarScale?: TSLNode;
 }
 
+function lineEndpointColorTexels(
+  lineTex: TSLNode,
+  texelX: TSLNode,
+  texelY: TSLNode,
+  t: TSLNode,
+  fixedOrtho: boolean | undefined
+): readonly [TSLNode, TSLNode] {
+  if (fixedOrtho) {
+    const endpoint = loadTexel(lineTex, ivec2(texelX.add(int(2).add(int(t))), texelY)).toVar();
+    return [endpoint, endpoint];
+  }
+  return [
+    loadTexel(lineTex, ivec2(texelX.add(int(2)), texelY)).toVar(),
+    loadTexel(lineTex, ivec2(texelX.add(int(3)), texelY)).toVar(),
+  ];
+}
+
 /**
  * Line-material TSL factory.
  *
@@ -382,10 +399,15 @@ export function lineWebGPUFactory(
     ).toVar();
     const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
     const texelY: TSLNode = lineBase.div(lineTexW).toVar();
+    // Quad corners are exactly -1/+1 along the segment. In the ortho
+    // variant near-plane clipping is absent, so tEff == t and each vertex
+    // needs only its own endpoint's color and sharpness. Select the texel
+    // address before loading it; the perspective variant still needs both
+    // endpoint values when clipping remaps tEff between 0 and 1.
+    const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5).toVar();
     const lineT0: TSLNode = loadTexel(uLineTex, ivec2(texelX, texelY)).toVar();
     const lineT1: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(1)), texelY)).toVar();
-    const lineT2: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(2)), texelY)).toVar();
-    const lineT3: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(3)), texelY)).toVar();
+    const [lineT2, lineT3] = lineEndpointColorTexels(uLineTex, texelX, texelY, t, fixedOrtho);
     const lineT4: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(4)), texelY)).toVar();
     const lineT5: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(5)), texelY)).toVar();
     const aStartPos: TSLNode = vec3(lineT0).toVar();
@@ -400,8 +422,6 @@ export function lineWebGPUFactory(
 
     // t ∈ {0, 1} — position along the segment. Branchless because
     // aQuadCorner.x ∈ {-1, +1} by construction.
-    const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5).toVar();
-
     // The ortho branch of the projection THIS draw uses (GLSL twin:
     // `luxarLineIsOrtho = luxarIsOrthoProjection()`), so a draw through a
     // different camera (the environment capture's cube faces) needs no
