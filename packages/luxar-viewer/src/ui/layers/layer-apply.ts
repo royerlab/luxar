@@ -788,10 +788,11 @@ export class LayerApplyEngine {
     // kept for external/future materials): that arm never stamps
     // `userData.blendingMode`, so reading the material alone would leave the
     // value unchanged and silently make this hook a no-op for such a node.
+    const resolvedMode = isPhysicalMeshMaterial(mat)
+      ? 'opaque'
+      : ((mat.userData?.blendingMode as BlendingMode | undefined) ?? blendingMode);
+    if (prevBlendingMode !== resolvedMode) invalidateStandaloneLadderFade();
     if (!uncommitted && isDepthSortable(obj.userData?.nodeType)) {
-      const resolvedMode = isPhysicalMeshMaterial(mat)
-        ? 'opaque'
-        : ((mat.userData?.blendingMode as BlendingMode | undefined) ?? blendingMode);
       noteDepthSortBlendingModeSwitch(obj as THREE.Mesh, resolvedMode, prevBlendingMode);
     }
     scheduleBlendModeProgramWarmupForObject(obj);
@@ -1002,7 +1003,6 @@ export class LayerApplyEngine {
 
   applyBlendingMode(layer: LayerInfo): void {
     this.applyComposed(layer);
-    invalidateStandaloneLadderFade();
   }
 
   /**
