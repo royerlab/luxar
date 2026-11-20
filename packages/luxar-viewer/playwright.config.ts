@@ -322,9 +322,9 @@ export default defineConfig({
         VITE_LUXAR_USE_WEBGPU: process.env.VITE_LUXAR_USE_WEBGPU ?? '',
         VITE_LUXAR_USE_LEGACY_WEBGL: process.env.VITE_LUXAR_USE_LEGACY_WEBGL ?? '',
         VITE_LUXAR_USE_WEBGPU_RENDERER: process.env.VITE_LUXAR_USE_WEBGPU_RENDERER ?? '',
-        // The platform policy's WebGPU rows are held until #3172, so production
-        // has none; the suite runs the staged ones so `early-webgpu-prefetch`
-        // still exercises the policy path. Tests needing WebGL pin `renderer`.
+        // Also run any staged platform-policy rows (none today), so a row held
+        // off production is still exercised by `early-webgpu-prefetch`. Tests
+        // needing WebGL pin `renderer`.
         VITE_LUXAR_WEBGPU_STAGED_RULES: process.env.VITE_LUXAR_WEBGPU_STAGED_RULES ?? '1',
       },
     },
