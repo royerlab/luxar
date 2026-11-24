@@ -360,7 +360,9 @@ under GPU-budget pressure. `setExposure()` scales exposure relative to the scene
 authored value, which a host needs because that value was tuned against a different
 post chain than its own. On a Mesh in the default `opaque` mode, this scales cutout
 coverage rather than brightness: values below `alphaCutoff` discard the surface,
-while `normal` blending provides smooth transparency.
+while `normal` blending provides smooth transparency. `setGain()` brightens the
+emitted colour without touching opacity, which is the right brightness control for
+`volumetric` scenes: there, exposure above 1 adds opacity, not light.
 
 Note that a scene's `tone_mapping` does **not** apply in layer mode: Luxar
 tone-maps in a post-processing pass the layer does not own, so a host wanting a

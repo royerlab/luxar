@@ -66,6 +66,7 @@ asynchronously.
 | `awaitDimensionUpdate()` | Resolve when no dimension update remains in flight. |
 | `setVisible(visible)` / `isVisible()` | Hide or show without discarding caches. |
 | `setExposure(multiplier)` / `getExposure()` | Scale opacity relative to authored values. |
+| `setGain(gain)` / `getGain()` | Scale the emitted colour (post-colormap `intensity`/`offset`) without touching opacity or optical depth. |
 | `getBounds()` | Return world-space bounds for the current root, or `null`. |
 | `alignTo(matrix)` | Place the root in host world space before or after `load()`. |
 | `onDatasetFault(listener)` | Subscribe to `DatasetFaultPayload` archive faults, replaying the current fault immediately; returns an unsubscribe function and throws after `dispose()`. |

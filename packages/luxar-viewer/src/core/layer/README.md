@@ -159,6 +159,7 @@ scene fetch, so requiring one order would make correctness a race.
 ```ts
 layer.setVisible(false); // hide without discarding caches or in-flight streams
 layer.setExposure(0.75); // scale authored node opacity; 1 = as authored
+layer.setGain(2); // brighten the emitted colour only; opacity untouched
 ```
 
 `setVisible` toggles `visible` on the root rather than detaching it, so
@@ -179,6 +180,15 @@ coverage: values below `alphaCutoff` (0.5 by default) discard the surface, while
 values above it do not dim surviving fragments. Author the mesh with `normal`
 blending when exposure should produce smooth surface transparency.
 
+`setGain` is the brightness control that leaves opacity alone. In `volumetric`
+blending opacity is optical depth, so `setExposure` above 1 makes elements more
+opaque (hard-edged, and dark where the colour window maps them to black) rather
+than brighter. `setGain` multiplies the post-colormap `intensity`/`offset` pair
+instead, so a colormapped node keeps its scalar window. It composes against the
+authored values, is re-applied as geometry streams in, and survives the
+material clone an LOD fade makes. Physical meshes, which keep their intensity
+outside that uniform pair, are left unchanged.
+
 ### API summary
 
 | Method                             | Purpose                                                           |
@@ -196,6 +206,7 @@ blending when exposure should produce smooth surface transparency.
 | `awaitDimensionUpdate()`           | Resolve once no slice update is in flight                         |
 | `setVisible(v)` / `isVisible()`    | Show/hide while preserving caches and in-flight fetches           |
 | `setExposure(m)` / `getExposure()` | Scale exposure relative to authored                               |
+| `setGain(g)` / `getGain()`         | Scale emitted colour brightness; opacity untouched                |
 | `getDatasetFault()`                | Current `{ src, error }` archive fault, or `null`                 |
 | `onDatasetFault(fn)`               | Subscribe to faults; replays current state; returns unsubscribe   |
 | `handleContextLost()`              | Back off the Luxar GPU budget after WebGL context loss            |

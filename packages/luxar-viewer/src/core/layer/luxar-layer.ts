@@ -273,6 +273,19 @@ function readOpacity(mat: THREE.Material): number {
   return (mat as Partial<FadeableMaterial>).getOpacity?.() ?? 1;
 }
 
+/**
+ * The post-colormap colour gain/offset a material currently carries, or null
+ * when it keeps them outside `uIntensity`/`uOffset` (the physical mesh wrapper),
+ * in which case the gain leaves it alone rather than overwrite an unknown value.
+ */
+function readColorGain(mat: THREE.Material): { intensity: number; offset: number } | null {
+  const u = (mat as { uniforms?: Record<string, { value: unknown } | undefined> }).uniforms;
+  const intensity = u?.uIntensity?.value;
+  const offset = u?.uOffset?.value;
+  if (typeof intensity !== 'number') return null;
+  return { intensity, offset: typeof offset === 'number' ? offset : 0 };
+}
+
 const LOADER_ID = 'default';
 const DEFAULT_RENDER_ORDER = 10;
 
@@ -365,6 +378,8 @@ export class LuxarLayer {
   // whose geometry streams in over time converges on one exposure, and so the
   // authored value is never lost to repeated scaling.
   private exposure = 1;
+  // Host colour gain (see setGain); never touches opacity or optical depth.
+  private gain = 1;
   private visible = true;
   private renderOrderDirty = false;
   private datasetFaultLoader: SceneLoader | null = null;
@@ -373,6 +388,7 @@ export class LuxarLayer {
   private readonly datasetFaultListeners = new Set<(payload: DatasetFaultPayload) => void>();
   private readonly authoredOpacity = new WeakMap<THREE.Material, number>();
   private readonly appliedExposure = new WeakMap<THREE.Material, number>();
+  private readonly appliedGain = new WeakMap<THREE.Material, number>();
   // nD update coalescing. A scrubbing host outruns the loader by ~30x, so
   // callers arriving during an in-flight pass are all served by the NEXT pass
   // rather than each getting one of their own.
@@ -580,6 +596,7 @@ export class LuxarLayer {
     // so a non-default exposure has to be re-asserted. Skipped entirely at the
     // authored exposure, which is the common case.
     if (this.exposure !== 1) this.applyExposure();
+    if (this.gain !== 1) this.applyGain();
     const changed = sortChanged || lodChanged || densityChanged;
     if (changed) this.options.requestRender?.();
     return changed;
@@ -850,6 +867,31 @@ export class LuxarLayer {
   }
 
   /**
+   * Scale the brightness of the layer's emitted colour by `gain`, relative to
+   * the authored appearance. 1 restores it.
+   *
+   * Unlike {@link setExposure} this leaves opacity alone, so it never changes
+   * optical depth: in `volumetric` blending, exposure above 1 makes elements
+   * more opaque (hard-edged, and dark where the colour window maps them to
+   * black) rather than brighter, while a gain only brightens. It multiplies the
+   * post-colormap colour gain/offset pair (`intensity`/`offset`), so on a
+   * colormapped node it does not move the scalar window. Like any gain it can
+   * push bright structure past the host's tone curve. Physical meshes, which
+   * keep their intensity outside that uniform pair, are left unchanged.
+   *
+   * Re-applied by {@link update} as geometry streams in.
+   */
+  setGain(gain: number): void {
+    this.gain = gain;
+    this.applyGain();
+  }
+
+  /** Current colour gain; 1 means the authored appearance. */
+  getGain(): number {
+    return this.gain;
+  }
+
+  /**
    * Push {@link exposure} onto any material that has not received it yet.
    *
    * The authored opacity is captured per material the first time that material
@@ -886,6 +928,34 @@ export class LuxarLayer {
       // contract `ui/layers/layer-apply.ts` follows for the Layers panel.
       if (!rebaseLodFade(mesh, mat, next)) mat.updateOpacity(next);
       this.appliedExposure.set(mat, this.exposure);
+    });
+  }
+
+  /**
+   * Push {@link gain} onto any material that has not received it yet.
+   *
+   * The authored intensity/offset are kept in `material.userData` rather than a
+   * side table, because an LOD fade clones a material (uniforms and userData
+   * both) — a clone made after a gain would otherwise capture the gained value
+   * as authored and apply the gain twice.
+   */
+  private applyGain(): void {
+    const root = this.rootGroup;
+    if (!root) return;
+    root.traverse((obj) => {
+      const mat = (obj as THREE.Mesh).material;
+      if (!mat || Array.isArray(mat) || !isLuxarMaterial(mat)) return;
+      if (this.appliedGain.get(mat) === this.gain) return;
+      const ud = mat.userData as { _layerAuthoredColor?: { intensity: number; offset: number } };
+      if (!ud._layerAuthoredColor) {
+        const authored = readColorGain(mat);
+        if (!authored) return;
+        ud._layerAuthoredColor = authored;
+      }
+      const base = ud._layerAuthoredColor;
+      mat.updateIntensity(base.intensity * this.gain);
+      mat.updateOffset(base.offset * this.gain);
+      this.appliedGain.set(mat, this.gain);
     });
   }
 
