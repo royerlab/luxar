@@ -9,8 +9,8 @@
  * row admits a platform to WebGPU, and everything without a row stays on
  * WebGL. Add a row only after the render gate's perf and hosted suites have
  * been run on that platform (`--backends webgl,webgpu`), and only once cold
- * load there is within 0.15 s of WebGL (#3172). Until then the table is empty
- * and measured rows wait in {@link STAGED_WEBGPU_PLATFORM_RULES}.
+ * load there is within 0.15 s of WebGL (#3172). A measured row that misses the
+ * cold-load target waits in {@link STAGED_WEBGPU_PLATFORM_RULES}.
  *
  * Matching runs in two steps so a session that cannot qualify never pays for
  * WebGPU. The OS and browser come from the user agent and are checked before
@@ -45,24 +45,24 @@ export interface WebGPUPlatformRule {
 }
 
 /**
- * Measured platforms that passed the GPU-speed half of the go/no-go but are
- * held off the default: WebGPU is not the default anywhere until its cold load
- * is within 0.15 s of WebGL (#3172). Move a row into
- * {@link WEBGPU_PLATFORM_RULES} once that holds on its platform.
+ * Measured platforms that passed the GPU-speed half of the go/no-go but not
+ * the cold-load target (within 0.15 s of WebGL, #3172), so they are held off
+ * the default. Move a row into {@link WEBGPU_PLATFORM_RULES} once that holds on
+ * its platform. Empty today.
  */
-export const STAGED_WEBGPU_PLATFORM_RULES: readonly WebGPUPlatformRule[] = [
+export const STAGED_WEBGPU_PLATFORM_RULES: readonly WebGPUPlatformRule[] = [];
+
+/** The platforms where WebGPU is the default. */
+export const WEBGPU_PLATFORM_RULES: readonly WebGPUPlatformRule[] = [
   {
     os: 'linux',
     browser: 'chromium',
     vendor: 'nvidia',
     evidence:
       '#3146 go/no-go (RTX 3070, Vulkan): WebGPU 2-9% faster GPU time on every heavy case; ' +
-      'cold load ~0.5 s slower on a first visit (held on #3172)',
+      '#3172 hosted cold_zip_mixed (5 rounds): first frame 70.6 ms behind WebGL, within 0.15 s',
   },
 ];
-
-/** The platforms where WebGPU is the default: none yet (see {@link STAGED_WEBGPU_PLATFORM_RULES}). */
-export const WEBGPU_PLATFORM_RULES: readonly WebGPUPlatformRule[] = [];
 
 /**
  * The rules the default selection uses: {@link WEBGPU_PLATFORM_RULES}, plus the
