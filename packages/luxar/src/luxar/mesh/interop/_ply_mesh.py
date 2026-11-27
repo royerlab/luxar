@@ -92,6 +92,9 @@ class PlyElement:
         return any(p.is_list for p in self.entries)
 
 
+_END_HEADER_RE = re.compile(rb"(?:^|\r?\n)end_header[ \t]*(?:\r?\n|$)")
+
+
 def parse_ply_header(raw: bytes) -> tuple[list[PlyElement], str, int]:
     """Parse a PLY header.
 
@@ -99,12 +102,12 @@ def parse_ply_header(raw: bytes) -> tuple[list[PlyElement], str, int]:
     ``binary_little_endian`` / ``binary_big_endian`` and ``body_offset`` is the byte
     offset just past ``end_header``.
     """
-    end = raw.find(b"end_header")
-    if end < 0:
+    match = _END_HEADER_RE.search(raw)
+    if match is None:
         raise ValueError("not a PLY file (no 'end_header' in the first block)")
     # Past the marker and its line terminator, which may be \n or \r\n.
-    body_offset = raw.index(b"\n", end) + 1
-    text = raw[:end].decode("ascii", errors="replace")
+    body_offset = match.end()
+    text = raw[: match.start()].decode("ascii", errors="replace")
 
     if not text.lstrip().startswith("ply"):
         raise ValueError("not a PLY file (missing the 'ply' magic)")

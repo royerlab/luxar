@@ -2342,3 +2342,27 @@ class TestWelding:
             weld_vertices(
                 vertices, faces, extras={"colors": np.zeros((2, 3), np.uint8)}
             )
+
+
+def test_ply_header_ignores_comment_mentioning_end_header(tmp_path: Path) -> None:
+    path = tmp_path / "comment_end_header.ply"
+    lines = [
+        "ply",
+        "format ascii 1.0",
+        "comment exported before end_header marker",
+        "element vertex 3",
+        "property float x",
+        "property float y",
+        "property float z",
+        "element face 1",
+        "property list uchar int vertex_indices",
+        "end_header",
+        "0 0 0",
+        "1 0 0",
+        "0 1 0",
+        "3 0 1 2",
+    ]
+    path.write_bytes(("\r\n".join(lines) + "\r\n").encode("ascii"))
+    mesh = import_mesh(path)
+    assert mesh.n_vertices == 3
+    assert mesh.n_faces == 1
