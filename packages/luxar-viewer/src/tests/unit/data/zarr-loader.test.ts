@@ -92,96 +92,116 @@ vi.mock('three', () => ({
     };
     return self;
   }),
-  Box3: vi.fn().mockImplementation(() => ({
-    expandByPoint: vi.fn(),
-    clone: vi.fn().mockReturnThis(),
-  })),
-  Vector3: vi.fn().mockImplementation((x = 0, y = 0, z = 0) => ({
-    x,
-    y,
-    z,
-    set: vi.fn().mockReturnThis(),
-    copy: vi.fn().mockReturnThis(),
-  })),
-  Quaternion: vi.fn().mockImplementation(() => ({
-    x: 0,
-    y: 0,
-    z: 0,
-    w: 1,
-    copy: vi.fn().mockReturnThis(),
-  })),
-  Matrix4: vi.fn().mockImplementation(() => ({
-    fromArray: vi.fn().mockReturnThis(),
-    decompose: vi.fn((pos: any, _quat: any, scale: any) => {
-      pos.set(0, 0, 0);
-      scale.set(1, 1, 1);
-    }),
-  })),
-  Points: vi.fn().mockImplementation((geometry, material) => ({
-    name: '',
-    userData: {},
-    geometry,
-    material,
-    position: {
-      copy: vi.fn().mockReturnThis(),
+  Box3: vi.fn().mockImplementation(function () {
+    return {
+      expandByPoint: vi.fn(),
+      clone: vi.fn().mockReturnThis(),
+    };
+  }),
+  Vector3: vi.fn().mockImplementation(function (x = 0, y = 0, z = 0) {
+    return {
+      x,
+      y,
+      z,
       set: vi.fn().mockReturnThis(),
-    },
-    quaternion: {
       copy: vi.fn().mockReturnThis(),
-    },
-    scale: {
+    };
+  }),
+  Quaternion: vi.fn().mockImplementation(function () {
+    return {
+      x: 0,
+      y: 0,
+      z: 0,
+      w: 1,
       copy: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    },
-  })),
-  Mesh: vi.fn().mockImplementation((geometry, material) => ({
-    name: '',
-    userData: {},
-    geometry,
-    material,
-    count: 0,
-    position: {
-      copy: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    },
-    quaternion: {
-      copy: vi.fn().mockReturnThis(),
-    },
-    scale: {
-      copy: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    },
-  })),
-  BufferGeometry: vi.fn().mockImplementation(() => ({
-    setAttribute: vi.fn(),
-    boundingBox: null,
-    dispose: vi.fn(),
-  })),
-  BufferAttribute: vi.fn().mockImplementation((array, itemSize) => ({
-    array,
-    itemSize,
-    count: array.length / itemSize,
-  })),
+    };
+  }),
+  Matrix4: vi.fn().mockImplementation(function () {
+    return {
+      fromArray: vi.fn().mockReturnThis(),
+      decompose: vi.fn((pos: any, _quat: any, scale: any) => {
+        pos.set(0, 0, 0);
+        scale.set(1, 1, 1);
+      }),
+    };
+  }),
+  Points: vi.fn().mockImplementation(function (geometry, material) {
+    return {
+      name: '',
+      userData: {},
+      geometry,
+      material,
+      position: {
+        copy: vi.fn().mockReturnThis(),
+        set: vi.fn().mockReturnThis(),
+      },
+      quaternion: {
+        copy: vi.fn().mockReturnThis(),
+      },
+      scale: {
+        copy: vi.fn().mockReturnThis(),
+        set: vi.fn().mockReturnThis(),
+      },
+    };
+  }),
+  Mesh: vi.fn().mockImplementation(function (geometry, material) {
+    return {
+      name: '',
+      userData: {},
+      geometry,
+      material,
+      count: 0,
+      position: {
+        copy: vi.fn().mockReturnThis(),
+        set: vi.fn().mockReturnThis(),
+      },
+      quaternion: {
+        copy: vi.fn().mockReturnThis(),
+      },
+      scale: {
+        copy: vi.fn().mockReturnThis(),
+        set: vi.fn().mockReturnThis(),
+      },
+    };
+  }),
+  BufferGeometry: vi.fn().mockImplementation(function () {
+    return {
+      setAttribute: vi.fn(),
+      boundingBox: null,
+      dispose: vi.fn(),
+    };
+  }),
+  BufferAttribute: vi.fn().mockImplementation(function (array, itemSize) {
+    return {
+      array,
+      itemSize,
+      count: array.length / itemSize,
+    };
+  }),
   Float32BufferAttribute: vi.fn(),
   Uint8BufferAttribute: vi.fn(),
   Uint16BufferAttribute: vi.fn(),
   // The physical mesh wrapper `extends THREE.MeshPhysicalMaterial` at module load,
   // so the class must exist on the mock even though nothing here constructs it.
   MeshPhysicalMaterial: class {},
-  ShaderMaterial: vi.fn().mockImplementation(() => ({
-    uniforms: {},
-  })),
-  EventDispatcher: vi.fn().mockImplementation(() => ({
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-    dispatchEvent: vi.fn(),
-  })),
+  ShaderMaterial: vi.fn().mockImplementation(function () {
+    return {
+      uniforms: {},
+    };
+  }),
+  EventDispatcher: vi.fn().mockImplementation(function () {
+    return {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    };
+  }),
   Color: vi.fn(),
   // Constants
   HalfFloatType: 1016,
   FloatType: 1015,
   UnsignedByteType: 1009,
-  Vector2: vi.fn().mockImplementation((x, y) => {
+  Vector2: vi.fn().mockImplementation(function (x, y) {
     const vec = {
       x: x || 0,
       y: y || 0,
@@ -224,7 +244,7 @@ vi.mock('zarrita', async () => {
   const actual = await vi.importActual('zarrita');
   return {
     ...actual,
-    FetchStore: vi.fn().mockImplementation((url) => {
+    FetchStore: vi.fn().mockImplementation(function (url) {
       mockFetchStore = {
         url,
         contents: vi.fn().mockReturnValue(mockStoreContents),
@@ -412,19 +432,23 @@ describe('zarr-loader', () => {
 
   describe('loadScene — error handling', () => {
     it('rejects when the FetchStore constructor throws', async () => {
-      (zarrita.FetchStore as any).mockImplementationOnce(() => {
+      (zarrita.FetchStore as any).mockImplementationOnce(function () {
         throw new Error('Failed to fetch');
       });
 
-      await expect(loadScene(appLoaders(), 'invalid-url')).rejects.toThrow();
+      await expect(loadScene(appLoaders(), 'invalid-url', { noCache: true })).rejects.toThrow(
+        'Failed to fetch'
+      );
     });
 
-    it('rejects when the store contents() call rejects (timeout-like)', async () => {
-      (zarrita.FetchStore as any).mockImplementationOnce(() => ({
-        contents: vi.fn().mockRejectedValue(new Error('Network timeout')),
-      }));
+    it('rejects when the consolidated-metadata wrapper times out', async () => {
+      (zarrita as any).withMaybeConsolidatedMetadata.mockRejectedValueOnce(
+        new Error('Network timeout')
+      );
 
-      await expect(loadScene(appLoaders(), 'http://timeout.test/data.zarr')).rejects.toThrow();
+      await expect(
+        loadScene(appLoaders(), 'http://timeout.test/data.zarr', { noCache: true })
+      ).rejects.toThrow('Network timeout');
     });
 
     it('rejects when open() returns null (missing .zgroup)', async () => {

@@ -13,6 +13,9 @@ import { afterEach } from 'vitest';
 import { installAllMocks } from './mocks';
 import { __setMinInstanceCapacityForTesting } from '../rendering/gpu-buffer-pool';
 
+// Vitest 5.1.1 captures Reflect.construct before setup files run, so patching it here
+// cannot make arrow mocks constructible. Use function or class implementations for mocks called with new.
+
 // Production scenes (real-WebGPU dispatch in particular) need a floor
 // on instance-capacity to sidestep a WebGPU zero-buffer rebinding bug
 // on grow — see the comment in `rendering/gpu-buffer-pool.ts` near

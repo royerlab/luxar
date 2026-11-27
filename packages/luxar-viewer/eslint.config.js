@@ -147,6 +147,21 @@ export default [
     },
     rules: {
       '@typescript-eslint/no-restricted-imports': 'off',
+      // Vitest 5.1.1 captures Reflect.construct before setup files run. A mock
+      // exported as a class must have a constructible implementation.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "CallExpression[callee.object.name='vi'][callee.property.name='mock'] Property[key.name=/^[A-Z]/] > CallExpression[callee.object.name='vi'][callee.property.name='fn'] > ArrowFunctionExpression",
+          message: 'Constructed mocks need function or class implementations, not arrows.',
+        },
+        {
+          selector:
+            "CallExpression[callee.object.name='vi'][callee.property.name='mock'] Property[key.name=/^[A-Z]/] > CallExpression[callee.property.name=/^mockImplementation(Once)?$/] > ArrowFunctionExpression",
+          message: 'Constructed mocks need function or class implementations, not arrows.',
+        },
+      ],
     },
   },
   {
