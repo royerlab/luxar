@@ -210,6 +210,33 @@ class TestReaders:
         assert np.allclose(cs.colors, ground_truth.colors, atol=1 / 255)
         assert np.allclose(cs.positions, ground_truth.positions, atol=5e-3)
 
+    @pytest.mark.parametrize("fmt", ("inria", "supersplat"))
+    def test_ply_crlf_header_and_comment_with_end_header(
+        self, fmt: str, ground_truth: GroundTruth
+    ) -> None:
+        from luxar.gsplats.interop.classical_splats import _READERS
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = _write_fixture(fmt, ground_truth, Path(tmp))
+            raw = src.read_bytes()
+            sep = raw.index(b"end_header\n") + len(b"end_header\n")
+            header = raw[:sep].decode("ascii")
+            body = raw[sep:]
+
+            # Convert header line endings to CRLF and inject a comment whose text
+            # ends with 'end_header' so substring matching cannot stop early.
+            lines = header.splitlines()
+            lines.insert(2, "comment note mentioning end_header")
+            crlf_path = Path(tmp) / f"crlf_{fmt}.ply"
+            crlf_path.write_bytes(("\r\n".join(lines) + "\r\n").encode("ascii") + body)
+
+            assert detect_classical_format(crlf_path) == fmt
+            cs = _READERS[fmt](crlf_path)
+            assert cs.n_splats == ground_truth.positions.shape[0]
+            assert np.allclose(
+                cs.positions, ground_truth.positions, atol=_POSITION_ATOL[fmt]
+            )
+
     def test_spz_declares_y_up_others_do_not(self, ground_truth: GroundTruth) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             for fmt in CLASSICAL_FORMATS:

@@ -42,6 +42,9 @@ class _PlyElement:
         return np.dtype([(name, "<" + dt) for name, dt in self.properties])
 
 
+_END_HEADER_RE = re.compile(rb"(?:^|\r?\n)end_header[ \t]*(?:\r?\n|$)")
+
+
 def _parse_ply_header(raw: bytes) -> tuple[list[_PlyElement], int]:
     """Parse a binary-little-endian PLY header.
 
@@ -49,11 +52,11 @@ def _parse_ply_header(raw: bytes) -> tuple[list[_PlyElement], int]:
     binary body. Only scalar properties are supported (3DGS dialects never use
     ``property list``).
     """
-    end = raw.find(b"end_header\n")
-    if not raw.startswith(b"ply") or end < 0:
+    match = _END_HEADER_RE.search(raw)
+    if not raw.startswith(b"ply") or match is None:
         raise ValueError("Not a PLY file (missing 'ply' magic or 'end_header')")
-    header = raw[:end].decode("ascii", errors="replace")
-    body_offset = end + len(b"end_header\n")
+    header = raw[: match.start()].decode("ascii", errors="replace")
+    body_offset = match.end()
 
     if not re.search(r"^format\s+binary_little_endian\s+1\.0\s*$", header, re.M):
         raise ValueError(
