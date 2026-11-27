@@ -1825,6 +1825,113 @@ describe('LuxarLayer', () => {
     });
   });
 
+  describe('setGain', () => {
+    type Uniforms = Record<string, { value: number }>;
+    /** A stand-in Luxar material with the colour gain/offset pair and opacity. */
+    function colorMesh(intensity: number, offset: number, opacity = 0.2): THREE.Mesh {
+      const mat = new THREE.ShaderMaterial({
+        uniforms: {
+          uOpacity: { value: opacity },
+          uIntensity: { value: intensity },
+          uOffset: { value: offset },
+        },
+      });
+      Object.assign(mat, {
+        updateOpacity: (v: number) => (mat.uniforms.uOpacity.value = v),
+        getOpacity: () => mat.uniforms.uOpacity.value as number,
+        updateIntensity: (v: number) => (mat.uniforms.uIntensity.value = v),
+        updateOffset: (v: number) => (mat.uniforms.uOffset.value = v),
+        updateGamma: () => {},
+      });
+      return new THREE.Mesh(new THREE.BufferGeometry(), mat);
+    }
+    const u = (m: THREE.Mesh) => (m.material as unknown as { uniforms: Uniforms }).uniforms;
+    async function loaded(root: THREE.Group): Promise<LuxarLayer> {
+      loadSceneMock.mockImplementation(async () => root);
+      const layer = new LuxarLayer(makeOptions());
+      await layer.load('http://example.test/scene.zarr');
+      return layer;
+    }
+
+    it('scales intensity and offset but never opacity', async () => {
+      const mesh = colorMesh(0.8, -0.2);
+      const layer = await loaded(new THREE.Group().add(mesh));
+
+      layer.setGain(3);
+      expect(u(mesh).uIntensity.value).toBeCloseTo(2.4);
+      expect(u(mesh).uOffset.value).toBeCloseTo(-0.6);
+      expect(u(mesh).uOpacity.value).toBeCloseTo(0.2); // optical depth untouched
+      expect(layer.getGain()).toBe(3);
+    });
+
+    it('composes against the authored values rather than compounding', async () => {
+      const mesh = colorMesh(0.8, -0.2);
+      const layer = await loaded(new THREE.Group().add(mesh));
+
+      layer.setGain(2);
+      layer.setGain(4);
+      layer.setGain(0.5);
+      expect(u(mesh).uIntensity.value).toBeCloseTo(0.4);
+
+      layer.setGain(1);
+      expect(u(mesh).uIntensity.value).toBeCloseTo(0.8);
+      expect(u(mesh).uOffset.value).toBeCloseTo(-0.2);
+    });
+
+    it('applies the gain to geometry that streams in later', async () => {
+      const root = new THREE.Group().add(colorMesh(1, 0));
+      const layer = await loaded(root);
+
+      layer.setGain(2);
+      const late = colorMesh(1, 0);
+      root.add(late);
+      expect(u(late).uIntensity.value).toBeCloseTo(1); // not yet seen
+
+      layer.update();
+      expect(u(late).uIntensity.value).toBeCloseTo(2);
+    });
+
+    it('does not double-apply to a material cloned after the gain', async () => {
+      // lod-fade.ts clones a material (uniforms AND userData) on first fade; the
+      // clone must inherit the authored values, not treat the gained ones as authored.
+      const mesh = colorMesh(0.5, 0);
+      const layer = await loaded(new THREE.Group().add(mesh));
+
+      layer.setGain(2);
+      const original = mesh.material as THREE.ShaderMaterial;
+      const clone = original.clone();
+      Object.assign(clone, {
+        updateIntensity: (v: number) => (clone.uniforms.uIntensity.value = v),
+        updateOffset: (v: number) => (clone.uniforms.uOffset.value = v),
+        updateGamma: () => {},
+      });
+      mesh.material = clone;
+      layer.update();
+      expect(clone.uniforms.uIntensity.value).toBeCloseTo(1); // 2 x authored 0.5, not 2 x 1
+    });
+
+    it('leaves a material without a uIntensity uniform alone', async () => {
+      const updateIntensity = vi.fn();
+      const mat = Object.assign(new THREE.Material(), {
+        updateIntensity,
+        updateOffset: vi.fn(),
+        updateGamma() {},
+        updateOpacity() {},
+      });
+      const mesh = new THREE.Mesh(new THREE.BufferGeometry(), mat as unknown as THREE.Material);
+      const layer = await loaded(new THREE.Group().add(mesh));
+
+      layer.setGain(2);
+      expect(updateIntensity).not.toHaveBeenCalled();
+    });
+
+    it('is a no-op before load', () => {
+      const layer = new LuxarLayer(makeOptions());
+      expect(() => layer.setGain(2)).not.toThrow();
+      expect(layer.getGain()).toBe(2);
+    });
+  });
+
   describe('dispose', () => {
     it('clears the current fault and unsubscribes host listeners', async () => {
       const listener = vi.fn();
