@@ -138,34 +138,44 @@ vi.mock('../../../../../scene/animation/animation-controller', () => ({
   AnimationController: vi.fn(),
 }));
 vi.mock('../../../../../ui/performance-monitor', () => ({
-  PerformanceMonitor: vi.fn().mockImplementation(() => ({ kind: 'perf-monitor' })),
+  PerformanceMonitor: vi.fn().mockImplementation(function () {
+    return { kind: 'perf-monitor' };
+  }),
 }));
 // Mock the rail so the pipeline test doesn't build a real one (which would
 // attach document listeners / a rAF loop that outlive the test).
 vi.mock('../../../../../ui/control-rail', () => ({
-  ControlRail: vi.fn().mockImplementation(() => ({ setCollapsed: vi.fn(), dispose: vi.fn() })),
+  ControlRail: vi.fn().mockImplementation(function () {
+    return { setCollapsed: vi.fn(), dispose: vi.fn() };
+  }),
   RAIL_ICONS: {},
 }));
 vi.mock('../../../../../ui/debug-console', () => ({
-  DebugConsole: vi.fn().mockImplementation(() => ({ kind: 'debug-console' })),
+  DebugConsole: vi.fn().mockImplementation(function () {
+    return { kind: 'debug-console' };
+  }),
 }));
 vi.mock('../../../../../rendering/adaptive-dpr-manager', () => ({
   mobileAdaptiveDprOverrides: vi.fn(() => undefined),
-  AdaptiveDPRManager: vi.fn().mockImplementation(() => ({
-    setRenderer: vi.fn(),
-    setOnDPRChangeCallback: vi.fn(),
-    getNativeDPR: vi.fn(() => 2),
-    setLoadActivityPredicate: vi.fn(),
-    notifyContentChanged: vi.fn(),
-    notifyPaused: vi.fn(),
-  })),
+  AdaptiveDPRManager: vi.fn().mockImplementation(function () {
+    return {
+      setRenderer: vi.fn(),
+      setOnDPRChangeCallback: vi.fn(),
+      getNativeDPR: vi.fn(() => 2),
+      setLoadActivityPredicate: vi.fn(),
+      notifyContentChanged: vi.fn(),
+      notifyPaused: vi.fn(),
+    };
+  }),
 }));
 vi.mock('../../../../../ui/resolution-indicator', () => ({
-  ResolutionIndicator: vi.fn().mockImplementation(() => ({
-    setTargetFPS: vi.fn(),
-    show: vi.fn(),
-    reset: vi.fn(),
-  })),
+  ResolutionIndicator: vi.fn().mockImplementation(function () {
+    return {
+      setTargetFPS: vi.fn(),
+      show: vi.fn(),
+      reset: vi.fn(),
+    };
+  }),
 }));
 vi.mock('../../../../../input', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../../../input')>();
@@ -272,9 +282,9 @@ describe('runInitPipeline', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     inputProfile.deviceClass = 'laptop';
-    (InputHandler as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
-      makeInputHandlerStub()
-    );
+    (InputHandler as unknown as ReturnType<typeof vi.fn>).mockImplementation(function () {
+      return makeInputHandlerStub();
+    });
   });
 
   it('configures the GPU byte budget for direct LuxarApp embeds', async () => {

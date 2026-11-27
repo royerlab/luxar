@@ -20,22 +20,28 @@ import { log, Modules } from '../../../../../utils/log';
 // All heavy collaborators are module-mocked so the test never touches
 // WebGL / zarr stores / GPU picking pipeline.
 vi.mock('../../../../../rendering/picking/picking-system', () => ({
-  PickingSystem: vi.fn().mockImplementation(() => ({
-    dispose: vi.fn(),
-    onMouseMove: vi.fn(),
-    onMouseLeave: vi.fn(),
-    markDirty: vi.fn(),
-    setShouldPick: vi.fn(),
-    setPostProcessing: vi.fn(),
-    setCamera: vi.fn(),
-    suppress: vi.fn(),
-  })),
+  PickingSystem: vi.fn().mockImplementation(function () {
+    return {
+      dispose: vi.fn(),
+      onMouseMove: vi.fn(),
+      onMouseLeave: vi.fn(),
+      markDirty: vi.fn(),
+      setShouldPick: vi.fn(),
+      setPostProcessing: vi.fn(),
+      setCamera: vi.fn(),
+      suppress: vi.fn(),
+    };
+  }),
 }));
 vi.mock('../../../../../data/loaders/picking/label-loader', () => ({
-  LabelLoader: vi.fn().mockImplementation(() => ({ dispose: vi.fn() })),
+  LabelLoader: vi.fn().mockImplementation(function () {
+    return { dispose: vi.fn() };
+  }),
 }));
 vi.mock('../../../../../data/loaders/picking/image-label-loader', () => ({
-  ImageLabelLoader: vi.fn().mockImplementation(() => ({ dispose: vi.fn() })),
+  ImageLabelLoader: vi.fn().mockImplementation(function () {
+    return { dispose: vi.fn() };
+  }),
 }));
 vi.mock('../../../../../data/zarr', () => ({
   root: vi.fn(() => ({ kind: 'zarr-root-loc' })),

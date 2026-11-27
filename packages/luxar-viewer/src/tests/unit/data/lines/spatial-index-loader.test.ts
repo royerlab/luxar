@@ -43,9 +43,11 @@ vi.mock('../../../../data/loaders/spatial-query/spatial-query-builder', async ()
   >('../../../../data/loaders/spatial-query/spatial-query-builder');
   return {
     ...actual,
-    SpatialQueryBuilder: vi.fn().mockImplementation(() => ({
-      execute: mockExecute,
-    })),
+    SpatialQueryBuilder: vi.fn().mockImplementation(function () {
+      return {
+        execute: mockExecute,
+      };
+    }),
   };
 });
 

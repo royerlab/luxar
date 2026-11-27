@@ -21,10 +21,12 @@ vi.mock('../../../data', async () => {
   const actual = await vi.importActual<typeof import('../../../data')>('../../../data');
   return {
     ...actual,
-    DirectoryNavigator: vi.fn().mockImplementation(() => ({
-      navigate: navigateMock,
-      getFullUrl: getFullUrlMock,
-    })),
+    DirectoryNavigator: vi.fn().mockImplementation(function () {
+      return {
+        navigate: navigateMock,
+        getFullUrl: getFullUrlMock,
+      };
+    }),
   };
 });
 

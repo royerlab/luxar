@@ -45,18 +45,20 @@ vi.mock('../../../../../utils/viewer-container', () => ({
 // reach into the real DimensionAnimationManager (which constructs
 // timers + listeners).
 vi.mock('../../../../../scene/animation/dimension-animation-manager', () => ({
-  DimensionAnimationManager: vi.fn().mockImplementation(() => ({
-    dispose: vi.fn(),
-    // updateAllNDNodes reads the playback frame budget per update; the real
-    // manager returns null when nothing is playing. The t+1 prefetch reads
-    // the playing set / next-value peek — default: nothing playing.
-    getFrameBudgetMs: vi.fn(() => null),
-    getPlaybackLadderDepth: vi.fn(() => null),
-    getScrubLadderDepth: vi.fn(() => null),
-    isFramePacedPlaying: vi.fn(() => false),
-    getFramePacedDimIndices: vi.fn(() => []),
-    peekNextValue: vi.fn(() => null),
-  })),
+  DimensionAnimationManager: vi.fn().mockImplementation(function () {
+    return {
+      dispose: vi.fn(),
+      // updateAllNDNodes reads the playback frame budget per update; the real
+      // manager returns null when nothing is playing. The t+1 prefetch reads
+      // the playing set / next-value peek — default: nothing playing.
+      getFrameBudgetMs: vi.fn(() => null),
+      getPlaybackLadderDepth: vi.fn(() => null),
+      getScrubLadderDepth: vi.fn(() => null),
+      isFramePacedPlaying: vi.fn(() => false),
+      getFramePacedDimIndices: vi.fn(() => []),
+      peekNextValue: vi.fn(() => null),
+    };
+  }),
 }));
 
 import {

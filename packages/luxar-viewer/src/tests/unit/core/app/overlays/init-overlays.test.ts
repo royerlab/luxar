@@ -37,10 +37,12 @@ import type { SceneManager } from '../../../../../scene/scene-manager';
 vi.mock('../../../../../ui/overlay-manager', () => {
   const loadOverlays = vi.fn().mockResolvedValue(undefined);
   return {
-    OverlayManager: vi.fn().mockImplementation(() => ({
-      loadOverlays,
-      dispose: vi.fn(),
-    })),
+    OverlayManager: vi.fn().mockImplementation(function () {
+      return {
+        loadOverlays,
+        dispose: vi.fn(),
+      };
+    }),
   };
 });
 
@@ -79,7 +81,7 @@ describe('initOverlays', () => {
   it('calls disposePrevious BEFORE constructing a new OverlayManager', async () => {
     const order: string[] = [];
     const disposePrevious = vi.fn(() => order.push('disposePrevious'));
-    (OverlayManager as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+    (OverlayManager as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(function () {
       order.push('construct');
       return { loadOverlays: vi.fn(), dispose: vi.fn() };
     });

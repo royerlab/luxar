@@ -44,29 +44,37 @@ vi.mock('zarr', () => ({
 // Mock THREE.js with required exports
 vi.mock('three', () => ({
   // Classes
-  Group: vi.fn().mockImplementation(() => ({
-    add: vi.fn(),
-    children: [],
-  })),
-  Box3: vi.fn().mockImplementation(() => ({
-    expandByPoint: vi.fn(),
-    isEmpty: vi.fn().mockReturnValue(false),
-    getSize: vi.fn().mockReturnValue({ x: 10, y: 10, z: 10 }),
-    getCenter: vi.fn().mockReturnValue({ x: 0, y: 0, z: 0 }),
-  })),
-  Vector2: vi.fn().mockImplementation((x = 0, y = 0) => ({
-    x,
-    y,
-    set: vi.fn().mockReturnThis(),
-    copy: vi.fn().mockReturnThis(),
-  })),
-  Vector3: vi.fn().mockImplementation((x = 0, y = 0, z = 0) => ({
-    x,
-    y,
-    z,
-    set: vi.fn().mockReturnThis(),
-    copy: vi.fn().mockReturnThis(),
-  })),
+  Group: vi.fn().mockImplementation(function () {
+    return {
+      add: vi.fn(),
+      children: [],
+    };
+  }),
+  Box3: vi.fn().mockImplementation(function () {
+    return {
+      expandByPoint: vi.fn(),
+      isEmpty: vi.fn().mockReturnValue(false),
+      getSize: vi.fn().mockReturnValue({ x: 10, y: 10, z: 10 }),
+      getCenter: vi.fn().mockReturnValue({ x: 0, y: 0, z: 0 }),
+    };
+  }),
+  Vector2: vi.fn().mockImplementation(function (x = 0, y = 0) {
+    return {
+      x,
+      y,
+      set: vi.fn().mockReturnThis(),
+      copy: vi.fn().mockReturnThis(),
+    };
+  }),
+  Vector3: vi.fn().mockImplementation(function (x = 0, y = 0, z = 0) {
+    return {
+      x,
+      y,
+      z,
+      set: vi.fn().mockReturnThis(),
+      copy: vi.fn().mockReturnThis(),
+    };
+  }),
   // The physical mesh wrapper `extends THREE.MeshPhysicalMaterial` at module load,
   // so the class must exist on the mock even though nothing here constructs it.
   MeshPhysicalMaterial: class {},
@@ -84,19 +92,25 @@ vi.mock('three', () => ({
       dispose: vi.fn(),
     });
   }),
-  WebGLRenderer: vi.fn().mockImplementation(() => ({
-    setSize: vi.fn(),
-    render: vi.fn(),
-    domElement: document.createElement('canvas'),
-  })),
-  PerspectiveCamera: vi.fn().mockImplementation(() => ({
-    position: { set: vi.fn() },
-    lookAt: vi.fn(),
-  })),
-  Scene: vi.fn().mockImplementation(() => ({
-    add: vi.fn(),
-    children: [],
-  })),
+  WebGLRenderer: vi.fn().mockImplementation(function () {
+    return {
+      setSize: vi.fn(),
+      render: vi.fn(),
+      domElement: document.createElement('canvas'),
+    };
+  }),
+  PerspectiveCamera: vi.fn().mockImplementation(function () {
+    return {
+      position: { set: vi.fn() },
+      lookAt: vi.fn(),
+    };
+  }),
+  Scene: vi.fn().mockImplementation(function () {
+    return {
+      add: vi.fn(),
+      children: [],
+    };
+  }),
   // Required constants
   HalfFloatType: 1016,
   FloatType: 1015,

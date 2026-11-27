@@ -69,10 +69,12 @@ beforeEach(() => {
   mocks.replaceBrowserDataSourceUrl.mockReset();
   mocks.DatasetBrowserCtor.mockReset();
   mocks.logError.mockReset();
-  mocks.DatasetBrowserCtor.mockImplementation((opts: CapturedOpts) => ({
-    close: vi.fn(),
-    __opts: opts,
-  }));
+  mocks.DatasetBrowserCtor.mockImplementation(function (opts: CapturedOpts) {
+    return {
+      close: vi.fn(),
+      __opts: opts,
+    };
+  });
 });
 
 import type { InputHandler } from '../../../../../input';
