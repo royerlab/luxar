@@ -15,6 +15,25 @@ geometry.setAttribute('aSortedIndexB', new THREE.Uint32BufferAttribute([0], 1));
 geometry.setAttribute('aQuadCorner', new THREE.Float32BufferAttribute([0, 0], 2));
 
 describe('element texture loads in generated WGSL', () => {
+  it('loads one color/sharpness endpoint per orthographic line quad vertex', () => {
+    const material = new LineTSLMaterial({ primitive: 'screen-space' });
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
+    material.selectProjectionVariant(camera);
+    const vertex = wgslVertexFor(material, camera, geometry);
+    const loads = vertex.split('\n').filter((line) => line.includes('textureLoad('));
+    // Five segment texels (positions/widths, one color/sharpness, joints,
+    // alpha) plus two partner texels for each join endpoint.
+    expect(loads).toHaveLength(9);
+  });
+
+  it('guards the second perspective line color/sharpness fetch behind clipping', () => {
+    const material = new LineTSLMaterial({ primitive: 'screen-space' });
+    const vertex = wgslVertexFor(material, new THREE.PerspectiveCamera(50, 1, 0.1, 100), geometry);
+    const loads = vertex.split('\n').filter((line) => line.includes('textureLoad('));
+    expect(loads).toHaveLength(10);
+    expect(vertex).toMatch(/if \([^\n]* != [^\n]*\) \{\s*\w+ = textureLoad\(/);
+  });
+
   // geometry-subset: Mesh reads vertex buffers rather than element data textures.
   it.each([
     ['gsplat', () => new GSplatTSLMaterial(), 4], // splatT0..T3

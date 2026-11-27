@@ -229,6 +229,29 @@ export interface LineTSLNodes {
   readonly uScalarScale?: TSLNode;
 }
 
+function lineEndpointColorSharpness(
+  lineTex: TSLNode,
+  texel0: TSLNode,
+  t: TSLNode,
+  tEff: TSLNode,
+  fixedOrtho: boolean | undefined
+): readonly [TSLNode, TSLNode] {
+  const selected = loadTexel(lineTex, ivec2(texel0.x.add(int(2).add(int(t))), texel0.y)).toVar();
+  const selectedSharpness = clamp(sanitizeNonNegative(selected.w, float(0.5)), 0.0, 1.0);
+  if (fixedOrtho) {
+    return [vec3(selected), selectedSharpness];
+  }
+  // Perspective near-plane clipping can move this vertex between the
+  // endpoints. The uncut case has tEff == t and skips the other fetch.
+  const other = vec4(0.0).toVar();
+  If(tEff.notEqual(t), () => {
+    other.assign(loadTexel(lineTex, ivec2(texel0.x.add(int(3).sub(int(t))), texel0.y)));
+  });
+  const weight = tEff.sub(t).abs();
+  const otherSharpness = clamp(sanitizeNonNegative(other.w, float(0.5)), 0.0, 1.0);
+  return [mix(vec3(selected), vec3(other), weight), mix(selectedSharpness, otherSharpness, weight)];
+}
+
 /**
  * Line-material TSL factory.
  *
@@ -352,20 +375,13 @@ export function lineWebGPUFactory(
 
   const vertexBody = Fn(() => {
     // === Line-texture fetch prologue ===
-    // textureLoad reads reconstruct the per-segment values into the
-    // exact local names the math below has always used — zero changes
-    // downstream of this block. Every value is a `.toVar()` STATEMENT
-    // (the Fn house rule; see the block comment above). The texture
-    // width is a multiple of 6 (element-texture-layout.ts), so a
-    // segment's 6 texels share one row and only x advances. texel5
-    // carries the colormap scalars (.xy, read under useColormap) and
-    // the per-endpoint alphas (.zw, written unconditionally by the
-    // texel writer — 1.0 for RGB data), so it is fetched in every
-    // mode. Unlike the GLSL twin, texels 2/3/5 are NOT deferred past
-    // the bothBehind cull — the Fn trace-order house rule emits
-    // statements unconditionally, so the TSL backend pays the extra
-    // loads per culled vertex (accepted asymmetry, output-identical;
-    // same trade as the point factory).
+    // The texture width is a multiple of 6 (element-texture-layout.ts),
+    // so a segment's texels share one row and only x advances. Texel 5
+    // carries colormap scalars (.xy) and endpoint alphas (.zw); it is
+    // fetched in every mode. Color/sharpness texels 2/3 are handled
+    // after near clipping. Unlike the GLSL twin, these reads are not
+    // deferred past the bothBehind cull: the Fn trace-order house rule
+    // emits statements unconditionally outside explicit If blocks.
     const lineBase: TSLNode = int(aSortedIndex).mul(int(6)).toVar();
     // The width is baked as a LITERAL, not read via textureSize(): a
     // compile-time constant lets the shader compiler strength-reduce
@@ -382,25 +398,20 @@ export function lineWebGPUFactory(
     ).toVar();
     const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
     const texelY: TSLNode = lineBase.div(lineTexW).toVar();
+    // Quad corners are exactly -1/+1 along the segment, giving t=0/1.
+    // Color and sharpness are fetched after near clipping establishes tEff.
+    const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5).toVar();
     const lineT0: TSLNode = loadTexel(uLineTex, ivec2(texelX, texelY)).toVar();
     const lineT1: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(1)), texelY)).toVar();
-    const lineT2: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(2)), texelY)).toVar();
-    const lineT3: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(3)), texelY)).toVar();
     const lineT4: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(4)), texelY)).toVar();
     const lineT5: TSLNode = loadTexel(uLineTex, ivec2(texelX.add(int(5)), texelY)).toVar();
     const aStartPos: TSLNode = vec3(lineT0).toVar();
     const aStartWidth: TSLNode = lineT0.w.toVar();
     const aEndPos: TSLNode = vec3(lineT1).toVar();
     const aEndWidth: TSLNode = lineT1.w.toVar();
-    const aStartSharpness: TSLNode = lineT2.w.toVar();
-    const aEndSharpness: TSLNode = lineT3.w.toVar();
     const aSegmentLength: TSLNode = lineT4.x.toVar();
     const aStartJointCode: TSLNode = lineT4.y.toVar();
     const aEndJointCode: TSLNode = lineT4.z.toVar();
-
-    // t ∈ {0, 1} — position along the segment. Branchless because
-    // aQuadCorner.x ∈ {-1, +1} by construction.
-    const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5).toVar();
 
     // The ortho branch of the projection THIS draw uses (GLSL twin:
     // `luxarLineIsOrtho = luxarIsOrthoProjection()`), so a draw through a
@@ -460,6 +471,13 @@ export function lineWebGPUFactory(
       mvEnd.assign(mvEndClipped);
     });
     const tEff: TSLNode = mix(tA, tB, t).toVar();
+    const [endpointColor, vSharpnessVal] = lineEndpointColorSharpness(
+      uLineTex,
+      ivec2(texelX, texelY),
+      t,
+      tEff,
+      fixedOrtho
+    );
 
     // Per-endpoint colour or LUT lookup. Branch on `config.useColormap`
     // (JS-level graph variant, matching the GLSL `#ifdef USE_COLORMAP`
@@ -476,7 +494,7 @@ export function lineWebGPUFactory(
       const st: TSLNode = config.gammaOne ? st0 : st0.pow(uInvGamma);
       perPointColor = uColormapTex!.sample(vec2(st, 0.5)).rgb;
     } else {
-      perPointColor = mix(vec3(lineT2), vec3(lineT3), tEff);
+      perPointColor = endpointColor;
     }
 
     // Sanitised widths / sharpness, interpolated. Sharpness is authored in
@@ -486,11 +504,9 @@ export function lineWebGPUFactory(
     // (NOT sanitizePositive — that would wrongly reject s=0.) Mirrors GLSL.
     const startW: TSLNode = sanitizeNonNegative(aStartWidth, float(0.0));
     const endW: TSLNode = sanitizeNonNegative(aEndWidth, float(0.0));
-    const startS: TSLNode = clamp(sanitizeNonNegative(aStartSharpness, float(0.5)), 0.0, 1.0);
-    const endS: TSLNode = clamp(sanitizeNonNegative(aEndSharpness, float(0.5)), 0.0, 1.0);
     const width: TSLNode = mix(startW, endW, tEff).toVar();
-    // Interpolated [0, 1] sharpness KNOB; beta computed in the fragment.
-    const vSharpnessVal: TSLNode = mix(startS, endS, tEff);
+    // The color/sharpness fetch above interpolates its sanitized sharpness
+    // when clipping remaps this vertex; beta is computed in the fragment.
 
     // Interpolated view position — from the (possibly clipped) endpoints.
     const mvPos: TSLNode = mix(mvStart, mvEnd, t).toVar();
