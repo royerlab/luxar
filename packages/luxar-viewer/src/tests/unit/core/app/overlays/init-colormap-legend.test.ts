@@ -28,9 +28,11 @@ import { initColormapLegend } from '../../../../../core/app/overlays/init-colorm
 beforeEach(() => {
   mocks.ColormapLegendCtor.mockReset();
   mocks.legendDispose.mockReset();
-  mocks.ColormapLegendCtor.mockImplementation(() => ({
-    dispose: mocks.legendDispose,
-  }));
+  mocks.ColormapLegendCtor.mockImplementation(function () {
+    return {
+      dispose: mocks.legendDispose,
+    };
+  });
 });
 
 function makePorts(
@@ -99,7 +101,7 @@ describe('initColormapLegend', () => {
     it('disposes previous legend BEFORE constructing the new one', () => {
       const order: string[] = [];
       const previous = { dispose: vi.fn(() => order.push('disposePrev')) };
-      mocks.ColormapLegendCtor.mockImplementation(() => {
+      mocks.ColormapLegendCtor.mockImplementation(function () {
         order.push('construct');
         return { dispose: mocks.legendDispose };
       });
@@ -113,7 +115,7 @@ describe('initColormapLegend', () => {
 
   describe('DOM-unavailable path (test/headless environments)', () => {
     it('returns undefined when ColormapLegend constructor throws (no DOM)', () => {
-      mocks.ColormapLegendCtor.mockImplementation(() => {
+      mocks.ColormapLegendCtor.mockImplementation(function () {
         throw new Error('no document');
       });
       const ports = makePorts({ layersPanel: { layerState: {} } });
@@ -131,7 +133,7 @@ describe('initColormapLegend', () => {
     it('still disposes previous when ColormapLegend construction throws', () => {
       const previousDispose = vi.fn();
       const previous = { dispose: previousDispose };
-      mocks.ColormapLegendCtor.mockImplementation(() => {
+      mocks.ColormapLegendCtor.mockImplementation(function () {
         throw new Error('no document');
       });
       const ports = makePorts({ previous, layersPanel: { layerState: {} } });

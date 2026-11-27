@@ -40,24 +40,26 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../core/app', () => ({
-  LuxarApp: vi.fn().mockImplementation(() => ({
-    init: mocks.init,
-    initialized: true,
-    shortcutForAction: mocks.shortcutForAction,
-    getViewerState: () => ({ src: '/sample.zarr' }),
-    restoreSnapshot: mocks.restoreSnapshot,
-    setRenderingSettings: mocks.setRenderingSettings,
-    getLayers: () => [],
-    flyTo: mocks.flyTo,
-    switchDataset: mocks.switchDataset,
-    components: { sceneManager: { renderer: mocks.renderer } },
-    onDispose: (cleanup: () => void) => {
-      mocks.disposeCleanups.push(cleanup);
-    },
-    dispose: () => {
-      mocks.disposeCleanups.splice(0).forEach((cleanup) => cleanup());
-    },
-  })),
+  LuxarApp: vi.fn().mockImplementation(function () {
+    return {
+      init: mocks.init,
+      initialized: true,
+      shortcutForAction: mocks.shortcutForAction,
+      getViewerState: () => ({ src: '/sample.zarr' }),
+      restoreSnapshot: mocks.restoreSnapshot,
+      setRenderingSettings: mocks.setRenderingSettings,
+      getLayers: () => [],
+      flyTo: mocks.flyTo,
+      switchDataset: mocks.switchDataset,
+      components: { sceneManager: { renderer: mocks.renderer } },
+      onDispose: (cleanup: () => void) => {
+        mocks.disposeCleanups.push(cleanup);
+      },
+      dispose: () => {
+        mocks.disposeCleanups.splice(0).forEach((cleanup) => cleanup());
+      },
+    };
+  }),
 }));
 
 vi.mock('../../../themes/theme-manager', () => ({

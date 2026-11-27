@@ -49,13 +49,19 @@ const mockState = vi.hoisted(() => {
 });
 
 vi.mock('../../../../ui/recording-panel/drivers/image-sequence-driver', () => ({
-  ImageSequenceDriver: vi.fn(() => mockState.makeDriver()),
+  ImageSequenceDriver: vi.fn(function () {
+    return mockState.makeDriver();
+  }),
 }));
 vi.mock('../../../../ui/recording-panel/drivers/exr-sequence-driver', () => ({
-  ExrSequenceDriver: vi.fn(() => mockState.makeDriver()),
+  ExrSequenceDriver: vi.fn(function () {
+    return mockState.makeDriver();
+  }),
 }));
 vi.mock('../../../../ui/recording-panel/drivers/video-mode-driver', () => ({
-  VideoModeDriver: vi.fn(() => mockState.makeDriver()),
+  VideoModeDriver: vi.fn(function () {
+    return mockState.makeDriver();
+  }),
 }));
 
 vi.mock('../../../../ui/toast', () => ({ showToast: vi.fn() }));
@@ -777,7 +783,7 @@ describe('OfflineCaptureStrategy', () => {
       // the AnimationController FIRST, so a wake-up here would restart the
       // rAF loop against a disposed post-processing pipeline.
       let wakesBeforeTeardown = 0;
-      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(function () {
         const d = mockState.makeDriver();
         d.captureFrame = vi.fn(async () => {
           session.disposed = true;
@@ -803,7 +809,7 @@ describe('OfflineCaptureStrategy', () => {
       let flagDuringSetup: boolean | undefined;
       mockState.config.setupOk = true;
       const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
-      vi.mocked(ExrSequenceDriver).mockImplementationOnce(() => {
+      vi.mocked(ExrSequenceDriver).mockImplementationOnce(function () {
         const d = mockState.makeDriver();
         d.setup = vi.fn(async () => {
           flagDuringSetup = session.isEXRSequenceRecording;
@@ -827,7 +833,7 @@ describe('OfflineCaptureStrategy', () => {
       let flagDuringSetup: boolean | undefined;
       mockState.config.setupOk = true;
       const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
-      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(function () {
         const d = mockState.makeDriver();
         d.setup = vi.fn(async () => {
           flagDuringSetup = session.isLoopRenderSuppressed;
@@ -919,7 +925,7 @@ describe('OfflineCaptureStrategy', () => {
         return true;
       });
       const rafAtCapture: number[] = [];
-      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(function () {
         const d = mockState.makeDriver();
         d.captureFrame = vi.fn(async () => {
           rafAtCapture.push(rafSpy.mock.calls.length);
@@ -987,7 +993,7 @@ describe('OfflineCaptureStrategy', () => {
         trace.push(settled ? 'settled' : 'draining');
         return settled;
       });
-      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(function () {
         const d = mockState.makeDriver();
         d.captureFrame = vi.fn(async () => {
           trace.push('capture');
@@ -1039,7 +1045,7 @@ describe('OfflineCaptureStrategy', () => {
       const hooks = makeHooks();
       hooks.isLODSettled = vi.fn(() => false);
       const rafAtCapture: number[] = [];
-      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(function () {
         const d = mockState.makeDriver();
         d.captureFrame = vi.fn(async () => {
           rafAtCapture.push(rafSpy.mock.calls.length);
@@ -1107,7 +1113,7 @@ describe('OfflineCaptureStrategy', () => {
       let settles = false;
       hooks.isLODSettled = vi.fn(() => settles);
       const rafAtCapture: number[] = [];
-      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(function () {
         const d = mockState.makeDriver();
         d.captureFrame = vi.fn(async () => {
           rafAtCapture.push(rafSpy.mock.calls.length);
@@ -1153,7 +1159,7 @@ describe('OfflineCaptureStrategy', () => {
       let capturedSoFar = 0;
       // Frame 0 can never settle; every later frame settles at once.
       hooks.isLODSettled = vi.fn(() => capturedSoFar > 0);
-      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(function () {
         const d = mockState.makeDriver();
         d.captureFrame = vi.fn(async () => {
           capturedSoFar++;
@@ -1187,7 +1193,7 @@ describe('OfflineCaptureStrategy', () => {
       const { sm } = makeSceneManager();
       const hooks = makeHooks();
       hooks.isLODSettled = vi.fn(() => false);
-      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(function () {
         const d = mockState.makeDriver();
         d.captureFrame = vi.fn(async () => {
           throw new Error('encoder blew up');
@@ -1270,7 +1276,7 @@ describe('OfflineCaptureStrategy', () => {
         await Promise.resolve();
         events.push('resort');
       });
-      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(function () {
         const d = mockState.makeDriver();
         d.captureFrame = vi.fn(async () => {
           events.push('capture');
@@ -1363,7 +1369,7 @@ describe('OfflineCaptureStrategy', () => {
       // abort that never settles would otherwise leave the viewer frozen
       // with no recovery but a page reload.
       let flagDuringAbort: boolean | undefined;
-      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(function () {
         const d = mockState.makeDriver();
         d.abort = vi.fn(async () => {
           flagDuringAbort = session.isLoopRenderSuppressed;
@@ -1390,7 +1396,7 @@ describe('OfflineCaptureStrategy', () => {
       // `restoreRecordingState()` no-ops and the viewer is stuck at capture
       // resolution with resize locked until a page reload.
       let flagDuringAbort: boolean | undefined;
-      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(function () {
         const d = mockState.makeDriver();
         d.abort = vi.fn(async () => {
           flagDuringAbort = session.isOfflineCaptureActive;

@@ -265,25 +265,27 @@ vi.stubGlobal('document', {
 // etc.) are not used by this test suite but are added defensively so a
 // future test calling them through `sceneManager.*` won't crash.
 vi.mock('../../../rendering/post-processing/post-processing-manager', () => ({
-  PostProcessingManager: vi.fn().mockImplementation(() => ({
-    sceneRenderTarget: { name: 'HDR scene target' },
-    // Resize / DPR / camera plumbing (resize-orchestrator + camera-mode)
-    resize: vi.fn(),
-    setDPRScale: vi.fn(),
-    setCamera: vi.fn(),
-    // Render loop (animation-controller)
-    render: vi.fn(),
-    needsContinuousAnimation: vi.fn(() => false),
-    // Lifecycle: dispose (scene-manager.dispose) +
-    // rebuildAfterContextRestore (webgl-context-recovery).
-    dispose: vi.fn(),
-    rebuildAfterContextRestore: vi.fn(),
-    adoptRenderer: vi.fn(),
-    // EOG sliders (scene-manager getters/setters at ~line 956)
-    updateExposure: vi.fn(),
-    updateGlobalOffset: vi.fn(),
-    updateGlobalGamma: vi.fn(),
-  })),
+  PostProcessingManager: vi.fn().mockImplementation(function () {
+    return {
+      sceneRenderTarget: { name: 'HDR scene target' },
+      // Resize / DPR / camera plumbing (resize-orchestrator + camera-mode)
+      resize: vi.fn(),
+      setDPRScale: vi.fn(),
+      setCamera: vi.fn(),
+      // Render loop (animation-controller)
+      render: vi.fn(),
+      needsContinuousAnimation: vi.fn(() => false),
+      // Lifecycle: dispose (scene-manager.dispose) +
+      // rebuildAfterContextRestore (webgl-context-recovery).
+      dispose: vi.fn(),
+      rebuildAfterContextRestore: vi.fn(),
+      adoptRenderer: vi.fn(),
+      // EOG sliders (scene-manager getters/setters at ~line 956)
+      updateExposure: vi.fn(),
+      updateGlobalOffset: vi.fn(),
+      updateGlobalGamma: vi.fn(),
+    };
+  }),
 }));
 
 // [scene.md/W10][P3] Fix mock path: previously '../controls/controls-manager'
@@ -293,7 +295,7 @@ vi.mock('../../../rendering/post-processing/post-processing-manager', () => ({
 // The dead mock was silently ignored — SceneManager was being constructed
 // with the real ControlsManager, defeating test isolation.
 vi.mock('../../../controls/controls-manager', () => ({
-  ControlsManager: vi.fn().mockImplementation(() => {
+  ControlsManager: vi.fn().mockImplementation(function () {
     // A minimal working event dispatcher: commitCameraChange counts the
     // `change` events a write fires and dispatches one itself when none did,
     // and SceneManager relays controls `change` onto its own `change`.

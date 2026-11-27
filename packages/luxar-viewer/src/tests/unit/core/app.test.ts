@@ -76,26 +76,32 @@ vi.mock('../../../core/app/interaction/canvas-gesture-ownership', () => ({
 // mocked here so stats.js / DebugConsole's document.createElement
 // calls don't run in the stubbed-window env.
 vi.mock('../../../ui/performance-monitor', () => ({
-  PerformanceMonitor: vi.fn().mockImplementation(() => ({
-    show: vi.fn(),
-    hide: vi.fn(),
-    toggle: vi.fn(),
-    cycleMode: vi.fn(),
-    dispose: vi.fn(),
-    visible: false,
-  })),
+  PerformanceMonitor: vi.fn().mockImplementation(function () {
+    return {
+      show: vi.fn(),
+      hide: vi.fn(),
+      toggle: vi.fn(),
+      cycleMode: vi.fn(),
+      dispose: vi.fn(),
+      visible: false,
+    };
+  }),
 }));
 vi.mock('../../../ui/debug-console', () => ({
-  DebugConsole: vi.fn().mockImplementation(() => ({
-    show: vi.fn(),
-    hide: vi.fn(),
-    toggle: vi.fn(),
-    dispose: vi.fn(),
-    getIsVisible: vi.fn(() => false),
-  })),
+  DebugConsole: vi.fn().mockImplementation(function () {
+    return {
+      show: vi.fn(),
+      hide: vi.fn(),
+      toggle: vi.fn(),
+      dispose: vi.fn(),
+      getIsVisible: vi.fn(() => false),
+    };
+  }),
 }));
 vi.mock('../../../ui/control-rail', () => ({
-  ControlRail: vi.fn().mockImplementation(() => ({ setCollapsed: vi.fn(), dispose: vi.fn() })),
+  ControlRail: vi.fn().mockImplementation(function () {
+    return { setCollapsed: vi.fn(), dispose: vi.fn() };
+  }),
   RAIL_ICONS: {},
 }));
 vi.mock('../../../core/app/display-report', () => ({
@@ -324,10 +330,18 @@ describe('LuxarApp', () => {
     };
 
     // Setup constructor mocks
-    (SceneManager as any).mockImplementation(() => mockSceneManager);
-    (AnimationController as any).mockImplementation(() => mockAnimationController);
-    (InputHandler as any).mockImplementation(() => mockInputHandler);
-    (RenderingControls as any).mockImplementation(() => mockRenderingControls);
+    (SceneManager as any).mockImplementation(function () {
+      return mockSceneManager;
+    });
+    (AnimationController as any).mockImplementation(function () {
+      return mockAnimationController;
+    });
+    (InputHandler as any).mockImplementation(function () {
+      return mockInputHandler;
+    });
+    (RenderingControls as any).mockImplementation(function () {
+      return mockRenderingControls;
+    });
 
     // Reset fetch mock
     mockFetch.mockResolvedValue({ ok: false });
@@ -964,7 +978,7 @@ describe('LuxarApp', () => {
     });
 
     it('should handle animation controller creation failure', async () => {
-      (AnimationController as any).mockImplementation(() => {
+      (AnimationController as any).mockImplementation(function () {
         throw new Error('Animation controller failed');
       });
 

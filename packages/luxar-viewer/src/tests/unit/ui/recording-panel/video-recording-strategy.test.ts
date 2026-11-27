@@ -88,7 +88,9 @@ describe('VideoRecordingStrategy', () => {
     };
     vi.stubGlobal(
       'MediaRecorder',
-      vi.fn().mockImplementation(() => mockMediaRecorder)
+      vi.fn().mockImplementation(function () {
+        return mockMediaRecorder;
+      })
     );
     (MediaRecorder as any).isTypeSupported = vi.fn().mockReturnValue(true);
   });

@@ -17,18 +17,22 @@ vi.mock('three', async (importOriginal) => {
   const actual = await importOriginal<typeof import('three')>();
   return {
     ...actual,
-    Box3: vi.fn().mockImplementation(() => ({
-      min: { x: Infinity, y: Infinity, z: Infinity, set: vi.fn() },
-      max: { x: -Infinity, y: -Infinity, z: -Infinity, set: vi.fn() },
-      expandByPoint: vi.fn(),
-      clone: vi.fn().mockReturnThis(),
-    })),
-    Vector3: vi.fn().mockImplementation((x = 0, y = 0, z = 0) => ({
-      x,
-      y,
-      z,
-      set: vi.fn().mockReturnThis(),
-    })),
+    Box3: vi.fn().mockImplementation(function () {
+      return {
+        min: { x: Infinity, y: Infinity, z: Infinity, set: vi.fn() },
+        max: { x: -Infinity, y: -Infinity, z: -Infinity, set: vi.fn() },
+        expandByPoint: vi.fn(),
+        clone: vi.fn().mockReturnThis(),
+      };
+    }),
+    Vector3: vi.fn().mockImplementation(function (x = 0, y = 0, z = 0) {
+      return {
+        x,
+        y,
+        z,
+        set: vi.fn().mockReturnThis(),
+      };
+    }),
   };
 });
 
@@ -49,9 +53,11 @@ vi.mock('../../../../data/loaders/spatial-query/spatial-query-builder', async ()
   >('../../../../data/loaders/spatial-query/spatial-query-builder');
   return {
     ...actual,
-    SpatialQueryBuilder: vi.fn().mockImplementation(() => ({
-      execute: mockExecute,
-    })),
+    SpatialQueryBuilder: vi.fn().mockImplementation(function () {
+      return {
+        execute: mockExecute,
+      };
+    }),
   };
 });
 

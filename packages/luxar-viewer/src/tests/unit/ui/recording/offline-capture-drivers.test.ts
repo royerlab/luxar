@@ -268,8 +268,12 @@ describe('VideoModeDriver', () => {
     const finalize = opts.finalize ?? vi.fn().mockResolvedValue(undefined);
     const add = opts.add ?? vi.fn().mockResolvedValue(undefined);
     const close = opts.close ?? vi.fn();
-    const VideoSample = vi.fn(() => ({ close }));
-    const Output = vi.fn().mockImplementation(() => ({ start, addVideoTrack, finalize }));
+    const VideoSample = vi.fn(function () {
+      return { close };
+    });
+    const Output = vi.fn().mockImplementation(function () {
+      return { start, addVideoTrack, finalize };
+    });
     return {
       mb: {
         canEncodeVideo: vi.fn().mockResolvedValue(opts.canEncode ?? true),
@@ -277,10 +281,14 @@ describe('VideoModeDriver', () => {
         WebMOutputFormat: vi.fn(),
         Mp4OutputFormat: vi.fn(),
         MkvOutputFormat: vi.fn(),
-        BufferTarget: vi.fn(() => ({
-          buffer: opts.nullBuffer ? undefined : new ArrayBuffer(opts.bufferBytes ?? 16),
-        })),
-        VideoSampleSource: vi.fn(() => ({ add })),
+        BufferTarget: vi.fn(function () {
+          return {
+            buffer: opts.nullBuffer ? undefined : new ArrayBuffer(opts.bufferBytes ?? 16),
+          };
+        }),
+        VideoSampleSource: vi.fn(function () {
+          return { add };
+        }),
         VideoSample,
       },
       start,
@@ -321,15 +329,21 @@ describe('VideoModeDriver', () => {
   it('setup constructs encoder when canEncodeVideo accepts the preferred codec', async () => {
     const start = vi.fn().mockResolvedValue(undefined);
     const addVideoTrack = vi.fn();
-    const Output = vi.fn().mockImplementation(() => ({ start, addVideoTrack, finalize: vi.fn() }));
+    const Output = vi.fn().mockImplementation(function () {
+      return { start, addVideoTrack, finalize: vi.fn() };
+    });
     vi.doMock('mediabunny', () => ({
       canEncodeVideo: vi.fn().mockResolvedValue(true),
       Output,
       WebMOutputFormat: vi.fn(),
       Mp4OutputFormat: vi.fn(),
       MkvOutputFormat: vi.fn(),
-      BufferTarget: vi.fn(() => ({ buffer: new ArrayBuffer(8) })),
-      VideoSampleSource: vi.fn(() => ({ add: vi.fn() })),
+      BufferTarget: vi.fn(function () {
+        return { buffer: new ArrayBuffer(8) };
+      }),
+      VideoSampleSource: vi.fn(function () {
+        return { add: vi.fn() };
+      }),
       VideoSample: vi.fn(),
     }));
     const { VideoModeDriver } =
@@ -345,15 +359,21 @@ describe('VideoModeDriver', () => {
     const start = vi.fn().mockResolvedValue(undefined);
     const finalize = vi.fn().mockResolvedValue(undefined);
     const addVideoTrack = vi.fn();
-    const Output = vi.fn().mockImplementation(() => ({ start, addVideoTrack, finalize }));
+    const Output = vi.fn().mockImplementation(function () {
+      return { start, addVideoTrack, finalize };
+    });
     vi.doMock('mediabunny', () => ({
       canEncodeVideo: vi.fn().mockResolvedValue(true),
       Output,
       WebMOutputFormat: vi.fn(),
       Mp4OutputFormat: vi.fn(),
       MkvOutputFormat: vi.fn(),
-      BufferTarget: vi.fn(() => ({ buffer: new ArrayBuffer(0) })),
-      VideoSampleSource: vi.fn(() => ({ add: vi.fn() })),
+      BufferTarget: vi.fn(function () {
+        return { buffer: new ArrayBuffer(0) };
+      }),
+      VideoSampleSource: vi.fn(function () {
+        return { add: vi.fn() };
+      }),
       VideoSample: vi.fn(),
     }));
     const { VideoModeDriver } =
@@ -373,15 +393,21 @@ describe('VideoModeDriver', () => {
     const start = vi.fn().mockResolvedValue(undefined);
     const finalize = vi.fn().mockResolvedValue(undefined);
     const addVideoTrack = vi.fn();
-    const Output = vi.fn().mockImplementation(() => ({ start, addVideoTrack, finalize }));
+    const Output = vi.fn().mockImplementation(function () {
+      return { start, addVideoTrack, finalize };
+    });
     vi.doMock('mediabunny', () => ({
       canEncodeVideo: vi.fn().mockResolvedValue(true),
       Output,
       WebMOutputFormat: vi.fn(),
       Mp4OutputFormat: vi.fn(),
       MkvOutputFormat: vi.fn(),
-      BufferTarget: vi.fn(() => ({ buffer: new ArrayBuffer(8) })),
-      VideoSampleSource: vi.fn(() => ({ add: vi.fn() })),
+      BufferTarget: vi.fn(function () {
+        return { buffer: new ArrayBuffer(8) };
+      }),
+      VideoSampleSource: vi.fn(function () {
+        return { add: vi.fn() };
+      }),
       VideoSample: vi.fn(),
     }));
     const { VideoModeDriver } =

@@ -44,10 +44,12 @@ beforeEach(() => {
   mocks.ScaleBarCtor.mockReset();
   mocks.scaleBarUpdate.mockReset();
   mocks.scaleBarDispose.mockReset();
-  mocks.ScaleBarCtor.mockImplementation(() => ({
-    update: mocks.scaleBarUpdate,
-    dispose: mocks.scaleBarDispose,
-  }));
+  mocks.ScaleBarCtor.mockImplementation(function () {
+    return {
+      update: mocks.scaleBarUpdate,
+      dispose: mocks.scaleBarDispose,
+    };
+  });
 });
 
 function makePorts(opts: { previous?: unknown } = {}) {

@@ -42,11 +42,13 @@ export function installMatchMediaMock(): void {
  * Used for responsive canvas sizing
  */
 export function installResizeObserverMock(): void {
-  (globalThis as any).ResizeObserver = vi.fn().mockImplementation(() => ({
-    observe: vi.fn(),
-    unobserve: vi.fn(),
-    disconnect: vi.fn(),
-  }));
+  (globalThis as any).ResizeObserver = vi.fn().mockImplementation(function () {
+    return {
+      observe: vi.fn(),
+      unobserve: vi.fn(),
+      disconnect: vi.fn(),
+    };
+  });
 }
 
 /**
@@ -55,11 +57,13 @@ export function installResizeObserverMock(): void {
  * Used for visibility detection
  */
 export function installIntersectionObserverMock(): void {
-  (globalThis as any).IntersectionObserver = vi.fn().mockImplementation(() => ({
-    observe: vi.fn(),
-    unobserve: vi.fn(),
-    disconnect: vi.fn(),
-  }));
+  (globalThis as any).IntersectionObserver = vi.fn().mockImplementation(function () {
+    return {
+      observe: vi.fn(),
+      unobserve: vi.fn(),
+      disconnect: vi.fn(),
+    };
+  });
 }
 
 /**

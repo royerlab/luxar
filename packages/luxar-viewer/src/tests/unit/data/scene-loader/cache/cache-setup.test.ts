@@ -19,17 +19,21 @@ import { MultiLevelCachingStore } from '../../../../../cache/multi-level-caching
 const invalidateListeners: Array<() => void> = [];
 vi.mock('../../../../../cache/multi-level-caching-store', () => {
   return {
-    MultiLevelCachingStore: vi.fn().mockImplementation(() => ({
-      init: vi.fn().mockResolvedValue(undefined),
-      setPrefetcher: vi.fn(),
-      onInvalidate: vi.fn((cb: () => void) => {
-        invalidateListeners.push(cb);
-      }),
-    })),
+    MultiLevelCachingStore: vi.fn().mockImplementation(function () {
+      return {
+        init: vi.fn().mockResolvedValue(undefined),
+        setPrefetcher: vi.fn(),
+        onInvalidate: vi.fn((cb: () => void) => {
+          invalidateListeners.push(cb);
+        }),
+      };
+    }),
   };
 });
 vi.mock('../../../../../cache/chunk-prefetcher', () => ({
-  ChunkPrefetcher: vi.fn().mockImplementation(() => ({})),
+  ChunkPrefetcher: vi.fn().mockImplementation(function () {
+    return {};
+  }),
 }));
 
 vi.mock('../../../../../data/zarr', () => ({

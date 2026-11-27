@@ -201,7 +201,9 @@ describe('SceneLoader', () => {
     };
 
     // Mock zarrita functions
-    (zarr.FetchStore as any).mockImplementation(() => mockStore);
+    (zarr.FetchStore as any).mockImplementation(function () {
+      return mockStore;
+    });
     (zarr as any).withMaybeConsolidatedMetadata.mockResolvedValue(mockStore);
     (zarr.root as any).mockReturnValue(mockRootLoc);
     (zarr.open as any).mockResolvedValue(mockZarrGroup);
