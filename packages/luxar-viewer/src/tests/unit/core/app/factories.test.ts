@@ -23,35 +23,29 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // default factory invokes it exactly once with the right arguments and
 // returns whatever `new` produced.
 vi.mock('../../../../scene/scene-manager', () => ({
-  SceneManager: vi.fn().mockImplementation(() => ({ kind: 'scene-manager' })),
+  SceneManager: vi.fn().mockImplementation(function () {
+    return { kind: 'scene-manager' };
+  }),
 }));
 vi.mock('../../../../scene/animation/animation-controller', () => ({
-  AnimationController: vi.fn().mockImplementation((controls, postProcessing) => ({
-    kind: 'animation-controller',
-    controls,
-    postProcessing,
-  })),
+  AnimationController: vi.fn().mockImplementation(function (controls, postProcessing) {
+    return { kind: 'animation-controller', controls, postProcessing };
+  }),
 }));
 vi.mock('../../../../ui/rendering-controls', () => ({
-  RenderingControls: vi.fn().mockImplementation((postProcessing, sceneManager) => ({
-    kind: 'rendering-controls',
-    postProcessing,
-    sceneManager,
-  })),
+  RenderingControls: vi.fn().mockImplementation(function (postProcessing, sceneManager) {
+    return { kind: 'rendering-controls', postProcessing, sceneManager };
+  }),
 }));
 vi.mock('../../../../ui/recording-panel', () => ({
-  RecordingPanel: vi.fn().mockImplementation((sm, ac) => ({
-    kind: 'recording-panel',
-    sm,
-    ac,
-  })),
+  RecordingPanel: vi.fn().mockImplementation(function (sm, ac) {
+    return { kind: 'recording-panel', sm, ac };
+  }),
 }));
 vi.mock('../../../../ui/layers', () => ({
-  LayersPanel: vi.fn().mockImplementation((parent, ac) => ({
-    kind: 'layers-panel',
-    parent,
-    ac,
-  })),
+  LayersPanel: vi.fn().mockImplementation(function (parent, ac) {
+    return { kind: 'layers-panel', parent, ac };
+  }),
 }));
 
 import {
